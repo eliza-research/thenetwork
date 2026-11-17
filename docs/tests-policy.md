@@ -6,11 +6,11 @@ The validation layer is now:
 
 | Layer | Command | What it is |
 |---|---|---|
-| Simulations | `bun run sim` | Every simulation block with its gates on pinned seeds (offline, no LLM). The safety, ops, pipeline and audit blocks also use the dev Postgres; CI's sim job has one and fails when they skip. |
-| Integration | `bun run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`bun run security` runs that subset alone). |
-| E2E | `bun run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
+| Simulations | `pnpm run sim` | Every simulation block with its gates on pinned seeds (offline, no LLM). The safety, ops, pipeline and audit blocks also use the dev Postgres; CI's sim job has one and fails when they skip. |
+| Integration | `pnpm run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`pnpm run security` runs that subset alone). |
+| E2E | `pnpm run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
 
-The integration and e2e suites need the dev Postgres (`bun run packages/observatory/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
+The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
 
 **No unit tests and no smoke tests.** A unit test checks one function with fakes. A smoke test checks that something starts or answers, or calls a live provider. Do not add either. A bug fix adds a sim gate, a scenario, a corpus row in `evals/`, or an integration or e2e case that fails before the fix.
 
@@ -54,12 +54,12 @@ The integration and e2e suites need the dev Postgres (`bun run packages/observat
 | `packages/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server | 9 pass |
 | `packages/platform/test/api.test.ts` | The public API end to end, on memory and Postgres | 38 pass |
 | `packages/platform/test/photos.test.ts` | Private photos through the public API | 10 pass |
-| `packages/platform/test/proxy.test.ts` | Router signing, a local Bun server and the public API | 4 pass |
+| `packages/platform/test/proxy.test.ts` | Router signing, a local HTTP server and the public API | 4 pass |
 | `sites/test/contract.test.ts` | The sites' API client against the real platform API | 9 pass |
 | `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server | 70 pass |
 | `packages/network/test/mini.ts` | Helper (`START`, the small world) | |
 
-The security suite is part of the integration suite. `bun run security` runs it alone. AGENTS.md has the same list. The 11 files (2026-10-09):
+The security suite is part of the integration suite. `pnpm run security` runs it alone. AGENTS.md has the same list. The 11 files (2026-10-09):
 
 | File | What it checks |
 |---|---|
@@ -79,7 +79,7 @@ Helpers: `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`, `packag
 
 The slop.date path gate is `packages/network/test/slop-date-path.integration.test.ts`: join by text, onboarding, review approval, a yes from both people, the booked date, the check-in, a report that reaches the safety queue, and the pair kept apart.
 
-Run on 2026-10-08 against a private Postgres 16 cluster: `bun run test:integration` 413 pass, 0 fail, 0 skip across 31 files (about 5.5 minutes); `bun run test:e2e` 27 pass, 0 fail.
+The original 2026-10-08 integration run against a private Postgres 16 cluster recorded 413 pass, 0 fail, and 0 skip across 31 files (about 5.5 minutes). The e2e run recorded 27 pass and 0 fail.
 
 #### Fixes against current main
 
@@ -93,7 +93,7 @@ Run on 2026-10-08 against a private Postgres 16 cluster: `bun run test:integrati
 
 - `notify/test/wiring.test.ts`, the "connector bridge" case: `connectorInbox` was removed from notify in the cleanup.
 
-### Not restored: simulation-shaped (in-process world runs, covered by `bun run sim`)
+### Not restored: simulation-shaped (in-process world runs, covered by `pnpm run sim`)
 
 - `packages/network/test/network.test.ts` (ConsentNetwork arms and scenarios on the NYC world: the sim's `network` block), `packages/network/test/packs.test.ts` (the slop, peon and friends packs behind the ConsentNetwork: the `slop`, `peon`, `friends` blocks), `packages/network/test/flows.test.ts` and `staff.test.ts` (flows on the hand-built mini world with fakes).
 - `packages/observatory/test/console.test.ts`, `game.test.ts`, `projector.test.ts`, `world-stepping.test.ts` (game mode in process).
@@ -111,7 +111,7 @@ Run on 2026-10-08 against a private Postgres 16 cluster: `bun run test:integrati
 - `packages/observatory/test/{scoring,scrub,web-escape,web-sinks}.test.ts`
 - `packages/platform/test/{apps,body,consent,env,otp,phone,safety,sessions,turnstile}.test.ts` (in-memory, `createPublicApi` with fakes; the Postgres and HTTP paths are in `api.test.ts`, `db.test.ts` and `api-security.test.ts`), `fixtures/opt-out.jsonl` (now in `evals/`)
 - The former plugin package's tests (mock runtime). The plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`), and its tests live there. This repo keeps only the contract mirror in `packages/core/src/svc/`.
-- `packages/mcp/test/plugins.test.ts` (the plugin snapshots equal a fresh build: `bun run plugins/build.ts --check` in CI does this)
+- `packages/mcp/test/plugins.test.ts` (the plugin snapshots equal a fresh build: `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` in CI does this)
 - `scripts/supply-chain.test.ts`, `scripts/wrangler.test.ts`, `scripts/synthetic/synthetic.test.ts` (static file checks)
 - `sites/test/skill.test.ts`
 

@@ -89,6 +89,8 @@ export interface ScoreInput {
   members: ObsMember[]; opps: ObsOpportunity[]; messages: MsgMeta[]; requests: ObsRequest[];
   /** When each member opted out. */
   optOutAt: Map<MemberId, number>;
+  /** Current app's recorded yes/no survey responses, when the source measures them. */
+  worthwhileAnswers?: { yes: number; total: number };
   invites: number; accepts: number;
   /** Review seconds recorded, and the proposals a person approved that started (not invalidated; the simulated reviewer excluded). */
   reviewSeconds: number; sentProposals: number;
@@ -179,8 +181,11 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
   return [
-    metric({ key: "worthwhile_interruption", label: "Worthwhile interruptions (proxy)", value: share(worthwhile, proactive), unit: "share", n: proactive, target: { op: ">=", value: 0.7 },
-      how: "Proactive messages the member answered within 72 hours without a STOP. The PRD measure asks a sample 'Was that worth a text?', which is not built." }),
+    x.worthwhileAnswers
+      ? metric({ key: "worthwhile_interruption", label: "Worthwhile interruptions", value: share(x.worthwhileAnswers.yes, x.worthwhileAnswers.total),
+        unit: "share", n: x.worthwhileAnswers.total, target: { op: ">=", value: 0.7 }, how: "Yes responses among answered surveys on sampled invitations." })
+      : metric({ key: "worthwhile_interruption", label: "Worthwhile interruptions (proxy)", value: share(worthwhile, proactive),
+        unit: "share", n: proactive, target: { op: ">=", value: 0.7 }, how: "Proactive messages the simulated member answered within 72 hours without a STOP." }),
     metric({ key: "opt_in", label: "Opt-in rate", value: share(x.accepts, x.invites), unit: "share", n: x.invites, target: { op: ">=", value: 0.4 },
       how: "Yes answers to sent proposals (reveals) over proposals sent to a member." }),
     metric({ key: "completion", label: "Completion", value: share(held.length, agreed.length), unit: "share", n: agreed.length, target: { op: ">=", value: 0.7 },

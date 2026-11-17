@@ -1,6 +1,7 @@
-#!/usr/bin/env bun
-// The shared backend's entry point (docs/deploy.md; `bun run start:backend`).
-//   bun run deploy/backend/server.ts [--port N] [--dry-run]
+#!/usr/bin/env -S node --import=tsx
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+// The shared backend's entry point (docs/deploy.md; `pnpm run start:backend`).
+//   node --import tsx --env-file-if-exists=.env deploy/backend/server.ts [--port N] [--dry-run]
 //
 // 1. Checks the environment (backend.ts loadConfig; a deployed environment without its secrets stops here).
 // 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
@@ -8,7 +9,7 @@
 // 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
 // Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
 // app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval).
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
 
 // Structured, redacted logs from the first line: the rest is imported after console is captured.
@@ -119,12 +120,12 @@ async function main() {
   });
 
   const servers: { stop(force?: boolean): unknown }[] = [];
-  // Bodies past 9 MB (a photo is at most 8 MB) are refused before they are read (Bun's default is 128 MB).
-  const pub = Bun.serve({ hostname: c.host, port: c.port, maxRequestBodySize: MAX_PUBLIC_BODY_BYTES, fetch: (req, server) => backend.publicFetch(req, server) });
+  // Bodies past 9 MB (a photo is at most 8 MB) are refused before they are read (the default is 128 MB).
+  const pub = await serveHttp({ hostname: c.host, port: c.port, maxRequestBodySize: MAX_PUBLIC_BODY_BYTES, fetch: (req, server) => backend.publicFetch(req, server) });
   servers.push(pub);
   log.info("listening", { port: "public", url: `http://${c.host}:${pub.port}` });
   if (c.staff) {
-    const staff = Bun.serve({ hostname: c.staff.host, port: c.staff.port, fetch: req => backend.staffFetch(req) });
+    const staff = await serveHttp({ hostname: c.staff.host, port: c.staff.port, fetch: req => backend.staffFetch(req) });
     servers.push(staff);
     log.info("listening", { port: "staff", url: `http://${c.staff.host.includes(":") ? `[${c.staff.host}]` : c.staff.host}:${staff.port}` });
   }
@@ -132,8 +133,8 @@ async function main() {
   const stop = async (signal: string) => {
     log.info("shutdown", { signal });
     const { clean } = await backend.shutdown(servers);
-    await pool.close().catch(() => {});
-    await opsPool.close().catch(() => {});
+    const end = clean ? undefined : { timeout: 0 };
+    await Promise.allSettled([pool.end(end), opsPool.end(end)]);
     process.exit(clean ? 0 : 1);
   };
   process.on("SIGTERM", () => void stop("SIGTERM"));

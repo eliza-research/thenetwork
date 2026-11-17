@@ -2,29 +2,34 @@
 // (docs/admin-console.md 3.7.1; founder decisions 2026-10-08: photos and ratings are for verified
 // adults only). Postgres in a database of its own per test process; dry-run sends; fictional numbers
 // (+1 212 555 01xx); photos in a temporary folder (no R2).
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { LocalDiskPhotoStorage, PHOTO_CONSENT, type PhotoRater } from "../../platform/src/photos.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
-import { START } from "./mini.ts";
+import { Mini, START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
+import { presentInNyc } from "../src/network.ts";
+import { WATCH } from "../src/trust.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
 import { World } from "../../engine/src/world.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_service_safety_test_${process.pid}`;
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
@@ -129,6 +134,194 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   });
   const fresh = async () => { await applySchema(URL_, { reset: true, lockTimeout: "5s" }); };
 
+  // spec/staffSafetyService.md, "Live enrollment and ban projection use the current person"
+  test("a membership that joins during a staff ban is restricted in its Network runtime", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Ari, 32")).toBe("joined");
+    const primary = (await memberOf("slop", phone))!;
+    const person = (await s.accounts.personFor(phone))!;
+    await web.login("friends", phone);
+
+    let entered!: () => void, release!: () => void;
+    const atPersist = new Promise<void>(resolve => { entered = resolve; });
+    const allowPersist = new Promise<void>(resolve => { release = resolve; });
+    const persistBan = s.people.ban.bind(s.people);
+    let snapshotStatus: string | undefined;
+    s.people.ban = async (ban, options) => {
+      entered();
+      await allowPersist;
+      await persistBan(ban, options);
+      const rt = s.runtimeFor("friends")!;
+      const member = (await memberOf("friends", phone))!;
+      const snapshot = await rt.scoped(tx => loadSnapshot(tx, clock.now(), { app: "friends" }));
+      snapshotStatus = (snapshot.members.find(candidate => candidate.id === member.id) as { accountStatus?: string } | undefined)?.accountStatus;
+    };
+    const banning = staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: primary.id, by: "person", note: "confirmed by staff" });
+    try {
+      await Promise.race([atPersist, banning.then(() => { throw new Error("Ban ended before persistence"); })]);
+      expect((await web.join("friends", 32, "Ari")).status).toBe(200);
+      expect(await memberOf("friends", phone)).toMatchObject({ account_status: "active" });
+      release();
+      expect(await (await banning).json()).toEqual({ ok: true });
+      const member = (await memberOf("friends", phone))!;
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "restricted" });
+      expect(member.account_status).toBe("restricted");
+      expect(snapshotStatus).toBe("restricted");
+      const rt = s.runtimeFor("friends")!;
+      expect(await rt.readState(n => n.trust.level(member.id))).toBe("hold");
+    } finally {
+      release();
+      await banning;
+    }
+  });
+
+  test("a ban prevents an already admitted enrollment from creating an active Network member", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Nila, 32")).toBe("joined");
+    const primary = (await memberOf("slop", phone))!;
+    const person = (await s.accounts.personFor(phone))!;
+    await web.login("friends", phone);
+
+    let entered!: () => void, release!: () => void;
+    const atProjection = new Promise<void>(resolve => { entered = resolve; });
+    const allowProjection = new Promise<void>(resolve => { release = resolve; });
+    const createMember = s.createMember.bind(s);
+    s.createMember = async (...args) => { entered(); await allowProjection; return createMember(...args); };
+    const joining = web.join("friends", 32, "Nila");
+    try {
+      await Promise.race([atProjection, joining.then(() => { throw new Error("Enrollment ended before projection"); })]);
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "active" });
+      const banned = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: primary.id, by: "phone", note: "confirmed by staff" });
+      expect(await banned.json()).toEqual({ ok: true });
+      release();
+      expect((await joining).body).toMatchObject({ ok: false, error: "review" });
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "restricted" });
+      expect(await memberOf("friends", phone)).toBeUndefined();
+    } finally {
+      release();
+      await joining;
+    }
+  });
+
+  // spec/staffSafetyService.md, "An interrupted ban resumes from its saved authority"
+  test("staff retry completes a durable ban after a process restart without recording another ban", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Mara, 32")).toBe("joined");
+    const primary = (await memberOf("slop", phone))!;
+    const reporter = newPhone();
+    expect(await text(s, clock, reporter, "slop")).toBe("join_asked");
+    expect(await text(s, clock, reporter, "Ana, 30")).toBe("joined");
+    expect(await text(s, clock, reporter, "report Mara, she was rude and kept texting me")).toBe("handled");
+    const [report] = await s.runtimeFor("slop")!.readState(n => n.safetyReports());
+    expect(report).toMatchObject({ subjectId: primary.id, status: "open" });
+    const web = site(s, clock, otp);
+    await web.login("friends", phone);
+    expect((await web.join("friends", 32, "Mara")).status).toBe(200);
+    const peer = (await memberOf("friends", phone))!;
+    s.people.suppress = async () => { throw new Error("fixture: process ended after saving the ban"); };
+    const path = "/apps/slop/safety/ban";
+    const body = { memberId: primary.id, by: "phone", note: "original confirmed case", reportId: report!.id };
+    expect((await staff(s, "saf-tok", "POST", path, body)).status).toBe(503);
+    expect(await sql`select reason,report_id,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, report_id: report!.id, projection_completed_at: null }]);
+    expect(await memberOf("friends", phone)).toMatchObject({ account_status: "active" });
+    await s.close();
+
+    const { s: restarted } = service(clock);
+    const retry = await staff(restarted, "saf-tok", "POST", "/apps/friends/safety/ban", { ...body, memberId: peer.id, note: "retry after restart", reportId: "friends.rp999" });
+    expect(await retry.json()).toEqual({ ok: true });
+    expect(await memberOf("slop", phone)).toMatchObject({ account_status: "restricted" });
+    expect(await memberOf("friends", phone)).toMatchObject({ account_status: "restricted" });
+    expect(await restarted.runtimeFor("friends")!.readState(n => n.trust.level(peer.id))).toBe("hold");
+    expect(await restarted.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([expect.objectContaining({ id: report!.id, status: "banned" })]);
+    expect(await sql`select app_id, payload->>'reportId' as report_id from network.events
+      where type='safety_action' and payload->>'action'='ban' order by app_id`).toEqual([
+      { app_id: "friends", report_id: null }, { app_id: "slop", report_id: report!.id },
+    ]);
+    expect(await sql`select reason,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, projection_completed_at: new Date(clock.now()) }]);
+    const duplicate = await staff(restarted, "saf-tok", "POST", path, body);
+    expect(await duplicate.json()).toEqual({ ok: false, reason: "already_banned" });
+  });
+
+  test("a staff phone ban covers a move committed after staff read the number, including projection retry", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const { s: other, otp } = service(clock);
+    const web = site(other, clock, otp);
+    const previous = newPhone(), current = newPhone();
+    expect(await text(s, clock, previous, "slop")).toBe("join_asked");
+    expect(await text(s, clock, previous, "Ari, 32")).toBe("joined");
+    const member = (await memberOf("slop", previous))!;
+    const previousHash = s.accounts.phoneHash(previous), currentHash = s.accounts.phoneHash(current);
+    await web.login("slop", previous);
+    expect((await web.json("slop", "POST", "/api/me/phone/start", { phone: current })).body).toEqual({ ok: true });
+
+    const persistBan = s.people.ban.bind(s.people);
+    s.people.ban = async (ban, options) => {
+      const move = await web.json("slop", "POST", "/api/me/phone/confirm", { code: otp.codes.get(current) });
+      expect(move.body).toMatchObject({ ok: true });
+      await persistBan(ban, options);
+    };
+    s.people.suppress = async () => { throw new Error("fixture: process ended after saving the ban"); };
+    const path = "/apps/slop/safety/ban";
+    const body = { memberId: member.id, by: "phone", note: "confirmed by staff" };
+    expect((await staff(s, "saf-tok", "POST", path, body)).status).toBe(503);
+    expect(await memberOf("slop", current)).toMatchObject({ id: member.id });
+    expect(await other.people.isBanned(previousHash)).toBe(true);
+    expect(await other.people.isBanned(currentHash)).toBe(true);
+
+    expect(await (await staff(other, "saf-tok", "POST", path, { ...body, note: "retried by staff" })).json()).toEqual({ ok: true });
+    expect(await memberOf("slop", current)).toMatchObject({ id: member.id, account_status: "restricted" });
+    expect(await other.people.isSuppressed(previousHash)).toBe(true);
+    expect(await other.people.isSuppressed(currentHash)).toBe(true);
+    const rows = await sql`select phone_hash, reason, projection_completed_at from platform.bans`;
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(row => row.phone_hash))).toEqual(new Set([previousHash, currentHash]));
+    expect(rows.every(row => row.reason === body.note && row.projection_completed_at !== null)).toBe(true);
+  });
+
+  test("a number move refuses a staff ban committed after verification and before the move", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const { s: other, otp } = service(clock);
+    const web = site(other, clock, otp);
+    const current = newPhone(), proposed = newPhone();
+    expect(await text(s, clock, current, "slop")).toBe("join_asked");
+    expect(await text(s, clock, current, "Ari, 32")).toBe("joined");
+    const member = (await memberOf("slop", current))!;
+    await web.login("slop", current);
+    expect((await web.json("slop", "POST", "/api/me/phone/start", { phone: proposed })).body).toEqual({ ok: true });
+
+    const movePhone = other.people.movePhone.bind(other.people);
+    other.people.movePhone = async move => {
+      const response = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", {
+        memberId: member.id, by: "phone", note: "confirmed by staff",
+      });
+      expect(await response.json()).toEqual({ ok: true });
+      return movePhone(move);
+    };
+    const confirmation = await web.json("slop", "POST", "/api/me/phone/confirm", { code: otp.codes.get(proposed) });
+    expect(confirmation.body).toMatchObject({ ok: false, error: "review" });
+    expect(await memberOf("slop", current)).toMatchObject({ id: member.id, account_status: "restricted" });
+    expect(await other.people.findPhone(proposed)).toBeUndefined();
+    expect(await other.people.isBanned(other.accounts.phoneHash(proposed))).toBe(false);
+  });
+
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {
     await fresh();
     const clock = new SimClock(START);
@@ -142,6 +335,12 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Ben is on friends too (the hold and the ban reach every app).
     await web.login("friends", ben);
     expect((await web.join("friends", 32, "Ben")).status).toBe(200);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(200);
+    // A profile-share grant and a pending SHARE flow that exist before the ban.
+    const benPerson = (await s.accounts.personFor(ben))!;
+    expect(await s.accounts.share(APPS.friends, { e164: ben, personId: benPerson.id }, "slop", ["city"])).toBe(true);
+    const benKey = s.accounts.phoneHash(ben);
+    await s.people.putPending({ phoneHash: benKey, kind: "share", app: "slop", name: null, age: null, at: clock.now() });
     const a = (await memberOf("slop", ana))!.id, b = (await memberOf("slop", ben))!.id, bf = (await memberOf("friends", ben))!.id;
     expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
 
@@ -167,6 +366,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
 
     // Ban by phone.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "number", note: "confirmed by staff" })).status).toBe(400);
+    const foreignReport = await staff(s, "saf-tok", "POST", "/apps/friends/safety/ban", { memberId: bf, by: "phone", note: "confirmed by staff", reportId });
+    expect(foreignReport.status).toBe(409);
+    expect(await foreignReport.json()).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await sql`select id from platform.bans`).toEqual([]);
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed by staff", reportId })).json()).toEqual({ ok: true });
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed again" })).json()).toEqual({ ok: false, reason: "already_banned" });
     expect((await sql`select scope, report_id, phone_hash is not null as hashed from platform.bans`).map((r: any) => [r.scope, r.report_id, r.hashed])).toEqual([["phone", reportId, true]]);
@@ -177,6 +380,26 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect([(await memberOf("slop", ben))!.account_status, (await memberOf("friends", ben))!.account_status]).toEqual(["restricted", "restricted"]);
     const after = await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any;
     expect(after.reports[0].status).toBe("banned");
+    // The web cookie issued before the ban no longer authenticates.
+    // spec/webSession.md, "Only a live token on the requested app can authenticate"
+    expect(await web.json("friends", "GET", "/api/me")).toEqual({ status: 401, body: { ok: false, error: "unauthorized" } });
+    // The ban revoked the share grant and deleted the pending SHARE flow; ordinary text is not handled, HELP still answers.
+    // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
+    expect(await s.people.shareGrants(benPerson.id)).toEqual([
+      expect.objectContaining({ fromApp: "slop", toApp: "friends", revokedAt: expect.any(Number) }),
+    ]);
+    expect(await s.people.getPending(benKey, "share", "slop")).toBeUndefined();
+    expect(await s.accounts.share(APPS.friends, { e164: ben, personId: benPerson.id }, "slop", ["city"])).toBe(false);
+    const replies = directs.length;
+    expect(await text(s, clock, ben, "SHARE")).toBe("held");
+    expect(await text(s, clock, ben, "are you there?")).toBe("held");
+    expect(directs).toHaveLength(replies);
+    expect(await text(s, clock, ben, "HELP")).toBe("held");
+    expect(directs.slice(replies)).toEqual([expect.objectContaining({ to: ben })]);
+    // A banned member can still leave an app: "left" and one compliance reply from that app.
+    const beforeLeave = directs.length;
+    expect(await text(s, clock, ben, "leave friends.help")).toBe("left");
+    expect(directs.slice(beforeLeave)).toEqual([expect.objectContaining({ app: "friends", to: ben })]);
 
     // The banned number cannot join any other app, by text or on the web; nothing is stored and nothing is answered.
     const before = directs.length;
@@ -196,16 +419,19 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const rows = (await sql`select action, detail->>'safety' as safety, detail->>'phase' as phase, ok from network.staff_audit where action in ('safety', 'read_safety_reports') order by id`) as any[];
     const hold = rows.filter(r => r.safety === "hold").map(r => r.phase), ban = rows.filter(r => r.safety === "ban").map(r => r.phase);
     expect(hold).toEqual(["requested", "result"]);
-    expect(ban).toEqual(["requested", "result", "refused"]);
+    expect(ban).toEqual(["refused", "requested", "result", "refused"]);
     expect(rows.filter(r => r.action === "read_safety_reports").length).toBe(2);
   }, T);
 
   test("ban by person; dismiss a report", async () => {
     await fresh();
     const clock = new SimClock(START);
-    const { s } = service(clock);
+    const { s, otp } = service(clock);
     const cy = newPhone(), di = newPhone();
     for (const [p, who] of [[cy, "Cy, 40"], [di, "Di, 38"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    const web = site(s, clock, otp), unrelated = site(s, clock, otp);
+    await web.login("slop", di);
+    await unrelated.login("slop", cy);
     await text(s, clock, cy, "report Di, she asked me for money on venmo");
     await text(s, clock, di, "report Cy, he was rude");
     const q = (await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any).reports as any[];
@@ -214,6 +440,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/dismiss", { reportId: "nope", note: "no such report" })).json()).toEqual({ ok: false, reason: "unknown_report" });
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" })).json()).toEqual({ ok: true });
     expect((await sql`select scope from platform.bans`).map((r: any) => r.scope)).toEqual(["person"]);
+    // spec/webSession.md, "Only a live token on the requested app can authenticate"
+    expect((await web.json("slop", "GET", "/api/me")).status).toBe(401);
+    expect((await unrelated.json("slop", "GET", "/api/me")).status).toBe(200);
     expect(await text(s, clock, di, "friends")).toBe("held");
   }, T);
 
@@ -281,7 +510,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await fresh();
     const clock = new SimClock(START);
     const { s } = service(clock, { tokens: "admin:adm-tok,safety:saf-tok,admin:console-token-0123456789abcdef0123", consoleToken: "console-token-0123456789abcdef0123" });
-    const srv = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => s.fetch(req) });
+    const srv = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: req => s.fetch(req) });
     try {
       const ed = newPhone(), flo = newPhone();
       for (const [p, who] of [[ed, "Ed, 35"], [flo, "Flo, 33"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
@@ -297,7 +526,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(new Set((await sql`select actor from network.staff_audit where action = 'safety'`).map((x: any) => x.actor))).toEqual(new Set(["safety.lead@example.org"]));
       // Photos: no photo storage here, so the console hears that photos are off (never a link).
       expect(await client.photos("safety.lead@example.org", r.subjectId, "report review")).toMatchObject({ ok: false });
-    } finally { srv.stop(true); }
+    } finally { await srv.stop(true); }
   }, T);
 
   test("photos: adults by stated age (no ID check), a failed staff check refuses, the staff read audited before the link, signed links through the backend, deleted on leave", async () => {
@@ -359,12 +588,24 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
   }, T);
-  test("the private member rating recomputes after photo deletion and clears on failed age or a minor age in any app", async () => {
+  // spec/photoRating.md, "Write only after the returned score passes a fresh authority check"
+  test("the private member rating follows the latest photos and clears on failed age or a minor age in any app", async () => {
     await fresh();
     const dir = mkdtempSync(join(tmpdir(), "svc-ratings-")); dirs.push(dir);
     const clock = new SimClock(START);
     const ratedPhotoCounts: number[] = [];
-    const rater: PhotoRater = { id: "fake", rate: async (_subject, photos) => { ratedPhotoCounts.push(photos.length); return { face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }; } };
+    let markFirstRatingStarted!: () => void;
+    let finishFirstRating!: () => void;
+    const firstRatingStarted = new Promise<void>(resolve => { markFirstRatingStarted = resolve; });
+    const waitForFirstRating = new Promise<void>(resolve => { finishFirstRating = resolve; });
+    const rater: PhotoRater = { id: "fake", rate: async (_subject, photos) => {
+      ratedPhotoCounts.push(photos.length);
+      if (ratedPhotoCounts.length === 1) {
+        markFirstRatingStarted();
+        await waitForFirstRating;
+      }
+      return { face: 0.5, body: 0.5, overall: photos.length > 1 ? 0.7 : 0.5, confidence: 0.9, model: "fake" };
+    } };
     const { s, otp } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
     const web = site(s, clock, otp);
     const ana = newPhone();
@@ -373,7 +614,21 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const a = (await memberOf("slop", ana))!.id;
     const upload = async () => (await (await web.call("slop", "POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "image/jpeg", "x-photo-consent": PHOTO_CONSENT.version })).json()) as { ok: boolean; id: string };
     const ratings = async () => (await sql`select count(*)::int as n from network.facets where member_id = ${a} and id = ${`${a}:appearance`}`)[0].n as number;
-    const first = await upload(), second = await upload();
+    const pending = upload();
+    let second: Awaited<ReturnType<typeof upload>>;
+    const ratingVersion = () => sql`select xmin::text as write_version, tags from network.facets where id=${`${a}:appearance`}`;
+    let completedVersion: Awaited<ReturnType<typeof ratingVersion>>;
+    try {
+      await firstRatingStarted;
+      clock.advance(MINUTE);
+      second = await upload();
+      completedVersion = await ratingVersion();
+      expect(completedVersion).toHaveLength(1);
+    } finally {
+      finishFirstRating();
+    }
+    const first = await pending;
+    expect(await ratingVersion()).toEqual(completedVersion);
     expect(ratedPhotoCounts).toEqual([1, 2]);
     expect([first.ok, second.ok]).toEqual([true, true]);
     expect(await ratings()).toBe(1);
@@ -422,6 +677,35 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await verified()).toEqual({ [ari]: true, [bo]: false });
   }, T);
 
+  // spec/travelPresence.md, "Use my travel dates for matching"
+  test("friends matching uses bounded trips and drops them at the end", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    await web.login("friends", phone);
+    expect((await web.join("friends", 30, "Ari")).status).toBe(200);
+    const id = (await memberOf("friends", phone))!.id;
+    const now = clock.now(), from = now + HOUR, to = now + 2 * HOUR, end = now + 3 * HOUR;
+    await sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at) values
+      ('friends', ${id}, 'sf', 'temporary', ${new Date(from)}, ${new Date(to)}),
+      ('friends', ${id}, 'la', 'temporary', ${new Date(now - HOUR)}, ${new Date(now)}),
+      ('friends', ${id}, 'la', 'temporary', null, null),
+      ('friends', ${id}, 'la', 'temporary', ${new Date(to)}, ${new Date(from)})`;
+
+    const snapshot = await loadSnapshot(sql, now, { app: "friends", city: "sf" });
+    expect(snapshot.members.map(m => m.id)).toEqual([id]);
+    expect(snapshot.presence.filter(p => p.type === "temporary").map(p => [p.city, p.from, p.to])).toEqual([["sf", from, to]]);
+    const world = new World(snapshot, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    expect([...world.location(id, now, end)]).toEqual([["nyc", [[now, from], [to, end]]], ["sf", [[from, to]]]]);
+    expect(presentInNyc(snapshot, id, now, from)).toBe(true);
+    expect(presentInNyc(snapshot, id, from, to)).toBe(false);
+    expect(presentInNyc(snapshot, id, to, end)).toBe(true);
+    expect((await loadSnapshot(sql, to, { app: "friends", city: "sf" })).members).toEqual([]);
+    expect((await loadSnapshot(sql, to, { app: "friends", city: "sf", homeCities: ["nyc"] })).members.map(m => m.id)).toEqual([id]);
+  }, T);
+
   test("staff with safety on one app hold on that app only and cannot ban; the audit never counts the person's apps", async () => {
     await fresh();
     const clock = new SimClock(START);
@@ -448,5 +732,328 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Safety on every app: the hold reaches every app.
     expect((await staff(s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: peon, note: "cross-app review" })).status).toBe(200);
     expect(await held("slop", slop)).toBe(true);
+  }, T);
+
+  test("scoped staff holds survive leave, restart and rejoin until an authorized app lift", async () => {
+    // spec/staffSafetyService.md, "A staff hold survives ordinary app membership changes"
+    await fresh();
+    const clock = new SimClock(START);
+    const tokens = "safety@peon:peon-safety-tok,safety@slop:slop-safety-tok,safety:saf-tok";
+    const initial = service(clock, { tokens });
+    const phone = newPhone();
+    let web = site(initial.s, clock, initial.otp);
+    await web.login("slop", phone);
+    expect((await web.join("slop", 30, "Ari")).status).toBe(200);
+    await web.login("peon", phone);
+    expect((await web.join("peon", 30, "Ari")).status).toBe(200);
+    const former = (await memberOf("peon", phone))!.id;
+    const slopId = (await memberOf("slop", phone))!.id;
+    const status = async (app: AppId, id: string) => {
+      const snapshot = await loadSnapshot(sql, clock.now(), { app });
+      return (snapshot.members.find(member => member.id === id) as { accountStatus: string } | undefined)?.accountStatus;
+    };
+    expect(await (await staff(initial.s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: former, note: "local safety review" })).json()).toEqual({ ok: true });
+    expect(await status("peon", former)).toBe("restricted");
+    expect(await status("slop", slopId)).toBe("active");
+    expect(await text(initial.s, clock, phone, "leave peon.biz")).toBe("left");
+    expect(await memberOf("peon", phone)).toBeUndefined();
+    await initial.s.close();
+
+    const restarted = service(clock, { tokens });
+    await restarted.s.start();
+    web = site(restarted.s, clock, restarted.otp);
+    await web.login("peon", phone);
+    expect((await web.join("peon", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("peon", phone))!.id;
+    expect(current).not.toBe(former);
+    expect(await status("peon", current)).toBe("restricted");
+    const [serviceProjection] = await sql.begin(async tx => {
+      await tx`set local role network_service`;
+      await tx`select set_config('app.app_id','peon',true)`;
+      return tx`select staff_held from platform.matching_ages where app_id='peon' and member_id=${current}`;
+    });
+    expect(serviceProjection).toEqual({ staff_held: true });
+    const lift = (app: AppId, token: string, memberId: string) => staff(restarted.s, token, "POST", `/apps/${app}/safety/lift`, { memberId, note: "staff resolved review" });
+    expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: true });
+    expect(await status("peon", current)).toBe("active");
+
+    expect(await (await staff(restarted.s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: current, note: "global safety review" })).json()).toEqual({ ok: true });
+    expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
+    expect(await status("peon", current)).toBe("restricted");
+    expect(await (await lift("peon", "saf-tok", current)).json()).toEqual({ ok: true });
+    expect(await status("peon", current)).toBe("active");
+    expect(await status("slop", slopId)).toBe("restricted");
+    expect(await (await lift("slop", "slop-safety-tok", slopId)).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
+
+    clock.advance(HOUR);
+    await web.login("friends", phone);
+    expect((await web.join("friends", 30, "Ari")).status).toBe(200);
+    const friendsId = (await memberOf("friends", phone))!.id;
+    expect(await status("friends", friendsId)).toBe("restricted");
+    expect(await (await lift("friends", "saf-tok", friendsId)).json()).toEqual({ ok: true });
+    expect(await status("friends", friendsId)).toBe("active");
+    expect(await status("slop", slopId)).toBe("restricted");
+
+    const person = (await restarted.s.accounts.personFor(phone))!;
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
+    expect(await restarted.s.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+  }, T);
+
+  test("an automatic hard hold committed after leave admission survives the atomic forget", async () => {
+    // spec/staffSafetyService.md, "A committed trust hold follows the person through ordinary app leave"
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock, { tokens: "safety@peon:peon-safety-tok" });
+    const web = site(s, clock, otp);
+    const phone = newPhone(), watchPhone = newPhone();
+    for (const [app, e164, name] of [["slop", phone, "Ari"], ["peon", phone, "Ari"], ["peon", watchPhone, "Blair"]] as const) {
+      await web.login(app, e164);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const person = (await s.accounts.personFor(phone))!;
+    const watchPerson = (await s.accounts.personFor(watchPhone))!;
+    const former = (await memberOf("peon", phone))!.id;
+    const watchId = (await memberOf("peon", watchPhone))!.id;
+    const slop = (await memberOf("slop", phone))!.id;
+    const rt = s.runtimeFor("peon")!;
+    await rt.unitOfWork(n => {
+      for (const id of [former, watchId]) n.trust.add(id, clock.now(), "block_abuse", WATCH);
+    });
+
+    const beginAppLeave = s.people.beginAppLeave.bind(s.people);
+    s.people.beginAppLeave = async request => {
+      const admission = await beginAppLeave(request);
+      if (admission.ok && admission.membership?.memberId === former) await rt.unitOfWork(n => {
+        // The simulator supplies committed report evidence between the consent write and runtime forget.
+        expect(n.trust.report(former, "fixture-counterpart", clock.now(), { met: true })).toBeGreaterThan(0);
+        expect(n.trust.level(former)).toBe("hold");
+      });
+      return admission;
+    };
+    try {
+      expect(await text(s, clock, phone, "leave peon.biz")).toBe("left");
+    } finally {
+      s.people.beginAppLeave = beginAppLeave;
+    }
+    expect(await text(s, clock, watchPhone, "leave peon.biz")).toBe("left");
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: "peon" }]);
+    expect(await sql`select origin from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ origin: "automatic_carryover" }]);
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${watchPerson.id}`).toEqual([]);
+    expect(await memberOf("peon", phone)).toBeUndefined();
+
+    await web.login("peon", phone);
+    expect((await web.join("peon", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("peon", phone))!.id;
+    expect(current).not.toBe(former);
+    expect(await sql`select app_id,staff_held from platform.matching_ages where member_id in (${current},${slop}) order by app_id`)
+      .toEqual([{ app_id: "peon", staff_held: true }, { app_id: "slop", staff_held: false }]);
+    const lifted = await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/lift", { memberId: current, note: "staff resolved review" });
+    expect(await lifted.json()).toEqual({ ok: true });
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+    expect(await sql`select staff_held from platform.matching_ages where app_id='peon' and member_id=${current}`).toEqual([{ staff_held: false }]);
+  }, T);
+
+  test.each(["staff review", "account erasure"] as const)("an open report follows ordinary app leave until %s", async disposition => {
+    // spec/safetyCase.md, "The exact open report follows its subject through ordinary app leave"
+    await fresh();
+    const clock = new SimClock(START);
+    const tokens = "safety:saf-tok,safety@friends:friends-safety-tok";
+    const delivered: SendRequest[] = [];
+    const options: Partial<ServiceOptions> = { tokens,
+      adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
+        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `report-carryover:${request.idempotencyKey}`, status: "sent" };
+        } },
+      }),
+    };
+    const { s, otp } = service(clock, options);
+    const web = site(s, clock, otp);
+    const subjectPhone = newPhone(), reporterPhone = newPhone(), peerPhone = newPhone();
+    for (const [app, phone, name] of [["friends", subjectPhone, "Ari"], ["slop", subjectPhone, "Ari"],
+      ["friends", reporterPhone, "Blair"], ["friends", peerPhone, "Casey"]] as const) {
+      await web.login(app, phone);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const person = (await s.accounts.personFor(subjectPhone))!;
+    const former = (await memberOf("friends", subjectPhone))!.id;
+    const reporter = (await memberOf("friends", reporterPhone))!.id;
+    const otherApp = (await memberOf("slop", subjectPhone))!.id;
+    const rt = s.runtimeFor("friends")!;
+    const bookedPair = async (first: string, second: string, otherName: string) => {
+      const world = new Mini([{ id: first, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
+        { id: second, name: otherName, age: 30, area: "Greenpoint", interests: ["hiking"] }],
+        { app: "friends", review: "auto", plans: false, growth: false });
+      world.clock.set(clock.now());
+      await world.onboard(first, second);
+      const opportunityId = world.propose([first, second]);
+      await world.answerProbes([first, second]);
+      const state = world.net.exportState();
+      const opportunity = state.opps.find(candidate => candidate.id === opportunityId)!;
+      expect(opportunity.stage).toBe("scheduled");
+      return { state, opportunity };
+    };
+    const booked = await bookedPair(former, reporter, "Blair");
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: booked.state.members, opps: booked.state.opps }));
+    expect(await text(s, clock, reporterPhone, "report Ari, he was rude and kept texting me")).toBe("handled");
+    expect(await text(s, clock, reporterPhone, "report Ari, he never showed up")).toBe("handled");
+    expect(await rt.readState(net => net.trust.level(former))).toBe("ok");
+    const beginLeave = s.people.beginAppLeave.bind(s.people);
+    s.people.beginAppLeave = async input => {
+      const admission = await beginLeave(input);
+      if (admission.ok && admission.membership?.memberId === former) {
+        expect(await text(s, clock, reporterPhone, "report Ari, he asked me for money")).toBe("handled");
+      }
+      return admission;
+    };
+    try {
+      expect(await text(s, clock, subjectPhone, "leave friends.help")).toBe("left");
+    } finally { s.people.beginAppLeave = beginLeave; }
+    const reports = (await rt.pg.load())!.reports!.filter(report => report.subjectId === former);
+    expect(reports.map(report => [report.kind, report.met])).toEqual([["harassment", true], ["no_show", true], ["scam", true]]);
+    const harassment = reports[0]!.id, scam = reports[2]!.id;
+    const carryovers = () => sql`select app_id,origin_runtime_id,report_id from platform.report_safety_carryovers
+      where person_id=${person.id} order by report_id`;
+    expect(await carryovers()).toEqual([harassment, scam].map(report_id => ({ app_id: "friends", origin_runtime_id: "friends:nyc", report_id })));
+    expect(await sql`select origin from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+    expect(await memberOf("friends", subjectPhone)).toBeUndefined();
+    await s.close();
+
+    const restarted = service(clock, options);
+    await restarted.s.start();
+    if (disposition === "account erasure") {
+      expect(await restarted.s.accounts.deleteAll({ e164: subjectPhone, personId: person.id })).toBe(true);
+      expect(await carryovers()).toEqual([]);
+      return;
+    }
+    const browser = site(restarted.s, clock, restarted.otp);
+    await browser.login("friends", subjectPhone);
+    expect((await browser.join("friends", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("friends", subjectPhone))!.id;
+    expect(current).not.toBe(former);
+    const status = () => sql`select app_id,staff_held,report_held from platform.matching_ages
+      where member_id in (${current},${otherApp}) order by app_id`;
+    const other = { app_id: "slop", staff_held: false, report_held: false };
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
+    const active = restarted.s.runtimeFor("friends")!, adapter = active.adapter as BlooioAdapter;
+    const peer = (await memberOf("friends", peerPhone))!.id;
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
+    const queueBookingReply = async (id: string) => {
+      const next = await bookedPair(current, peer, "Casey");
+      clock.set(next.opportunity.meetingAt! - 2 * HOUR);
+      await adapter.engaged(peerPhone);
+      await active.unitOfWork(net => {
+        net.importState({ ...net.exportState(), members: next.state.members, opps: next.state.opps });
+        // A causal reply can pass the recipient preflight. The locked claim also checks the roster.
+        active.unit.sends.push({ id, memberId: peer, to: peerPhone, kind: "reply", type: "proposal", oppId: next.opportunity.id,
+          bookingRoster: next.opportunity.participants, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+      });
+    };
+    await adapter.lineSafety("review");
+    const messageId = "report-carryover-booking-fixture";
+    await queueBookingReply(messageId);
+    expect(await adapter.queue.statusOf(messageId)).toBe("retry_scheduled");
+    await adapter.lineSafety(undefined);
+    clock.advance(HOUR);
+    await adapter.engaged(peerPhone);
+    await active.deliver();
+    expect(await sql`select status,note,attempts from platform.outbound where id=${messageId}`)
+      .toEqual([{ status: "suppressed_ineligible", note: null, attempts: 0 }]);
+    expect(delivered.some(request => request.idempotencyKey === `tn:${messageId}`)).toBe(false);
+
+    const decide = async (action: string, body: object, app: AppId = "friends", token = "friends-safety-tok") =>
+      (await staff(restarted.s, token, "POST", `/apps/${app}/safety/${action}`, { ...body, note: "staff reviewed the report" })).json();
+    expect(await decide("dismiss", { reportId: harassment }, "slop", "saf-tok")).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await decide("hold", { memberId: former })).toEqual({ ok: false, reason: "unknown_member" });
+    expect(await decide("ban", { memberId: former, reportId: harassment, by: "person" }, "friends", "saf-tok"))
+      .toEqual({ ok: false, reason: "no_person" });
+    expect(await decide("hold", { memberId: current, reportId: harassment })).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await decide("hold", { memberId: former, reportId: scam })).toEqual({ ok: true });
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: true, report_held: true }, other]);
+    expect(await decide("lift", { memberId: current })).toEqual({ ok: true });
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
+    expect(await decide("dismiss", { reportId: harassment })).toEqual({ ok: true });
+    expect(await decide("dismiss", { reportId: harassment })).toEqual({ ok: false, reason: "already_dismissed" });
+    expect(await carryovers()).toEqual([]);
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: false }, other]);
+    const clearedId = "report-carryover-cleared-booking-fixture";
+    await queueBookingReply(clearedId);
+    expect(await adapter.queue.statusOf(clearedId)).toBe("sent");
+    expect(delivered.some(request => request.idempotencyKey === `tn:${clearedId}`)).toBe(true);
+  }, T);
+
+  test.each(["hold", "ban"] as const)("a committed global %s stops queued peer delivery while a related runtime is still waiting", async decision => {
+    // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
+    await fresh();
+    const clock = new SimClock(START);
+    const delivered: SendRequest[] = [];
+    const { s, otp } = service(clock, {
+      adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
+        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `safety-fixture:${request.idempotencyKey}`, status: "sent" };
+        } },
+      }),
+    });
+    const phone = newPhone(), recipientPhone = newPhone();
+    const web = site(s, clock, otp);
+    for (const [app, e164, name] of [["slop", phone, "Ari"], ["friends", phone, "Ari"], ["friends", recipientPhone, "Blair"]] as const) {
+      await web.login(app, e164);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const slopId = (await memberOf("slop", phone))!.id;
+    const peerId = (await memberOf("friends", phone))!.id, recipient = (await memberOf("friends", recipientPhone))!.id;
+    const rt = s.runtimeFor("friends")!;
+    const adapter = rt.adapter as BlooioAdapter;
+    const world = new Mini([{ id: peerId, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
+      { id: recipient, name: "Blair", age: 30, area: "Greenpoint", interests: ["hiking"] }],
+      { app: "friends", review: "auto", plans: false, growth: false });
+    world.clock.set(clock.now());
+    await world.onboard(peerId, recipient);
+    const opportunityId = world.propose([peerId, recipient]);
+    await world.answerProbes([peerId, recipient]);
+    const ready = world.net.exportState();
+    const booked = ready.opps.find(opportunity => opportunity.id === opportunityId)!;
+    expect(booked.stage).toBe("scheduled");
+    clock.set(booked.meetingAt! - 2 * HOUR);
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
+    await adapter.engaged(recipientPhone);
+    await adapter.lineSafety("review");
+    const notice = "staff-restriction-queued-booking-fixture";
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: ready.members, opps: ready.opps });
+      rt.unit.sends.push({ id: notice, memberId: recipient, to: recipientPhone, kind: "transactional", type: "proposal",
+        oppId: opportunityId, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+    });
+    expect(await adapter.queue.statusOf(notice)).toBe("retry_scheduled");
+
+    let encountered!: () => void, resume!: () => void;
+    const pendingProjection = new Promise<void>(resolve => { encountered = resolve; });
+    const allowProjection = new Promise<void>(resolve => { resume = resolve; });
+    const unit = rt.unitOfWork.bind(rt);
+    rt.unitOfWork = async (fn, scheduling) => {
+      encountered();
+      await allowProjection;
+      return unit(fn, scheduling);
+    };
+    const applying = staff(s, "saf-tok", "POST", `/apps/slop/safety/${decision}`, {
+      memberId: slopId, note: "reviewed global restriction", ...(decision === "ban" ? { by: "person" } : {}),
+    });
+    try {
+      await Promise.race([pendingProjection, applying.then(() => { throw new Error("The restriction did not reach the related runtime"); })]);
+      expect((await rt.pg.load())!.trust?.find(entry => entry.id === peerId)?.level).not.toBe("hold");
+      await adapter.lineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      expect(await adapter.queue.statusOf(notice)).toBe("suppressed_ineligible");
+      expect(delivered.some(call => call.idempotencyKey === `tn:${notice}`)).toBe(false);
+    } finally {
+      resume();
+      expect(await (await applying).json()).toEqual({ ok: true });
+      rt.unitOfWork = unit;
+    }
   }, T);
 });

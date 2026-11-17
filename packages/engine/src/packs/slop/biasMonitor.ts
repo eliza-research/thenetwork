@@ -7,6 +7,10 @@
 // groupings such as the rating quintile (to check that low-rated members are not starved of dates).
 // Iteration 3 showed a biased rater moves match QUALITY (second dates) before it moves volume
 // (dates), so the second-date ratio is the one to watch. Nothing here is member-facing.
+import {
+  biasAnalysisGroupMinimum, biasGroupEligible, biasRateFor, biasRatingQuintile,
+  biasRatioBelowThreshold, biasRatioFor, biasThresholdDenominator, biasThresholdNumerator,
+} from "../../../../core/src/generated/weeklyBias.ts";
 
 export interface MemberOutcome {
   group: string;
@@ -24,9 +28,10 @@ export interface BiasReport {
   alerts: { group: string; metric: OutcomeMetric; ratio: number }[];
 }
 export const OUTCOME_METRICS: readonly OutcomeMetric[] = ["proposals", "dates", "secondDates"];
+export const DEFAULT_BIAS_THRESHOLD = biasThresholdNumerator / biasThresholdDenominator;
 
 export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; threshold?: number } = {}): BiasReport {
-  const minN = o.minN ?? 15, threshold = o.threshold ?? 0.8;
+  const minN = o.minN ?? biasAnalysisGroupMinimum, threshold = o.threshold ?? DEFAULT_BIAS_THRESHOLD;
   const acc = new Map<string, { n: number; mm: number; proposals: number; dates: number; secondDates: number }>();
   const tot = { n: 0, mm: 0, proposals: 0, dates: 0, secondDates: 0 };
   for (const r of rows) {
@@ -34,19 +39,19 @@ export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; t
     for (const t of [g, tot]) { t.n++; t.mm += r.memberMonths; t.proposals += r.proposals; t.dates += r.dates; t.secondDates += r.secondDates; }
     acc.set(r.group, g);
   }
-  const per = (t: typeof tot) => Object.fromEntries(OUTCOME_METRICS.map(m => [m, t.mm ? t[m] / t.mm : 0])) as Record<OutcomeMetric, number>;
+  const per = (t: typeof tot) => Object.fromEntries(OUTCOME_METRICS.map(m => [m, biasRateFor(!!t.mm, t[m] / t.mm)])) as Record<OutcomeMetric, number>;
   const overall = per(tot);
   const groups: Record<string, GroupOutcome> = {};
   for (const k of [...acc.keys()].sort()) {
     const g = acc.get(k)!, rate = per(g as typeof tot);
-    groups[k] = { n: g.n, memberMonths: g.mm, rate, ratio: Object.fromEntries(OUTCOME_METRICS.map(m => [m, overall[m] ? rate[m] / overall[m] : 1])) as Record<OutcomeMetric, number> };
+    groups[k] = { n: g.n, memberMonths: g.mm, rate, ratio: Object.fromEntries(OUTCOME_METRICS.map(m => [m, biasRatioFor(!!overall[m], rate[m] / overall[m])])) as Record<OutcomeMetric, number> };
   }
   const min = {} as BiasReport["min"];
   const alerts: BiasReport["alerts"] = [];
   for (const m of OUTCOME_METRICS) {
-    const elig = Object.entries(groups).filter(([, g]) => g.n >= minN).sort((x, y) => x[1].ratio[m] - y[1].ratio[m]);
+    const elig = Object.entries(groups).filter(([, g]) => biasGroupEligible(g.n, minN)).sort((x, y) => x[1].ratio[m] - y[1].ratio[m]);
     min[m] = elig.length ? { group: elig[0]![0], ratio: elig[0]![1].ratio[m] } : { group: "-", ratio: 1 };
-    for (const [k, g] of elig) if (g.ratio[m] < threshold) alerts.push({ group: k, metric: m, ratio: g.ratio[m] });
+    for (const [k, g] of elig) if (biasRatioBelowThreshold(g.ratio[m], threshold)) alerts.push({ group: k, metric: m, ratio: g.ratio[m] });
   }
   return { overall, groups, min, alerts };
 }
@@ -54,5 +59,5 @@ export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; t
 /** Quintile of the overall rating (1 = lowest), for the internal "are low-rated members starved?" check. */
 export function ratingQuintiles(overall: ReadonlyMap<string, number>): Map<string, string> {
   const xs = [...overall.entries()].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
-  return new Map(xs.map(([id], i) => [id, `q${1 + Math.floor((5 * i) / Math.max(1, xs.length))}`]));
+  return new Map(xs.map(([id], i) => [id, `q${biasRatingQuintile(i, xs.length)}`]));
 }

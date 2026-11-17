@@ -1,9 +1,11 @@
 # Audit status: platform packages (2026-10-09)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/audit/2026-10-09-platform-status.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This file gives the status of every P0 and P1 finding of the 2026-10-08 audit ([2026-10-08-weaknesses.md](2026-10-08-weaknesses.md)) in these packages: network, network/service, platform, blooio, observatory, observatory/db, sites, mcp and deploy. It also covers the P0 and P1 hand-offs to these packages in [2026-10-08-fixes-core.md](2026-10-08-fixes-core.md).
 
 - **Worktree:** `thenetwork-console`, branch `obs/network-console`, HEAD 6a55050 plus uncommitted work of this round.
-- **Method:** each finding was checked against the current code. The 2026-10-08 cleanup moved code and deleted the unit tests that proved most fixes. A finding is "proven" only by a gate in `bun run sim` or a case in `bun run security`.
+- **Method:** each finding was checked against the current code. The 2026-10-08 cleanup moved code and deleted the unit tests that proved most fixes. A finding is "proven" only by a gate in `pnpm run sim` or a case in `pnpm run security`.
 - **No LLM, no live send, no deploy.** The gates use fakes. Phones are +1 212 555 01xx.
 
 ## Status words
@@ -16,7 +18,7 @@ This file gives the status of every P0 and P1 finding of the 2026-10-08 audit ([
 | partly | One part is fixed. The "Open" column says what is not. |
 | open | Not fixed. The reason is given. |
 
-"audit block" is the new `bun run sim --only audit` block (`scripts/sim/audit.ts`). "security" is `bun run security`.
+"audit block" is the new `pnpm run sim --only audit` block (`scripts/sim/audit.ts`). "security" is `pnpm run security`.
 
 ## Summary
 
@@ -103,7 +105,7 @@ This file gives the status of every P0 and P1 finding of the 2026-10-08 audit ([
 | sites-infra-1 | fixed-before, gate now | audit block: "sites-infra-1: every POST from the sites' API client is JSON". | |
 | sites-infra-4 | fixed-before, gate now | audit block: "sites-infra-4: the deploy guard refuses every changing command ..." (23 commands, with flag values before the command; each exits 3 before wrangler runs). | |
 | sites-infra-5 | partly | CI typechecks the sites and runs the security suite with REQUIRE_PG=1. | CI is not in these packages. The CI sim job has no Postgres, so the Postgres gates of the pipeline, safety, ops and audit blocks are tracked as skipped there. The plugin-network typecheck is not blocking. |
-| sites-infra-6 | fixed-before | `bun install --frozen-lockfile --dry-run` exits 0 on 2026-10-09; `bun.lock` lists packages/platform and packages/blooio. | |
+| sites-infra-6 | fixed-before | `pnpm install --frozen-lockfile --dry-run` exits 0 on 2026-10-09; `the former lockfile` lists packages/platform and packages/blooio. | |
 | sites-infra-9 | fixed-before | Renamed to friends.help. The four `wrangler.toml` files are Pages projects with no routes or custom domains. | |
 | sites-infra-10 | fixed-before, gate now | audit block: "sites-infra-10, -14: each production build ships _headers, robots.txt, SKILL.md and the router; no page says Draft". | |
 | sites-infra-13 | fixed-before | The API host is `api.ntwrk.party`, reached through each site's Pages router. security: "router to backend (deploy/router.ts, the real Worker code)". `.github/workflows/deploy-sites.yml` deploys behind the "production" environment. | |
@@ -137,12 +139,12 @@ Each check below changed the code back to the defect for one run, then restored 
 ## Commands
 
 ```bash
-bun run sim --only audit     # the new block: 16 blocking gates
-bun run security             # 86 cases in 4 files (2 new: platform-3, platform-7)
-bunx tsc --noEmit -p .
+pnpm run sim --only audit     # the new block: 16 blocking gates
+pnpm run security             # 86 cases in 4 files (2 new: platform-3, platform-7)
+pnpm exec tsc --noEmit -p .
 ```
 
-Results on 2026-10-09 (dev Postgres on :54339 running): `bun run sim` PASS, 209/209 blocking gates in 894 s (audit 16/16). `bun run security`: 86 pass, 0 fail. `bunx tsc`: no errors.
+Results on 2026-10-09 (dev Postgres on :54339 running): `pnpm run sim` PASS, 209/209 blocking gates in 894 s (audit 16/16). `pnpm run security`: 86 pass, 0 fail. `pnpm exec tsc`: no errors.
 
 ## Open items
 

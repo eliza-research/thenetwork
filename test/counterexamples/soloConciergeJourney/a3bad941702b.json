@@ -1,0 +1,13 @@
+{
+  "origin": "journey \"Story: Get current public ideas without involving other members\" / \"Rank public events and collect the result for the requesting member\"",
+  "seed": 1,
+  "trace": [
+    [
+      "friends-solo",
+      {
+        "type": "askForIdeas",
+        "who": "AdultMember"
+      }
+    ]
+  ]
+}

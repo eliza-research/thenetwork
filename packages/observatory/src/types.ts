@@ -6,6 +6,10 @@ import type {
   ParticipationState, Presence, ScoreComponents,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
+import type { SearchTally } from "@thenetwork/engine";
+import type { ReviewPlanPreview } from "../../network/src/network.ts";
+
+export type StaffPlanPreview = ReviewPlanPreview & { app: string };
 
 export type Mode = "game" | "real";
 
@@ -200,6 +204,8 @@ export interface EngineRunSummary {
   fairness: { gini: number; top10Share: number; zeroExposureShare: number; newcomerCoverage: number; viableCoverage: number; lorenz: number[]; membersWithProposal: number; eligibleMembers: number };
   emptyStates: number;
   emptyStatesByReason: Record<string, number>;
+  /** The bounded candidate search totals (spec/candidateSearch.md); zero when no search ran. */
+  search: SearchTally;
   timingsMs: Record<string, number>;
   /** Highest-scoring configurations considered (selected or not), for "why did the alternatives lose". */
   top: { key: string; generator: string; participants: MemberId[]; score: number; eligible: boolean; reason?: string; selected: boolean; components: ScoreComponents }[];
@@ -351,16 +357,23 @@ export interface ObsDelta {
   reset?: boolean;
 }
 
+export type DeliveryReason =
+  | "line_paused" | "recipient_cap" | "line_cap" | "new_conversation_cap" | "awaiting_admission" | "earlier_attempt"
+  | "reply_window" | "plan_availability_changed" | "eligibility" | "expired_or_stale" | "sending_not_approved" | "no_send_consent" | "person_cap"
+  | "quiet_hours" | "awaiting_reply" | "leak_guard" | "invalid_timezone" | "membership_unavailable"
+  | "acceptance_unknown" | "provider_refused" | "dispatch_error" | "accepted_by_provider";
+
 export interface ObsMessage {
   id: string; ts: number; direction: "inbound" | "outbound"; body: string; status: string;
   type?: string; proposalId?: string; proactive?: boolean; system?: boolean;
   /** Real mode: the member's own text is withheld (body is "[member message hidden]"); its length in characters. */
   hiddenLength?: number;
   /**
-   * Consent Network outbound messages: the leak check result. "passed" = sent as written; "fallback" =
-   * the guard stopped the first text and this generic version went out (gap 8).
+   * Recorded guard evidence, independent of delivery. `fallback` is the simulation's generic replacement.
    */
-  guard?: "passed" | "fallback";
+  guard?: "passed" | "fallback" | "blocked" | "released";
+  /** Safe reason from the exact durable outbound queue row. */
+  deliveryReason?: DeliveryReason;
   /** Game mode: the times this message offered (a probe, the requester's time question, other times after "neither"). */
   timeOptions?: TimeChoice[];
   /** Game mode: this message is a booked plan (meeting time and the opt-out window). */
@@ -641,6 +654,8 @@ export type ControlCommand =
     objective?: string;
     /** "reroll": the participant to swap for an alternate. */
     swapOut?: MemberId;
+    /** The review revision the reviewer saw (Review.rerolls); another one is refused as "review_stale". */
+    revision?: number;
   }
   | { type: "review_mode"; mode: "human" | "auto" }
   /** Admin only: the "proactive matching on in NYC" switch. */

@@ -10,7 +10,7 @@
 #                   (audit finding: deploy-sites.yml preview job).
 #
 # Only code on main (reviewed, behind the production environment) ever runs next to the token, and only
-# approved production inspection/repair and deploy steps receive it. Pages has no build command. wrangler is pinned (bunx).
+# approved production inspection/repair and deploy steps receive it. Pages has no build command. wrangler is pinned (pnpm dlx).
 # Secrets (environment "production"): CLOUDFLARE_API_TOKEN (a token scoped to Cloudflare Pages: Edit in
 # the account below). Manual repair-proxy-and-deploy additionally uses the production environment
 # PLATFORM_PROXY_SECRET, supplied by the owner, only to rotate this exact Pages binding.
@@ -23,9 +23,39 @@ name: deploy-sites
 on:
   push:
     branches: [main]
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths:
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'packages/core/src/generated/**'
+      - 'packages/platform/src/proxy.ts'
+      - 'packages/platform/src/apps.ts'
+      - 'deploy/router.ts'
+      - 'deploy/smoke.ts'
+      - 'tools/vibestack/vibestack/design/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.github/workflows/deploy-sites.yml'
   pull_request:
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths:
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'packages/core/src/generated/**'
+      - 'packages/platform/src/proxy.ts'
+      - 'packages/platform/src/apps.ts'
+      - 'deploy/router.ts'
+      - 'deploy/smoke.ts'
+      - 'tools/vibestack/vibestack/design/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.github/workflows/deploy-sites.yml'
   workflow_dispatch:
     inputs:
       pages_operation:
@@ -54,12 +84,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Typecheck sites, router and scripts
-        run: bunx tsc --noEmit -p sites/tsconfig.json
+        run: |
+          pnpm exec tsc --noEmit -p sites/tsconfig.json
+          pnpm --filter @thenetwork/site run typecheck
 
   build:
     needs: test
@@ -69,12 +102,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Production build (refuses draft legal text and unfilled placeholders)
-        run: bun run sites/sites.ts
+        run: pnpm run sites:build
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
@@ -101,10 +135,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
       # Inspect this canonical project only. Only main receives the existing production credential.
       # PATCH merges only selected env keys. Existing secret values are never read or resubmitted.
       # https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/edit/
@@ -118,7 +153,7 @@ jobs:
           PROJECT: ${{ matrix.project }}
           PAGES_OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.pages_operation || 'deploy' }}
         run: |
-          bun - <<'JS'
+          node --import tsx --input-type=module - <<'JS'
           import { createHash } from "node:crypto";
           import { SITES } from "./sites/sites.ts";
           const { CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account, TURNSTILE_SITE_KEY: sitekey, PROJECT: project, PAGES_OPERATION: operation } = process.env;
@@ -179,7 +214,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || (inputs.pages_operation == 'repair-and-deploy' || inputs.pages_operation == 'repair-proxy-and-deploy')
         run: |
           test -n "$TURNSTILE_SITE_KEY" || { echo "Missing real public Turnstile key"; exit 1; }
-          bun run sites/sites.ts ${{ matrix.app }}
+          pnpm run sites:build ${{ matrix.app }}
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
@@ -194,7 +229,7 @@ jobs:
           DIR: sites/${{ matrix.dir }}/dist
         run: |
           test -f "$DIR/_worker.js" && test -f "$DIR/_routes.json" || { echo "missing _worker.js or _routes.json in $DIR"; exit 1; }
-          bunx "wrangler@${WRANGLER_VERSION}" pages deploy "$DIR" --project-name "$PROJECT" --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=false
+          pnpm dlx "wrangler@${WRANGLER_VERSION}" pages deploy "$DIR" --project-name "$PROJECT" --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=false
       - name: Smoke check
         if: github.event_name != 'workflow_dispatch' || (inputs.pages_operation == 'repair-and-deploy' || inputs.pages_operation == 'repair-proxy-and-deploy')
         env:
@@ -204,4 +239,4 @@ jobs:
         run: |
           args=("$SITE_URL" "$APP")
           if [ -n "$API_FLAG" ]; then args+=("$API_FLAG"); fi
-          bun run deploy/smoke.ts "${args[@]}"
+          node --import tsx deploy/smoke.ts "${args[@]}"

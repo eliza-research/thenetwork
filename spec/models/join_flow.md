@@ -10,6 +10,8 @@ Check account boundaries, stale responses, and valid profile submission. The mod
 
 The public browser Join form is retired. This historical model covers its account and asynchronous form behavior. The supported direct-agent flow calls the same app-bound site API. The [site enrollment spec](../siteEnrollment.md) generates the server's current account-marker, profile, consent, eligibility, membership, age and completion transitions. Authentication, account lookup and persistence still belong to the service.
 
+[The browser join spec](../browserJoin.md) is the current model of the join page. The files that this model names (`sites/shared/join.ts`, `sites/shared/auth.ts`, `sites/shared/join-core.ts` and `sites/shared/prefill.ts`) were removed from this branch.
+
 Imported from `quint/join_flow.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

@@ -1,4 +1,8 @@
 import { readCapped } from "../../../platform/src/body.ts";
+import { gatheringFromService, type GatheringRequest, type GatheringResponse } from "../gatherings.ts";
+import { reviewRevisionCurrent } from "../../../core/src/generated/reviewDeadline.ts";
+import { friendPlanHasWindow, friendPlanReviewedWindowsValid } from "../../../core/src/generated/friendsPlanTimeChoice.ts";
+import { scrubText } from "../scrub.ts";
 import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 // Real mode's write path: the Network service's staff API (packages/network/service, runbook-real
 // 6.5). The Observatory's own database login stays read-only; review decisions, safety actions and
@@ -32,8 +36,23 @@ import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 //   POST /staff/relay/<id>/release      { note }   (the console sends the reason as both reason and note)
 //   POST /staff/relay/<id>/reject       { note }
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
-import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
+import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport, StaffPlanPreview } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
+
+/** Read exact reviewed intervals in the order staff and members see them. */
+function reviewedPlanOptions(value: unknown, primary: { start: number; end: number }, probeDeadline: number): StaffPlanPreview["options"] {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > 3) throw new Error("plan preview unavailable");
+  const options: NonNullable<StaffPlanPreview["options"]> = [];
+  for (const slot of value) {
+    if (!slot || !Number.isSafeInteger(slot.start) || !Number.isSafeInteger(slot.end) || slot.start <= 0) throw new Error("plan preview unavailable");
+    options.push({ start: slot.start, end: slot.end });
+  }
+  // spec/friendsPlanTimeChoice.md, "Review fixes the available windows"
+  if (!friendPlanReviewedWindowsValid(options) || !friendPlanHasWindow(options, primary.start, primary.end)
+      || probeDeadline >= options[0]!.start) throw new Error("plan preview unavailable");
+  return options;
+}
 
 export interface ServiceConfig {
   url: string;
@@ -104,10 +123,53 @@ export class ServiceClient {
   }
 
   review(staff: string, cmd: Extract<ControlCommand, { type: "review" }>): Promise<ControlResult> {
-    const { decision, reason, note, explanations, objective, swapOut } = cmd;
+    const { decision, reason, note, explanations, objective, swapOut, revision } = cmd;
     // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
     const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
-    return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut }, REVIEW_BLOCK_ERRORS);
+    return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut, revision }, REVIEW_BLOCK_ERRORS);
+  }
+
+  async reviewPlanPreview(staff: string, id: string, revision: number): Promise<StaffPlanPreview | undefined> {
+    const { status, json } = await this.call("GET", `/review/${encodeURIComponent(id)}/plan?revision=${revision}`, staff);
+    if (status === 404 && json.error === "preview_unavailable") return;
+    const p = json.preview;
+    const textField = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 500;
+    if (status !== 200 || !json.ok || !p || !p.place
+        || ![p.deadline, p.start, p.end, p.probeDeadline, p.quorum, p.maxSeats].every(Number.isSafeInteger)
+        || p.end <= p.start || p.quorum < 1 || p.maxSeats < p.quorum
+        || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
+        || !textField(p.activity) || !textField(p.place.name) || (p.place.area !== undefined && !textField(p.place.area))
+        || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new Error("plan preview unavailable");
+    const options = reviewedPlanOptions(p.options, p, p.probeDeadline);
+    return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
+      activity: scrubText(p.activity, false), place: { name: scrubText(p.place.name, false), ...(p.place.area ? { area: scrubText(p.place.area, false) } : {}) },
+      start: p.start, end: p.end, probeDeadline: p.probeDeadline, quorum: p.quorum, maxSeats: p.maxSeats,
+      ...(options ? { options } : {}), alternates: p.alternates };
+  }
+
+  /** The staff API owns authoring and review; only its accepted result reaches the workspace. */
+  async monthlyGatherings(staff: string, request: GatheringRequest): Promise<{ status: number; body: GatheringResponse }> {
+    const base = "/apps/ntwrk/gatherings";
+    const path = request.action === "review" ? `${base}/${encodeURIComponent(request.id)}/review` : base;
+    const unavailable = { status: 503, body: { ok: false as const, error: "gatherings_unavailable" } };
+    try {
+      const { status, json } = await (request.action === "list" ? this.call("GET", path, staff) : this.call("POST", path, staff, request.body));
+      if (status === 403) return { status, body: { ok: false, error: "forbidden" } };
+      if (status === 400 || status === 409 || (status === 404 && request.action === "review")) {
+        const error = ["invalid_gathering", "month_unavailable", "gathering_not_reviewable", "not_found"].find(code => code === json.error) ?? "invalid_request";
+        return { status, body: { ok: false, error } };
+      }
+      if (!json.ok) return unavailable;
+      if (status === 200 && request.action === "list" && Array.isArray(json.gatherings) && json.gatherings.length <= 120) {
+        const gatherings = (json.gatherings as unknown[]).map(gatheringFromService);
+        if (gatherings.every(row => row !== undefined)) return { status, body: { ok: true, gatherings } };
+      }
+      if ((status === 200 || status === 201) && request.action !== "list") {
+        const gathering = gatheringFromService(json.gathering);
+        if (gathering) return { status, body: { ok: true, gathering } };
+      }
+    } catch { return unavailable; }
+    return unavailable;
   }
 
   safety(staff: string, a: SafetyAction): Promise<ControlResult> {

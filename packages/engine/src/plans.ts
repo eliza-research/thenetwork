@@ -20,19 +20,29 @@ import {
   canApplyPlanReply, crewBelowMinimum, crewHostOrder, crewMembersWhoOptedIn, hasCrewQuorum, planFallbackShape, planProbeExpired,
   planReplyChoice, qualifiesForPlanAllowance, singlePlanSeedsCrew, unmetPlanQuorum, type PlanStage,
 } from "../../core/src/generated/planDecision.ts";
+import {
+  cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
+  planActivityWindowEnd, planCanFitPlace, planGroupCanReserve, planInviteLimit, planScoreQualifies, planSlotPairCanConnect, planTravelFits,
+  searchForPlanGroup, searchForPlanPartner, statedPlanWindowAllows, step as stepCityPlanRun,
+  venueCanHoldGroup, venueCanHostActivity,
+} from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
-import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
-import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
+import { availabilityProb, candidateSlots, standingWindowCoversSlot, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
+import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
-import { isMinor, memberReason } from "./filters.ts";
-import { makeCompat } from "./group.ts";
+import { isMinor, memberReason, publicEventPreferencesAllow, requiredPairValues } from "./filters.ts";
+import { initial as initialFormation, step as stepFormation } from "../../core/src/generated/groupFormation.ts";
+import { pairValueScale } from "../../core/src/generated/pairValue.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
+import { chooseCircle, circleKey, formsGroups, groupLane, leastMiseryUtility, pairCircle, poolCircles, poolGraph, type GroupCircle } from "./group.ts";
+import { compareText, type MatchProfile } from "./match/profile.ts";
+import { eligiblePair } from "./match/pair.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";
 import { sha256 } from "./hash.ts";
 import type { AttentionItem, EngineProposal, NetworkEvent, Role } from "./types.ts";
-import type { AppPack, PlansPack } from "./pack.ts";
-import { networkPack } from "./packs/network/index.ts";
+import type { PlansPack } from "./pack.ts";
 import type { World } from "./world.ts";
 
 export { ACTIVITIES, activityById, type ActivityType, type Venue } from "./packs/network/activities.ts";
@@ -52,6 +62,12 @@ export interface StatedWindows { windows: TimeSlot[]; at: number; until: number;
 /** Everything the planner knows about when a member is free: the attention evidence plus stated windows. */
 export interface PlanEvidence extends AvailabilityEvidence { stated?: StatedWindows }
 export type WindowSource = "stated" | "standing" | "learned" | "prior";
+
+/** Exact activity-window admission shared by formation, rescheduling, and dispatch. */
+export function planWindowMatchesStated(stated: StatedWindows | undefined, slot: TimeSlot, now: number): boolean {
+  return !stated || statedPlanWindowAllows(stated.at, stated.until, now, slot.start,
+    stated.windows.some(window => window.start <= slot.start && window.end >= slot.end));
+}
 
 const jsDay = (t: number, tz: string) => (localParts(t, tz).weekday + 1) % 7;
 export function daypartOf(t: number, tz: string, att: AttentionConfig = DEFAULT_ATTENTION): Daypart | "weekday_day" {
@@ -76,8 +92,8 @@ export function planFreeProb(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg
     p *= 1 - pcfg.stated.outsideFactor * c;
     return { p, source: "stated" };
   }
-  const lp = localParts(slot.start, ev.tz), day = (lp.weekday + 1) % 7;
-  if ((ev.standing ?? []).some(w => w.byDay.includes(day) && lp.hour >= w.startHour && lp.hour < w.endHour)) return { p, source: "standing" };
+  const lp = localParts(slot.start, ev.tz);
+  if ((ev.standing ?? []).some(w => standingWindowCoversSlot(w, slot, ev.tz, lp))) return { p, source: "standing" };
   const part = daypartOf(slot.start, ev.tz, att);
   if ((ev.history ?? []).some(h => h.outcome !== "declined_time" && h.at <= now && daypartOf(h.at, ev.tz, att) === part)) return { p, source: "learned" };
   return { p, source: "prior" };
@@ -85,6 +101,7 @@ export function planFreeProb(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg
 
 /** Demand: the slot is a stated or inferred window for the member (not the daypart prior alone) and P(free) >= minFree. */
 export function hasWindow(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg: PlansConfig = DEFAULT_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): number {
+  if (!planWindowMatchesStated(ev.stated, slot, now)) return 0;
   const r = planFreeProb(ev, slot, now, pcfg, att);
   return r.source !== "prior" && r.p >= pcfg.minFree ? r.p : 0;
 }
@@ -160,11 +177,9 @@ export function planMemberReason(w: World, id: MemberId, role: Role = "guest"): 
 
 export interface PlanMemberInput { id: MemberId; fit: number; venueFit: number; timeFit: number }
 
-/** u_i(G) = activity_fit x venue_fit x time_fit x (0.5 + 0.5 x mean_j compat(i, j)); compat clamped to [0, 1]. */
+/** u_i(G) = activity_fit x venue_fit x time_fit x (0.5 + 0.5 x mean_j compat(i, j)); compat clamped to [0, 1] (group.ts leastMiseryUtility). */
 export function memberUtility(m: PlanMemberInput, others: readonly MemberId[], compat: (a: MemberId, b: MemberId) => number): number {
-  const cs = others.map(o => Math.max(0, Math.min(1, compat(m.id, o))));
-  const mc = cs.length ? cs.reduce((s, x) => s + x, 0) / cs.length : 0;
-  return m.fit * m.venueFit * m.timeFit * (0.5 + 0.5 * mc);
+  return leastMiseryUtility(m.fit * m.venueFit * m.timeFit, others.map(o => compat(m.id, o)));
 }
 
 export interface PlanScore { score: number; u: Record<MemberId, number>; min: number; mean: number; familiarity: number; familiar: Record<MemberId, MemberId[]> }
@@ -203,10 +218,12 @@ export interface Plan {
   /** Public place shown in the probe: venue or event name and area. */
   place: { name: string; area?: string };
   window: TimeSlot;
+  /** Exact candidate windows at this venue on a weekly Friends partner review. */
+  reviewedOptions?: TimeSlot[];
   /** Members probed (primary group, plus alternates once backfilled). */
   invited: MemberId[];
   alternates: MemberId[];
-  hostId?: MemberId; crewId?: string;
+  hostId?: MemberId; crewId?: string; repeatOf?: string;
   /** Activity-partner plan (exactly 2, one-to-one rules) or a group plan (3-6). */
   partner: boolean;
   size: { min: number; target: number; max: number };
@@ -222,6 +239,8 @@ export interface PlannerInput {
   /** Members with any availability evidence (others are never planned: "only with a stated or inferred window"). */
   evidence: ReadonlyMap<MemberId, PlanEvidence>;
   venues: readonly Venue[];
+  /** Estimated one-way minutes to a known public place. Unknown locations have no estimate. */
+  travelMinutes?: (id: MemberId, place: Venue | NetworkEvent) => number | undefined;
   /** Member is already committed at that slot (open opportunity, booked plan). */
   busyAt?: (id: MemberId, slot: TimeSlot) => boolean;
   /** Members not to plan this run (in a live plan or crew session). */
@@ -236,7 +255,7 @@ export interface PlannerInput {
   hints?: ReadonlyMap<MemberId, string[]>;
 }
 
-const openAt = (v: Venue, slot: TimeSlot, durMin: number, tz: string, att: AttentionConfig) => {
+export const venueOpenForSlot = (v: Venue, slot: TimeSlot, durMin: number, tz: string, att: AttentionConfig = DEFAULT_ATTENTION) => {
   const lp = localParts(slot.start, tz);
   const [o, c] = att.sendTime.weekendDays.includes((lp.weekday + 1) % 7) ? v.hours.weekend : v.hours.weekday;
   const end = lp.hour + lp.minute / 60 + durMin / 60;
@@ -250,16 +269,19 @@ interface Cand { plan: Plan; rank: number }
 /**
  * The planner (4.5). For each candidate slot (attention.candidateSlots, minLeadHours..horizonDays)
  * and each public event in the horizon: the demand pool D(w) = eligible adults with a stated or
- * inferred window in it; per activity with >= 2 fitting members, the open, age-appropriate public
- * venue that covers the most of their areas; beam search over the pool for a 3-6 group (or a pair
- * for activity-partner activities when no group clears the floors) by least misery; floors on
- * min u_i and U. Greedy across candidates by U: one plan per member per run.
+ * inferred window for the whole activity; per activity with >= 2 fitting members, the open,
+ * age-appropriate public venue that fits their travel limits; the pool's coherent circles of 3-6 (group.ts poolCircles,
+ * from current pair values in the ranked slot pool), ranked by least misery, then the best pairs for
+ * activity-partner activities when no circle clears the floors; floors on min u_i and U; every
+ * primary group is admitted by the groupFormation machine. Greedy across candidates by U: one plan
+ * per member per run.
  */
 export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = DEFAULT_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): Plan[] {
   const { now, city, tz } = inp;
   const PP = plansOf(w);
   const ACTIVITIES = PP.activities;
-  const compat = makeCompat(w, PP.lane);
+  const lane = groupLane(PP.lane);
+  if (!formsGroups(lane)) return [];
   const familiar = (a: MemberId, b: MemberId) => w.isWarm(a, b);
   // Eligible members with evidence.
   const people: MemberId[] = [];
@@ -298,132 +320,174 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
     if (acts.length) whens.push({ slot: { start: e.start, end: e.end }, event: e, acts: [acts[0]!] });
   }
 
+  // spec/planFormation.md, "Check pairs inside the available slot pool"
+  const pairValues = new Map<string, number>();
+  const scoreSlotPair = (a: MatchProfile, b: MatchProfile, key: string): number | undefined => {
+    let value = pairValues.get(key);
+    if (value === undefined) {
+      value = w.match.value(a, b);
+      pairValues.set(key, value);
+    }
+    return planSlotPairCanConnect(value) ? value : undefined;
+  };
+
   const cands: Cand[] = [];
   for (const wh of whens) {
-    const avail = new Map<MemberId, number>();
-    for (const id of people) {
-      if (inp.busyAt?.(id, wh.slot)) continue;
-      const p = hasWindow(inp.evidence.get(id)!, wh.slot, now, pcfg, att);
-      if (p > 0) avail.set(id, p);
-    }
-    if (avail.size < 2) continue;
+    const start = wh.slot.start;
+    const availableByEnd = new Map<number, Map<MemberId, number>>();
+    const minimumAge = wh.event?.listing ? listedEventMinimumAge(wh.event) : undefined;
     for (const a of wh.acts) {
-      const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin))
+      const slot = wh.event ? wh.slot : { start, end: planActivityWindowEnd(start, a.durationMin) };
+      let avail = availableByEnd.get(slot.end);
+      if (!avail) {
+        avail = new Map<MemberId, number>();
+        for (const id of people) {
+          if (inp.busyAt?.(id, slot)) continue;
+          const p = hasWindow(inp.evidence.get(id)!, slot, now, pcfg, att);
+          if (p > 0) avail.set(id, p);
+        }
+        availableByEnd.set(slot.end, avail);
+      }
+      if (avail.size < 2) continue;
+      const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin)
+        && (minimumAge === undefined || publicEventPreferencesAllow(w.get(id)?.m, a.category, minimumAge)))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
       if (pool.length < 2) continue;
       const minG = Math.max(pcfg.size.min, a.groupSize[0]);
-      // Use the event site or an open venue. Prefer venues that can host a full group before comparing area coverage.
-      let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
-      if (wh.event) place = { name: wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
-      else {
-        const vs = inp.venues.filter(v => v.public && v.city === city && v.activities.includes(a.id) && (v.capacity === undefined || v.capacity >= 2) && openAt(v, wh.slot, a.durationMin, tz, att));
-        if (!vs.length) continue;
-        const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
-        const groupFits = (v: Venue) => (v.capacity ?? Infinity) >= minG && pool.filter(id => ageOk(id, v.ageMin)).length >= minG;
-        const v = vs.sort((x, y) => Number(groupFits(y)) - Number(groupFits(x)) || cover(y) - cover(x) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))[0]!;
-        place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier, capacity: v.capacity };
-      }
-      let pool2 = pool.filter(id => ageOk(id, place.ageMin));
+      // spec/planFormation.md, "A known trip must fit the member's travel limit"
+      const destinations = wh.event ? [wh.event] : inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city,
+        v.activities.includes(a.id), v.capacity ?? Infinity, venueOpenForSlot(v, slot, a.durationMin, tz, att)));
+      const place = destinations.map(destination => {
+        const venue = "activities" in destination ? destination : undefined;
+        const area = destination.area?.toLowerCase();
+        const reachable: MemberId[] = [];
+        let cover = 0, longest = 0;
+        for (const id of pool) {
+          if (venue && !ageOk(id, venue.ageMin)) continue;
+          const estimate = inp.travelMinutes?.(id, destination);
+          const maximum = w.get(id)!.m.prefs.maxTravelMinutes;
+          if (!planTravelFits(estimate !== undefined && Number.isFinite(maximum) && maximum >= 0, estimate ?? 0, maximum ?? 0)) continue;
+          reachable.push(id);
+          if (area && areas.get(id)!.has(area)) cover++;
+          if (estimate !== undefined) longest = Math.max(longest, estimate);
+        }
+        const capacity = destination.capacity ?? Infinity;
+        return { destination, capacity, reachable, cover, longest, group: venueCanHoldGroup(capacity, reachable.length, minG) };
+      }).sort((x, y) => Number(y.group) - Number(x.group) || y.reachable.length - x.reachable.length
+        || x.longest - y.longest || y.cover - x.cover || compareText(x.destination.id, y.destination.id))[0];
+      if (!place || place.reachable.length < 2) continue;
+      const pool2 = place.reachable;
+      const { destination } = place;
+      const venueId = "activities" in destination ? destination.id : undefined;
+      const name = "activities" in destination ? destination.name : destination.listing?.venue ?? destination.title;
+      const graph = poolGraph(w, lane, pool2, scoreSlotPair);
+      const compat = (x: MemberId, y: MemberId) => { const v = graph.value(x, y); return v === undefined ? -Infinity : v / pairValueScale; };
       const input = (id: MemberId): PlanMemberInput => ({
         id, fit: fits.get(id)!.get(a.id)!, timeFit: avail.get(id)!,
-        venueFit: !place.area || areas.get(id)!.has(place.area.toLowerCase()) ? 1 : pcfg.otherAreaFit,
+        venueFit: !destination.area || areas.get(id)!.has(destination.area.toLowerCase()) ? 1 : pcfg.otherAreaFit,
       });
-      const score = (ids: MemberId[]) => scorePlanGroup(ids.map(input), compat, familiar, pcfg);
-      const passes = (s: PlanScore | null): s is PlanScore => !!s && s.min >= pcfg.minMemberU && s.score >= pcfg.threshold;
+      const score = (ids: readonly MemberId[]) => scorePlanGroup(ids.map(input), compat, familiar, pcfg);
+      const passes = (s: PlanScore | null | undefined): s is PlanScore => !!s && planScoreQualifies(s.min, s.score, pcfg.minMemberU, pcfg.threshold);
       // The chosen public place's capacity bounds both groups and partner fallbacks.
-      const cap = wh.event?.capacity ?? place.capacity ?? Infinity;
-      const maxG = Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target, cap);
-      if (maxG < Math.min(minG, 2)) continue;
+      const cap = place.capacity;
+      const maxG = planInviteLimit(Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target), cap);
+      if (!planCanFitPlace(maxG, Math.min(minG, 2))) continue;
       const minInvite = Math.min(maxG, Math.max(minG, pcfg.minInvite));
-      // Disjoint k-best (engine-attention-plans-12): after the best group, the next best group from
-      // the members left, so one (slot, activity) is not always won by the same members.
-      for (let k = 0; k < Math.max(1, pcfg.maxPlansPerCityRun) && pool2.length >= 2; k++) {
-      let best: { ids: MemberId[]; s: PlanScore } | undefined;
-      if (pool2.length >= minInvite && maxG >= minG) best = beam(pool2, minInvite, maxG, score, passes, pcfg);
-      let partner = false;
-      if (!best && pcfg.partnerPlans && a.groupSize[0] <= 2 && cap >= 2) {
-        // Activity-partner plan: the best pair (one-to-one intro rules: sequential probes, double opt-in).
-        for (let i = 0; i < pool2.length; i++) for (let j = i + 1; j < pool2.length; j++) {
-          const s = score([pool2[i]!, pool2[j]!]);
-          if (passes(s) && (!best || s.score > best.s.score)) best = { ids: [pool2[i]!, pool2[j]!], s };
+      const limit = Math.max(1, pcfg.maxPlansPerCityRun);
+      type Chosen = { circle: GroupCircle; s: PlanScore; partner: boolean };
+      const rankOf = (c: Chosen) => c.s.score + 0.015 * c.circle.members.length;
+      const hostOf = (c: GroupCircle) => c.members.find(id => w.get(id)!.isHost && !planMemberReason(w, id, "host"));
+      // spec/groupFormation.md, "Only eligible adults enter the group search" and "A primary group has
+      // a common place and meets its requirements"
+      const admit = (c: GroupCircle, host: MemberId | undefined): MemberId[] | undefined => {
+        const searching = stepFormation(initialFormation, { type: "startSearch", forcedEligible: c.members.every(id => !isMinor(w, id)), hostRequired: false });
+        const formation = chooseCircle(searching, c, host !== undefined);
+        return formation.phase === "PrimaryChosen" ? [...formation.primary] : undefined;
+      };
+      // spec/planFormation.md, "Search for a qualifying group before an activity partner"
+      const groupByRoster = new Map<string, Chosen | undefined>();
+      const rankGroup = (circle: GroupCircle) => {
+        const key = JSON.stringify(circle.members);
+        if (!groupByRoster.has(key)) {
+          const s = score(circle.members);
+          const group = s && planGroupCanReserve(!!admit(circle, hostOf(circle)), s.min, s.score, pcfg.minMemberU, pcfg.threshold)
+            ? { circle, s, partner: false } : undefined;
+          groupByRoster.set(key, group);
         }
-        partner = !!best;
+        const group = groupByRoster.get(key);
+        return group && rankOf(group);
+      };
+      const passing = (searchForPlanGroup(pool2.length, minInvite, maxG, minG) ? poolCircles(graph, [], minInvite, maxG, rankGroup) : [])
+        .flatMap(circle => groupByRoster.get(JSON.stringify(circle.members)) ?? [])
+        .sort((x, y) => rankOf(y) - rankOf(x) || compareText(circleKey(x.circle.members), circleKey(y.circle.members)));
+      const chosen = passing.slice(0, limit);
+      // Activity-partner plans (one-to-one intro rules: sequential probes, double opt-in): the best
+      // admitted pairs of the members left, when no circle of them clears the floors.
+      const taken = new Set(chosen.flatMap(c => c.circle.members));
+      const partnerAllowed = searchForPlanPartner(passing.length > chosen.length, pcfg.partnerPlans, a.groupSize[0], cap);
+      while (chosen.length < limit && partnerAllowed) {
+        let best: Chosen | undefined;
+        for (const p of graph.pairs) {
+          if (taken.has(p.a) || taken.has(p.b)) continue;
+          const circle = pairCircle(graph, p.a, p.b);
+          const s = circle && score(circle.members);
+          if (circle && passes(s) && (!best || s.score > best.s.score) && admit(circle, undefined)) best = { circle, s, partner: true };
+        }
+        if (!best) break;
+        chosen.push(best);
+        for (const id of best.circle.members) taken.add(id);
       }
-      if (!best) break;
-      const primary = best.ids;
-      // Alternates are pairwise compatible with the primary group AND with each other (a blocked
-      // pair of alternates could both be backfilled, engine-attention-plans-2).
-      const alternates: MemberId[] = [];
-      for (const id of pool2.filter(x => !primary.includes(x))
-        .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y))) {
-        if (alternates.length >= (partner ? 1 : pcfg.alternates)) break;
-        if (isMinor(w, id)) continue; // never a minor or unknown age as an alternate (pool is adults already)
-        if ([...primary, ...alternates].every(p => compat(p, id) !== -Infinity)) alternates.push(id);
-      }
-      const host = partner ? undefined : primary.find(id => w.get(id)!.isHost && !planMemberReason(w, id, "host"));
-      const start = wh.slot.start;
-      const id = `plan_${sha256(`${city}|${a.id}|${place.venueId ?? wh.event?.id}|${start}|${[...primary].sort().join(",")}|${now}`).slice(0, 16)}`;
-      cands.push({
-        rank: best.s.score + 0.015 * primary.length,
-        plan: {
-          id, city, activityId: a.id, ...(place.venueId ? { venueId: place.venueId } : {}), ...(wh.event ? { eventId: wh.event.id } : {}),
-          place: { name: place.name, ...(place.area ? { area: place.area } : {}) },
-          window: { start, end: wh.event ? wh.slot.end : start + a.durationMin * 60_000 },
-          invited: [...primary], alternates, ...(host ? { hostId: host } : {}), partner,
-          size: partner ? { min: 2, target: 2, max: 2 } : { min: minG, target: primary.length, max: maxG },
-          quorum: partner ? pcfg.quorum.partner : Math.min(primary.length, Math.max(minG, pcfg.quorum.group)),
-          probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
-          score: round(best.s.score), u: Object.fromEntries(Object.entries(best.s.u).map(([k, v]) => [k, round(v)])), familiar: best.s.familiar,
-          createdAt: now, category: PP.lane,
-        },
-      });
-      pool2 = pool2.filter(x => !primary.includes(x));
+      for (const best of chosen) {
+        const { partner } = best;
+        const host = partner ? undefined : hostOf(best.circle);
+        const primary = admit(best.circle, host);
+        if (!primary) continue;
+        // Alternates have a pair value with every primary member and pass the pair gate with each
+        // other (a blocked pair of alternates could both be backfilled, engine-attention-plans-2).
+        const alternates: MemberId[] = [];
+        for (const id of pool2.filter(x => !primary.includes(x))
+          .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y))) {
+          if (planAlternateLimitReached(alternates.length, partner, pcfg.alternates)) break;
+          const adult = !isMinor(w, id);
+          const profile = graph.profiles.get(id);
+          const compatible = adult && profile !== undefined && primary.every(p => graph.value(p, id) !== undefined)
+            && alternates.every(x => { const other = graph.profiles.get(x); return other !== undefined && eligiblePair(w, other, profile) === null; });
+          if (isPlanAlternate(adult, compatible)) alternates.push(id);
+        }
+        const id = `plan_${sha256(`${city}|${a.id}|${destination.id}|${start}|${circleKey(primary)}|${now}`).slice(0, 16)}`;
+        cands.push({
+          rank: rankOf(best),
+          plan: {
+            id, city, activityId: a.id, ...(venueId ? { venueId } : {}), ...(wh.event ? { eventId: wh.event.id } : {}),
+            place: { name, ...(destination.area ? { area: destination.area } : {}) },
+            window: { ...slot },
+            invited: primary, alternates, ...(host ? { hostId: host } : {}), partner,
+            size: partner ? { min: 2, target: 2, max: 2 } : { min: minG, target: primary.length, max: maxG },
+            quorum: partner ? pcfg.quorum.partner : Math.min(primary.length, Math.max(minG, pcfg.quorum.group)),
+            probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
+            score: round(best.s.score), u: Object.fromEntries(Object.entries(best.s.u).map(([k, v]) => [k, round(v)])), familiar: best.s.familiar,
+            createdAt: now, category: PP.lane,
+          },
+        });
       }
     }
   }
-  // Greedy: best plans first, each member in at most one plan per run (participants and alternates).
+  // Greedy: best plans first, with each invited member reserved once.
   cands.sort((x, y) => (y.rank - x.rank) || (x.plan.id < y.plan.id ? -1 : 1));
-  const used = new Set<MemberId>();
+  let reservations = initialCityPlanRun;
   const out: Plan[] = [];
   for (const c of cands) {
-    if (out.length >= pcfg.maxPlansPerCityRun) break;
-    if (c.plan.invited.some(id => used.has(id))) continue;
-    c.plan.alternates = c.plan.alternates.filter(id => !used.has(id) && !out.some(p => p.invited.includes(id)));
-    for (const id of c.plan.invited) used.add(id);
+    if (cityPlanLimitReached(reservations, pcfg.maxPlansPerCityRun)) break;
+    const reserved = stepCityPlanRun(reservations, { type: "reservePlan", invited: c.plan.invited, limit: pcfg.maxPlansPerCityRun });
+    if (reserved === reservations) continue;
+    reservations = reserved;
     out.push(c.plan);
   }
-  // Alternates are never someone already invited elsewhere this run.
-  for (const p of out) p.alternates = p.alternates.filter(id => !used.has(id));
+  reservations = stepCityPlanRun(reservations, { type: "publishPlans" });
+  for (const p of out) p.alternates = p.alternates.filter(id => planAlternateCanRemain(reservations, id));
   return out;
 }
 
-function beam(pool: MemberId[], minG: number, maxG: number, score: (ids: MemberId[]) => PlanScore | null, passes: (s: PlanScore | null) => s is PlanScore, pcfg: PlansConfig):
-  { ids: MemberId[]; s: PlanScore } | undefined {
-  const key = (ids: MemberId[]) => [...ids].sort().join(",");
-  let states: { ids: MemberId[]; v: number }[] = pool.slice(0, pcfg.beamWidth).map(id => ({ ids: [id], v: 0 }));
-  const seen = new Set<string>();
-  let best: { ids: MemberId[]; s: PlanScore; r: number } | undefined;
-  for (let size = 1; size < maxG && states.length; size++) {
-    const next: { ids: MemberId[]; v: number; s: PlanScore | null }[] = [];
-    for (const st of states) for (const id of pool) {
-      if (st.ids.includes(id)) continue;
-      const ids = [...st.ids, id], k = key(ids);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      const s = score(ids);
-      if (!s) continue;
-      next.push({ ids, v: s.score, s });
-    }
-    next.sort((a, b) => (b.v - a.v) || (key(a.ids) < key(b.ids) ? -1 : 1));
-    states = next.slice(0, pcfg.beamWidth);
-    for (const st of next.slice(0, pcfg.beamWidth)) {
-      if (st.ids.length < minG || !passes(st.s)) continue;
-      const r = st.s.score + 0.015 * st.ids.length;
-      if (!best || r > best.r) best = { ids: st.ids, s: st.s, r };
-    }
-  }
-  return best && { ids: best.ids, s: best.s };
-}
 const round = (x: number) => Math.round(x * 1e4) / 1e4;
 
 // ------------------------------------------------------------------------------------------------
@@ -471,6 +535,7 @@ const COST = ["Free.", "About $10-20 each; everyone pays their own way.", "About
 const FRAME_COPY = [
   "Your crew for is on again: In?",
   "Up for with someone who are into at near? I'll only share who it is if you both say yes.",
+  "Up for with someone who are into at near? Reply with every time that works. I'll only share who it is if you both pick the same time.",
   "with others who are into. Want in? I'll share who's coming once enough people say yes.",
 ];
 /**
@@ -492,13 +557,14 @@ export const PLAN_COPY_PUBLIC: ReadonlySet<string> = new Set(tokenize([...COST, 
  * vocabulary) and a name-token check; richer variants are dropped first; null if none passes.
  * Null for any minor involved and for anything romance (plans never are).
  */
-export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string): string | null {
+export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string, choices?: readonly { key: string; label: string }[]): string | null {
   const others = plan.invited.filter(x => x !== recipient);
   if (!plan.invited.includes(recipient) || w.pack.ontology.lanes.some(l => l.neverInPlans && l.id === plan.category)) return null;
   if ([recipient, ...others].some(id => !w.get(id) || isMinor(w, id))) return null;
   const a = activityById.get(plan.activityId);
   if (!a) return null;
   const when = timeOptionsPhrase([plan.window], tz);
+  const menu = choices?.map(option => `${option.key.toUpperCase()}: ${option.label}`).join("\n");
   const ah = a.tags.find(t => others.length > 0 && others.every(o => w.get(o)!.share.some(f => f.tags.includes(t))));
   const into = ah ? ` who are into ${ah.replace(/_/g, " ")}` : "";
   const cost = COST[a.costTier]!;
@@ -506,6 +572,7 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
     const near = withArea && plan.place.area ? ` near ${plan.place.area}` : "";
     const i = withInto ? into : "";
     if (plan.crewId) return `Your crew for ${a.label} is on again: ${when}, ${plan.place.name}${near}. In? ${cost}`;
+    if (plan.partner && menu) return `Up for ${a.label} with someone${i} at ${plan.place.name}${near}? ${cost}\n${menu}\nReply with every time that works. I'll only share who it is if you both pick the same time.`;
     if (plan.partner) return `Up for ${a.label} with someone${i}, ${when} at ${plan.place.name}${near}? ${cost} I'll only share who it is if you both say yes.`;
     return `${when}: ${a.label} at ${plan.place.name}${near} with ${others.length} others${i}. ${cost} Want in? I'll share who's coming once enough people say yes.`;
   };
@@ -514,7 +581,7 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
   // probe is about, not a fact about any member, so its words are not private vocabulary here. Any
   // other private word of the others (canaries, agent_private values, matchable facets) still blocks.
   // The fixed copy (PLAN_COPY_PUBLIC) and the time phrase are the Network's own words, also allowed.
-  const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
+  const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${menu ?? when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
   const vocab = new Set([...privateVocabulary(w, others)].filter(t => !own.has(t.toLowerCase())));
   for (const [i, ar] of [[true, true], [false, true], [false, false]] as const) {
     if (i && !into) continue;
@@ -587,6 +654,8 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
     beforeDeadline: now < p.probeDeadline, lateJoinOpen: now <= p.window.start - pcfg.lateJoinHours * HOUR,
   });
   switch (choice) {
+    case "ExpireProbe":
+      return checkPlanDeadline(run, now);
     case "AddMember":
       return { run: r, action: { kind: "join", member } };
     case "RecordLate":
@@ -608,7 +677,7 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
       break;
     }
   }
-  if (!yes && r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
+  if (r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
     r.stage = "closed";
     return { run: r, action: { kind: "fallback" } };
   }
@@ -652,6 +721,7 @@ export function partnerPlanFor(p: Plan, pair: [MemberId, MemberId], now: number,
   // One-to-one: no host, and not a crew session (the crew frame would skip the partner probe copy).
   delete plan.hostId;
   delete plan.crewId;
+  delete plan.reviewedOptions;
   return plan;
 }
 
@@ -736,10 +806,18 @@ export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansC
   return { ...crew, members, hostRotation: crewHostOrder(members, crew.hostRotation) };
 }
 
-/** The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each session is opt-in. Hosts rotate. */
-export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], pcfg: PlansConfig = DEFAULT_PLANS, pack: AppPack = networkPack,
-  tz: string | undefined = DEFAULT_CONFIG.timezones[crew.city]): Plan | null {
+/**
+ * The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each
+ * session is opt-in. Hosts rotate. Null when the crew is handed off, or when a pair of its members
+ * has no pair value in the plans lane today (a block, a minor, a hold, or a pair below the lane's
+ * rules): a crew session passes the same pair gate as every other configuration.
+ */
+export function crewSessionPlan(w: World, crew: Crew, now: number, place: Plan["place"], pcfg: PlansConfig = DEFAULT_PLANS): Plan | null {
   if (crew.handedOff) return null;
+  const category = plansOf(w).lane;
+  const values = requiredPairValues(w, { participants: crew.members, lane: groupLane(category) });
+  if (!values || values.some(v => v < 0)) return null;
+  const tz: string | undefined = w.cfg.timezones[crew.city];
   // Advance in local wall-clock time (same weekday and local time), so sessions do not drift an
   // hour across a DST change (engine-attention-plans-4). Without a time zone: fixed 24-hour days.
   const first = crew.slot.start;
@@ -758,7 +836,7 @@ export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], p
     id: `plan_${sha256(`${crew.id}|${start}`).slice(0, 16)}`, city: crew.city, activityId: crew.activityId, ...(crew.venueId ? { venueId: crew.venueId } : {}),
     place, window: { start, end: start + a.durationMin * 60_000 }, invited: [...crew.members], alternates: [], ...(host ? { hostId: host } : {}), crewId: crew.id,
     partner: false, size: { min: Math.min(3, n), target: n, max: Math.max(n, 3) }, quorum: Math.min(pcfg.quorum.group, n),
-    probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category: pack.plans!.lane,
+    probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category,
   };
 }
 

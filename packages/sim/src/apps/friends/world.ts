@@ -53,6 +53,7 @@ export interface MeetupRecord {
 }
 export interface FlowRecord {
   key: string; week: number; kind: ProposalKind; invited: MemberId[];
+  additionalTable?: true;
   stage: "dropped_policy" | "no_quorum" | "backout" | "no_show" | "held" | "crew_declined";
   probed: number; yes: number; replied: number; going: MemberId[]; booked: MemberId[]; attended: MemberId[];
   declaredMinor: boolean; harms: HarmEvent[]; capDrops: number;
@@ -82,6 +83,7 @@ export interface FriendsWorld {
   mutual: Set<string>;
   /** Pairs where one did NOT want to see the other again (back-out risk at a reveal). */
   disliked: Set<string>;
+  /** Latest meetup enjoyment from completed weeks, used by this week's invitations. */
   lastEnjoy: Map<MemberId, number>;
   selfHangouts: number;
   /** Hangouts a pair arranged on its own (hidden). */
@@ -107,6 +109,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
   const { oracle, state } = world;
   const planCap = o.planCap ?? 1, bookCap = o.bookCap ?? 2, introCap = o.introCap ?? 2;
   const flows: FlowRecord[] = [], meetups: MeetupRecord[] = [], contacts: Contact[] = [];
+  const completedEnjoyment: { at: number; values: Record<MemberId, number> }[] = [];
   const valueDays = new Map<MemberId, number[]>();
   const addValue = (id: MemberId, day: number) => { if (!valueDays.has(id)) valueDays.set(id, []); valueDays.get(id)!.push(day); };
   const addHours = (a: MemberId, b: MemberId, h: number, week: number) => {
@@ -118,6 +121,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
   const P = oracle.P;
 
   for (let week = 0; week < world.weeks; week++) {
+    completedEnjoyment.length = 0;
     state.week = week;
     state.now = weekTime(week, 0, 9); // Monday 09:00 local: the weekly planner run
     // 0. check-ins
@@ -205,7 +209,8 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         for (const id of [...picks.keys()].filter(id => picks.get(id)!.includes(slot))) if (!going.includes(id) && !pr.split) picks.delete(id);
         for (const id of going) picks.delete(id);
         if (going.length < quorum) { if (table === 0) { f.stage = "no_quorum"; record(key, "declined", invited, slotTime(week, slot)); } break; }
-        const g = table === 0 ? f : { ...f, key: `${key}:t${table}`, probed: 0, yes: 0, replied: 0, capDrops: 0, harms: [], going: [], booked: [], attended: [], stage: "no_quorum" as FlowRecord["stage"] };
+        const g: FlowRecord = table === 0 ? f : { ...f, key: `${key}:t${table}`, additionalTable: true,
+          probed: 0, yes: 0, replied: 0, capDrops: 0, harms: [], going: [], booked: [], attended: [], stage: "no_quorum" };
         if (table > 0) flows.push(g);
         bookTable(g, going, slot);
         table++;
@@ -228,7 +233,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         g.attended = g.booked.filter(id => oracle.attends(id, tkey, week, slot, pr.venueHood));
         if (g.attended.length < 2) { g.stage = "no_show"; record(tkey, "no_show", g.booked, at); applyHarms(g.harms, at); return; }
         g.stage = "held";
-        const res = held(tkey, pr.kind, g.attended, pr.activity, pr.venueHood, week, day, pr.crewId ?? (pr.kind === "crew_offer" ? state.crews[state.crews.length - 1]!.id : undefined));
+        const res = held(tkey, pr.kind, g.attended, pr.activity, pr.venueHood, week, day, at, pr.crewId ?? (pr.kind === "crew_offer" ? state.crews[state.crews.length - 1]!.id : undefined));
         g.harms.push(...res.harms);
         record(tkey, "completed", g.attended, at);
         // Feedback the Network receives (private): rating and "see again?" per person.
@@ -269,8 +274,12 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       const slot = SLOTS.indexOf(slotOfCrew(c));
       const came = c.members.filter(id => !state.safetyHolds.some(h => h.memberId === id) && oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness) && (booked.get(id) ?? 0) < bookCap);
       if (came.length < 2 || slot < 0) continue;
-      held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slotDay(week, slot), c.id);
+      held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slotDay(week, slot), slotTime(week, slot), c.id);
     }
+    // Invitations precede this week's meetups: keep their prior experience fixed, then keep the
+    // latest outcome by meetup time, because proposal order is not time order (PR #450).
+    for (const m of completedEnjoyment.sort((x, y) => x.at - y.at))
+      for (const [id, enjoyed] of Object.entries(m.values)) world.lastEnjoy.set(id, enjoyed);
     // Hidden hangouts between pairs who both want more.
     for (const k of [...world.mutual].sort()) {
       const [a, b] = k.split("|") as [MemberId, MemberId];
@@ -279,11 +288,12 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
   }
   return { world, flows, meetups, contacts, matcher: matcher.name, valueDays };
 
-  function held(key: string, kind: MeetupRecord["kind"], attendees: MemberId[], activity: string, venueHood: string, week: number, day: number, crewId?: string) {
+  function held(key: string, kind: MeetupRecord["kind"], attendees: MemberId[], activity: string, venueHood: string, week: number, day: number, at: number, crewId?: string) {
     const res = oracle.meetup(key, attendees, activity, venueHood, (a, b) => world.bond.get(pk(a, b)) ?? 0);
+    completedEnjoyment.push({ at, values: res.enjoy });
     const dur = activityById.get(activity)?.durationMin ?? 120;
     const travel: Record<MemberId, number> = {};
-    for (const id of attendees) { travel[id] = oracle.travel(id, venueHood); addValue(id, day); world.lastEnjoy.set(id, res.enjoy[id]!); }
+    for (const id of attendees) { travel[id] = oracle.travel(id, venueHood); addValue(id, day); }
     for (let i = 0; i < attendees.length; i++) for (let j = i + 1; j < attendees.length; j++) {
       const a = attendees[i]!, b = attendees[j]!, k = pk(a, b);
       const h = oracle.pairHours(dur, attendees.length, res.enjoy[a]!, res.enjoy[b]!);

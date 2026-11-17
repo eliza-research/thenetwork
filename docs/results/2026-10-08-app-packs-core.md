@@ -1,5 +1,7 @@
 # App packs, core: the AppPack contract and networkPack
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-08-app-packs-core.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-08. Branch `engine/packs` (worktree the `thenetwork-packs` worktree), based on `origin/main` @ `976a39e`. No LLM calls; tests ran with API keys unset and no `LIVE_TESTS`.
 
 **Goal.** One engine with app packs powers four apps:
@@ -99,7 +101,7 @@ Every old module path still exports the same names, so no call site changed.
 
 ## 3. Goldens (P0)
 
-**Fast tier** (`packages/engine/test/golden.test.ts`, about 11 s, runs on every `bun test`). Captured on the unchanged code at commit `7291764`; stored in `packages/engine/test/goldens/fast.json`.
+**Fast tier** (`packages/engine/test/golden.test.ts`, about 11 s, runs on every `pnpm exec vitest run`). Captured on the unchanged code at commit `7291764`; stored in `packages/engine/test/goldens/fast.json`.
 
 | Artifact | Contents |
 |---|---|
@@ -165,8 +167,8 @@ Reference values from the fast tier, unchanged after the refactor:
 
 ## 5. Full test run
 
-- `bunx tsc --noEmit -p .` is clean.
-- `bun test --conditions eliza-source ./packages`: 696 pass, 4 fail. All 4 failures also fail on clean `origin/main` (`976a39e`), before any change in this branch:
+- `pnpm exec tsc --noEmit -p .` is clean.
+- `pnpm exec vitest run --conditions eliza-source ./packages`: 696 pass, 4 fail. All 4 failures also fail on clean `origin/main` (`976a39e`), before any change in this branch:
   - `packages/plugin-network` (2 files): `@elizaos/core` and `@elizaos/testing` cannot be resolved because the `eliza` submodule is not initialised. Skipped as instructed.
   - `packages/network/test/network.test.ts` (2 tests):
     - "meetings happen at real public NYC venues" fails because a venue name ("NYPL Stephen A. Schwarzman Building") does not match the test's regex.
@@ -207,7 +209,7 @@ Nothing had to be left non-identical: every golden matches. These seams remain f
 
 | Commit | What |
 |---|---|
-| `7291764` | Fast-tier goldens (+ the `bun.lock` capital workspace entry that `bun install` adds on `origin/main`) |
+| `7291764` | Fast-tier goldens (+ the `the former lockfile` capital workspace entry that `pnpm install` adds on `origin/main`) |
 | `78ffe90` | Full-tier goldens |
 | `ae7e0cc` | AppPack contract and networkPack |
 | `194cd25` | Conformance suite |

@@ -15,3 +15,18 @@ pure def reviewLate(currentTime: int, deadline: int): bool =
 pure def lawReviewDeadlineIsExclusive(deadline: int): bool =
   reviewLate(deadline, deadline)
 ```
+
+### A decision applies only to the revision the reviewer saw
+
+The review revision of an opportunity is the number of re-rolls that kept it in review. It starts at 0 when the opportunity enters review, and each such re-roll adds 1, because a re-roll changes the people and the explanations. The review queue shows the revision with each item. A staff decision (approve, edit, reject, or re-roll) carries the revision that the reviewer saw, and the staff API refuses a decision without one. A decision with another revision is refused as stale and changes nothing: nobody is contacted, and the item waits for a decision on what it now says. The staff audit keeps the requested row and the refused result row. A materially changed proposal must pass review again ([policies](product/policies.md)). A caller inside the Network that reads and decides in the same unit of work cannot see an old revision, so it may decide without one.
+
+```quint
+pure def reviewRevisionCurrent(seenRevision: int, currentRevision: int): bool =
+  seenRevision == currentRevision
+
+pure def lawSeenReviewRevisionIsCurrent(revision: int): bool =
+  reviewRevisionCurrent(revision, revision)
+
+pure def lawRerolledReviewIsStale(seenRevision: int): bool =
+  not(reviewRevisionCurrent(seenRevision, seenRevision + 1))
+```

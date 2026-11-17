@@ -4,8 +4,8 @@
 // production rater is `WorkersAIClefRater` (clef.ts: Cloudflare Workers AI Clef decision model,
 // jevector-style feature vector, learned head). Ratings are computed when photos are uploaded
 // (outside the engine run) and stored as agent_private facets (`appearanceFacet`); the pack reads
-// them from the snapshot and uses them ONLY inside matching (an assortative-similarity term on
-// face / body / overall, and body type against stated or revealed body-type preferences).
+// them from the snapshot and uses them ONLY inside matching (the overall rating is the private
+// Date-lane standing of spec/memberStanding.md; body type against stated or revealed preferences).
 //
 // Rules (enforced here and tested):
 //  - ADULTS ONLY (hard rule): photo processing, photo-in-probe and appearance ratings are for verified
@@ -35,6 +35,8 @@ export interface AppearanceScore {
   bodyType?: BodyType; bodyTypeConfidence?: number;
   /** 0..1: how much to trust the rating (photo quality, agreement, number of photos). */
   confidence: number;
+  /** Photos the rating is based on: the uncertainty of the private standing shrinks with it. */
+  photos?: number;
   /** Rater id and version (provenance; never shown). */
   model: string;
 }
@@ -61,6 +63,8 @@ export function adultsOnly(r: AppearanceRater): AppearanceRater {
 
 const clampZ = (x: number) => Math.max(-3, Math.min(3, Number.isFinite(x) ? x : 0));
 const clamp01 = (x: number) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
+/** The overall rating on the private rating scale of spec/memberStanding.md: z -3..3 maps to 0..1000. */
+export const ratingPermille = (overall: number): number => Math.round(((clampZ(overall) + 3) * 1000) / 6);
 const cos = (a: readonly number[], b: readonly number[]) => {
   let s = 0, na = 0, nb = 0;
   for (let i = 0; i < Math.min(a.length, b.length); i++) { s += a[i]! * b[i]!; na += a[i]! ** 2; nb += b[i]! ** 2; }
@@ -104,7 +108,7 @@ export class ClipAppearanceRater implements AppearanceRater {
     }
     const mean = [0, 1, 2].map(d => per.reduce((s, x) => s + x[d]!, 0) / per.length);
     const spread = per.length > 1 ? Math.sqrt(per.reduce((s, x) => s + (x[2]! - mean[2]!) ** 2, 0) / (per.length - 1)) : 1;
-    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), model: this.id };
+    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), photos: per.length, model: this.id };
   }
 }
 const dot = (w: readonly number[], e: readonly number[]) => w.reduce((s, x, i) => s + x * (e[i] ?? 0), 0);
@@ -131,7 +135,7 @@ export class VisionLlmAppearanceRater implements AppearanceRater {
     try { j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); } catch { return null; }
     const c = clamp01(Number(j.confidence));
     if (!c) return null;
-    return { face: clampZ(Number(j.face)), body: clampZ(Number(j.body)), overall: clampZ(Number(j.overall)), confidence: c, model: this.id };
+    return { face: clampZ(Number(j.face)), body: clampZ(Number(j.body)), overall: clampZ(Number(j.overall)), confidence: c, photos: urls.length, model: this.id };
   }
 }
 
@@ -148,11 +152,12 @@ export function appearanceFacet(memberId: MemberId, subject: RatingSubject, s: A
   return {
     id: `${memberId}:appearance`, memberId, kind: "fact", value: "photo rating (internal)",
     tags: [`${APPEARANCE_PREFIX}face=${f(s.face)}`, `${APPEARANCE_PREFIX}body=${f(s.body)}`, `${APPEARANCE_PREFIX}overall=${f(s.overall)}`, `${APPEARANCE_PREFIX}conf=${f(s.confidence)}`,
-      ...(s.bodyType ? [`${APPEARANCE_PREFIX}bodyType=${s.bodyType}`, `${APPEARANCE_PREFIX}bodyTypeConf=${f(s.bodyTypeConfidence ?? s.confidence)}`] : [])],
+      ...(s.bodyType ? [`${APPEARANCE_PREFIX}bodyType=${s.bodyType}`, `${APPEARANCE_PREFIX}bodyTypeConf=${f(s.bodyTypeConfidence ?? s.confidence)}`] : []),
+      ...(s.photos !== undefined && Number.isSafeInteger(s.photos) && s.photos > 0 ? [`${APPEARANCE_PREFIX}photos=${s.photos}`] : [])],
     scope: "agent_private", provenance: "inferred", confidence: s.confidence, validFrom: at, observedAt: at, inferred: true, confirmedByMember: false,
   };
 }
-/** Read a rating back from tags (undefined when absent or malformed). Body type is optional (iteration-3 facets have none). */
+/** Read a rating back from tags (undefined when absent or malformed). Body type and the photo count are optional. */
 export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore, "model">) | undefined {
   const v: Record<string, number> = {};
   let bodyType: BodyType | undefined;
@@ -161,7 +166,11 @@ export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore,
     if (k === "bodyType") { if (isBodyType(x)) bodyType = x; } else v[k!] = Number(x);
   }
   if (![v.face, v.body, v.overall, v.conf].every(x => Number.isFinite(x))) return undefined;
-  return { face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf!, ...(bodyType ? { bodyType, bodyTypeConfidence: Number.isFinite(v.bodyTypeConf) ? v.bodyTypeConf! : v.conf! } : {}) };
+  return {
+    face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf!,
+    ...(bodyType ? { bodyType, bodyTypeConfidence: Number.isFinite(v.bodyTypeConf) ? v.bodyTypeConf! : v.conf! } : {}),
+    ...(Number.isSafeInteger(v.photos) && v.photos! > 0 ? { photos: v.photos! } : {}),
+  };
 }
 
 /**

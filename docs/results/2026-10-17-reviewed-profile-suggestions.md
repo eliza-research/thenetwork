@@ -1,5 +1,7 @@
 # Private reviewed profile suggestions — source and local qualification
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-17-reviewed-profile-suggestions.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This separately approved intake work adds private pending suggestions and an authenticated internal review boundary. It does not fetch Google data, create a Google connector, enable matching, send a message, or deploy a migration. The source is stacked on the inferred-facet fix in PR #97; that PR remains independently reviewable.
 
 Pending and rejected suggestions never enter the canonical snapshot. An exact human decision promotes only the reviewed value and scope to the existing facet table, preserving provider, observation time, confidence and inferred provenance. Edits and scope changes return a new revision for review. Expiry, rejection and disconnect erase pending content. Explicit disconnect retention applies only to already accepted facts. App leave, account deletion and batch deletion remove linked derived facts without deleting unrelated facts.
@@ -20,20 +22,20 @@ Successful responses have `kind` and `reviewText`; a preview also carries the ca
 
 Local fixtures use synthetic adults, a fake source-consent callback, a fake trusted Cloud binding resolver, real HTTP, and an isolated real PostgreSQL database on port 54428. No Google, LLM, OTP or delivery provider calls run. These tests prove the Network request/store boundary; they do not prove the deployed Cloud resolver, real iMessage dispatch or real Google extraction.
 
-Focused command, Bun 1.4.2:
+Focused command, the former runtime 1.4.2:
 
 ```sh
 OBSERVATORY_PG_PORT=54428 OBSERVATORY_PG_DIR=<owned-local-cluster> REQUIRE_PG=1 \
-  bun test --conditions eliza-source packages/network/test/profile-suggestions.integration.test.ts \
+  pnpm exec vitest run --conditions eliza-source packages/network/test/profile-suggestions.integration.test.ts \
   packages/network/test/profile-suggestion-review.test.ts
 ```
 
 The initial focused run passed 31 tests and 184 assertions. The final broader run includes the additional resolved-preview assertion. Cases cover pending isolation, exact acceptance, edits and scope revisions, wrong owner/org/person/app/chat, signature mismatch, fabricated human commands, replay, expiry, source revocation, identity revocation during a request, atomic rollback, deletion, app leave, row-level isolation, and cleanup after authorization is disabled. Independent source review found no actionable HTTP-boundary defect. Broader qualification is recorded separately after terminal results.
 
-Final pinned integration command: `bun test --conditions eliza-source --timeout 120000 ./deploy ./packages ./sites` with the same isolated cluster. Result: **593 passed, zero failed, 11,822 assertions across 61 files**. TypeScript checking passed. Earlier intermediate runs used an unintended shell-resolved Bun 1.3.14; they are not qualification results. The final command directly invokes Bun 1.4.2.
+Final pinned integration command: `pnpm exec vitest run --testTimeout 120000 ./deploy ./packages ./sites` with the same isolated cluster. Result: **593 passed, zero failed, 11,822 assertions across 61 files**. TypeScript checking passed. Earlier intermediate runs used an unintended shell-resolved the former runtime 1.3.14; they are not qualification results. The final command directly invokes the former runtime 1.4.2.
 
 The normal backend forwards only the three exact internal review paths, with a 16 KiB declared-body cap. Its regression assertions pass in the integration suite.
 
-An additional private joined fixture imports the actual Cloud `NetworkServiceClient.profileSuggestion` and real bounded-fetch implementation from the paired source worktree, then calls the actual Network HTTP service and PostgreSQL. It passed one test and 14 assertions, including source/binding revocation, acceptance, replay refusal and linked deletion. The local source resolver/connector remains a fixture. The explicit tsconfig alias invocation emits a nonfatal Bun directory-mismatch warning; exit status and test assertions passed. No deployed or live acceptance is inferred.
+An additional private joined fixture imports the actual Cloud `NetworkServiceClient.profileSuggestion` and real bounded-fetch implementation from the paired source worktree, then calls the actual Network HTTP service and PostgreSQL. It passed one test and 14 assertions, including source/binding revocation, acceptance, replay refusal and linked deletion. The local source resolver/connector remains a fixture. The explicit tsconfig alias invocation emits a nonfatal the former runtime directory-mismatch warning; exit status and test assertions passed. No deployed or live acceptance is inferred.
 
-Final end-to-end command: `bun test --conditions eliza-source --timeout 180000 ./tests/e2e`, same pinned Bun and isolated PostgreSQL. Result: **42 passed, three existing browser skips, zero failed, 609 assertions**. No browser-native or provider acceptance is claimed for the skipped cases.
+Final end-to-end command: `pnpm exec vitest run --testTimeout 180000 ./tests/e2e`, same the pinned former runtime and isolated PostgreSQL. Result: **42 passed, three existing browser skips, zero failed, 609 assertions**. No browser-native or provider acceptance is claimed for the skipped cases.

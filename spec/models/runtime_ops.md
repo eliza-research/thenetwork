@@ -8,6 +8,31 @@ An operator needs the backend to complete scheduled work, report failures, and r
 
 Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit.
+
+The [backend lifecycle spec](../backendLifecycle.md) drives worker
+reservations and shutdown decisions. The serving shell starts a single
+grace period for both listener drain and tracked work.
+
+The [backend health spec](../backendHealth.md) drives the public health
+check from serving admission through the database ping and tick freshness.
+The VibeLang shell runs the effects against the backend's live dependencies.
+
+The [platform retention rules](../platformRetention.md) set the account
+and inbox cutoffs and retain counters needed for STOP hints.
+
+The [alert dispatch spec](../opsAlertDispatch.md) drives the VibeLang
+shell under the existing alert-store transaction. The backend
+evaluates the alerts it could collect, may close a missing episode without
+a prior successful post, and can still ping its heartbeat after a failed
+alert delivery. The retained model below describes different behavior for
+those cases.
+
+[Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
+eligibility, and aggregate outcome rules. The backend reads saved
+opportunities and rechecks eligibility under its report lock before
+inserting an aggregate report.
+
 Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -526,7 +551,7 @@ module runtime_ops {
     s.pr.phase == "running",
     s' = { ...s, pr: { ...s.pr, phase: "stopping", sigtermAt: s.now, graceAt: s.now } },
   }
-  /** Bun 1.4.2: server.stop(false) resolves only when the in-flight requests end (checked by a local run). */
+  /** A graceful listener stop waits for its in-flight requests to end. */
   action serversStopped: bool = all {
     s.pr.phase == "stopping", s.pr.stuck != "http",
     s' = { ...s, pr: { ...s.pr, phase: "waiting" } },
@@ -772,7 +797,7 @@ module runtime_ops {
    * README rollback: an inactive Worker stops the container (worker.ts:56-58 comment: SIGTERM). SD-159; a
    * rollback without BACKEND_RUNTIME_CONFIG also leaves it running (worker.ts:55, cfNoConfigTest).
    * NOT IN `safety`: SD-159 is open, skipped because the fix needs a test in workerd (Durable Objects and
-   * Containers), and no Workers runtime is in the repository; a Bun stub would be mock-only proof. cfNoBuildIdTest replays it.
+   * Containers), and no Workers runtime is in the repository; a local runtime stub would give only mock evidence. cfNoBuildIdTest replays it.
    */
   val inactiveStops = (not(s.cf.enabled) and s.cf.cronSinceInactive) implies not(s.cf.containerRunning)
 

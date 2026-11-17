@@ -1,8 +1,8 @@
 // The one place that names the shared backend for the four sites. Every SKILL.md, the support pages
 // and the site routers (deploy/router.ts reads BACKEND_ORIGIN from the Worker env, which CI sets from
 // the same value) point here. Override per build with the BACKEND_ORIGIN and MCP_URL env vars.
-//   bun run sites/sites.ts                 -> https://api.ntwrk.party, and https://<site>/mcp per site
-//   BACKEND_ORIGIN=https://staging.example bun run sites/sites.ts
+//   node --import tsx --env-file-if-exists=.env sites/sites.ts                 -> https://api.ntwrk.party, and https://<site>/mcp per site
+//   BACKEND_ORIGIN=https://staging.example node --import tsx --env-file-if-exists=.env sites/sites.ts
 //
 // The MCP URL is per site, not the backend origin: each site's router forwards /mcp to the backend
 // with the site's signed host, and the MCP server binds a client to that one app (packages/mcp).

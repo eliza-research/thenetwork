@@ -1,5 +1,7 @@
 # Blooio for iMessage and SMS: research, verification, recommendations
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/research/blooio.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Status: research complete. The API key was verified with read-only calls. No message has been sent and no
 configuration was changed. Date: 2026-10-05.
 PRD: 32.2 (channel gateway and messaging), 36.1 (messaging compliance and deliverability).
@@ -198,7 +200,7 @@ What this means: the key works, but its only line is an existing line with real 
 has **no active webhook routed to it** (the active one is scoped to another key). Before using it for the Network,
 confirm who owns the line's existing conversations. Better, buy dedicated Network lines and assign them to this key.
 
-The prototype's `bun run scripts/verify-readonly.ts` reproduces this table. `BLOOIO_LIVE_TEST=1 bun test tests/live.readonly.test.ts` passes.
+The prototype's `node --import tsx --env-file-if-exists=.env scripts/verify-readonly.ts` reproduces this table. `BLOOIO_LIVE_TEST=1 pnpm exec vitest run tests/live.readonly.test.ts` passes.
 
 ## 5. Recommendations
 

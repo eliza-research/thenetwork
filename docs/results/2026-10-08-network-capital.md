@@ -1,5 +1,7 @@
 # Network capital (NC) ledger, MVP-lite: build and pre-launch simulation (2026-10-08)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-08-network-capital.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Spec: [docs/design/2026-10-07-growth-capital-ownership.md](../design/2026-10-07-growth-capital-ownership.md), section 2 ("the doc"), and PRD Section 39.2. **No LLM calls, $0.** Tests run with API keys unset and without `LIVE_TESTS`. The text is hand-written. The tables are copied from the generated output of the commands below.
 
 ## Result in one paragraph
@@ -20,7 +22,7 @@ Gate (a) does not pass if effort helps 2.5x more than assumed (-0.023). Measure 
 
 ## Update 2026-10-09: gate (a) failed on main, fixed
 
-Once gate (a) read the 95% CI lower bound (capital-13), it failed on main: change -0.012, lower bound -0.056. Two causes, measured at 32 paired seeds (`bun run packages/capital/experiments/run.ts`):
+Once gate (a) read the 95% CI lower bound (capital-13), it failed on main: change -0.012, lower bound -0.056. Two causes, measured at 32 paired seeds (`node --import tsx --env-file-if-exists=.env packages/capital/experiments/run.ts`):
 
 - **Effort lever (mechanism).** Effort alone lowered the ratio by -0.016 ± 0.003, a precise effect: high-NC members got up to +25% AI spend, which raised the top decile's V14 (+0.018) and barely the bottom's (+0.003). Fix in `src/levers.ts` `EFFORT_TABLE`, per PRD 39.2.3 (a high floor, diminishing returns at the top): the floor is raised (judge pass 2 on the top 12 instead of 10), and the tiers above add +5%, +3% and +2% spend, capped at +10% (was +12%, +8%, +5%, capped at +25%). Effort alone is now -0.005 ± 0.002. The x2.5 effort-effect sensitivity now passes too (lower bound -0.011).
 - **Broken pairing in the harness (measurement).** The common-random-numbers design promised that arms stay paired when a lever changes who joins. They did not: invitee and sybil ids came from a running counter, friend-plan ids from the plan counter, and intro, crew, helper and needs picks indexed into the population list. One extra or missing invite re-rolled every later draw in that seed, so the vouch lever alone carried a paired standard error of 0.022 and the gate's CI was about +-0.045 whatever the levers did. Fix in `experiments/world.ts`: ids are derived from (member, day), and members are drawn by rendezvous hashing (`Keyed.member`, `Keyed.weighted`), which changes a draw only when the added or removed member wins it. The gate's threshold (0.02), seeds (1-32), sample size and comparator are unchanged.
@@ -98,10 +100,10 @@ The gate is encoded in `experiments/run.ts`:
 ## How it was measured
 
 ```bash
-bun run packages/capital/experiments/run.ts --json runs/capital/2026-10-08-default.json   # arms at 8 seeds + launch gates at 32 paired seeds (~25 s)
-bun run packages/capital/experiments/run.ts --effort-sweep                               # thresholds x effect size x reach policy, 32 paired seeds
-bun run packages/capital/experiments/run.ts --sweep                                      # period cap x pair decay, 8 seeds
-bun test packages/capital
+node --import tsx --env-file-if-exists=.env packages/capital/experiments/run.ts --json runs/capital/2026-10-08-default.json   # arms at 8 seeds + launch gates at 32 paired seeds (~25 s)
+node --import tsx --env-file-if-exists=.env packages/capital/experiments/run.ts --effort-sweep                               # thresholds x effect size x reach policy, 32 paired seeds
+node --import tsx --env-file-if-exists=.env packages/capital/experiments/run.ts --sweep                                      # period cap x pair decay, 8 seeds
+pnpm exec vitest run packages/capital
 ```
 
 Descriptive arms use seeds 1-8, and the launch gates use seeds 1-32 (`--gate-seeds`). Each seed is a fresh population and event stream. **Common random numbers:** every decision draws from a hash of (seed, purpose, day, members), not from a shared stream. Two arms that differ only in a lever therefore see the same coin flips for the same decisions, even when the lever changes who joins. ± is the standard error over seeds.
@@ -288,5 +290,5 @@ Penalties are not the problem: cancelling with notice is free, and the forgiven 
 
 ## Not in scope / not changed
 
-- `packages/engine` and `packages/core` were not edited. `packages/capital` imports `isMinor` and `DAY`/`HOUR` from core and the `EngineConfigInput` type from engine **by relative path**, because adding a workspace dependency would change `bun.lock`. No new core type was needed: `MemberId` is reused.
-- `bun test packages/capital`: 30 pass, 0 fail. `bunx tsc --noEmit -p .`: clean.
+- `packages/engine` and `packages/core` were not edited. `packages/capital` imports `isMinor` and `DAY`/`HOUR` from core and the `EngineConfigInput` type from engine **by relative path**, because adding a workspace dependency would change `the former lockfile`. No new core type was needed: `MemberId` is reused.
+- `pnpm exec vitest run packages/capital`: 30 pass, 0 fail. `pnpm exec tsc --noEmit -p .`: clean.

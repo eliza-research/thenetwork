@@ -1,5 +1,6 @@
 // Run peon.biz arms over seeds and print the tables in docs/results/2026-10-08-peon-pack.md. No LLM calls.
-//   bun run packages/sim/src/apps/peon/cli.ts --seeds 1-4 [--arms keyword,pack,...] [--per-city 400] [--jobs 80] [--weeks 8] [--json out.json] [--impact]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/peon/cli.ts --seeds 1-4 [--arms keyword,pack,...] [--per-city 400] [--jobs 80] [--weeks 8] [--json out.json] [--impact]
+import { writePath } from "../../../../core/src/runtime/files.ts";
 import { ARMS } from "./arms.ts";
 import { historicalGates, officialGates, type GateResult } from "./gates.ts";
 import { peonMetrics, poolImpact, STAGES, type PeonMetrics } from "./metrics.ts";
@@ -19,12 +20,9 @@ async function main() {
     if (!arm) throw new Error(`unknown arm ${a}; known: ${Object.keys(ARMS).join(", ")}`);
     all[a] = [];
     for (const seed of seeds) {
-      const restore = arm.setup?.();
       const t = performance.now();
-      try {
-        const r = await runPeonWorld({ seed, perCity, jobsPerCity, weeks, matcher: arm.matcher, realism });
-        all[a]!.push(peonMetrics(r));
-      } finally { restore?.(); }
+      const run = await runPeonWorld({ seed, perCity, jobsPerCity, weeks, matcher: arm.matcher, realism });
+      all[a]!.push(peonMetrics(run));
       console.error(`${a} seed ${seed}: hires ${all[a]!.at(-1)!.hires} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }
@@ -104,7 +102,7 @@ async function main() {
     }
   }
   const out = arg("json");
-  if (out) await Bun.write(out, JSON.stringify(all, null, 1));
+  if (out) await writePath(out, JSON.stringify(all, null, 1));
 }
 
 if (import.meta.main) await main();

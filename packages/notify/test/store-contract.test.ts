@@ -1,7 +1,7 @@
 // The same rules for the in-memory store and the Postgres store (db/schema.sql). The Postgres run
 // uses its own database on the local dev cluster (:54339) and is skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { MemoryNotifyStore, type NotifyStore } from "../src/index.ts";

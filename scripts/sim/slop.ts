@@ -14,11 +14,8 @@
 // --quick: seed 13 only, 2 weeks, 150 per city; every quality gate is tracked (one seed is noise).
 // Then the slop-live arm (scripts/sim/slop-live.ts): the service's slop wiring and onboarding loop in
 // the sim World (seeds 21-22, 30 days); its invariant gates block.
-import type { Facet, MemberId } from "../../packages/core/src/index.ts";
+import type { Facet, MemberId, Presence } from "../../packages/core/src/index.ts";
 import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
-import type { AssignContext } from "../../packages/engine/src/pack.ts";
-import type { SelectionResult } from "../../packages/engine/src/policy.ts";
-import type { Scored } from "../../packages/engine/src/scoring.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -31,14 +28,16 @@ import { limitMiles } from "../../packages/engine/src/packs/slop/geo.ts";
 import { makeSlopPack, mutualMarkets, planFromInput, SLOP_ASK_QUESTIONS, SLOP_ENGINE_CONFIG, slopPack, slopProfiles } from "../../packages/engine/src/packs/slop/index.ts";
 import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
 import { statedDealbreaker } from "../../packages/engine/src/packs/slop/score.ts";
-import { cellMiles } from "../../packages/engine/src/packs/slop/zips.ts";
+import { cellMiles, MARKET_ANCHOR_ZIP } from "../../packages/engine/src/packs/slop/zips.ts";
+import { laneLimits, laneOffset } from "../../packages/core/src/generated/matchLane.ts";
+import { parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
-import { World, pairKey } from "../../packages/engine/src/world.ts";
+import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
@@ -184,6 +183,33 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     // The true median of [10, 10, 30, 30] is (10 + 30) / 2 = 20, not the upper-middle element 30.
     expect(m.timeToFirstDate.medianDays).toBe(20);
   });
+  await b.run("metrics: scammer median reach counts distinct real recipients whose identities were revealed", () => {
+    const [first, second, third, alice, bob, harasser] = generateSlopPersonas({ seed: 41, perCity: 12 }).filter(isSafe);
+    const world = createSlopWorld({ seed: 41, weeks: 4, personas: [first!, second!, third!,
+      { ...alice!, hidden: { ...alice!.hidden, adversary: "romance_scammer" } },
+      { ...bob!, hidden: { ...bob!.hidden, adversary: "romance_scammer" } },
+      { ...harasser!, hidden: { ...harasser!.hidden, adversary: "harasser" } },
+    ] });
+    const pair = (key: string, first: MemberId, partner: MemberId, revealed = true): FlowRecord => ({
+      key, week: 1, first, partner, city: "nyc", activity: "coffee", options: [],
+      stage: revealed ? "backout" : "first_no", firstYes: revealed, mutualYes: revealed,
+      revealed, filterViolation: false, harms: [], declaredMinor: false,
+    });
+    // Alice reached one real member, Bob two. An even cohort crosses the maximum of one.
+    const reveals = [pair("a1", alice!.id, first!.id), pair("b1", first!.id, bob!.id), pair("b2", bob!.id, second!.id)];
+    const evaluate = (flows: FlowRecord[]) => {
+      const run = { world, flows, matcher: "scammer-reach" };
+      const metrics = slopMetrics(run);
+      const extra = extraOf(run, metrics);
+      const arm = { arm: run.matcher, seeds: [world.seed], metrics: [metrics], extra: [extra] };
+      return gates3(arm, arm).find(g => g.name === "Scammer median reach");
+    };
+    const expected = { name: "Scammer median reach", target: "<= 1", value: 1.5, pass: false };
+    expect(evaluate(reveals)).toEqual(expected);
+    expect(evaluate([...reveals, pair("a1-again", alice!.id, first!.id),
+      pair("a-probe-only", alice!.id, third!.id, false), pair("a-harasser", alice!.id, harasser!.id)])).toEqual(expected);
+    expect(evaluate(reveals.slice(1))).toEqual({ ...expected, value: 1, pass: true });
+  });
 
   // ---- conformance: core rules, then the stated filters and the never-shared rating -------------------
   await conformance(b, slopPack, { world: seed => slopWorld(seed), cfg: SLOP_ENGINE_CONFIG, seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
@@ -210,9 +236,15 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
         expect(mutualMarkets(a, c, slopPack.options, ["sf", "nyc", "la"]).map(m => m.market)).toContain(p.city);
       }
     }
-    // Negative control: a pack without the orientation rule is caught by the same check.
-    const broken = makeSlopPack();
-    (broken.eligibility as unknown as { pairRules: unknown[] }).pairRules = broken.eligibility.pairRules.filter(r => r.id !== "orientation_mismatch");
+    // Negative control: a pack without the orientation rule is caught by the same check. The Date
+    // segment also encodes orientation (partners are the pools a member seeks), so the broken pack
+    // drops it too; otherwise the gate refuses the same pairs as segment_unreachable.
+    const base = makeSlopPack();
+    const broken: typeof base = {
+      ...base,
+      eligibility: { ...base.eligibility, pairRules: base.eligibility.pairRules.filter(r => r.id !== "orientation_mismatch") },
+      ...(base.vectors ? { vectors: { ...base.vectors, segment: undefined } } : {}),
+    };
     const P = slopProfiles(inputs.get(1)!);
     const bad = (await run(inputs.get(1)!, 1, broken)).proposals.filter(p => { const [a, c] = p.participants.map(id => P.get(id)!); return !a!.seeks.includes(c!.is!) || !c!.seeks.includes(a!.is!); });
     expect(bad.length).toBeGreaterThan(0);
@@ -260,6 +292,73 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     for (const q of Object.values(SLOP_ASK_QUESTIONS)) expect(q).not.toMatch(/\d+\.\d+|\b\d{5}\b/);
   });
 
+  // The Date lane of the one match core: every proposal is a pair of Date profiles inside the parity
+  // band, and the bounded search stays within its budget.
+  const dateProfile = (w: World, p: EngineProposal, id: MemberId) => {
+    const entity = p.entities?.[id];
+    const q = entity ? w.match.profile(entity) : w.match.profileIn(id, "Date");
+    return q?.lane === "Date" ? q : undefined;
+  };
+  await b.run("conformance slop: every proposal pairs two Date profiles whose standing gap is inside the band plus both uncertainties", async () => {
+    const { parityBand } = laneLimits("Date").rules;
+    for (const s of SEEDS) {
+      const w = new World(inputs.get(s)!, resolveConfig(cfg(s)), localEmbed, slopPack);
+      const ps = (await result(s)).proposals;
+      expect(ps.length).toBeGreaterThan(5);
+      for (const p of ps) {
+        const [a, c] = p.participants.map(id => dateProfile(w, p, id));
+        expect(a).not.toBeUndefined(); expect(c).not.toBeUndefined();
+        // spec/pairValue.md, "A pair is refused when the gap is wider than the band and both uncertainties"
+        expect(parityAllowed(standingGap(a!.standing, c!.standing, laneOffset("Date", a!.side)), parityBand, a!.uncertainty, c!.uncertainty)).toBe(true);
+      }
+    }
+  });
+  await b.run("conformance slop: the run log's search makes at most Date profiles x searchBudget pair checks", async () => {
+    const { searchBudget } = laneLimits("Date");
+    for (const s of SEEDS) {
+      const w = new World(inputs.get(s)!, resolveConfig(cfg(s)), localEmbed, slopPack);
+      const profiles = w.match.profiles.filter(q => q.lane === "Date").length;
+      const search = (await result(s)).runLog.search;
+      // spec/candidateSearch.md: total checks <= members x budget.
+      expect(search).not.toBeUndefined();
+      expect(search!.members).toBeGreaterThan(0);
+      expect(search!.members).toBeLessThanOrEqual(profiles);
+      expect(search!.checks).toBeLessThanOrEqual(profiles * searchBudget);
+    }
+  });
+  await b.run("conformance slop: two members whose homes are nyc and sf are matched when both date in nyc and sf, and not when each dates at home only", async () => {
+    const input = inputs.get(1)!;
+    const pair = (await result(1)).proposals.find(p => p.participants.length === 2 && p.participants.every(id => input.members.find(m => m.id === id)!.homeCity === "nyc"));
+    expect(pair).not.toBeUndefined();
+    const [x, y] = pair!.participants as [MemberId, MemberId];
+    // As the slop world stores it: a home presence, and a routine presence in each other market dated in.
+    const two = (scope: "multi:nyc,sf" | "city"): EngineInput => {
+      const home: Record<MemberId, "nyc" | "sf"> = { [x]: "nyc", [y]: "sf" };
+      const away = (id: MemberId): "nyc" | "sf" => (home[id] === "nyc" ? "sf" : "nyc");
+      const placed = /^slop:(zip|area|scope|max_miles):/;
+      return {
+        ...input,
+        members: input.members.filter(m => m.id in home).map(m => ({ ...m, homeCity: home[m.id]! })),
+        facets: [
+          ...input.facets.filter(f => f.memberId in home).map(f => ({ ...f, tags: f.tags.filter(t => !placed.test(t)) })),
+          ...[x, y].map((id): Facet => ({ id: `${id}:two-markets`, memberId: id, kind: "preference", value: "home zip and markets", tags: [`slop:zip:${MARKET_ANCHOR_ZIP[home[id]!]}`, `slop:scope:${scope}`, "slop:max_miles:25"], scope: "agent_private", provenance: "said", confidence: 1 })),
+        ],
+        intents: input.intents.filter(i => i.memberId in home),
+        edges: input.edges.filter(e => e.from in home && e.to in home),
+        presence: [x, y].flatMap((id): Presence[] => [
+          { memberId: id, city: home[id]!, type: "home", areas: [] },
+          ...(scope === "city" ? [] : [{ memberId: id, city: away(id), type: "routine" as const, areas: [] }]),
+        ]),
+        safetyHolds: [], idAliases: {},
+      };
+    };
+    const both = (await run(two("multi:nyc,sf"))).proposals.filter(p => p.participants.includes(x) && p.participants.includes(y));
+    expect(both.length).toBe(1);
+    expect(["nyc", "sf"]).toContain(both[0]!.city);
+    const apart = (await run(two("city"))).proposals.filter(p => p.participants.includes(x) && p.participants.includes(y));
+    expect(apart.length).toBe(0);
+  });
+
   // Appearance ratings are used in matching and never shared (founder decision 2026-10-08).
   const RATER = { ...RATER_DEFAULTS, noise: 0.4 };
   const res = await runSlopWorldAsync({ seed: 5, perCity: 70, weeks: 3, minorShare: 0.15, platform: { rater: RATER, photos: { noiseSd: 1 } }, bodyTypes: BODY_TYPE_DEFAULTS, matcher: slopEngineMatcher({ seed: 5 }) });
@@ -268,8 +367,9 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const r = await runEngine(input, cfg(5), { pack: slopPack });
   const scoreTags = [...new Set(input.facets.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX) || t.startsWith("slop:wants_body:"))).flatMap(f => f.tags))];
   const ASPECTS = /appearance|bodyType|body_type|wants_body|attractive|photo rating|clef/i;
+  const STANDING = /(?<![-\w])standing\b|uncertaint/i;
 
-  await b.run("conformance slop: no rating, score, rank, body type or derived phrase in explanations, probes, reveals, plans, asks or run logs", async () => {
+  await b.run("conformance slop: no rating, score, rank, standing, body type or derived phrase in explanations, probes, reveals, plans, asks or run logs", async () => {
     expect(scoreTags.length).toBeGreaterThan(0);
     const w = new World(input, resolveConfig(cfg(5)), localEmbed, slopPack);
     const texts: string[] = [];
@@ -286,12 +386,26 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     texts.push(...Object.values(SLOP_ASK_QUESTIONS));
     expect(texts.length).toBeGreaterThan(10);
     for (const t of texts) { expect(appearanceLeak(t, scoreTags)).toBeNull(); expect(ASPECTS.test(t)).toBe(false); }
-    const band = await runEngine(input, cfg(5), { pack: makeSlopPack({ appearance: { mode: "band", band: 0.75 } }) });
-    for (const x of [r, band]) {
-      const out = JSON.stringify({ p: x.proposals, a: x.asks, l: { ...x.runLog, timingsMs: undefined } });
-      for (const t of scoreTags) expect(out.includes(t)).toBe(false);
-      expect(out).not.toMatch(ASPECTS);
-    }
+    const out = JSON.stringify({ p: r.proposals, a: r.asks, l: { ...r.runLog, timingsMs: undefined } });
+    for (const t of scoreTags) expect(out.includes(t)).toBe(false);
+    expect(out).not.toMatch(ASPECTS);
+    // spec/memberStanding.md: standing and its uncertainty are never shown to a member. Member-facing
+    // text has no such word; the proposals, asks and run log have no such key and no member-keyed map
+    // whose values are the members' standings or uncertainties, under any key.
+    for (const t of texts) expect(t).not.toMatch(STANDING);
+    const rated = new Map(w.match.profiles.filter(q => q.lane === "Date").map(q => [q.memberId, q] as const));
+    const copies: string[] = [];
+    const walk = (v: unknown, path: string): void => {
+      if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
+      if (!v || typeof v !== "object") return;
+      const entries = Object.entries(v);
+      for (const [k, x] of entries) { if (/^standing$|uncertaint|parity|standingGap/i.test(k)) copies.push(`${path}.${k}`); walk(x, `${path}.${k}`); }
+      const keyed = entries.filter(([k, x]) => rated.has(k) && typeof x === "number");
+      if (keyed.length < 2) return;
+      for (const field of ["standing", "uncertainty"] as const) if (keyed.every(([k, x]) => x === rated.get(k)![field])) copies.push(`${path} (${field})`);
+    };
+    walk(JSON.parse(out), "");
+    expect(copies).toEqual([]);
     // A forged facet with a revealing value cannot reach an explanation either.
     const forged = input.facets.map(f => (f.tags.some(t => t.startsWith(APPEARANCE_PREFIX)) ? { ...f, value: "very attractive, athletic body type, top 10% looks" } : f));
     for (const p of (await runEngine({ ...input, facets: forged }, cfg(5), { pack: slopPack })).proposals) for (const t of Object.values(p.explanations)) { expect(appearanceLeak(t)).toBeNull(); expect(t).not.toMatch(/looks|attractive|athletic|top 10/i); }
@@ -305,53 +419,6 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(snap.facets.some(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX) || t.startsWith("slop:wants_body:")))).toBe(false);
     }
     expect(minors).toBeGreaterThan(0);
-  });
-
-  // ---- the stable-roommates invariant (packages/engine/src/packs/slop/assign.ts stableRound) -----
-  // The pack documents `assignment: "stable"` as "no two members would both rather be proposed to
-  // each other than to whom they got". This gate runs the real engine with that option and checks the
-  // invariant on the result. A blocking pair is an eligible pair the algorithm did not choose, whose
-  // two members are both matched elsewhere, and who each prefer the other to their own partner on
-  // their OWN predicted enjoyment (Candidate.benefit). The comparison is strict, so the check never
-  // depends on the value or id tie-break inside stableRound: a tie in own benefit is not a block.
-  await b.run("assignment stable: no matched pair blocks another on own benefit (0 blocking pairs)", async () => {
-    let matched = 0, blocked = 0;
-    for (const s of [1, 2, 3, 4, 5]) {
-      const input = slopWorld(s, { perCity: 60 });
-      const pack = makeSlopPack({ assignment: "stable" });
-      const assign = pack.selection.assign!;
-      let seen: { w: World; scored: readonly Scored[]; ctx: AssignContext; result: SelectionResult } | undefined;
-      pack.selection.assign = (w, scored, ctx) => { const r = assign(w, scored, ctx); seen = { w, scored, ctx, result: r }; return r; };
-      await runEngine(input, cfg(s), { pack });
-      expect(seen).not.toBeUndefined();
-      const { w, scored, ctx, result } = seen!;
-      // The edge set stableRound saw: eligible two-person candidates, both members usable, at or
-      // above minValue. The first pair for a key wins, as it does when the pack builds its edges.
-      const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
-      const edges = new Map<string, { a: MemberId; b: MemberId; ownA: number; ownB: number }>();
-      for (const x of scored) {
-        if (!x.eligible || x.c.participants.length !== 2 || x.c.exploration) continue;
-        const [a, b] = x.c.participants as [MemberId, MemberId];
-        if (!usable(a) || !usable(b) || x.score < pack.options.minValue) continue;
-        const k = pairKey(a, b);
-        if (edges.has(k)) continue;
-        edges.set(k, { a, b, ownA: x.c.benefit[a] ?? 0, ownB: x.c.benefit[b] ?? 0 });
-      }
-      const chosen = result.selected.map(x => x.s.c.participants as [MemberId, MemberId]);
-      const partner = new Map<MemberId, MemberId>();
-      for (const [u, v] of chosen) { partner.set(u, v); partner.set(v, u); }
-      const picked = new Set(chosen.map(([u, v]) => pairKey(u, v)));
-      const own = (m: MemberId, o: MemberId) => { const e = edges.get(pairKey(m, o))!; return m === e.a ? e.ownA : e.ownB; };
-      matched += chosen.length;
-      for (const [k, e] of edges) {
-        if (picked.has(k)) continue;
-        const { a, b } = e, pa = partner.get(a), pb = partner.get(b);
-        if (pa === undefined || pb === undefined) continue;
-        if (own(a, b) > own(a, pa) && own(b, a) > own(b, pb)) blocked++;
-      }
-    }
-    expect(matched).toBeGreaterThan(20);
-    expect(blocked).toBe(0);
   });
 
   // ---- slop-live: the production ConsentNetwork with the slop wiring (scripts/sim/slop-live.ts) -----

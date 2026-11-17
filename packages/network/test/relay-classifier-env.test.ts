@@ -1,6 +1,6 @@
 // The relay classifier chosen from the environment (relay-endpoint.ts relayClassifierFromEnv). No network:
 // without Workers AI credentials no Clef client is built.
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { relayClassifierFromEnv } from "../service/relay-endpoint.ts";
 
 test("dev and staging without Clef run on the rules alone", () => {
@@ -22,9 +22,9 @@ test("production without Clef fails closed: the hook errors, so a text the rules
 test("RELAY_CLEF_WEIGHTS_PATH loads the fitted weights; a bad file stops the start", () => {
   const logs: string[] = [];
   const env = { PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: "t", CLOUDFLARE_ACCOUNT_ID: "a" };
-  expect(relayClassifierFromEnv({ ...env, RELAY_CLEF_WEIGHTS_PATH: `${import.meta.dir}/../../../evals/relay/clef-relay-weights.json` }, l => logs.push(l))).toBeDefined();
+  expect(relayClassifierFromEnv({ ...env, RELAY_CLEF_WEIGHTS_PATH: `${import.meta.dirname}/../../../evals/relay/clef-relay-weights.json` }, l => logs.push(l))).toBeDefined();
   expect(logs.at(-1)).toBe("relay classifier: rules + Clef (clef-flash, weights relay-clef-bank-2026-10-11)");
   expect(relayClassifierFromEnv(env, l => logs.push(l))).toBeDefined();
   expect(logs.at(-1)).toContain("weights relay-clef-0-placeholder");
-  expect(() => relayClassifierFromEnv({ ...env, RELAY_CLEF_WEIGHTS_PATH: `${import.meta.dir}/../../../package.json` }, () => {})).toThrow();
+  expect(() => relayClassifierFromEnv({ ...env, RELAY_CLEF_WEIGHTS_PATH: `${import.meta.dirname}/../../../package.json` }, () => {})).toThrow();
 });

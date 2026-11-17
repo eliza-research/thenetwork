@@ -8,6 +8,11 @@ A member needs to approve suggested facts before they become part of their profi
 
 Check collection scope, review and acceptance, expiry, STOP, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+[Source collection and cleanup](../profileSuggestionSource.md) drives
+intake, replay, disconnect, and owner withdrawal decisions.
+[Suggestion review](../profileSuggestionReview.md) drives the member's
+selection and review actions on the pending facts.
+
 Imported from `quint/profile_learning.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

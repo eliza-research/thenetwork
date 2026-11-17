@@ -1,11 +1,13 @@
 # Build context: the repository root. Everything is excluded, then the image's inputs are allowed back.
 *
 !package.json
-!bun.lock
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
 !tsconfig.json
 !packages/
 !deploy/
 !evals/relay/clef-relay-weights.json
+!tools/vibestack/vibestack/design/
 **/node_modules
 **/.env
 **/.env.*
@@ -13,3 +15,6 @@
 **/dist
 **/runs
 **/test-results
+packages/design-system/**/generated
+packages/mcp/src/pages/generated
+tools/vibestack/vibestack/design/test

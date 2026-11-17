@@ -26,7 +26,7 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "probe_started", "probe_sent", "probe_answer", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
   "request", "request_result", "request_withdrawn_want", "trust", "abuse", "safety_action", "guard_blocked", "send_refused", "send_skipped",
   "age_unknown", "age_resolved", "age_conflict", "minor_signal", "join_declined", "invite", "growth_ask", "reengagement",
-  "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered",
+  "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered", "empty_intent_followup", "interruption_feedback",
   // The send path and the booked plan (attention v1.2, network.md 4 and 6.4): what waited and why, what
   // the engine proposed and the gates stopped, the times offered and picked, cancellations, and the
   // availability opt-ins. Codes, keys and tags only, never the member's words.
@@ -222,7 +222,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "trust": text = `Trust ${String(p.from).toUpperCase()} → ${String(p.to).toUpperCase()} (${human(p.why)})`; severity = p.to === "ok" ? "info" : "bad"; keep("from", "to", "why", "score"); break;
     case "abuse": text = `Abuse handled: ${(p.kinds as string[] | undefined)?.map(human).join(", ") ?? "?"}`; severity = "bad"; keep("risk"); break;
     case "safety_action": text = `Staff ${human(p.action)}${p.actor ? ` by ${p.actor}` : ""}${p.caseId ? ` (case ${p.caseId})` : ""}`; keep("action", "caseId", "actor", "held"); break;
-    case "guard_blocked": text = `Leak guard stopped a ${human(p.kind ?? "message")} (${(p.reasons as string[] | undefined)?.join(", ") ?? "leak"}): ${p.fallback ? "a generic version was sent" : "nothing sent"}`; severity = "warn"; keep("kind", "fallback"); if (Array.isArray(p.reasons)) detail.reasons = p.reasons.join(","); break;
+    case "guard_blocked": text = `Leak guard stopped a ${human(p.kind ?? "message")} (${(p.reasons as string[] | undefined)?.join(", ") ?? "leak"}): ${p.fallback ? "a generic replacement was prepared" : "no replacement"}`; severity = "warn"; keep("kind", "fallback"); if (Array.isArray(p.reasons)) detail.reasons = p.reasons.join(","); break;
     case "send_refused": text = `Send refused: ${human(p.kind)} (${human(p.reason)})`; severity = "warn"; keep("kind", "reason"); break;
     case "send_skipped": text = `Send skipped: ${human(p.kind)} (${human(p.reason)})`; keep("kind", "reason"); break;
     case "age_unknown": text = "No valid age: treated as under 18 until they say"; severity = "warn"; break;
@@ -237,6 +237,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "outreach_resumed": text = "Outreach resumed (they wrote again)"; break;
     case "ask_sent": text = `Profile question sent (${human(p.reason)})`; keep("reason"); break;
     case "ask_answered": text = `Profile question answered (${human(p.reason)})`; keep("reason"); break;
+    case "empty_intent_followup": text = "The Network offered a public event search because a match was unavailable"; keep("reason"); break;
     default: break;
   }
   const memberId = subjectOf(row);

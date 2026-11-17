@@ -1,31 +1,53 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Builds the SKILL.md snapshots in the two plugins from the one source, sites/skills/<name>/SKILL.md.
 // Never edit a snapshot by hand: change the source, then run this. ChatGPT and Codex import the
 // skills when the plugin is submitted and do not fetch them again, so a change needs a new plugin version.
-//   bun run plugins/build.ts           write plugins/openai/skills and plugins/claude/skills
-//   bun run plugins/build.ts --check   exit 1 if a snapshot differs from a fresh build (tests run this)
+//   node --import tsx --env-file-if-exists=.env plugins/build.ts           write plugins/openai/skills and plugins/claude/skills
+//   node --import tsx --env-file-if-exists=.env plugins/build.ts --check   exit 1 if a snapshot differs from a fresh build (tests run this)
 //
 // The OpenAI plugin leaves out slop.date: OpenAI requires plugins that suit people aged 13-17
 // (developers.openai.com/plugins/plugin-guidelines). Its copy of the hub skill is cut down to the
 // other apps, and the build fails if "slop" or "dating" is left anywhere in plugins/openai.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { type Plugin, pluginEndpoint, pluginListsSkill, skillFor } from "../packages/core/src/generated/agentEntry.ts";
+import { type AppKey, appKeys, brandFor } from "../packages/core/src/generated/brandIdentity.ts";
 import { DEFAULT_BACKEND_ORIGIN, DEFAULT_TEXT_LINE } from "../sites/skills.config.ts";
 import { RESPONSE_STYLE } from "../sites/skill-responses.ts";
 
-const ROOT = import.meta.dir;
+const ROOT = import.meta.dirname;
 const SOURCE = join(ROOT, "..", "sites", "skills");
 
-export const SITE: Record<string, string> = { "ntwrk-party": "ntwrk.party", "slop-date": "slop.date", "peon-biz": "peon.biz", "friends-help": "friends.help" };
+/** Each skill name and the domain of its app (spec/brandIdentity.md:9). */
+export const SITE: Record<string, string> = Object.fromEntries(appKeys.map(app => [skillFor(app), brandFor(app).domain]));
 /** The one MCP endpoint of the OpenAI plugin (OpenAI allows one server per plugin). It never lists slop. */
 export const OPENAI_MCP_URL = "https://ntwrk.party/mcp/openai";
 /** Each site is its own MCP resource: a connection covers that one app. */
 export const siteMcpUrl = (skill: string) => `https://${SITE[skill]}/mcp`;
 
-export const PLUGINS = {
-  openai: { skills: ["ntwrk-party", "peon-biz", "friends-help"], mcpUrl: (_: string) => OPENAI_MCP_URL },
-  claude: { skills: ["ntwrk-party", "slop-date", "peon-biz", "friends-help"], mcpUrl: siteMcpUrl },
-} as const;
+/** The MCP URL of one listed skill, as the generated endpoint decision selects it (spec/agentEntry.md:9). */
+function endpointUrl(plugin: Plugin, app: AppKey): string {
+  const endpoint = pluginEndpoint(plugin, app);
+  if (endpoint === "SiteEndpoint") return siteMcpUrl(skillFor(app));
+  if (endpoint === "OpenAiEndpoint") return OPENAI_MCP_URL;
+  throw new Error(`${plugin} lists ${skillFor(app)} but has no MCP endpoint for it`);
+}
+
+/** The skills one plugin lists, in brand order, and the MCP URL of each (spec/agentEntry.md:9). */
+function pluginSkills(plugin: Plugin): { skills: string[]; mcpUrl: (skill: string) => string } {
+  const listed = appKeys.filter(app => pluginListsSkill(plugin, app));
+  const urls = new Map(listed.map(app => [skillFor(app), endpointUrl(plugin, app)]));
+  return {
+    skills: [...urls.keys()],
+    mcpUrl: skill => {
+      const url = urls.get(skill);
+      if (url === undefined) throw new Error(`${plugin} does not list ${skill}`);
+      return url;
+    },
+  };
+}
+
+export const PLUGINS = { openai: pluginSkills("OpenAiPlugin"), claude: pluginSkills("ClaudePlugin") };
 
 const fill = (text: string, mcpUrl: string) =>
   text.replaceAll("{{RESPONSE_STYLE}}", RESPONSE_STYLE.trim()).replaceAll("{{BACKEND_ORIGIN}}", DEFAULT_BACKEND_ORIGIN).replaceAll("{{MCP_URL}}", mcpUrl).replaceAll("{{TEXT_LINE}}", DEFAULT_TEXT_LINE);
@@ -98,6 +120,6 @@ if (import.meta.main) {
     const want = new Set(PLUGINS[plugin as keyof typeof PLUGINS].skills as readonly string[]);
     for (const d of existsSync(dir) ? readdirSync(dir) : []) if (!want.has(d)) stale.push(`${plugin}/skills/${d} (not in the plugin; delete it)`);
   }
-  if (stale.length) { console.error(`stale snapshots (run bun run plugins/build.ts):\n  ${stale.join("\n  ")}`); process.exit(1); }
+  if (stale.length) { console.error(`stale snapshots (run node --import tsx --env-file-if-exists=.env plugins/build.ts):\n  ${stale.join("\n  ")}`); process.exit(1); }
   if (check) console.log("plugin skill snapshots are up to date");
 }

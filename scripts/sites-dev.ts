@@ -1,7 +1,8 @@
+import { serveHttp } from "../packages/core/src/runtime/http.ts";
 // Local dev server for the four app sites (sites/*).
-//   bun run sites:dev                 all four: ntwrk 5101, slop 5102, peon 5103, friends 5104
-//   bun run sites:dev slop peon       only some
-// Each site is built with Bun's HTML bundler into sites/<domain>/dist and rebuilt on change.
+//   pnpm run sites:dev                 all four: ntwrk 5101, slop 5102, peon 5103, friends 5104
+//   pnpm run sites:dev slop peon       only some
+// Each site is prerendered by the shared React app into sites/<domain>/dist and rebuilt on change.
 // The backend paths of the production router (deploy/router.ts: /api/*, /mcp, /oauth/*,
 // /.well-known/oauth-*) are proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790), the
 // shared backend. With PLATFORM_PROXY_SECRET set (scripts/platform-dev.ts sets it) those paths run
@@ -9,10 +10,11 @@
 // the backend sees exactly the signed headers it sees in production. Without a secret (sites:dev alone,
 // against the legacy service on :8790) it sends X-Forwarded-Host: <site domain> instead. When the API is down, those paths answer 502 {ok:false, error:"api_unreachable"} and the
 // pages show an inline error. Nothing here sends a text message or calls a paid service.
+import { fileAt } from "../packages/core/src/runtime/files.ts";
 import { existsSync, statSync, watch } from "node:fs";
 import { join, normalize, sep } from "node:path";
-import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage } from "../deploy/router.ts";
-import { SECURITY_HEADERS, SITES, buildSite, site as findSite, type Site } from "../sites/sites.ts";
+import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage, updateHandoffPage } from "../deploy/router.ts";
+import { PAGE_FILES, SECURITY_HEADERS, SITES, buildSite, resetSiteApp, site as findSite, type Site } from "../sites/sites.ts";
 
 const HOP = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length", "accept-encoding"];
 /** Client-set IP headers are dropped: the backend never takes a rate-limit bucket from a header a browser sets. */
@@ -81,18 +83,24 @@ function file(outdir: string, pathname: string): { path: string; status: number 
     if (c === "_headers" || c === "_redirects") return null;
     const full = normalize(join(outdir, c));
     if (!full.startsWith(outdir + sep)) return null;
+    if (full === join(outdir, PAGE_FILES.UpdateHandoffPage)) return null;
     if (existsSync(full) && statSync(full).isFile()) return { path: full, status: 200 };
   }
   const nf = join(outdir, "404.html");
   return existsSync(nf) ? { path: nf, status: 404 } : null;
 }
 
-export function serveSite(s: Site, opts: DevOptions) {
+export async function serveSite(s: Site, opts: DevOptions) {
   const secret = opts.proxySecret ?? process.env.PLATFORM_PROXY_SECRET ?? undefined;
-  return Bun.serve({
+  return await serveHttp({
     port: opts.port,
     hostname: "127.0.0.1",
     async fetch(req) {
+      const handoff = await updateHandoffPage(req, s.app, async () => {
+        const template = join(opts.outdir, PAGE_FILES.UpdateHandoffPage);
+        return existsSync(template) ? new Response(await fileAt(template).blob()) : new Response(null, { status: 404 });
+      });
+      if (handoff) return handoff;
       const retired = retiredSitePage(req, s.app);
       if (retired) return retired;
       const url = new URL(req.url);
@@ -107,7 +115,7 @@ export function serveSite(s: Site, opts: DevOptions) {
       if (!f) return new Response("Not found", { status: 404 });
       const headers: Record<string, string> = { "cache-control": "no-store", ...SECURITY_HEADERS };
       if (f.path.endsWith(".md")) headers["content-type"] = "text/plain; charset=utf-8";
-      return new Response(Bun.file(f.path), { status: f.status, headers });
+      return new Response(await fileAt(f.path).blob(), { status: f.status, headers });
     },
   });
 }
@@ -122,19 +130,27 @@ if (import.meta.main) {
   const apiOrigin = (process.env.PLATFORM_API_ORIGIN ?? "http://127.0.0.1:8790").replace(/\/+$/, "");
   const wanted = process.argv.slice(2);
   const chosen = wanted.length ? wanted.map(findSite) : SITES;
-  const sitesDir = join(import.meta.dir, "../sites");
+  const sitesDir = join(import.meta.dirname, "../sites");
   for (const s of chosen) {
     const outdir = join(sitesDir, s.domain, "dist");
     await rebuild(s, outdir);
-    serveSite(s, { port: s.port, apiOrigin, outdir });
+    await serveSite(s, { port: s.port, apiOrigin, outdir });
     console.log(`[sites] ${s.domain.padEnd(12)} http://127.0.0.1:${s.port}  (api -> ${apiOrigin})`);
   }
-  // Rebuild on change. A change in sites/shared rebuilds every site.
+  // Rebuild on change. A change in the site app, the components, the design system or a skill
+  // builds the app again and rebuilds every site; a change in a site's own files rebuilds that site.
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const schedule = (s: Site) => {
     clearTimeout(timers.get(s.domain));
     timers.set(s.domain, setTimeout(() => void rebuild(s, join(sitesDir, s.domain, "dist")), 120));
   };
   for (const s of chosen) watch(s.src, { recursive: true }, () => schedule(s));
-  watch(join(sitesDir, "shared"), { recursive: true }, () => chosen.forEach(schedule));
+  const repo = join(import.meta.dirname, "..");
+  const shared = ["apps/site/src", "apps/site/index.html", "packages/ui/src", "packages/design-system/generated", "packages/core/src/generated", "sites/skills"];
+  for (const path of shared) {
+    watch(join(repo, path), { recursive: true }, () => {
+      resetSiteApp();
+      chosen.forEach(schedule);
+    });
+  }
 }

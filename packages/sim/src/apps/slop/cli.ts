@@ -1,6 +1,7 @@
 // Run the slop.date baselines over seeds and print the table used in
 // docs/results/2026-10-08-slop-world.md. No LLM calls.
-//   bun run packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
+import { writePath } from "../../../../core/src/runtime/files.ts";
 import { BASELINES } from "./baselines.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { runSlopWorld } from "./world.ts";
@@ -60,13 +61,13 @@ console.log(`|---|${only.map(() => "---:").join("|")}|`);
 for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${only.map(n => fmt(all[n]!.map(f), pct, d)).join(" | ")} |`);
 console.log("\nFairness by matching gender (dates per member-month, share with a date):");
 for (const n of only) {
-  const g = all[n]![0]!.fairness.byGender;
-  console.log(`  ${n}: ` + Object.keys(g).map(k => `${k} ${fmt(all[n]!.map(m => m.fairness.byGender[k]?.datesPerMemberMonth ?? 0), false, 3)} / ${fmt(all[n]!.map(m => m.fairness.byGender[k]?.shareWithDate ?? 0), true)}`).join("; "));
+  const keys = [...new Set(all[n]!.flatMap(m => Object.keys(m.fairness.byGender)))].sort();
+  console.log(`  ${n}: ` + keys.map(k => `${k} ${fmt(all[n]!.map(m => m.fairness.byGender[k]?.datesPerMemberMonth ?? 0), false, 3)} / ${fmt(all[n]!.map(m => m.fairness.byGender[k]?.shareWithDate ?? 0), true)}`).join("; "));
 }
 console.log("\nFairness by group (dates per member-month; n averaged):");
 for (const n of only) {
-  const keys = Object.keys(all[n]![0]!.fairness.byGroup);
+  const keys = [...new Set(all[n]!.flatMap(m => Object.keys(m.fairness.byGroup)))].sort();
   console.log(`  ${n}: ` + keys.map(k => `${k} (n≈${Math.round(mean(all[n]!.map(m => m.fairness.byGroup[k]?.n ?? 0)))}) ${mean(all[n]!.map(m => m.fairness.byGroup[k]?.datesPerMemberMonth ?? 0)).toFixed(3)}`).join("; "));
 }
 const out = arg("json");
-if (out) await Bun.write(out, JSON.stringify(all, null, 1));
+if (out) await writePath(out, JSON.stringify(all, null, 1));

@@ -2,11 +2,12 @@
 // S3-compatible stub in place of R2 (no real bucket, no network): the dump is encrypted before upload,
 // a public bucket is refused before anything is uploaded, a restore decrypts, restores with
 // --no-owner --no-privileges into a new database and never changes a role of the source server.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DEV_PG_PORT } from "../../packages/observatory/db/dev-pg.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../packages/observatory/test/pg.ts";
 import { backup, upload } from "./backup.ts";
@@ -20,11 +21,11 @@ const ADMIN = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_P
 const SCRATCH = `restore_test_${process.pid}`;
 
 /** A local S3-compatible bucket: PUT, GET, HEAD and DELETE by path (bucket/key). Signed requests always pass; an unsigned GET passes only when `public`. */
-function fakeBucket(bucket: string) {
+async function fakeBucket(bucket: string) {
   const objects = new Map<string, Uint8Array>();
   const state = { public: false, unsignedStatus: 403 };
   const signed = (req: Request) => !!req.headers.get("authorization") || new URL(req.url).searchParams.has("X-Amz-Signature");
-  const server = Bun.serve({
+  const server = await serveHttp({
     port: 0, hostname: "127.0.0.1",
     async fetch(req) {
       const u = new URL(req.url);
@@ -113,30 +114,30 @@ describe("backup encryption and the bucket check", () => {
   });
 
   test.skipIf(!pgAvailable)("a public bucket is refused before anything is uploaded", async () => {
-    const b = fakeBucket("ntwrk-backups-public");
+    const b = await fakeBucket("ntwrk-backups-public");
     b.state.public = true;
     try {
       const r = await backup({ url: src, outDir: join(dir, "public"), roles: false });
       const err = await upload(r.dir, r.manifest, "postgres/production/20261009T000000Z", b.env, backupKey(KEY)).then(() => "uploaded", e => String(e.message));
       expect(err).toMatch(/readable without credentials/);
       expect([...b.objects.keys()]).toEqual([]);
-    } finally { b.stop(); }
+    } finally { await b.stop(); }
   }, T);
 
   for (const status of [429, 503]) test.skipIf(!pgAvailable)(`an inconclusive privacy probe (HTTP ${status}) prevents backup upload`, async () => {
-    const b = fakeBucket(`ntwrk-backups-error-${status}`);
+    const b = await fakeBucket(`ntwrk-backups-error-${status}`);
     b.state.unsignedStatus = status;
     try {
       const r = await backup({ url: src, outDir: join(dir, `error-${status}`), roles: false });
       await expect(upload(r.dir, r.manifest, "postgres/production/20261009T000000Z", b.env, backupKey(KEY))).rejects.toThrow("privacy check inconclusive");
       expect([...b.objects.keys()]).toEqual([]);
-    } finally { b.stop(); }
+    } finally { await b.stop(); }
   }, T);
 });
 
 describe("backup and restore drill", () => {
   test.skipIf(!pgAvailable)("encrypted upload; download decrypts; restore into a new database with --no-owner --no-privileges; no role on the server changes", async () => {
-    const b = fakeBucket("ntwrk-backups");
+    const b = await fakeBucket("ntwrk-backups");
     const prefix = "postgres/production/20261009T071500Z";
     try {
       const r = await backup({ url: src, outDir: join(dir, "bk") });
@@ -157,7 +158,7 @@ describe("backup and restore drill", () => {
       expect(await download(prefix, wrong, { ...b.env, BACKUP_ENCRYPTION_KEY: "y".repeat(40) }).then(() => "ok", e => String(e.message))).toMatch(/not the key/);
       await rm(wrong, { recursive: true, force: true });
       const dl = join(dir, "dl");
-      await Bun.$`mkdir -p ${dl}`.quiet();
+      await mkdir(dl, { recursive: true });
       await download(prefix, dl, { ...b.env, BACKUP_ENCRYPTION_KEY: KEY });
       expect((await readFile(join(dl, "db.dump"))).subarray(0, 5).toString()).toBe("PGDMP");
 
@@ -177,6 +178,6 @@ describe("backup and restore drill", () => {
         const [{ n }] = await s`select count(*)::int as n from network.members where name like ${`${CANARY}%`}`;
         expect(n).toBe(4);
       } finally { await s.close(); }
-    } finally { b.stop(); }
+    } finally { await b.stop(); }
   }, T);
 });

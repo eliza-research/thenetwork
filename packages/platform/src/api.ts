@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The public API that the four sites call at same-origin /api/* (platform plan 3.3, option A).
 // Responses never name or reveal another app, and /api/auth/otp/start answers the same body, after
 // at least the same time, whether or not the phone is known.
@@ -9,14 +10,19 @@
 //  - Anything else: the Host header picks the app (production names only outside dev) and the socket
 //    address is the client. A header a client sets never picks the app or the rate-limit bucket.
 //
-// Mount it in any Bun.serve fetch:
+// Mount it in any serveHttp fetch:
 //   const api = createPublicApi({ store, otp, turnstile });
-//   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
+//   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
-import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
+import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
+import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
-  cloudIssuedAtWithinSkew, cloudSessionStartedAt, initial as cloudSignInInitial, liveBeforeDeadline, step as stepCloudSignIn,
-} from "../../core/src/generated/cloudSignIn.ts";
+  type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCachePublication,
+  grantExpiresAt, grantResourceMatches, initial as authorityInitial, step as stepAuthority,
+} from "../../core/src/generated/cloudAuthority.ts";
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
@@ -31,6 +37,26 @@ import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
 import type { PhotoRelayService } from "./photo-relay.ts";
+
+type CloudStatus = "valid" | "invalid" | "unavailable";
+const cloudResponse: Record<CloudStatus, CloudResponse> = { valid: "CloudAccepted", invalid: "CloudDenied", unavailable: "CloudUnavailable" };
+function authorityStatus(check: AuthorityCheck): CloudStatus {
+  if (check.phase === "AuthorityValid") return "valid";
+  return check.phase === "AuthorityUnavailable" ? "unavailable" : "invalid";
+}
+
+function readJoinPrefill(input: unknown) {
+  if (typeof input !== "object" || input === null) return;
+  const firstName = "firstName" in input && typeof input.firstName === "string" ? input.firstName.slice(0, fragmentNameMax) : "";
+  const ageText = "age" in input && typeof input.age === "string" ? input.age : "";
+  const age = fragmentAgeAccepted(/^\d+$/.test(ageText), ageText.length, Number(ageText)) ? ageText : "";
+  const viaAgent = "viaAgent" in input && input.viaAgent === true;
+  if (firstName || age || viaAgent) return { firstName, age, viaAgent };
+}
+
+export type HomeHelpVenueRequest = { id: string; revision: number } & (
+  { action: "submit"; address: string } | { action: "reveal" | "revoke" }
+);
 
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
@@ -65,6 +91,9 @@ export interface PublicApiOptions extends AccountHooks {
   photos?: PhotoService;
   /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
   photoRelay?: PhotoRelayService;
+  /** Private home-help address for the current approved revision. Use the verified app session only. */
+  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
+  calendarInvite?: (app: AppInfo, code: string) => Promise<Response>;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
    * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
@@ -84,7 +113,7 @@ export interface PublicApiOptions extends AccountHooks {
 import type { MemberParticipation } from "./public-types.ts";
 export type { MemberParticipation } from "./public-types.ts";
 
-/** What Bun.serve passes as the second fetch argument: the socket address of the request. */
+/** What serveHttp passes as the second fetch argument: the socket address of the request. */
 export interface PeerInfo { requestIP(req: Request): { address: string } | null }
 
 export interface PublicApi {
@@ -94,7 +123,7 @@ export interface PublicApi {
   cloudAuthorityRequired(app: AppId): boolean;
   cloudGrantAuthority(app: AppId, req: Request, resource: string): Promise<CloudGrantAuthority | "unavailable" | undefined>;
   validateCloudGrant(grant: { app: AppId; resource: string; phoneKey: string; personId: string | null; cloudAuthority?: CloudGrantAuthority | null }): Promise<"valid" | "invalid" | "unavailable">;
-  /** The answer for an /api/* request, or undefined for any other path. Pass the Bun server for the socket address. */
+  /** The answer for an /api/* request, or undefined for any other path. Pass the HTTP server for the socket address. */
   fetch(req: Request, server?: PeerInfo): Promise<Response | undefined>;
   accounts: Accounts;
   otp: OtpService;
@@ -196,17 +225,17 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
-  const sessions = new SessionService(o.store, { now, secret: sessionSecret });
+  const sessions = new SessionService(o.store, { now, secret: sessionSecret, phoneHash: e164 => accounts.phoneHash(e164) });
   const cookieName = (app: AppId) => (dev ? `sid_${app}` : "__Host-sid");
   const cookie = (app: AppId, token: string, maxAge: number) =>
     `${cookieName(app)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${dev ? "" : "; Secure"}`;
 
   const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...headers } });
-  const pad = async (t0: number, min: number) => { const left = min - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
+  const pad = async (t0: number, min: number) => { const left = min - (performance.now() - t0); if (left > 0) await waitForMs(left); };
 
   /** The JSON object body, "too_large" over 16 KB, or undefined when it is not a JSON object. */
   async function body(req: Request): Promise<Record<string, unknown> | "too_large" | undefined> {
@@ -224,7 +253,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // HMAC, and each carries its kind as associated data: a pending cookie is never accepted as an identity,
   // and the browser never sees the phone number or the Cloud ids inside.
   const sealKey = createHash("sha256").update(`cloud-seal:${sessionSecret}`).digest();
-  type SealKind = "cloud-pending" | "cloud-identity" | "cloud-grant";
+  type SealKind = "cloud-pending" | "cloud-identity" | "cloud-grant" | "cloud-join-prefill";
   const seal = (kind: SealKind, value: unknown) => {
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", sealKey, iv);
@@ -249,41 +278,82 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // this keeps the cookies safe if the gate is ever widened.
   const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
   const cloudReturnPath = (path: unknown): path is string => path === "/join" || oauthReturnPath(path);
-  const startCloudHandoff = async (app: AppId, returnPath: string) => {
+  const startCloudHandoff = async (app: AppId, returnPath: string, prefill?: ReturnType<typeof readJoinPrefill>) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
     const challenge=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier));
-    const value=seal("cloud-pending",{app,state,verifier,returnPath,until:now()+300_000});
+    const receipt = prefill ? randomBytes(16).toString("hex") : undefined;
+    const value=seal("cloud-pending",{app,state,verifier,returnPath,until:now()+300_000,prefill,receipt});
     const authorize=new URL("/network/sign-in",cloud.loginOrigin);
     if(productionCloud){authorize.searchParams.set("app",app);authorize.searchParams.set("realm",cloudRealm);}else authorize.searchParams.set("networkSite",cloud.siteOrigin);
     authorize.searchParams.set("state",state);authorize.searchParams.set("challenge",Buffer.from(challenge).toString("hex"));
     const name=dev?`cloud_pending_${app}`:"__Secure-cloud_pending";
-    return {url:authorize.href,setCookie:`${name}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=300${dev?"":"; Secure"}`};
+    return {url:authorize.href,receipt,setCookie:`${name}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=300${dev?"":"; Secure"}`};
   };
+  function parseCloudIdentity(input: unknown) {
+    if (typeof input !== "object" || input === null) return;
+    const claims: Record<string, unknown> = { ...input };
+    const { userId, organizationId, e164, expiresAt, stewardUserId, issuedAt } = claims;
+    if (typeof userId !== "string" || !userId || typeof organizationId !== "string" || !organizationId
+      || typeof e164 !== "string" || normalizePhone(e164) !== e164
+      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)
+      || typeof stewardUserId !== "string" || !stewardUserId
+      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt)
+      || !cloudIdentityTimesValid(issuedAt * 1000, expiresAt, now())) return;
+    return { ...claims, e164, issuedAt, expiresAt };
+  }
   const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
   const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${dev ? "" : "; Secure"}`;
-  // A positive Cloud validation is reused for 60 seconds per session, so a Cloud blip or a page load does not
-  // cost a round trip on every request. A denial is never cached.
+  const joinPrefillName = dev ? "cloud_join_prefill_peon" : "__Secure-cloud_join_prefill";
+  const joinPrefillCookie = (value: string, age: number) => `${joinPrefillName}=${value}; Path=/api/me; HttpOnly; SameSite=Strict; Max-Age=${age}${dev ? "" : "; Secure"}`;
+  // Non-production can reuse positive validations for 60 seconds per session.
   const VALIDATION_TTL_MS = o.cloudValidationTtlMs ?? 60_000;
   const validated = new Map<string, number>();
-  async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<"valid" | "invalid" | "unavailable"> {
+  const validationRounds = new Map<string, { pending: number }>();
+  function clearCloudValidation(sessionHash: string) {
+    validated.delete(sessionHash);
+    validationRounds.delete(sessionHash);
+  }
+  function publishCloudValidation(sessionHash: string, until: number) {
+    if (validated.size > 10_000) validated.clear();
+    validated.set(sessionHash, until);
+  }
+  async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<CloudStatus> {
     const cloud = cloudFor(app);
-    if (!cloud) return token.startsWith("cloud.") ? "invalid" : "valid";
+    if (!cloud) return authorityStatus(stepAuthority(authorityInitial, {type: "useLocalSession", cloudToken: token.startsWith("cloud.")}));
     const identity = unseal("cloud-identity", jar.get(identityName(app)));
     const sessionHash = tokenHash(token, sessionSecret);
-    if (!identity || identity.app !== app || identity.sessionHash !== sessionHash
-      || typeof identity.expiresAt !== "number" || identity.expiresAt <= now()) { validated.delete(sessionHash); return "invalid"; }
-    if (!productionCloud && (validated.get(sessionHash) ?? 0) > now()) return "valid";
+    const bindingValid = !!identity && identity.app === app && identity.sessionHash === sessionHash;
+    const expiresAt = identity?.expiresAt;
+    const proofLive = bindingValid && typeof expiresAt === "number" && !(expiresAt <= now());
+    const check = stepAuthority(authorityInitial, {
+      type: "checkSiteProof", bindingValid, proofLive, productionCloud,
+      cacheLive: proofLive && !productionCloud && (validated.get(sessionHash) ?? 0) > now(),
+    });
+    if (check.fromCache) return authorityStatus(check);
+    if (!canFinishCloudCheck(check) || !identity || typeof expiresAt !== "number") {
+      clearCloudValidation(sessionHash);
+      return "invalid";
+    }
+    const round = productionCloud ? undefined : validationRounds.get(sessionHash) ?? { pending: 0 };
+    if (round) {
+      round.pending++;
+      validationRounds.set(sessionHash, round);
+    }
     const {kind: _kind, ...proof} = identity;
-    const status = await validate(cloud, proof);
-    if(identity.expiresAt<=now()){validated.delete(sessionHash);return "invalid";}
-    if (status === "valid") {
-      if (validated.size > 10_000) validated.clear();
-      validated.set(sessionHash, now() + VALIDATION_TTL_MS);
-    } else validated.delete(sessionHash);
-    return status;
+    try {
+      const answer = cloudResponse[await validate(cloud, proof)];
+      const at = now();
+      const status = authorityStatus(stepAuthority(check, {type: "finishCloudCheck", answer, proofLive: expiresAt > at}));
+      const publication = cloudCachePublication(productionCloud, status === "valid", !!round && validationRounds.get(sessionHash) === round);
+      if (publication === "PublishCloudValidation") publishCloudValidation(sessionHash, at + VALIDATION_TTL_MS);
+      else if (publication === "ClearCloudValidation") clearCloudValidation(sessionHash);
+      return status;
+    } finally {
+      if (round && --round.pending === 0 && validationRounds.get(sessionHash) === round) validationRounds.delete(sessionHash);
+    }
   }
-  async function validate(cloud: NonNullable<typeof cloudAuth>, identity: Record<string, unknown>): Promise<"valid" | "invalid" | "unavailable"> {
+  async function validate(cloud: NonNullable<typeof cloudAuth>, identity: Record<string, unknown>): Promise<CloudStatus> {
     if (productionDelegation) return productionDelegation.validate(identity.app as AppId, identity);
     try {
       const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-validate`, {
@@ -328,12 +398,16 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if (a.token.startsWith("cloud.")) {
         const {kind: _kind, ...identity} = unseal("cloud-identity", cookies.get(identityName(appId)))!;
         const sessionHash = tokenHash(a.token, sessionSecret);
-        validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+        const previousUntil = a.session.rotatedFrom ? validated.get(a.session.rotatedFrom) : undefined;
+        if (!productionCloud && previousUntil !== undefined && previousUntil > now()) publishCloudValidation(sessionHash, previousUntil);
         response.headers.append("set-cookie", identityCookie(appId, seal("cloud-identity", {...identity, sessionHash}), age));
       }
     };
     const post = req.method === "POST";
     if (!post && req.method !== "GET") return json(405, { ok: false, error: "method" });
+    if (!post && url.pathname === calendarInvitePath && o.calendarInvite) {
+      return o.calendarInvite(app, url.searchParams.get("code") ?? "");
+    }
     const photoPath = url.pathname.replace(/\/+$/, "");
     if (o.photoRelay && photoPath.startsWith("/api/relay-photos/")) {
       if (post) {
@@ -346,7 +420,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       let authenticated: Awaited<ReturnType<typeof auth>>;
       const response = await o.photoRelay.route(req, photoPath, appId, async () => {
         authenticated = await auth();
-        return authenticated?.session.personId ? { personId: authenticated.session.personId, accountView: signupAccountView(appId, accounts.phoneHash(authenticated.session.e164)) } : undefined;
+        return authenticated?.session.personId ? { personId: authenticated.session.personId,
+          accountView: signupAccountView(appId, accounts.phoneHash(authenticated.session.e164), authenticated.session.personId) } : undefined;
       });
       if (response) { if (authenticated) rotatedCookies(response, authenticated); return response; }
     }
@@ -406,70 +481,68 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
           : null;
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
-        const handoff=await startCloudHandoff(appId,returnPath);
+        const handoff=await startCloudHandoff(appId,returnPath,appId === "peon" ? readJoinPrefill(b.prefill) : undefined);
         if(!handoff)return json(404,{ok:false,error:"not_found"});
-        return json(200,{url:handoff.url},{"set-cookie":handoff.setCookie});
+        return json(200,{url:handoff.url,receipt:handoff.receipt},{"set-cookie":handoff.setCookie});
       }
       case "GET /api/auth/cloud/callback": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const pending = unseal("cloud-pending", cookies.get(pendingName));
-        const bound = !!pending && pending.app === appId && pending.state === url.searchParams.get("state") && typeof pending.verifier === "string";
-        const pendingLive = bound && typeof pending.until === "number" && liveBeforeDeadline(now(), pending.until);
+        const verifier = pending?.verifier;
         const returnPath = pending?.returnPath;
-        const allowedReturnPath = cloudReturnPath(returnPath);
         const code = url.searchParams.get("code");
-        const handoff = stepCloudSignIn(cloudSignInInitial, {
-          type: "checkHandoff",
-          handoffFacts: {
-            bindingValid: bound && allowedReturnPath,
-            pendingLive,
-            codeWellFormed: !!code && /^enso_[0-9a-f]{64}$/.test(code),
-          },
-        });
-        if (handoff.phase !== "AwaitingExchange" || !allowedReturnPath || !pending || typeof pending.verifier !== "string" || !code) return reject(400);
+        const bound = pending?.app === appId && pending.state === url.searchParams.get("state") && typeof verifier === "string";
+        const allowedReturnPath = cloudReturnPath(returnPath);
+        const handoff = allowedReturnPath && typeof verifier === "string" && code ? { verifier, code, returnPath } : undefined;
         try {
-          let identity: Record<string, any> | undefined;
-          let exchangeAccepted: boolean;
-          if (productionDelegation) {
-            const delegated = await productionDelegation.exchange(appId, code, pending.verifier);
-            exchangeAccepted = delegated !== undefined;
-            if (delegated) identity = { ...delegated, identity: Object.fromEntries(Object.entries(delegated).filter(([key]) => key !== "proof")) };
-          } else {
-            const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-exchange`, {
-              method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
-              body: JSON.stringify({code, codeVerifier: pending.verifier}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
-            }));
-            exchangeAccepted = response.ok && !response.redirected;
-            if (exchangeAccepted) identity = await response.json() as Record<string, any>;
-          }
-          const exchanged = stepCloudSignIn(handoff, { type: "recordExchange", exchangeAccepted });
-          if (exchanged.phase !== "AwaitingIdentity") return reject(403);
-          if (identity == null) return reject(503);
-          const identityValid = typeof identity.userId === "string" && !!identity.userId && typeof identity.organizationId === "string" && !!identity.organizationId
-            && normalizePhone(identity.e164) === identity.e164 && typeof identity.e164 === "string" && typeof identity.expiresAt === "number" && Number.isFinite(identity.expiresAt) && liveBeforeDeadline(now(), identity.expiresAt)
-            && typeof identity.stewardUserId === "string" && !!identity.stewardUserId && typeof identity.issuedAt === "number"
-            && Number.isSafeInteger(identity.issuedAt) && identity.issuedAt > 0 && cloudIssuedAtWithinSkew(identity.issuedAt * 1000, now());
-          const checked = stepCloudSignIn(exchanged, { type: "checkIdentity", identityValid });
-          if (checked.phase !== "AwaitingPhone") return reject(403);
-          const phoneAllowed = !(await accounts.held(identity.e164) || await accounts.banned(identity.e164) || await o.store.isSuppressed(accounts.phoneHash(identity.e164)));
-          const eligible = stepCloudSignIn(checked, { type: "checkPhone", phoneAllowed });
-          if (eligible.phase !== "AwaitingSession") return reject(403);
-          await sessions.revoke(cookies.get(cookieName(appId)));
-          await accounts.seen(identity.e164);
-          const person = await accounts.personFor(identity.e164);
-          // A Cloud clock slightly ahead never makes the session start in the future.
-          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, cloudSessionStartedAt(identity.issuedAt * 1000, now()), identity.expiresAt, true);
-          const issued = stepCloudSignIn(eligible, { type: "recordSession" });
-          if (issued.phase !== "SignedIn") return reject(503);
+          const result = await completeCloudSignIn({
+            bindingValid: bound && allowedReturnPath,
+            pendingLive: bound && typeof pending.until === "number" && liveBeforeDeadline(now(), pending.until),
+            codeWellFormed: !!code && /^enso_[0-9a-f]{64}$/.test(code),
+          }, handoff, {
+            exchange: async ({ code, verifier }) => {
+              if (productionDelegation) {
+                const delegated = await productionDelegation.exchange(appId, code, verifier);
+                if (!delegated) return { accepted: false };
+                const { proof: _proof, ...identity } = delegated;
+                return { accepted: true, claims: { ...delegated, identity } };
+              }
+              const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-exchange`, {
+                method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
+                body: JSON.stringify({code, codeVerifier: verifier}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
+              }));
+              if (!response.ok || response.redirected) return { accepted: false };
+              return { accepted: true, claims: await response.json() };
+            },
+            parseIdentity: parseCloudIdentity,
+            phoneAllowed: async e164 => !(await accounts.held(e164) || await accounts.banned(e164) || await o.store.isSuppressed(accounts.phoneHash(e164))),
+            endPreviousSession: () => sessions.revoke(cookies.get(cookieName(appId))),
+            recordPhoneSeen: e164 => accounts.seen(e164),
+            findPersonId: async e164 => (await accounts.personFor(e164))?.id ?? null,
+            createSession: (identity, personId) => sessions.create(
+              appId, identity.e164, personId, null, cloudSessionStartedAt(identity.issuedAt * 1000, now()), identity.expiresAt, true,
+            ),
+          });
+          if (result.status !== 303) return reject(result.status);
+          const { identity, session: { token, session } } = result;
           const age = Math.max(0, Math.floor((session.expiresAt-now())/1000));
           const sessionHash = tokenHash(token, sessionSecret);
-          validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+          if (!productionCloud) publishCloudValidation(sessionHash, now() + VALIDATION_TTL_MS);
           const delegatedIdentity = seal("cloud-identity", {...identity, app: appId, sessionHash});
-          const responseHeaders = new Headers({location: returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
+          const responseHeaders = new Headers({location: result.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
           responseHeaders.append("set-cookie", pendingCookie("", 0));
           responseHeaders.append("set-cookie", cookie(appId, token, age));
           responseHeaders.append("set-cookie", identityCookie(appId, delegatedIdentity, age));
+          if (appId === "peon" && result.returnPath === "/join" && typeof pending?.receipt === "string" && typeof pending.until === "number") {
+            const prefill = readJoinPrefill(pending.prefill);
+            const until = Math.min(pending.until, session.expiresAt);
+            const at = now();
+            if (prefill && liveBeforeDeadline(at, until)) {
+              const value = seal("cloud-join-prefill", { app: appId, sessionHash, receipt: pending.receipt, until, prefill });
+              responseHeaders.append("set-cookie", joinPrefillCookie(value, Math.ceil((until - at) / 1000)));
+            }
+          }
           return new Response(null, {status: 303, headers: responseHeaders});
         } catch { return reject(503); }
       }
@@ -529,20 +602,62 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return response;
       }
 
-      case "GET /api/me":
+      case "POST /api/home-help/venue": {
+        const venue = o.homeHelpVenue;
+        if (!venue) return json(404, { ok: false, error: "not_found" });
         return withSession(async who => {
+          const { action, id, revision, address } = b;
+          if ((action !== "submit" && action !== "reveal" && action !== "revoke")
+            || typeof id !== "string" || id.length === 0 || id.length > 36
+            || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 2_147_483_647
+            || ("app" in b && b.app !== appId)
+            || Object.keys(b).some(key => key !== "action" && key !== "id" && key !== "revision" && key !== "app" && !(key === "address" && action === "submit"))) {
+            return json(400, { ok: false, error: "invalid" });
+          }
+          let input: HomeHelpVenueRequest;
+          if (action === "submit") {
+            if (typeof address !== "string") return json(400, { ok: false, error: "invalid" });
+            input = { action, id, revision, address };
+          } else input = { action, id, revision };
+          try {
+            const result = await venue(app, who, input);
+            return result ? json(200, { ok: true, ...result }) : json(409, { ok: false, error: "home_help_venue_unavailable" });
+          } catch {
+            return json(503, { ok: false, error: "home_help_venue_unavailable" });
+          }
+        });
+      }
+
+      case "GET /api/me":
+        return withSession(async (who, authenticated) => {
           const c = await accounts.canJoin(app, who);
+          const currentPerson = c.person?.id ?? null;
+          if (c.reason !== "review" && who.personId !== null && who.personId !== currentPerson)
+            return json(401, { ok: false, error: "unauthorized" });
           const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
           const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           const home = live && o.home && (who.personId === null || who.personId === live.personId)
             ? await o.home({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
-          return json(200, {
-            app: appId, ...(["ntwrk", "friends"].includes(appId) && c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164)) } : {}), phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
+          const receipt = req.headers.get("x-ntwrk-join-receipt");
+          const carry = appId === "peon" && receipt ? unseal("cloud-join-prefill", cookies.get(joinPrefillName)) : null;
+          const receiptMatches = !!carry && receipt === carry.receipt;
+          const joinPrefill = carry && typeof carry.until === "number" && cloudJoinPrefillCanRead(
+            c.canJoin && carry.app === appId, receiptMatches, carry.sessionHash === authenticated.session.tokenHash, now(), carry.until,
+          ) ? readJoinPrefill(carry.prefill) : undefined;
+          const response = json(200, {
+            app: appId, ...(c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164), currentPerson) } : {}),
+            phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
             ...(participation ? { participation } : {}),
             ...(home ? { home } : {}),
+            ...(joinPrefill ? { joinPrefill } : {}),
           });
+          if (receiptMatches) {
+            response.headers.append("set-cookie", joinPrefillCookie("", 0));
+            rotatedCookies(response, authenticated);
+          }
+          return response;
         });
 
       case "POST /api/me/home":
@@ -573,17 +688,23 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return withSession(async who => {
           // Updated forms bind the reviewed fields to the displayed account. Check before
           // recording age, creating a person or accepting consent; another tab may change cookies.
+          const markerSupplied = b.signupView !== undefined;
+          const personId = who.personId ?? (markerSupplied ? (await accounts.personFor(who.e164))?.id ?? null : null);
+          const markerMatches = markerSupplied && b.signupView === signupAccountView(appId, accounts.phoneHash(who.e164), personId);
           const accountView = stepEnrollment(enrollmentInitial, {
             type: "checkAccountView",
-            viewMatches: b.signupView === undefined || b.signupView === signupAccountView(appId, accounts.phoneHash(who.e164)),
+            viewMatches: signupAccountViewMatches(markerSupplied, markerMatches),
           });
           if (accountView.phase === "AccountChanged")
             return json(409, { ok: false, error: "account_changed" });
           const input = parseJoin(b);
           const enrollment = stepEnrollment(accountView, { type: "decodeProfile", decoded: input !== undefined });
           if (!input || enrollment.phase !== "AwaitingConsent") return json(400, { ok: false, error: "invalid" });
+          if (b.inviteToken !== undefined && typeof b.inviteToken !== "string")
+            return json(400, { ok: false, error: "invalid_invitation" });
           try {
-            const r = await accounts.join(app, who, input, enrollment);
+            const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined);
+            if (!r.ok && r.error === "account_changed") return json(409, { ok: false, error: r.error });
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {
@@ -658,12 +779,13 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/me/delete":
         return withSession(async (who, a) => {
           if ((b.scope === "app" || b.scope === "all") && (await accounts.held(who.e164))) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
-          if (b.scope === "app") { await accounts.leave(app, who); return json(200, { ok: true }); }
+          if (b.scope === "app") return await accounts.leave(app, who) ? json(200, { ok: true })
+            : json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
           if (b.scope === "all") {
             // Step-up: a cookie from an older login cannot delete everything. A Cloud session starts at the Cloud
             // phone proof's issuedAt, so a new Cloud sign-in (the site's reauth path) is the fresh step-up there.
             if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
-            await accounts.deleteAll(who);
+            if (!await accounts.deleteAll(who)) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
             return json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
           }
           return json(400, { ok: false, error: "invalid" });
@@ -688,7 +810,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       return sessions.authenticate(app,token,false);
     },
     async cloudGrantAuthority(app,req,resource) {
-      if(!productionCloud || ![`${cloudSites[app]}/mcp`,`${cloudSites[app]}/mcp/openai`].includes(resource))return;
+      if(!grantResourceMatches(productionCloud,resource,`${cloudSites[app]}/mcp`,`${cloudSites[app]}/mcp/openai`))return;
       const jar=parseCookies(req.headers.get("cookie")),token=jar.get(cookieName(app));
       if(!token)return;
       const status=await cloudSessionStatus(app,jar,token);
@@ -697,25 +819,40 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const session=await sessions.authenticate(app,token,false),identity=unseal("cloud-identity",jar.get(identityName(app)));
       if(!session || !identity || !Number.isSafeInteger(identity.expiresAt) || typeof identity.issuedAt!=="number")return;
       const authority={version:1 as const,app,resource,phoneKey:accounts.phoneHash(session.session.e164),issuedAt:identity.issuedAt,
-        expiresAt:Math.min(session.session.expiresAt,identity.expiresAt as number)};
+        expiresAt:grantExpiresAt(session.session.expiresAt,identity.expiresAt as number)};
       return {...authority,sealed:seal("cloud-grant",{...authority,delegation:identity})};
     },
     async validateCloudGrant(grant) {
       const authority=grant.cloudAuthority;
-      if(!productionDelegation || !authority || authority.version!==1 || authority.app!==grant.app || authority.resource!==grant.resource
-        || authority.phoneKey!==grant.phoneKey || !Number.isSafeInteger(authority.issuedAt) || authority.issuedAt*1000>now()
-        || !Number.isSafeInteger(authority.expiresAt) || authority.expiresAt<=now()
-        || typeof authority.sealed!=="string" || authority.sealed.length>16000)return "invalid";
+      if (!productionDelegation || !authority) return "invalid";
+      const envelope = stepAuthority(authorityInitial, {
+        type: "checkGrantEnvelope",
+        envelopeValid: authority.version===1 && authority.app===grant.app && authority.resource===grant.resource
+          && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && !(authority.issuedAt*1000>now())
+          && Number.isSafeInteger(authority.expiresAt)
+          && typeof authority.sealed==="string" && authority.sealed.length<=16000,
+        grantLive: !(authority.expiresAt<=now()),
+      });
+      if (!canCheckGrantDelegation(envelope)) return authorityStatus(envelope);
       const value=unseal("cloud-grant",authority.sealed);
-      if(!value || ["version","app","resource","phoneKey","issuedAt","expiresAt"].some(key=>value[key]!==authority[key as keyof CloudGrantAuthority])
-        || !value.delegation || typeof value.delegation!=="object")return "invalid";
-      const delegation=value.delegation as Record<string,unknown>;
-      if(typeof delegation.e164!=="string" || accounts.phoneHash(delegation.e164)!==grant.phoneKey)return "invalid";
+      const sealedFieldsMatch = !!value && ["version","app","resource","phoneKey","issuedAt","expiresAt"]
+        .every(key=>value[key]===authority[key as keyof CloudGrantAuthority]);
+      const delegation = sealedFieldsMatch && value.delegation && typeof value.delegation === "object"
+        ? value.delegation as Record<string, unknown> : undefined;
+      const phone = delegation?.e164;
+      const bound = stepAuthority(envelope, {
+        type: "checkGrantDelegation", delegationBound: typeof phone === "string" && accounts.phoneHash(phone) === grant.phoneKey,
+      });
+      if (!canCheckGrantOwner(bound) || !delegation || typeof phone !== "string") return authorityStatus(bound);
       const owner=await accounts.byPhoneHash(grant.phoneKey);
-      if((grant.personId!==null && grant.personId!==owner?.person.id) || await accounts.held(delegation.e164) || await accounts.banned(delegation.e164)
-        || await o.store.isSuppressed(grant.phoneKey))return "invalid";
-      const status=await productionDelegation.validate(grant.app,value.delegation as Record<string,unknown>);
-      return now()<authority.expiresAt?status:"invalid";
+      const owned = stepAuthority(bound, {
+        type: "checkGrantOwner",
+        ownerCurrent: grant.personId === null || grant.personId === owner?.person.id,
+        phoneEligible: !await accounts.held(phone) && !await accounts.banned(phone) && !await o.store.isSuppressed(grant.phoneKey),
+      });
+      if (!canFinishCloudCheck(owned)) return authorityStatus(owned);
+      const answer = cloudResponse[await productionDelegation.validate(grant.app, delegation)];
+      return authorityStatus(stepAuthority(owned, {type: "finishCloudCheck", answer, proofLive: now() < authority.expiresAt}));
     },
     async fetch(req: Request, server?: PeerInfo) {
       const url = new URL(req.url);

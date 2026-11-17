@@ -38,9 +38,21 @@ pure def lawVouchCapacityIsBounded(good: int, lost: int, base: int, perGood: int
     vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) <= maximum)
 ```
 
+### Vouch capacity counts only the vouches and stakes of its rolling period
+
+The capacity is a rate per rolling period. The default period is thirty days. A good vouch or a lost stake counts only when its time is after the period start and not after the evaluation time. An entry exactly one period old no longer counts. So a lost stake lowers the allowance for one period, not for good, and an old good vouch does not raise it for good. The shell converts the configured days to milliseconds and counts the entries for which this check holds.
+
+```quint
+pure def vouchInPeriod(entryAt: int, asOf: int, periodMs: int): bool =
+  entryAt > asOf - periodMs and entryAt <= asOf
+
+pure def lawVouchPeriodDropsOldEntries(entryAt: int, asOf: int, periodMs: int): bool =
+  entryAt <= asOf - periodMs implies not(vouchInPeriod(entryAt, asOf, periodMs))
+```
+
 ### Earned organizing reach reserves the extra slots for low exposure
 
-The configured maximum caps the total reach. Slots above the baseline are reserved for members with low exposure. The shell computes completed session bands and applies any active abuse or fraud lock.
+The configured maximum caps the total reach. Slots above the baseline are reserved for members with low exposure. A candidate takes a reserved slot only while a slot is left and the candidate's seat fits. A candidate whose seat does not fit is skipped and uses no slot. The shell computes completed session bands, applies any active abuse or fraud lock, and considers eligible candidates in order of least recent participation. For a Friends crew session, the shell finds that a seat fits only when the candidate has no block or avoid rule with each retained crew member and each candidate already added, and `currentFriendPlanSeatFits` ([plan decisions](planDecision.md)) holds for the candidate's current Friend pair values with them.
 
 ```quint
 type ReachAllowance = { max: int, reservedForLowExposure: int }
@@ -49,4 +61,18 @@ pure def reachFromBands(bands: int, base: int, perBand: int, maximum: int): Reac
   val reach = base + bands * perBand
   val capped = if (reach < maximum) reach else maximum
   { max: capped, reservedForLowExposure: if (capped > base) capped - base else 0 }
+
+pure def organizingReachSeatTaken(added: int, extra: int, seatFits: bool): bool = added < extra and seatFits
+
+pure def lawReachUsesOnlyReservedSlots(added: int, extra: int, seatFits: bool): bool =
+  organizingReachSeatTaken(added, extra, seatFits) implies added + 1 <= extra
+```
+
+### Capital never makes an incompatible candidate eligible
+
+Effort tiers and organizing reach change only how much work the Network does for the member and how many invitations a plan can carry. The shell uses the effort tier only for the effort settings of the member's own requests (judge depth, research depth and plan-building options), never for the pair gate or the pair value. A reserved reach slot still needs a seat that fits, so no amount of reach seats a candidate whose seat does not fit.
+
+```quint
+pure def lawReachNeverSeatsAnIncompatibleCandidate(added: int, extra: int): bool =
+  not(organizingReachSeatTaken(added, extra, false))
 ```

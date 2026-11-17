@@ -34,7 +34,7 @@ The game is the simulator made playable. You can play the Network (matchmaker), 
  Postgres ──┤  sources/real.ts (network.* rows -> ObsState; shadow    │
  network.*  │                   engine runs; read-only, PII scrubbed) │
             │      │                                                  │
-            │  server.ts  Bun.serve: REST + WebSocket deltas + client │
+            │  server.ts  HTTP: REST + WebSocket deltas + client │
             │      │                                                  │
             │  web/  React: NYC map (Leaflet) + force graph (d3-force)│
             └──────────────────────────────────────────────────────────┘
@@ -144,24 +144,24 @@ All times are New York time. Controls follow the staff role (section 9): a contr
 ## 8. Running it
 
 ```bash
-bun install
-bun run observatory                                        # prints http://127.0.0.1:4747/#token=... (game mode)
-bun run observatory --review human                         # you are the reviewer (default: a simulated reviewer)
-bun run observatory --level under_13_join                  # play a scenario as a level
-bun run observatory --time-aware                           # personas answer offered times from a hidden week (runbook-simulation 6.1.2)
+pnpm install
+pnpm run observatory                                        # prints http://127.0.0.1:4747/#token=... (game mode)
+pnpm run observatory --review human                         # you are the reviewer (default: a simulated reviewer)
+pnpm run observatory --level under_13_join                  # play a scenario as a level
+pnpm run observatory --time-aware                           # personas answer offered times from a hidden week (runbook-simulation 6.1.2)
 # Real-world mode against a local dev Postgres seeded from a simulated run:
-bun run packages/observatory/db/dev-pg.ts up               # local cluster on :54339 + schema
-bun run packages/observatory/db/seed.ts --from-sim --days 14
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network bun run observatory --mode real
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up               # local cluster on :54339 + schema
+node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-sim --days 14
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network pnpm run observatory --mode real
 # Real-mode staff actions: also set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN (runbook-real 4.4).
 # Production: point NETWORK_DATABASE_URL at a read-only login (role network_observatory) on the
 # database that has the network schema, and set OBSERVATORY_REAL_ONLY=1 (section 9.7);
 # OBSERVATORY_ENV_LABEL=STAGING names a non-prod environment.
 # Four apps: open http://127.0.0.1:4747/#a=slop (or use the app switcher). Per-app tokens:
-OBSERVATORY_TOKENS="admin@*:<t>,reviewer@slop:<t>,engineer@*:<t>" bun run observatory
+OBSERVATORY_TOKENS="admin@*:<t>,reviewer@slop:<t>,engineer@*:<t>" pnpm run observatory
 # Real mode per app: OBSERVATORY_DATABASE_URL_SLOP=<a login in network_observatory_slop>;
 # the cross-app person view: OBSERVATORY_PLATFORM_DATABASE_URL=<a login in network_observatory_cross_app>.
-bun run packages/observatory/src/report.ts --days 14       # headless findings (JSON)
+node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14       # headless findings (JSON)
 ```
 
 Access: the server listens on 127.0.0.1 only (`OBSERVATORY_HOST` changes it). Every `/api/*` route and the `/ws` WebSocket need a staff identity (section 9). With no settings, the server makes a random admin token and prints it at startup. Send a token as `Authorization: Bearer <token>` only (`?token=` is refused; tokens need 32 or more characters). The page `/` is public. The server refuses a `Host` other than localhost and an `Origin` other than its own, unless `OBSERVATORY_ALLOWED_ORIGINS` (comma-separated) lists it.
@@ -238,7 +238,7 @@ The server writes an audit row before it returns data or acts. If the row cannot
 The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app; the list shows the app's runs only. Every app runs The Network's NYC world; slop and peon runs get `--max-new 0` (matching off). The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
 
 ```bash
-bun run packages/network/harness/experiment.ts --only consent --days 1 --seed 1
+node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --only consent --days 1 --seed 1
 ```
 
 ### 9.7 Real-only server
@@ -253,7 +253,7 @@ The game code is still in the client bundle. The flag turns it off; it does not 
 
 ```bash
 OBSERVATORY_REAL_ONLY=1 OBSERVATORY_TOKENS="admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>" \
-  NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network bun run observatory
+  NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network pnpm run observatory
 ```
 
 Checked on 2026-10-07 against the local database: `/api/me` returned the reviewer role for the reviewer token; no token gave 401; `POST /api/mode` to game gave `real_only`; `/api/lab` said `enabled: false`; an analyst got 403 on a member; a safety reveal was written to the audit file after the member read.

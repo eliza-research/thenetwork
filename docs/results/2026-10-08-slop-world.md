@@ -1,5 +1,7 @@
 # slop.date simulated world: personas, oracle, harness and baselines (2026-10-08)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-08-slop-world.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 slop.date is dating, the first app on The Network's shared matching engine. This report describes the simulated world in the new package `packages/sim/src/apps` (`src/slop/`): the persona model with hidden truth, the snapshot the matcher sees, the oracle, the persona behaviour in the probe-first harness, the metrics, and three baselines. It gives the calibration and the baseline numbers that the slop AppPack must be compared against.
 
 - Code: `packages/sim/src/apps/slop/*.ts`, tests in `packages/sim/src/apps/test/slop.test.ts` (12 tests, offline, keys empty).
@@ -19,11 +21,11 @@ slop.date is dating, the first app on The Network's shared matching engine. This
 
 ```bash
 # Baselines (table below), no LLM, keys empty
-OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY= bun run packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4
+OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY= node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4
 # Calibration diagnostics (and a parameter grid with --grid '{"dateLift":[1.3,1.6]}')
-OPENAI_API_KEY= SURPLUS_API_KEY= bun run packages/sim/src/apps/slop/calibrate.ts --seeds 1-8 --diag
+OPENAI_API_KEY= SURPLUS_API_KEY= node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/calibrate.ts --seeds 1-8 --diag
 # Tests
-OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY= bun test --conditions eliza-source ./packages/sim/src/apps
+OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY= pnpm exec vitest run --conditions eliza-source ./packages/sim/src/apps
 ```
 
 Seeds 1-8. One run is 900 personas over 4 weekly rounds and takes about 0.3-0.5 s.
@@ -201,7 +203,7 @@ const m = slopMetrics(runSlopWorld({ seed: 1, perCity: 300, weeks: 4, matcher: s
 ```
 
 - The pack must read only `ctx.snapshot` / `ctx.profiles`. Matchers that need hidden truth get the world via a factory (`matcher: w => ...`), which is reserved for baselines.
-- An engine-backed pack can map `EngineProposal` to `SlopProposal`: the participants become first and partner, `Proposal.city` becomes the city, and the time options and activity come from the planner. Compare it with `bun run packages/sim/src/apps/slop/cli.ts` after adding it to `BASELINES` or calling `runSlopWorld` directly with the same seeds.
+- An engine-backed pack can map `EngineProposal` to `SlopProposal`: the participants become first and partner, `Proposal.city` becomes the city, and the time options and activity come from the planner. Compare it with `node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/cli.ts` after adding it to `BASELINES` or calling `runSlopWorld` directly with the same seeds.
 - Acceptance bar, against the same seeds: declared-minor contacts 0; hidden-minor contacts and adversary contacts well below random's 6.5 and 55 per seed (use the `safety:*` cues, holds and blocks); second dates per seed above random's 9.8; top-10% proposal share near random's 11.9%, not greedy's 41.5%.
 
 ## 8. Limits

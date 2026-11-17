@@ -1,8 +1,9 @@
 // The migrations and the database guards: the runner, the platform schema, composite keys across
 // apps, row-level security per app, the synthetic-phone guard, and the upgrade of a database that
 // has only the old schema files (as every dev database has today).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { migrate, migrations } from "../../observatory/db/migrate.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
@@ -41,8 +42,8 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     const url = await emptyDb("upgrade"); urls.push(url);
     const sql = new SQL({ url, max: 1 });
     try {
-      await sql.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
-      await sql.unsafe(await Bun.file(new URL("../../network/db/network-state.sql", import.meta.url)).text());
+      await sql.unsafe(await fileAt(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+      await sql.unsafe(await fileAt(new URL("../../network/db/network-state.sql", import.meta.url)).text());
       await sql`insert into network.members (id, name, home_city, age, joined_at) values ('a', 'A', 'nyc', 34, now()), ('b', 'B', 'nyc', null, now())`;
       // A legacy member texts from a phone; another from an Apple ID (not a phone: left as it is).
       await sql`insert into network.channel_identities (member_id, channel, address, is_primary) values ('a', 'imessage', '+12125550177', true), ('b', 'imessage', 'b@example.com', true)`;
@@ -68,7 +69,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     // Apply 0001-0006 by hand, as a dev database had them before 0007.
     const sql = new SQL({ url, max: 1 });
     try {
-      for (const m of all.slice(0, upTo)) await sql.unsafe(await Bun.file(m.file).text());
+      for (const m of all.slice(0, upTo)) await sql.unsafe(await fileAt(m.file).text());
       await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
       for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
       const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
@@ -158,11 +159,13 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
       expect(apps.length).toBeGreaterThanOrEqual(4);
       // Readable without row-level security, on purpose: app configuration, each app's own views (they
-      // filter by app), the console's own ops and audit tables, and the cross-app safety role's person tables.
+      // filter by app), the public event catalog used in snapshots, and scoped ops, audit and safety tables.
+      const catalog = ["network.public_events", "network.public_event_imports"];
       const allowed = (role: string, rel: string): boolean => {
         if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
-        if (apps.includes(app) && [`network.network_state_console_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
+        if (apps.includes(app) && [`network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
+        if (catalog.includes(rel)) return apps.includes(app) || role === "network_observatory_cross_app";
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
         if (role === "network_observatory_audit") return rel === "network.staff_audit";
         if (role === "network_observatory_cross_app") return ["network.network_state_console_cross_app", "platform.memberships", "platform.people", "platform.person_blocks"].includes(rel);
@@ -170,6 +173,18 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       };
       const open = rows.filter((r: any) => !(r.kind === "r" && r.rls) && !allowed(r.role, r.rel)).map((r: any) => `${r.role} ${r.rel}`);
       expect(open).toEqual([]);
+      const outboundReaders = rows.filter(r => r.rel.startsWith("network.outbound_evidence_")).map(r => `${r.role} ${r.rel}`);
+      expect(outboundReaders.sort()).toEqual([
+        "network_observatory network.outbound_evidence_ntwrk",
+        ...apps.map(app => `network_observatory_${app} network.outbound_evidence_${app}`),
+      ].sort());
+      const catalogWriters = await sql`
+        select r.rolname as role, c.relname as relation
+        from pg_roles r cross join pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where r.rolname like 'network\\_observatory%' and n.nspname = 'network'
+          and (c.relname in ('public_events', 'public_event_imports') or c.relname in ${sql(apps.map(app => `outbound_evidence_${app}`))})
+          and has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')`;
+      expect(catalogWriters).toEqual([]);
       expect(rows.filter((r: any) => r.rel === "network.network_state_console" || r.rel === "network.network_state")).toEqual([]);
       // No console role gets around row-level security.
       expect((await sql`select rolname from pg_roles where rolname like 'network\\_observatory%' and (rolsuper or rolbypassrls)`).map((r: any) => r.rolname)).toEqual([]);

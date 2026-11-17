@@ -11,7 +11,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 | Module | What it does |
 |---|---|
 | `store.ts` | The `NotifyStore` interface (inbox, deliveries, task tokens, surface signals) and `MemoryNotifyStore` |
-| `pg-store.ts` | `PgNotifyStore` on Postgres with Bun's SQL client, schema in `db/schema.sql`. Import it directly: it is not exported from `index.ts`, so the connector's Workers build never pulls in `bun` |
+| `pg-store.ts` | `PgNotifyStore` on Postgres with the shared Postgres client, schema in `db/schema.sql`. Import it directly: it is not exported from `index.ts`, so the connector's Workers build stays independent of the Node Postgres client |
 | `scheduler.ts` | `Notifier`: due rules (requested at once, urgent after 5 min, normal after 4 h), quiet hours, a weekly cap of 2, a re-check before enqueue, `stillNeeded`, `readUpdates`, `redeemSubjects`, `shownSubjects`, `threadReply` and `sweep` (unanswered links become "ignored") |
 | `surface.ts` | `resolveDelivery`: explicit choice, then score, then thread. Links unused twice fall back to the thread |
 | `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.party/t/<token>` button page, and URL checks |
@@ -40,8 +40,8 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 - **Producers that don't already text.** Today every update is texted by the Network itself and only recorded here. Moving a member to "updates by link in my assistant" means having the engine add the item to the inbox instead of texting it, then letting `dispatch` choose the surface.
 - **Member settings.** There is no setting for a preferred surface yet ("send my updates to Claude"). `Recipient.prefs.explicit` is ready for one.
-- **Button page.** The `ntwrk.party/t/<token>` page is not built yet.
+- **Button page.** The Pages router serves `ntwrk.party/t/<token>` as a script-free assistant chooser. The page uses the reference from the URL without looking up an inbox. The chosen assistant reads the update through its authenticated connector.
 
 ## Device test
 
-Run `bun run scripts/link-test-page.ts` and follow `docs/runbook-deeplink-test.md`.
+Run `node --import tsx --env-file-if-exists=.env scripts/link-test-page.ts` and follow `docs/runbook-deeplink-test.md`.

@@ -1,21 +1,21 @@
-// GENERATED from spec/textEnrollment.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/textEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md:9) */
-export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; appKeyword: boolean }
-/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md:9) */
-export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ExplicitRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
-/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md:9) */
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "KeywordRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export interface TextRoute { phase: RoutePhase }
-/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md:26) */
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
 export interface FallbackFacts { hasPendingJoin: boolean; alreadyInPendingApp: boolean; hasMembership: boolean; answerHasAge: boolean; hasOpenItem: boolean }
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 export type JoinPhase = "AwaitingBan" | "JoinHeld" | "AwaitingInvite" | "InviteRequired" | "AwaitingAnswer" | "AskForAge" | "AskForHome" | "AwaitingJoinAge" | "RefuseAge" | "AskForName" | "AwaitingMember" | "AwaitingWelcome" | "JoinedWaitlist" | "JoinedWithShare" | "JoinedWithLookingFor" | "JoinedWithoutFollowUp";
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 export interface TextJoin { phase: JoinPhase; ageAllowed: boolean; hasName: boolean; invalidHome: boolean }
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md:65) */
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 export interface JoinAnswerFacts { hasAge: boolean; hasName: boolean; invalidHome: boolean }
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 export type OtherAppOutcome = "SkipOtherApp" | "KeepOtherApp" | "CreateOtherApp";
 
 /** One variant per transition in the spec. */
@@ -27,11 +27,13 @@ export type Event =
   | { type: "recordTextMembership"; membershipActive: boolean }
   | { type: "recordWelcome"; hasOtherApp: boolean; sharedNetwork: boolean; invited: boolean };
 
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md:65) */
+/** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
+export const preparedPeonTextHeader: string = "join peon";
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 export const completedAnswer: JoinAnswerFacts = { hasAge: true, hasName: true, invalidHome: false };
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 export const initial: TextJoin = { phase: "AwaitingBan", ageAllowed: false, hasName: false, invalidHome: false };
-/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md:9) */
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export const initialRoute: TextRoute = { phase: "AwaitingExplicitRoute" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -40,173 +42,227 @@ export function inv(current: TextJoin): boolean {
   return alwaysMembershipRequiresCompletedEligibleAnswer(current);
 }
 
-/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md:9) */
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
 export function checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute {
-  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp || explicitFacts.appKeyword ? ({ phase: "ExplicitRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)));
+  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp ? ({ phase: "ProfileRoute" } as TextRoute) : (explicitFacts.surveyApp ? ({ phase: "SurveyRoute" } as TextRoute) : (explicitFacts.appKeyword ? ({ phase: "KeywordRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)))));
 }
 
-/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md:26) */
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawDedicatedLineTakesPrecedence(profileApp: boolean, surveyApp: boolean, appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: true, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "DedicatedRoute";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawProfileReadTakesPrecedence(surveyApp: boolean, appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "ProfileRoute";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawSurveyReplyTakesPrecedence(appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
+}
+
+/** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
+//@ pure
+export function preparedPeonTextNamesApp(header: string, profilePresent: boolean): boolean {
+  return header === preparedPeonTextHeader && profilePresent;
+}
+
+/** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
+//@ pure
+export function lawPreparedPeonTextRequiresExplicitHeader(header: string, profilePresent: boolean): boolean {
+  //@ ensures \result === true
+  return preparedPeonTextNamesApp(header, profilePresent) === (header === preparedPeonTextHeader && profilePresent);
+}
+
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
 //@ pure
 export function shouldReadPendingAnswer(hasPendingJoin: boolean, alreadyInPendingApp: boolean, hasMembership: boolean): boolean {
   return hasPendingJoin && !alreadyInPendingApp && hasMembership;
 }
 
-/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md:26) */
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
 //@ pure
 export function pendingMatchesApp(pendingApp: string, routedApp: string): boolean {
   return pendingApp === routedApp;
 }
 
-/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md:26) */
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
 //@ pure
 export function checkFallbackRoute(routing: TextRoute, fallbackFacts: FallbackFacts): TextRoute {
   return routing.phase !== "AwaitingFallbackRoute" ? routing : (fallbackFacts.hasPendingJoin && !fallbackFacts.alreadyInPendingApp && (!fallbackFacts.hasMembership || fallbackFacts.answerHasAge) ? ({ phase: "PendingJoinRoute" } as TextRoute) : (fallbackFacts.hasOpenItem ? ({ phase: "OpenItemRoute" } as TextRoute) : (fallbackFacts.hasMembership ? ({ phase: "RecentAppRoute" } as TextRoute) : ({ phase: "DefaultNetworkRoute" } as TextRoute))));
 }
 
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 //@ pure
 export function canCheckJoinBan(joining: TextJoin): boolean {
   return joining.phase === "AwaitingBan";
 }
 
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 //@ pure
 export function checkJoinBan(joining: TextJoin, banned: boolean): TextJoin {
   //@ ensures (inv(joining) && canCheckJoinBan(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
   return { ...joining, phase: banned ? "JoinHeld" : "AwaitingInvite" };
 }
 
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 //@ pure
 export function canCheckInvitation(joining: TextJoin): boolean {
   return joining.phase === "AwaitingInvite";
 }
 
-/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md:45) */
+/** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 //@ pure
 export function checkInvitation(joining: TextJoin, inviteOnly: boolean, invited: boolean, sharedNetwork: boolean): TextJoin {
   //@ ensures (inv(joining) && canCheckInvitation(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
   return { ...joining, phase: inviteOnly && !invited && !sharedNetwork ? "InviteRequired" : "AwaitingAnswer" };
 }
 
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md:65) */
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 //@ pure
 export function canReadJoinAnswer(joining: TextJoin): boolean {
   return joining.phase === "AwaitingAnswer";
 }
 
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md:65) */
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 //@ pure
 export function readJoinAnswer(joining: TextJoin, answerFacts: JoinAnswerFacts): TextJoin {
   //@ ensures (inv(joining) && canReadJoinAnswer(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
   return { ...joining, hasName: answerFacts.hasName, invalidHome: answerFacts.invalidHome, phase: answerFacts.hasAge ? "AwaitingJoinAge" : (answerFacts.invalidHome ? "AskForHome" : "AskForAge") };
 }
 
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md:65) */
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 //@ pure
 export function canCheckTextJoinAge(joining: TextJoin): boolean {
   return joining.phase === "AwaitingJoinAge";
 }
 
-/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md:65) */
+/** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 //@ pure
 export function checkTextJoinAge(joining: TextJoin, ageAllowed: boolean): TextJoin {
   //@ ensures (inv(joining) && canCheckTextJoinAge(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
   return { ...joining, ageAllowed: ageAllowed, phase: !ageAllowed ? "RefuseAge" : (joining.invalidHome ? "AskForHome" : (joining.hasName ? "AwaitingMember" : "AskForName")) };
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function canRecordTextMembership(joining: TextJoin): boolean {
   return joining.phase === "AwaitingMember" && joining.ageAllowed && joining.hasName && !joining.invalidHome;
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function recordTextMembership(joining: TextJoin, membershipActive: boolean): TextJoin {
   //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
   return { ...joining, phase: membershipActive ? "AwaitingWelcome" : "JoinedWaitlist" };
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function canRecordWelcome(joining: TextJoin): boolean {
   return joining.phase === "AwaitingWelcome" && joining.ageAllowed && joining.hasName && !joining.invalidHome;
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function recordWelcome(joining: TextJoin, hasOtherApp: boolean, sharedNetwork: boolean, invited: boolean): TextJoin {
   //@ ensures (inv(joining) && canRecordWelcome(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
   return { ...joining, phase: hasOtherApp ? "JoinedWithShare" : (sharedNetwork && !invited ? "JoinedWithLookingFor" : "JoinedWithoutFollowUp") };
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function alwaysMembershipRequiresCompletedEligibleAnswer(joining: TextJoin): boolean {
   return !(joining.phase === "AwaitingMember" || joining.phase === "AwaitingWelcome" || joining.phase === "JoinedWaitlist" || joining.phase === "JoinedWithShare" || joining.phase === "JoinedWithLookingFor" || joining.phase === "JoinedWithoutFollowUp") || (joining.ageAllowed && joining.hasName && !joining.invalidHome);
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function sometimesAsksAge(joining: TextJoin): boolean {
   return joining.phase === "AskForAge";
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function sometimesRefusesAge(joining: TextJoin): boolean {
   return joining.phase === "RefuseAge";
 }
 
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md:87) */
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
 //@ pure
 export function sometimesAsksWhatTheyWant(joining: TextJoin): boolean {
   return joining.phase === "JoinedWithLookingFor";
 }
 
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
 export function shouldReadLookingFor(hasKeyword: boolean, profileRead: boolean, isNetwork: boolean): boolean {
   return !(hasKeyword || profileRead) && isNetwork;
 }
 
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
 export function namedOtherApp(appName: string, running: boolean): boolean {
   return appName !== "ntwrk" && running;
 }
 
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
 export function networkEnrollmentAllowed(hasPerson: boolean, hasNetworkMembership: boolean, banned: boolean): boolean {
   return hasPerson && hasNetworkMembership && !banned;
 }
 
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
 export function otherAppAllowed(appName: string, adult: boolean): boolean {
   return appName !== "slop" || adult;
 }
 
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
 export function otherAppEnrollment(existingMember: boolean, ageEligible: boolean): OtherAppOutcome {
   return existingMember ? "KeepOtherApp" : (ageEligible ? "CreateOtherApp" : "SkipOtherApp");
 }
 
-/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md:118) */
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
 export function lawSlopEnrollmentRequiresAdult(adult: boolean): boolean {
   //@ ensures \result === true
   return !otherAppAllowed("slop", adult) || adult;
 }
 
-/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md:136) */
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
 //@ pure
-export function noticeAllowed(joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
-  return joinAgeAllowed && ageFloorAllowed;
+export function firstContactMayCheckAge(signedTurn: boolean, nonMember: boolean, banned: boolean): boolean {
+  return signedTurn && nonMember && !banned;
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function firstContactNoticeAllowed(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  return firstContactMayCheckAge(signedTurn, nonMember, banned) && joinAgeAllowed && ageFloorAllowed;
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawFirstContactNoticeRequiresEligibleNumber(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed) || (signedTurn && nonMember && !banned && joinAgeAllowed && ageFloorAllowed);
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawMemberOrBannedGetsNoNotice(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !(!nonMember || banned || !signedTurn) || !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed);
 }
 
 /** Do the rules allow this event in this state? */
@@ -226,12 +282,12 @@ export function enabled(current: TextJoin, event: Event): boolean {
 export function step(current: TextJoin, event: Event): TextJoin {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkJoinBan" && canCheckJoinBan(current)) return checkJoinBan(current, event.banned);
-  if (event.type === "checkInvitation" && canCheckInvitation(current)) return checkInvitation(current, event.inviteOnly, event.invited, event.sharedNetwork);
-  if (event.type === "readJoinAnswer" && canReadJoinAnswer(current)) return readJoinAnswer(current, event.answerFacts);
-  if (event.type === "checkTextJoinAge" && canCheckTextJoinAge(current)) return checkTextJoinAge(current, event.ageAllowed);
-  if (event.type === "recordTextMembership" && canRecordTextMembership(current)) return recordTextMembership(current, event.membershipActive);
-  if (event.type === "recordWelcome" && canRecordWelcome(current)) return recordWelcome(current, event.hasOtherApp, event.sharedNetwork, event.invited);
+  if (event.type === "checkJoinBan") return canCheckJoinBan(current) ? checkJoinBan(current, event.banned) : current;
+  if (event.type === "checkInvitation") return canCheckInvitation(current) ? checkInvitation(current, event.inviteOnly, event.invited, event.sharedNetwork) : current;
+  if (event.type === "readJoinAnswer") return canReadJoinAnswer(current) ? readJoinAnswer(current, event.answerFacts) : current;
+  if (event.type === "checkTextJoinAge") return canCheckTextJoinAge(current) ? checkTextJoinAge(current, event.ageAllowed) : current;
+  if (event.type === "recordTextMembership") return canRecordTextMembership(current) ? recordTextMembership(current, event.membershipActive) : current;
+  if (event.type === "recordWelcome") return canRecordWelcome(current) ? recordWelcome(current, event.hasOtherApp, event.sharedNetwork, event.invited) : current;
   return current;
 }
 
@@ -248,10 +304,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_JoinAnswerFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.hasAge === "boolean" && typeof v.hasName === "boolean" && typeof v.invalidHome === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "checkJoinBan" && typeof raw.banned === "boolean") return { type: "checkJoinBan", banned: raw.banned };
   if (raw.type === "checkInvitation" && typeof raw.inviteOnly === "boolean" && typeof raw.invited === "boolean" && typeof raw.sharedNetwork === "boolean") return { type: "checkInvitation", inviteOnly: raw.inviteOnly, invited: raw.invited, sharedNetwork: raw.sharedNetwork };
-  if (raw.type === "readJoinAnswer" && typeof raw.answerFacts === "object" && raw.answerFacts !== null && !Array.isArray(raw.answerFacts) && typeof raw.answerFacts.hasAge === "boolean" && typeof raw.answerFacts.hasName === "boolean" && typeof raw.answerFacts.invalidHome === "boolean") return { type: "readJoinAnswer", answerFacts: ({ hasAge: raw.answerFacts.hasAge, hasName: raw.answerFacts.hasName, invalidHome: raw.answerFacts.invalidHome }) };
+  if (raw.type === "readJoinAnswer" && is_JoinAnswerFacts(raw.answerFacts)) return { type: "readJoinAnswer", answerFacts: ({ hasAge: raw.answerFacts.hasAge, hasName: raw.answerFacts.hasName, invalidHome: raw.answerFacts.invalidHome }) };
   if (raw.type === "checkTextJoinAge" && typeof raw.ageAllowed === "boolean") return { type: "checkTextJoinAge", ageAllowed: raw.ageAllowed };
   if (raw.type === "recordTextMembership" && typeof raw.membershipActive === "boolean") return { type: "recordTextMembership", membershipActive: raw.membershipActive };
   if (raw.type === "recordWelcome" && typeof raw.hasOtherApp === "boolean" && typeof raw.sharedNetwork === "boolean" && typeof raw.invited === "boolean") return { type: "recordWelcome", hasOtherApp: raw.hasOtherApp, sharedNetwork: raw.sharedNetwork, invited: raw.invited };

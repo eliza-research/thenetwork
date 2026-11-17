@@ -1,9 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Reproducible observatory findings: run the 500-member synthetic world headless for N days and
 // print what the observatory shows (funnel, outcomes vs ground truth, unsafe proposals by cause,
 // dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
 // judge scorer's invariant, canary-leak and minor-contact counts).
-//   bun run packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
+//   node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
 //       [--network consent|stub] [--review auto|human]
 // With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";

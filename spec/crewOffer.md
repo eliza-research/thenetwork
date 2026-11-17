@@ -1,6 +1,6 @@
 # Recurring crew offers
 
-This flow covers the offer after an existing plan. The Network owns the member records, finds the qualifying plan, and sends messages. The offer keeps its existing stored fields. The [standalone crew model](models/plan_crew.md) also covers eligibility changes, session booking, and handoff.
+This flow covers the offer after an existing plan, the time check for a recurring session, and the handoff. The Network owns the member records, finds the qualifying plan, and sends messages. The offer keeps its existing stored fields. The [standalone crew model](models/plan_crew.md) also covers eligibility changes and session booking.
 
 ## Story: Opt in to a recurring crew
 
@@ -44,6 +44,21 @@ pure def alwaysAnswersComeFromInvitees(offer: CrewOfferState): bool =
   offer.yes.every(id => offer.offered.includes(id)) and offer.no.every(id => offer.offered.includes(id))
 ```
 
+### A crew reply follows acceptance of its exact offer
+
+The member's pending question names the outbound crew offer. A direct member reply can count while the offer is open and within its three-day window. Require the provider acceptance of that exact offer for that member and app. Compare the signed receipt time of the inbound reply with the outbound acceptance time. A queued offer, a different offer, or a reply received before acceptance cannot add anyone to a crew.
+
+```quint
+pure def crewOfferReplyCurrent(memberReply: bool, accepted: bool, openedAt: int,
+  stagedAt: int, acceptedAt: int, receivedAt: int, now: int): bool =
+  memberReply and accepted and openedAt <= stagedAt and stagedAt <= acceptedAt and
+    acceptedAt <= receivedAt and receivedAt <= now and now - openedAt <= crewOfferWindowMs
+
+pure def lawCrewReplyNeedsExactAcceptance(memberReply: bool, openedAt: int,
+  stagedAt: int, acceptedAt: int, receivedAt: int, now: int): bool =
+  not(crewOfferReplyCurrent(memberReply, false, openedAt, stagedAt, acceptedAt, receivedAt, now))
+```
+
 ### An offer resolves after every reply or once more than three days pass
 
 After recording a reply, resolve the offer when every invited member has answered. The tick resolves an open offer after more than three days even if someone has not answered. The shell determines whether the recorded acceptances are enough to form a crew.
@@ -84,4 +99,42 @@ pure def forgetCrewInvitee(offer: CrewOfferState, memberId: str): CrewOfferState
     offered: offer.offered.select(id => id != memberId),
     yes: offer.yes.select(id => id != memberId),
     no: offer.no.select(id => id != memberId) }
+```
+
+## Story: Meet in a new recurring session
+
+> As a crew member, I want the next session to respect my current availability.
+
+### A new recurring session needs a currently usable time
+
+Before putting a new occurrence into review, check the retained crew against the proposed time. An announced absence, a nearby booking, or an active stated window that excludes the time prevents that proposal. Leave the occurrence uncounted and try again on the next planning pass. Check additional seats against the same rule. Unknown availability still allows a proposal. Each session requires its own review and replies.
+
+```quint
+pure def crewMemberWindowAvailable(present: bool, noNearbyBooking: bool, statedAllows: bool): bool =
+  present and noNearbyBooking and statedAllows
+```
+
+### A new recurring session uses a current public venue
+
+Resolve the crew's recorded venue in its city for the same activity before review. The venue must still be public and open for the full activity window. A missing venue or a closing time during the session prevents the proposal. Leave the occurrence uncounted and keep the crew available for a later planning pass. Existing pair, review and consent checks still apply.
+
+```quint
+pure def crewSessionVenueAllowed(isPublic: bool, sameCity: bool, supportsActivity: bool, fullWindowOpen: bool): bool =
+  isPublic and sameCity and supportsActivity and fullWindowOpen
+
+pure def lawCrewCannotUseAClosingVenue(isPublic: bool, sameCity: bool, supportsActivity: bool): bool =
+  not(crewSessionVenueAllowed(isPublic, sameCity, supportsActivity, false))
+```
+
+## Story: Take over the recurring crew
+
+> As a crew member, I want the Network to organize the first sessions before the crew takes over.
+
+### Handoff counts booked sessions that reached feedback
+
+When the crew has no open session, hand it off after the configured number of booked sessions reach the feedback step. A proposed session and a session that closes before feedback do not count. Keep the weekly slot history so a rejection does not queue another proposal for the same slot.
+
+```quint
+pure def crewHandoffDue(openSession: bool, completedCount: int, requiredCount: int): bool =
+  not(openSession) and completedCount >= requiredCount
 ```

@@ -17,7 +17,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 - **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. The placeholder weights ship until fitted weights pass the P2 decision rule. Production sets `CLEF_RATINGS=on`; the code reads an unset flag as off, so keep the variable set. Clef is also the scam and harassment classifier for relayed messages.
 - **STOP and HELP** on the shared line are answered by the service inside the gateway's signed `/internal/turn`. Only one system ever answers STOP. The service parses STOP inside `/internal/turn` and reports it as `consent` in the handled response; the gateway copies it into its send fence.
 - **Review and model:** a person reviews every proactive proposal before any member hears of it. Every LLM use is gpt-6-luna on Surplus.
-- **Testing:** sims (`bun run sim`), integration tests and e2e tests. Do not add unit tests or smoke tests.
+- **Testing:** sims (`pnpm run sim`), integration tests and e2e tests. Do not add unit tests or smoke tests.
 
 ## 1. Hard rules for you
 
@@ -93,18 +93,18 @@ Follow `docs/deploy.md` section 2. Summary:
 2. **slop.date and friends.help after the transfer lock (10 days):**
    - Move the domains from Eliza Labs to shawmakesmagic: Domain Registration → Move domain to account `CLOUDFLARE_ACCOUNT_ID`, then accept it in the destination account.
    - Re-create the CNAMEs if the zone moves, and re-check the Pages custom domains.
-3. Run `bun run sites/sites.ts` with `DEPLOY_TARGET=production` before any manual Pages deploy; it refuses draft legal text and placeholders. Deploys normally go through `deploy-sites.yml` after the founder approves the `production` environment run.
+3. Run `node --import tsx --env-file-if-exists=.env sites/sites.ts` with `DEPLOY_TARGET=production` before any manual Pages deploy; it refuses draft legal text and placeholders. Deploys normally go through `deploy-sites.yml` after the founder approves the `production` environment run.
 
 ## 6. GitHub
 
-1. Make sure CI is green on `main`. It runs typecheck, `bun run plugins/build.ts --check`, the sites production build, `bun run sim` (with a Postgres service, so the Postgres gates block), and the integration and e2e job with Postgres.
+1. Make sure CI is green on `main`. It runs typecheck, `node --import tsx --env-file-if-exists=.env plugins/build.ts --check`, the sites production build, `pnpm run sim` (with a Postgres service, so the Postgres gates block), and the integration and e2e job with Postgres.
 2. Branch protection on `main`: require CI, no force pushes. Any change to repo settings needs the founder's OK.
 3. The `production` environment already exists, with the founder as required reviewer and `main` only. The repo variables are already set: `CLOUDFLARE_ACCOUNT_ID`, `BACKEND_ORIGIN=https://api.ntwrk.party`, `TURNSTILE_SITE_KEY`. `MCP_URL` is no longer read from a repo variable: `deploy-sites.yml` sets it to `https://{domain}/mcp` per site, the same default as `skills.config.ts`.
 4. After the founder adds `CLOUDFLARE_API_TOKEN`, trigger `deploy-sites.yml` (manual dispatch, or a push to `main`). The founder approves the environment run, then the post-deploy check `deploy/smoke.ts` runs against all four sites.
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network
 
-The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network` (`plugins/plugin-network`), is on branch `spike/network-plugin` of elizaOS/eliza; the plugin with the RELAY action (#34657) and the relay hardening (#34661) is merged to `develop`. This repo has no plugin package and no eliza submodule; it keeps the wire contract in `packages/core/src/svc/contract.ts` and `svc-auth.ts`, byte-identical to the plugin's copy on `develop` (`packages/core/test/contract-mirror.test.ts` pins both hashes; `bun run check:mirror` compares them with upstream). Section corrected 2026-10-08 by the Eliza-side owner and 2026-10-09 for the plugin move and the relay contract.
+The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network` (`plugins/plugin-network`), is on branch `spike/network-plugin` of elizaOS/eliza; the plugin with the RELAY action (#34657) and the relay hardening (#34661) is merged to `develop`. This repo has no plugin package and no eliza submodule; it keeps the wire contract in `packages/core/src/svc/contract.ts` and `svc-auth.ts`, byte-identical to the plugin's copy on `develop` (`packages/core/test/contract-mirror.test.ts` pins both hashes; `pnpm run check:mirror` compares them with upstream). Section corrected 2026-10-08 by the Eliza-side owner and 2026-10-09 for the plugin move and the relay contract.
 
 ```
 iMessage (Blooio, shared line)
@@ -155,8 +155,8 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
    - The service decides this. A known eliza.app user who isn't a Network member is a "handled" turn: the notice, then the join flow.
 7. **The character.** It's "Eliza", speaking as The Network's agent, and must pass the Eliza-side owner's live eval.
 8. **Tests green:**
-   - `bun run sim`;
-   - the service's `/internal/turn` integration tests against real Postgres (`packages/network/test/shared-agent.integration.test.ts`, `shared-actions.integration.test.ts`, `cloud-outbound.integration.test.ts`) and `bun run security`;
+   - `pnpm run sim`;
+   - the service's `/internal/turn` integration tests against real Postgres (`packages/network/test/shared-agent.integration.test.ts`, `shared-actions.integration.test.ts`, `cloud-outbound.integration.test.ts`) and `pnpm run security`;
    - the Eliza side: gateway (`network-takeover.test.ts`), the Cloud deliver route, and the Workerd shared runtime.
 
 **The go-live sequence.** The founder's explicit approval is needed at each starred step.

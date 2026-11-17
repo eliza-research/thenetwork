@@ -1,5 +1,5 @@
 import { parseNetworkCollectionCommand } from "../../core/src/svc/learning-collection-command.ts";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash } from "node:crypto";
 import { parseNetworkRouteAuthorityV1, type NetworkRouteAuthorityV1 } from "../../core/src/svc/contract.ts";
 import type { AppId } from "../../platform/src/apps.ts";

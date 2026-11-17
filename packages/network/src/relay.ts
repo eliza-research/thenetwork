@@ -255,7 +255,7 @@ export class RelayDesk {
     if (decision.phase !== "ReadyToSend") return { itemId: item.id, decision: "held", reason: res.senderNotice };
 
     const sent = this.deliver(res, match, item, o, contact);
-    const delivery = stepRelay(decision, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent] });
+    const delivery = stepRelay(decision, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent], policyPermits: res.decision === "pass" });
     if (delivery.phase === "SendRefused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
     return { itemId: item.id, decision: "sent", reason: delivery.phase === "Deferred" ? NOTICE.late : res.senderNotice };
   }
@@ -373,7 +373,7 @@ export class RelayDesk {
     if (!rendered) return { ok: true, delivered: false };
     const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };
     const sent = this.deliver(res, match, item, o);
-    const result = stepRelay(released, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent] });
+    const result = stepRelay(released, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent], policyPermits: rendered !== "" });
     const delivered = result.phase === "Sent" || result.phase === "Deferred";
     if (delivered) this.log(res.record);
     return { ok: true, delivered };

@@ -1,5 +1,7 @@
 # Relay classifier on held-out 2, and the relay and photo adversarial scenarios
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-10-relay-heldout.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-10. Base: `origin/main` b53bd86. Relay policy `relay-1.0.0` (`packages/engine/src/relay.ts`), no threshold or rule changed. Issue #10 ("the relay classifier measured on `evals/relay/relay-heldout-2.jsonl` without tuning on it") and #11 (sims-and-e2e: "the relay and photo adversarial scenarios").
 
 ## 1. What was measured
@@ -15,7 +17,7 @@ Date: 2026-10-10. Base: `origin/main` b53bd86. Relay policy `relay-1.0.0` (`pack
 Command (generated output; the numbers below are copied from it):
 
 ```
-bun run relay-eval rules --json <out.json>
+pnpm run relay-eval rules --json <out.json>
 ```
 
 `rules` is a new offline subcommand of `scripts/relay-eval.ts`. It takes `--file` (default `relay/relay-heldout-2.jsonl`), and it prints aggregates and reason families only, never row text.
@@ -63,13 +65,13 @@ Reason families on the stopped rows (rules only): scam 5 `scam`, 1 `offplatform`
 
 ### To measure Clef
 
-With `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`: `bun run relay-eval --live` (estimate about $0.05 on clef-flash for every corpus), then `bun run relay-eval rules`. The `rules` command scores rules + Clef from the recorded answers with the shipped weights (or the placeholder) on the slop desk's rules, and the relay sim block scores the same arm. Fit only on the tuning sets (`bun run relay-eval fit --live`); held-out 2 stays scored only.
+With `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`: `pnpm run relay-eval --live` (estimate about $0.05 on clef-flash for every corpus), then `pnpm run relay-eval rules`. The `rules` command scores rules + Clef from the recorded answers with the shipped weights (or the placeholder) on the slop desk's rules, and the relay sim block scores the same arm. Fit only on the tuning sets (`pnpm run relay-eval fit --live`); held-out 2 stays scored only.
 
 ## 3. Adversarial scenarios in the slop world (#11 sims-and-e2e)
 
 New: `packages/sim/src/apps/slop/adversarial.ts`, gated in the relay block (`scripts/sim/relay.ts`, "relay adversarial"). Personas come from the slop world generator (`generateSlopPersonas`, 250 per city, raised adversary shares so each scenario has enough cases); every item goes through `relayItem`, every probe photo through `probePhotoRefs` and `slopProbeMessage`. Seeds 13-16. The scenario scripts and templates are sim-written (generated), separate from the hand-written corpus.
 
-`bun run sim --only relay`: **46/46 blocking gates pass** (39 before, plus 7 new), 5 tracked off target (the 4 rules-only held-out 2 gates and the skipped Clef arm, unchanged).
+`pnpm run sim --only relay`: **46/46 blocking gates pass** (39 before, plus 7 new), 5 tracked off target (the 4 rules-only held-out 2 gates and the skipped Clef arm, unchanged).
 
 | Scenario (blocking) | Cases (4 seeds) | Controls | Result |
 |---|---|---|---|

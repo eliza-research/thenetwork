@@ -1,6 +1,6 @@
 # Runtime startup configuration
 
-The [service start model](models/boot_config.md) includes database setup, process restarts and Pages proxy rotation. These generated rules decide which environment and local shortcuts apply, and which facts each startup gate requires. The entry points read environment variables and database role metadata and render the errors.
+The [service start model](models/boot_config.md) includes database setup, process restarts and Pages proxy rotation. These generated rules decide which environment and local shortcuts apply, and which facts each startup gate requires. The entry points read environment variables and database role metadata and render the errors. In staging and production, both entry points also ask the OTP adapter for its provider problems (an explicit OTP provider and its provider-specific credentials), and the network service entry lists each dev-only switch (`PLATFORM_DEV_*`) that is set as a problem.
 
 ## Story: Start the service with its declared configuration
 
@@ -31,12 +31,13 @@ pure def devShortcuts(platform: str, node: str): bool =
 pure def deployedEnvironment(environment: Environment): bool =
   environment == Production or environment == Staging
 
-pure def lawProductionDisallowsDev(platform: str): bool = not(devShortcuts(platform, "production"))
+pure def lawProductionDisallowsDev(platform: str, node: str): bool =
+  not(devShortcuts(platform, "production")) and not(devShortcuts("production", node))
 ```
 
 ### The network service entry checks provider, review, storage and secret configuration
 
-`main.ts` requires a declared environment and rejects a dev declaration combined with production. Staging and production require an OTP provider, a Turnstile secret, the service database, and the proxy, hash, and session secrets. If supplied, the review setting must be human. Dev-only switches must be unset. The OTP adapter supplies its own provider-specific requirements.
+`main.ts` requires a declared environment and rejects a dev declaration combined with production. Staging and production require a Turnstile secret, the service database, and the proxy, hash, and session secrets. If supplied, the review setting must be human.
 
 ```quint
 pure val minimumSecretLength: int = 32
@@ -66,7 +67,7 @@ pure def networkBoot(facts: NetworkBootFacts): NetworkBoot = {
 
 ### The combined backend entry checks its own database, provider and secret configuration
 
-The combined backend needs a database in every environment. Staging and production also need provider and proxy configuration, a Turnstile secret, a hash key, and a leak-label key. A supplied proxy secret must meet the character limit in every environment. The deployed hash key has the same character limit. The leak-label key limit is in UTF-8 bytes. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL.
+The combined backend needs a database in every environment. Staging and production also need proxy configuration, a Turnstile secret, a hash key, and a leak-label key. A supplied proxy secret must meet the character limit in every environment. The deployed hash key has the same character limit. The leak-label key limit is in UTF-8 bytes. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL.
 
 ```quint
 type BackendBootFacts = {

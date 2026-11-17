@@ -1,15 +1,16 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Local development Postgres for the observatory's real-world mode (never production).
-//   bun run packages/observatory/db/dev-pg.ts up      # init (once), start on :54339, create db, run the migrations
-//   bun run packages/observatory/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
-//   bun run packages/observatory/db/dev-pg.ts down    # stop
-//   bun run packages/observatory/db/dev-pg.ts url     # print the connection URL
+//   node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up      # init (once), start on :54339, create db, run the migrations
+//   node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
+//   node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts down    # stop
+//   node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts url     # print the connection URL
+import { findExecutable, spawnProcess } from "../../core/src/runtime/process.ts";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { migrate } from "./migrate.ts";
 
-const REPO = resolve(import.meta.dir, "../../..");
+const REPO = resolve(import.meta.dirname, "../../..");
 // CONTRIBUTING.md section 4 copies .env.example, whose optional values are empty lines
 // (OBSERVATORY_PG_PORT=, OBSERVATORY_PG_DIR=): an empty value means "leave the default", so only a
 // value with text overrides. ?? read "" as a value, and a copied .env broke `up` (mkdir of "" throws
@@ -26,33 +27,39 @@ function pgBin(name: string): string {
     const p = `/opt/homebrew/opt/postgresql@${v}/bin/${name}`;
     if (existsSync(p)) return p;
   }
-  const which = Bun.which(name);
+  const which = findExecutable(name);
   if (!which) throw new Error(`${name} not found: install Postgres (brew install postgresql@16)`);
   return which;
 }
 
 async function sh(cmd: string[], quiet = false) {
   // LC_ALL: macOS postgres refuses to start ("postmaster became multithreaded") without a valid locale.
-  const p = Bun.spawn(cmd, { stdout: quiet ? "ignore" : "inherit", stderr: quiet ? "ignore" : "inherit", env: { ...process.env, LC_ALL: "C" } });
+  const p = spawnProcess(cmd, { stdout: quiet ? "ignore" : "inherit", stderr: quiet ? "ignore" : "inherit", env: { ...process.env, LC_ALL: "C" } });
   return p.exited;
 }
 
 /** Start the dev cluster and create the `network` database. It does not migrate it: `up`, seed.ts and db:migrate do. */
 export async function devPgUp(): Promise<string> {
-  if (!existsSync(join(DEV_PG_DIR, "PG_VERSION"))) {
-    mkdirSync(DEV_PG_DIR, { recursive: true });
-    const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-U", DEV_PG_USER, "-A", "trust", "-E", "UTF8", "--no-locale"], true);
-    if (code !== 0) throw new Error("initdb failed");
-  }
+  // A prestarted server, such as the CI service container, has no local data directory.
   const ready = await sh([pgBin("pg_isready"), "-h", "localhost", "-p", String(DEV_PG_PORT), "-U", DEV_PG_USER], true);
   if (ready !== 0) {
+    if (!existsSync(join(DEV_PG_DIR, "PG_VERSION"))) {
+      mkdirSync(DEV_PG_DIR, { recursive: true });
+      const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-U", DEV_PG_USER, "-A", "trust", "-E", "UTF8", "--no-locale"], true);
+      if (code !== 0) throw new Error("initdb failed");
+    }
     const code = await sh([pgBin("pg_ctl"), "-D", DEV_PG_DIR, "-o", `-p ${DEV_PG_PORT} -k /tmp`, "-l", join(DEV_PG_DIR, "server.log"), "-w", "start"], true);
     if (code !== 0) throw new Error(`pg_ctl start failed (see ${join(DEV_PG_DIR, "server.log")})`);
   }
-  const admin = new SQL(`${DEV_PG_SERVER}/postgres`);
-  const exists = await admin`select 1 from pg_database where datname = 'network'`;
-  if (!exists.length) await admin.unsafe("create database network");
-  await admin.close();
+  const admin = new SQL({ url: `${DEV_PG_SERVER}/postgres`, max: 1 });
+  try {
+    // Test workers may run together. CREATE DATABASE must run outside a transaction.
+    await admin`select pg_advisory_lock(hashtext('thenetwork:dev-pg:create-network'))`;
+    const exists = await admin`select 1 from pg_database where datname = 'network'`;
+    if (!exists.length) await admin.unsafe("create database network");
+  } finally {
+    await admin.close();
+  }
   return DEV_PG_URL;
 }
 

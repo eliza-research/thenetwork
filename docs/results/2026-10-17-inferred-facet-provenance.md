@@ -1,5 +1,7 @@
 # Preserve inferred facts when reading profile data
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-17-inferred-facet-provenance.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Codex performed this work under Nubs' approval for Network bug fixes. No production data or Google account was accessed.
 
 ## Problem
@@ -28,10 +30,10 @@ One fictional member has a confirmed hiking interest. Another has a proposed hik
 Run the same regression before and after:
 
 ```sh
-REQUIRE_PG=1 bun test --conditions eliza-source packages/network/test/crossapp.test.ts --test-name-pattern 'proposed inferred database interest'
+REQUIRE_PG=1 pnpm exec vitest run --conditions eliza-source packages/network/test/crossapp.test.ts --test-name-pattern 'proposed inferred database interest'
 ```
 
-The local run used Bun 1.4.2, Postgres 17, port 54427 and a dedicated temporary cluster.
+The local run used the former runtime 1.4.2, Postgres 17, port 54427 and a dedicated temporary cluster.
 The existing cross-app suite also passed: 3 tests, 101 assertions, no failures.
 Type checking and plugin snapshot checking passed. Broader validation results are recorded with the pull request.
 

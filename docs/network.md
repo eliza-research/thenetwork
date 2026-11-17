@@ -62,7 +62,7 @@ The store tests check that a Network restarted from JSON gives the same messages
 `packages/network/service/` runs one Network for each row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`) against Postgres. Details and the boundary with `packages/plugin-network` are in its [README](../packages/network/service/README.md). How to run it, its variables, the live-send flags and the staff API: [runbook-real.md](runbook-real.md) section 6.5. The four apps in local dev: [runbook-platform.md](runbook-platform.md). It is not deployed.
 
 ```bash
-NETWORK_DATABASE_URL=... bun run packages/network/service/main.ts [--once] [--dry-run]
+NETWORK_DATABASE_URL=... node --import tsx --env-file-if-exists=.env packages/network/service/main.ts [--once] [--dry-run]
 ```
 
 | Part | What it does |
@@ -117,7 +117,7 @@ A hiring manager is a peon member who owns job postings. The engine matches job 
 
 **Intake by text.** The intake runs in a handled turn (`AppHooks.postings`, peon only), with rules only. It never reads an open-turn LLM output. A posting command ("We're hiring a data analyst, 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL") starts a draft. The Network asks for a missing title or pay range (at most two questions), then reads the post back. The manager's yes saves it (`applyPosting`, then `NetworkOptions.onPosting`). The service writes the rows in the same transaction as the state (`runtime.ts` `writeUnit`). Other details correct the draft, and a no drops it. "Update my data analyst post: 3 openings" and "Close my data analyst post" work the same way. The draft is in `MemberState.posting`, so it survives a restart.
 
-**Staff API** (`jobPostingRoutes`, peon only, admin for writes): `GET /postings?managerId=`, `POST /postings`, `POST /postings/:id/close` (`reason: closed | filled`), `POST /employers/:memberId/verify` (`company`, `note`; peonPack proposes no job of an unverified employer). Each write goes through `applyPosting` in a unit of work, with the same checks as a text, and writes `network.staff_audit`.
+**Staff API.** In Peon, admins and reviewers can list postings with `GET /postings?managerId=`. Admins can save with `POST /postings`, close with `POST /postings/:id/close` and reason `closed` or `filled`, and verify employers with `POST /employers/:memberId/verify` and a company and note. Posting writes use `applyPosting` in a unit of work and run the text intake checks. These routes use the staff audit log.
 
 **Routing.** The engine proposes a pair `[candidate, job:<id>]`. `seatRoute` puts the manager in place of the seat and keeps `Opp.seat = { id, manager }`. A seat without a manager on the record is never proposed (gate `seat_without_manager`). Every item goes to the review queue first, like every other item. Then the normal consent flow runs:
 
@@ -131,9 +131,9 @@ A no from the manager closes the item (an alternate candidate never stands in fo
 
 **Close and fill.** At every tick, `checkSeats` ends a seat's items in review or in probes when the posting is closed or gone, or when intros that both sides accepted take all its openings. A candidate who already said yes gets "That job is no longer open...". Intros that are already done stay.
 
-**Validation.** `bun run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
+**Validation.** `pnpm run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
 
-**Not built.** The service does not register `jobPostingRoutes` yet (one line in `service.ts`). There is no web intake page. Interview, offer and hire stages after the intro are not tracked. The pack's own stages go further (PRD 40.6).
+Peon tracks the introduction in the member conversation. The pack models the later interview, offer, and hire stages (PRD 40.6).
 
 ## 2. The review gate (PRD 32.8)
 
@@ -302,7 +302,7 @@ When every participant said yes, the Network books the plan and tells each membe
 - **The message** carries `type: "proposal"`, `proposalId`, `meetingAt` and `SimMeta.booked { proposalId, at, optOutHours: 48 }`. It is logistics: it never counts on the cap, and it goes only while the member has at most 2 messages unanswered. The meeting is recorded at booking. There is no separate "you're all set" message.
 - **Opt-out.** Silence for 48 hours (or until the meeting) counts as confirmed. A "no" ("can't", "no", "not anymore") or a cancel phrase ("can't make it", "need to cancel", "something came up") cancels the plan (`booked_cancelled`). A "yes" or an acknowledgement gets `copy.bookedThanks`. The other member hears that it is off (a pair) or still on (a group of 3 or more), never why. Only members the plan reached hear about a change.
 - **Caution: a bare "CANCEL" is a STOP keyword.** The simulator channel and the service treat the one word "cancel" (any case) as STOP, so it opts the member out of all messages; it does not only cancel the plan (section 11).
-- **Calendar and weekly check-in** (founder decisions 4c and 4d). A member's first booked plan ends with one offer: "Next time I can skip the time question: reply CALENDAR to share your calendar's free/busy, or WEEKLY for a short weekly check-in." CALENDAR records consent to free/busy only (`calendar_consent`); no calendar source is connected yet (section 11). WEEKLY turns on "What's your week like?" once a week, on Sunday (`availability.weeklyCheckIn.day`) in the member's send window. It is a profiling ask: never on the cap, one question at a time, never for members aged 13-17. The answer becomes stated availability for 7 days. "CALENDAR OFF" and "WEEKLY OFF" stop them.
+- **Calendar and weekly check-in** (founder decisions 4c and 4d). A member's first booked plan offers calendar free/busy and a weekly check-in. CALENDAR records the member's scheduling choice (`calendar_consent`). Scheduling uses fresh anonymous intervals only when a trusted calendar authority supplies a current grant for their exact app membership and connection. WEEKLY turns on "What's your week like?" once a week, on Sunday (`availability.weeklyCheckIn.day`) in the member's send window. It is a profiling ask: never on the cap, one question at a time, never for members aged 13-17. The answer becomes stated availability for 7 days. "CALENDAR OFF" and "WEEKLY OFF" stop them.
 
 ### 4.3 Meeting and after
 
@@ -377,7 +377,7 @@ Result (21 days, seeds 1-3 pooled, simulated reviewer, plan-aware personas): 99 
 |---|---|---|
 | Sales and spam | "20% off for Network members", "send my link to all members" | Polite boundary, risk points |
 | Scam | "send me $200 for the deposit", "guaranteed returns" | Boundary, risk points |
-| Contact extraction | "give me Sam's number", "home address" | "I can't share other members' contact details" |
+| Contact extraction | "give me Sam's number", "home address" | Boundary and two risk points. An explicit request for another member's number to contact them directly starts a watch. A recognized mutual-match swap request follows the consent flow. |
 | Prompt injection | "ignore previous instructions", "admin debug mode" | "I can't help with that", risk points |
 | Harassment | "they owe me", "make them answer" | "Please give them space" |
 | Age | "I'm 15", "10th grade", "my mom says", "after school" | Age policy (6.3) |
@@ -392,6 +392,7 @@ Result (21 days, seeds 1-3 pooled, simulated reviewer, plan-aware personas): 99 
 | hold | 6 or more | Everything paused. Open opportunities with them close. They hear that a person will look. Only a person lifts a hold. |
 
 - The score drops by 1 point for each 14 days with no new signal. Holds do not decay.
+- Each score reduction records a negative `decay` event, capped at the remaining score. The open safety case also records it. Decay does not open a case and does not reopen a closed or lifted case.
 - **Corroborated reports.** A report adds points only when two different members report the same person, or the target already has a risk score. The reporter must be credible (trust "ok", fewer than 3 blocks in 14 days). One person cannot get someone removed.
 - **Block abuse.** A member who blocks 3 people in 14 days gets 2 risk points.
 - **Inviter accountability.** When an invitee reaches hold, the inviter loses invites for 30 days and gets 1 risk point.
@@ -399,7 +400,7 @@ Result (21 days, seeds 1-3 pooled, simulated reviewer, plan-aware personas): 99 
 
 ### 6.2.1 Safety cases (PRD 32.14)
 
-Every trust event about a member goes into that member's open safety case, or opens a new one. A case holds the time, kind, points and reporter of each event. It never holds message text.
+Every trust event about a member goes into that member's open safety case, or opens a new one. Decay only updates an open case (spec/safetyCase.md). A case holds the time, kind, points and reporter of each event. It never holds message text.
 
 | Status | When |
 |---|---|
@@ -446,7 +447,8 @@ The policy comes from `packages/core/src/policy.ts` (`MIN_MEMBER_AGE = 13`, `ADU
 | Quiet hours | Always win. Nothing agent-started goes out in the member's quiet hours (plus 20:00-08:00 on school nights for members aged 13-17). Logistics (the booked plan, reminders, feedback asks, cancellation notices, the requester's time question) wait only for quiet hours. Direct replies and safety notices go at once. |
 | Deferral log | A send that waits is logged once: `send_deferred { memberId, kind, until }` (`oppId` for a probe). |
 | Cap (initial invites) | Only a member's initial invite to a new opportunity counts: their first probe, once per member and opportunity. The partner's first probe counts on the partner's cap; it needs no break-in and goes in the partner's send window as soon as the first member says yes. Open 4 per 7 days, Normal 2 per 7 days, Quiet 1 per 30 days, Receiving 2 per 7 days (support only), Paused 0. Counted at send time over what was sent. |
-| Never on the cap | The booked plan, reminders, cancellation notices, feedback asks, acknowledgements, a requester's own confirm-probe or time question, profiling asks (engine questions), growth asks and the weekly check-in. `meta.proactive` is true only for initial invites (and the one re-engagement), so the judge counts the same thing. |
+| Never on the cap | The booked plan, reminders, cancellation notices, meeting feedback asks, acknowledgements, a requester's own confirm-probe or time question, profiling asks (engine questions), growth asks and the weekly check-in. |
+| Invitation feedback | Sample one in ten initial invitations with a confirmed send and an explicit answer. From 24 to 72 hours later, the private survey can use an ordinary unsolicited slot and the shared person cap if no question is open. Record only the yes or no in the app scorecard. |
 | One question at a time | Asks (profiling, growth, the weekly check-in) are not budgeted, but an ask with no reply blocks the next ask for 72 hours. |
 | Unanswered | An initial invite is unanswered after 72 hours. Two unanswered initial invites move the member to "only when I ask". |
 | Blooio streak | Every outbound message counts since the member's last inbound message. An interruption needs at most 1 unanswered (`canInterrupt`); logistics at most 2 (`canSendLogistics`). A fourth message in a row is never sent. Replies and safety notices are exempt. |
@@ -635,7 +637,7 @@ Copy changes are UI changes. A PR that changes `copy.ts` needs the videos in CON
 - **The judge and the re-engagement.** `packages/sim/src/judge/metrics.ts` counts a re-engagement as a `two_unanswered` violation. With D6 (30 days plus a held top-quartile item) it cannot fire in runs shorter than 30 days. The message carries `meta.reengagement: true`; the judge should exempt one per silence.
 - **Blooio queue wired, never live.** The service's `BlooioAdapter` gives the queue `forbiddenProvider` and `blooioRecipientPolicy` (6.5). It is tested with a fake provider only. No live send has been made.
 - **Fixed 2026-10-07: a missing age read as 0.** The Observatory's snapshot builder (now `service/snapshot.ts`) turned a missing age into 0. The age 0 is valid and under 13, so the Network would decline that member and delete their data at their first message. It now stays unknown (6.3). The service test checks it.
-- **No calendar source.** CALENDAR records consent to free/busy only (4.2). `AvailabilityEvidence.calendar` stays empty until a free/busy integration exists.
+- **Calendar authority.** The Network service can preload short-lived anonymous free/busy evidence for reviewed scheduling. Configuration uses `NETWORK_CALENDAR_FREE_BUSY_SECRET` and the exact HTTPS `NETWORK_CLOUD_DELIVERY_ORIGIN`. The calendar secret differs from gateway and staff credentials. Eliza Cloud still needs to implement the counterpart and obtain explicit scheduling consent for the exact owned Google connection. While the counterpart is unavailable, scheduling uses stated and learned availability. [Signed calendar contract](../spec/calendarFreeBusy.md)
 - **Employer rule copied.** The probe check for employer-like values (4.1) copies two regular expressions from the engine's `buildProbe`, because the engine does not export them. The engine owner should export them.
 - **Booked plans are often cancelled in the time-aware simulator** (120 of 235, about half; [results/SUMMARY.md](results/SUMMARY.md)). Pilot data must say how often real members cancel.
 - **A bare "CANCEL" is STOP.** The simulator channel and the service (`detectKeyword`) treat it as an opt-out from all messages. The booked-plan text invites a reply about cancelling (4.2). The founder must decide the STOP, START and HELP owner before any live send (service README, rule 1).

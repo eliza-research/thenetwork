@@ -5,6 +5,6 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "sim": "bun run experiments/run.ts"
+    "sim": "node --import tsx --env-file-if-exists=.env experiments/run.ts"
   }
 }

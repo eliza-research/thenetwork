@@ -1,6 +1,7 @@
 // MCP over Streamable HTTP: 2026-07-28 (per-request _meta and headers) and the legacy initialize
 // handshake, the OpenAI surface that hides slop, and tool inputs that never take a phone or a code.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
+import { defaultApps } from "../src/apps.ts";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
 const NTWRK = `${origin("ntwrk.party")}/mcp`;
@@ -18,7 +19,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
-    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "submit_profile", "get_updates"]);
+    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "get_updates"]);
     for (const t of l.body!.result.tools) {
       // Profile submission and reading updates modify the person's own state.
       const ro = !["submit_profile", "get_updates", "prepare_signup"].includes(t.name);
@@ -29,8 +30,8 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(info.body!.result.isError).toBe(false);
     expect(info.body!.result.structuredContent).toMatchObject({ id: "peon", site: "https://peon.biz", ages: { join: 13, matching: 18 } });
     const signup = await call(env, NTWRK, "start_signup", { app: "friends" });
-    expect(signup.body!.result.structuredContent).toMatchObject({ app: "friends", url: "https://friends.help/join?via=agent", keyword: "friends" });
-    expect(signup.body!.result.structuredContent.instructions_for_person).toContain("Never share the code with anyone, including this assistant");
+    expect(signup.body!.result.structuredContent).toMatchObject({ app: "friends", url: "https://friends.help/SKILL.md", keyword: "friends" });
+    expect(signup.body!.result.structuredContent.instructions_for_person).toContain("Keep the verification code on that page");
     expect((await rpc(env, NTWRK, "ping")).body!.result).toMatchObject({ resultType: "complete" });
   });
 
@@ -82,7 +83,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const future = await rpc(env, NTWRK, "initialize", { protocolVersion: "2030-01-01", capabilities: {} }, { modern: false });
     expect(future.body!.result.protocolVersion).toBe("2025-11-25");
     const list = await rpc(env, NTWRK, "tools/list", {}, { modern: false, headers: { "mcp-protocol-version": "2025-06-18" } });
-    expect(list.body!.result.tools).toHaveLength(6);
+    expect(list.body!.result.tools).toHaveLength(7);
     const tool = await call(env, NTWRK, "app_info", {}, { modern: false });
     expect(tool.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
   });
@@ -117,6 +118,17 @@ describe("Streamable HTTP, 2026-07-28", () => {
 });
 
 describe("surface=openai hides slop", () => {
+  test("the OpenAI surface respects an app's registry opt-out on both connector paths", async () => {
+    // spec/connectorTools.md, "A connection binds to one host on one surface"
+    const apps = defaultApps();
+    apps.friends.openai = false;
+    const host = origin("friends.help");
+    const openAi = setup({ apps, surface: "openai" });
+    expect((await rpc(openAi, `${host}/mcp/openai`, "tools/list")).res.status).toBe(404);
+    expect((await rpc(openAi, `${host}/mcp`, "tools/list")).res.status).toBe(404);
+    expect((await rpc(setup({ apps }), `${host}/mcp`, "tools/list")).res.status).toBe(200);
+  });
+
   test("no slop in tools/list, app_info or start_signup; slop.date has no OpenAI endpoint", async () => {
     const env = setup();
     const l = await rpc(env, OPENAI, "tools/list");
@@ -248,7 +260,10 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     expect(n).toBe(0);
     await addMember(env, PHONE_B, [{ app: "peon", state: "active" }]);
     const d = await connect(env, "peon.biz", PHONE_B);
-    for (let i = 0; i < 5; i++) expect((await call(env, PEON_MCP, "submit_profile", { about }, { token: d.token.access_token })).res.status).toBe(200);
+    for (const schedule of ["weekday mornings", "weekday evenings", "Saturday mornings", "Sunday afternoons", "weekday afternoons"]) {
+      const profile = `Looking for a backend role in Brooklyn. I am free on ${schedule}.`;
+      expect((await call(env, PEON_MCP, "submit_profile", { about: profile }, { token: d.token.access_token })).res.status).toBe(200);
+    }
     expect((await call(env, PEON_MCP, "submit_profile", { about }, { token: d.token.access_token })).res.status).toBe(429);
     expect(n).toBe(5);
   });

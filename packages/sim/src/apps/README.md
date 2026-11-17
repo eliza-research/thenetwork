@@ -17,15 +17,15 @@ Simulated worlds for the apps on The Network's shared matching engine, one folde
 - `friends/`: friends.help (NYC friendship). Personas, meetups, crews, `officialGates` and tracked
   metrics: `docs/results/2026-10-08-friends-pack.md`.
 
-`bun run sim` runs each app's official gates on pinned seeds (scripts/sim/{slop,peon,friends}.ts).
+`pnpm run sim` runs each app's official gates on pinned seeds (scripts/sim/{slop,peon,friends}.ts).
 The CLIs print the full tables and exit 1 when an official gate fails:
 
 ```bash
-bun run packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4     # slop baselines
-bun run packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4     # slop baselines
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
   --population '{"catfish":0.005,"bodyTypes":true}' --world '{"verification":true,"relay":true,"review":3,"widen":true,"checkin":true,"photos":1,"rater":true}'
-bun run packages/sim/src/apps/peon/cli.ts --seeds 13-16
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/peon/cli.ts --seeds 13-16
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8
 ```
 
 Network code never imports hidden truth from here: matchers read only the snapshot. The worlds run

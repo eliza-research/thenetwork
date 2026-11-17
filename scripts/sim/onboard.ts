@@ -17,7 +17,8 @@
 //    read-back (0 wrong gender / seeking after confirmation, BLOCKING), minors flagged 100% and never
 //    matchable (BLOCKING), read-back leaks 0 (BLOCKING).
 // 3. --llm (off by default, needs a provider key): the same corpus and a smaller sim with the LLM
-//    reader filling low-confidence fields. Tracked only. `bun run sim` never sets it.
+//    reader filling low-confidence fields. Tracked only. `pnpm run sim` never sets it.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { defaultLLM, endpointsFor, Rng, HOUR } from "../../packages/core/src/index.ts";
 import {
   applyCorrection, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts,
@@ -27,8 +28,8 @@ import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/a
 import { zipInfo } from "../../packages/sim/src/apps/slop/geo.ts";
 import { Block } from "./gate.ts";
 
-const ROOT = `${import.meta.dir}/../../evals/slop-onboarding`;
-const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
+const ROOT = `${import.meta.dirname}/../../evals/slop-onboarding`;
+const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -53,6 +54,7 @@ function valueOf(p: SlopOnboarding, f: string): unknown {
 }
 function matches(p: SlopOnboarding, f: string, want: unknown): boolean {
   const got = valueOf(p, f);
+  if (want === null) return got === undefined;
   if (f === "location") return typeof got === "string" && typeof want === "string" && got.toLowerCase() === want.toLowerCase();
   if (f === "values") return Object.entries(want as Record<string, unknown>).every(([k, v]) => (got as Record<string, unknown>)[k] === v);
   if (f === "free") return same([...(got as string[])].sort(), [...(want as string[])].sort());
@@ -443,6 +445,35 @@ async function llmMergeGate(b: Block): Promise<void> {
     const teen = await run("sophomore year lol", { selfAge: { value: 15, quote: "sophomore year" } });
     if (!teen.minor || teen.declined) throw new Error("an LLM age must mark a minor and never decline");
     if ((await run("im 30 lol", { selfAge: { value: 45, quote: "im 30" } })).age?.value !== 30) throw new Error("an LLM age raised the age");
+    const home = "FiDi is where I live, if that helps";
+    const where = { location: { value: { area: "FiDi" }, quote: "FiDi" } };
+    for (const [market, zip] of [["sf", "94104"], ["nyc", "10004"]] as const) {
+      const matched = await extractSlopProfileLLM([home], undefined, { market, llm: { enabled: true, reader: scripted(where) } });
+      if (matched.location?.value.zip !== zip) throw new Error(`home in ${market}: ${JSON.stringify(matched.location)}`);
+      const office = await extractSlopProfileLLM(["My office is in FiDi"], undefined, { market, llm: { enabled: true, reader: scripted(where) } });
+      if (office.location) throw new Error("office accepted as home");
+    }
+    const badArea = await extractSlopProfileLLM(["River North is where I live"], undefined, {
+      market: "nyc", llm: { enabled: true, reader: async () => ({ location: { value: { area: "River North" }, quote: "River North" } }) },
+    });
+    if (badArea.location) throw new Error("unindexed area accepted as home");
+    const confirmed = { ...extractSlopProfile(["woman looking for men 28-38 within 5 mi of 11211"]), confirmed: true };
+    const soft = await extractSlopProfileLLM(["running is pretty neat"], confirmed, { llm: {
+      enabled: true, reader: scripted({ interests: { value: ["running"], quote: "running" } }),
+    } });
+    if (!soft.confirmed || !soft.interests.some(i => i.value === "running")) throw new Error("a soft addition replaced confirmation");
+    const preference = await run("into fellas mostly", { seeks: { value: ["man"], quote: "into fellas" } });
+    const orientation = await extractSlopProfileLLM(["actually I'm bi"], preference, { llm: { enabled: true, reader: scripted({
+      seeks: { value: ["woman"], quote: "bi" },
+    }) } });
+    if (!same(orientation.seeks?.value, ["man"])) throw new Error("an orientation correction replaced explicit seeks");
+    // A model-read gender change recomputes a seeking set the rules derived from the old gender.
+    const straight = await run("straight here lol", { gender: { value: "man", quote: "straight here" } });
+    if (!same(straight.seeks?.value, ["woman"])) throw new Error(`derived seeks: ${JSON.stringify(straight.seeks)}`);
+    const regendered = await extractSlopProfileLLM(["she/her actually"], straight, { llm: { enabled: true, reader: scripted({
+      gender: { value: "woman", quote: "she/her" },
+    }) } });
+    if (regendered.gender?.value !== "woman" || !same(regendered.seeks?.value, ["man"])) throw new Error(`a model gender change kept the old derived seeks: ${JSON.stringify(regendered.seeks)}`);
   });
 }
 

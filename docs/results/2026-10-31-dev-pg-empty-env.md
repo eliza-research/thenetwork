@@ -1,5 +1,7 @@
 # The dev Postgres startup reads the copied .env.example's empty values correctly
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-31-dev-pg-empty-env.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-31. Hand-written by the contributor. No model output is in this report. The
 reproduction is deterministic (a child process sees the exact empty values a copied
 `.env.example` carries, and base a0ed7bc fails on every run of the same command).
@@ -7,9 +9,9 @@ reproduction is deterministic (a child process sees the exact empty values a cop
 ## The problem
 
 CONTRIBUTING.md section 4 says: `cp .env.example .env`, then
-`bun run packages/observatory/db/dev-pg.ts up`. `.env.example` lists every optional value as an
+`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`. `.env.example` lists every optional value as an
 EMPTY line (`OBSERVATORY_PG_PORT=`, `OBSERVATORY_PG_DIR=`, `PG_BIN_DIR=`), and section 5.1 says of
-these: "Optional. Leave the default." Bun loads the copied `.env` into the process, so the dev
+these: "Optional. Leave the default." the former runtime loads the copied `.env` into the process, so the dev
 startup then reads these empty strings:
 
 ```ts
@@ -28,14 +30,14 @@ The new integration case runs the real CLI as a child process with exactly the v
 `.env.example` carries: `OBSERVATORY_PG_PORT=""`, `OBSERVATORY_PG_DIR=""`, `PG_BIN_DIR=""`.
 
 ```text
-bun test --conditions eliza-source packages/observatory/test/dev-pg-env.integration.test.ts
+pnpm exec vitest run --conditions eliza-source packages/observatory/test/dev-pg-env.integration.test.ts
   (fail) ... : expected "exit 1: ... at devPgUp (dev-pg.ts:36:5) ... code: \"ENOENT\"" to be "exit 0: "
 ```
 
 On the command line, the same thing (any shell, base revision):
 
 ```text
-OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= bun packages/observatory/db/dev-pg.ts up
+OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
   error: ... code: "ENOENT" ... at devPgUp (dev-pg.ts:36:5)
 ```
 
@@ -59,20 +61,20 @@ matches an existing repo idiom. A value with text still overrides exactly as bef
 
 | Metric | Before (a0ed7bc) | After | Command and seeds |
 |---|---|---|---|
-| New integration case (the documented command under the copied values) | 1 fail (exit 1: ENOENT) | 1 pass (exit 0, answers `localhost:54339/network`) | `bun test --conditions eliza-source packages/observatory/test/dev-pg-env.integration.test.ts` |
-| `bun run packages/observatory/db/dev-pg.ts up` on the CLI with the copied values | ENOENT (or port 0) | starts/answers on the default 54339 | same values in the shell |
-| `bun run sim --only pipeline` with the copied values | the block's Postgres helper fails, block records the tracked skip | `15/15 blocking gates pass` on base+fix (this branch: base main + this change) | `OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= PG_BIN_DIR= bun run sim --only pipeline` |
+| New integration case (the documented command under the copied values) | 1 fail (exit 1: ENOENT) | 1 pass (exit 0, answers `localhost:54339/network`) | `pnpm exec vitest run --conditions eliza-source packages/observatory/test/dev-pg-env.integration.test.ts` |
+| `node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up` on the CLI with the copied values | ENOENT (or port 0) | starts/answers on the default 54339 | same values in the shell |
+| `pnpm run sim --only pipeline` with the copied values | the block's Postgres helper fails, block records the tracked skip | `15/15 blocking gates pass` on base+fix (this branch: base main + this change) | `OBSERVATORY_PG_DIR= OBSERVATORY_PG_PORT= PG_BIN_DIR= pnpm run sim --only pipeline` |
 
 Model evidence: none; no model is called. Agent clients: not applicable — a developer-setup fix;
 nothing a member or an agent can observe changes.
 
 ## Validation
 
-Same machine, Bun 1.4.4 (and the same code passes under the CI-pinned 1.4.2 semantics), dev
-PostgreSQL 16 on :54339. Summary lines are pasted in the pull request. `bun run typecheck` is clean on all four
-projects; `bun run test:integration` runs `681 pass, 8 skip, 1 fail` (the one fail is the known
+Same machine, the former runtime 1.4.4 (and the same code passes under the CI-pinned 1.4.2 semantics), dev
+PostgreSQL 16 on :54339. Summary lines are pasted in the pull request. `pnpm run typecheck` is clean on all four
+projects; `pnpm run test:integration` runs `681 pass, 8 skip, 1 fail` (the one fail is the known
 pre-existing `real-fixes.test.ts` defect of the base revision, fixed by pull request #314; the new
-case itself passes); `bun run test:e2e` runs `42 pass, 1 skip, 0 fail`.
+case itself passes); `pnpm run test:e2e` runs `42 pass, 1 skip, 0 fail`.
 
 ## Limits
 

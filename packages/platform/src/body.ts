@@ -3,7 +3,7 @@
  *
  * A Content-Length over the cap is refused unread. A body without one (chunked) is read chunk by chunk
  * and abandoned as soon as it passes the cap, so no caller ever holds more than `max` bytes plus one
- * chunk (audit: unbounded request bodies; Bun's own default limit is 128 MB).
+ * chunk (audit: unbounded request bodies; the HTTP server's default limit is 128 MB).
  */
 export async function readCapped(req: Pick<Request, "headers" | "body">, max: number): Promise<Uint8Array<ArrayBuffer> | "too_large"> {
   const declared = req.headers.get("content-length");

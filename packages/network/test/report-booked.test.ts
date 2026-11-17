@@ -2,7 +2,7 @@
 // (a booked plan reached both), so the report holds the subject. The booked date is still called off
 // as a block: the other member hears it is off (never why or who), meeting_cancelled is logged with
 // reason "blocked", and the reporter is not offered another time with the person they reported.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { copy } from "../src/copy.ts";
 import { relayDispatchCheck } from "../src/index.ts";
 import { Mini } from "./mini.ts";
@@ -26,7 +26,7 @@ describe("an urgent report before a booked date", () => {
     expect(w.to("b", from).map(s => s.body)).toContain(copy.declinedQuiet);
     expect(w.log("meeting_cancelled").map(l => l.detail.reason)).toEqual(["blocked"]);
     const toA = w.to("a", from).map(s => s.body);
-    expect(toA).toEqual([copy.reported]);
+    expect(toA).toEqual([copy.reported()]);
     expect(w.net.eligible("b")).toBe(false);
     expect(w.net.recipientPolicy("c", "probe", { about: ["b"] })).toEqual({ ok: false, reason: "other_held" });
     expect(w.net.recipientPolicy("b", "checkin")).toEqual({ ok: false, reason: "held" });

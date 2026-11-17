@@ -1,7 +1,9 @@
 // Real service/runtime, queue, Notify and PostgreSQL. Cloud HTTP is the controlled transport boundary.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock,MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
@@ -14,9 +16,11 @@ const db=`network_cloud_outbound_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const clock=new SimClock(Date.UTC(2026,9,9,16)),secret="synthetic-cloud-outbound-signing-secret-20261009",phone="+12125550171",phone2="+12125550175";
-let sql:SQL,service:NetworkService,cloud:ReturnType<typeof Bun.serve>;
+let sql:SQL,service:NetworkService,cloud:HttpServer;
 let dispatches=0,lookups=0,known=false,acceptedAt=clock.now(),holdReceipt=false,releaseReceipt:()=>void,enteredReceipt:()=>void;
 let waiting:Promise<void>,entered:Promise<void>;
+const scriptedDelivery = new Map<string, (path: string, body: string) => Response>();
+const firstDispatchTime = new Map<string, number>();
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,tokens:"safety:saf-tok",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
     adapter:(_net,rt)=>new CloudChannelAdapter({clock,app:rt.app.id,city:rt.city,from:"+12125550170",origin:cloud.url.origin,secret,
@@ -25,19 +29,25 @@ const start=async()=>{
 };
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);console.info(`[owned-db] ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:2});
-  cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
+  cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text();
     const auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
     if (!auth.ok) return Response.json({ok:false,error:"invalid"},{status:401});
     const payload=JSON.parse(raw);expect(auth.id).toBe(payload.id);expect(payload.app).toBe("friends");expect([phone,phone2]).toContain(payload.to);expect(payload.memberId).toBeTruthy();
-    if (path===DELIVER_PATH) dispatches++;
+    if (path===DELIVER_PATH) {
+      dispatches++;
+      if (!firstDispatchTime.has(payload.id)) firstDispatchTime.set(payload.id, clock.now());
+    }
     else {expect(path).toBe(`${DELIVER_PATH}/receipt`);lookups++;if (holdReceipt) {enteredReceipt();await waiting;}}
-    return known?Response.json({ok:true,replayed:true,providerMessageIds:[`provider:${payload.id}`],history:true,acceptedAt:new Date(acceptedAt).toISOString()})
+    const scripted = scriptedDelivery.get(payload.id);
+    if (scripted) return scripted(path, raw);
+    const originalTime = payload.id === "receipt-first" ? acceptedAt : firstDispatchTime.get(payload.id) ?? clock.now();
+    return known?Response.json({ok:true,replayed:true,providerMessageIds:[`provider:${payload.id}`],history:true,acceptedAt:new Date(originalTime).toISOString()})
       :Response.json({ok:false,error:"unknown",retryable:true},{status:202});
   }});
   await start();
 },120_000);
-afterAll(async()=>{await service?.close();cloud?.stop(true);await sql?.close();await admin.close();}); // Preserve only this owned database.
+afterAll(async()=>{await service?.close();await cloud?.stop(true);await sql?.close();await admin.close();}); // Preserve only this owned database.
 
 test("unknown acceptance recovers by receipt only, repairs Notify exactly once, and cannot resurrect after canonical leave",async()=>{
   // Accounts is the canonical verified-profile owner; the fixture supplies only the prior phone proof.
@@ -101,6 +111,72 @@ test("unknown acceptance recovers by receipt only, repairs Notify exactly once, 
   const lookupsAfter=lookups;await liveRt.start();expect(lookups).toBe(lookupsAfter);expect(dispatches).toBe(dispatchBefore+3);
 },60_000);
 
+test("canonical Cloud transient refusal retries the same key while incomplete acceptance stays receipt-only", async () => {
+  // spec/cloudDeliveryReceipt.md, "Transient refusal has a different response from unknown acceptance"
+  // spec/cloudDeliveryReceipt.md, "The queued adapter requires a current canonical receipt"
+  const joined = await service.accounts.join(APPS.friends, { e164: phone2, personId: null },
+    { firstName: "Bex", age: 31, consent: { sms: true, wording: APPS.friends.consent.text } });
+  if (!joined.ok) throw new Error(`Fixture join refused: ${joined.error}`);
+  const rt = service.runtimes.get("friends:nyc")!;
+  const memberId = joined.membership.memberId;
+  const status = async (id: string) => (await sql`select status,next_attempt_at,sent_at,history_recorded from platform.outbound where id=${id}`)[0]!;
+  const emit = (id: string) => rt.unitOfWork(() => {
+    rt.unit.sends.push({ id, memberId, to: phone2, body: "Your requested reminder is ready.", kind: "reply", type: "reminder", proactive: false, system: false, ts: clock.now() });
+  });
+  const calls: { path: string; body: string }[] = [];
+  const retry = "cloud-explicit-transient", uncertain = "cloud-incomplete-evidence";
+  scriptedDelivery.set(retry, (path, body) => {
+    calls.push({ path, body });
+    if (calls.length === 1) return Response.json({ ok: false, error: "unavailable", retryable: true }, { status: 503 });
+    if (calls.length === 2) return Response.json({ ok: false, error: "delivery_pending", retryable: true }, { status: 423 });
+    return Response.json({ ok: true, replayed: false, providerMessageIds: ["sim-accepted-once"], history: true, acceptedAt: new Date(clock.now()).toISOString() });
+  });
+  try {
+    await rt.adapter.engaged!(phone2);
+    await emit(retry);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const row = await status(retry);
+      expect(row.status).toBe("retry_scheduled");
+      expect(row.sent_at).toBeNull();
+      clock.set(new Date(row.next_attempt_at).getTime());
+      await rt.deliver();
+    }
+    expect(calls.map(call => call.path)).toEqual([DELIVER_PATH, DELIVER_PATH, DELIVER_PATH]);
+    expect(new Set(calls.map(call => call.body)).size).toBe(1);
+    expect(await status(retry)).toMatchObject({ status: "accepted", history_recorded: true });
+
+    const originalAt = clock.now();
+    const nextCalls: string[] = [];
+    let receipt = "unavailable";
+    scriptedDelivery.set(uncertain, path => {
+      nextCalls.push(path);
+      if (path === DELIVER_PATH) return Response.json({ ok: false, error: "unknown", retryable: true }, { status: 202 });
+      if (receipt === "unavailable") return Response.json({ ok: false, error: "unavailable", retryable: true }, { status: 503 });
+      return Response.json({ ok: true, replayed: true, providerMessageIds: ["sim-other-accepted-once"], history: receipt !== "missing-history",
+        acceptedAt: new Date(receipt === "future" ? clock.now() + 5 * MINUTE : originalAt).toISOString() });
+    });
+    await rt.adapter.engaged!(phone2);
+    await emit(uncertain);
+    for (const evidence of ["unavailable", "future", "missing-history"]) {
+      receipt = evidence;
+      clock.advance(MINUTE);
+      await rt.deliver();
+      expect(await status(uncertain)).toMatchObject({ status: "unknown_acceptance", sent_at: null, history_recorded: null });
+    }
+    receipt = "verified";
+    clock.advance(MINUTE);
+    await rt.deliver();
+    const verified = await status(uncertain);
+    expect(verified).toMatchObject({ status: "accepted", history_recorded: true });
+    expect(new Date(verified.sent_at).getTime()).toBe(originalAt);
+    expect(nextCalls.filter(path => path === DELIVER_PATH)).toHaveLength(1);
+    expect(nextCalls.filter(path => path.endsWith("/receipt")).length).toBeGreaterThanOrEqual(4);
+  } finally {
+    scriptedDelivery.delete(retry);
+    scriptedDelivery.delete(uncertain);
+  }
+}, 60_000);
+
 test("canonical leave winning after the final async gate prevents dispatch admission",async()=>{
   known=true;
   const joined=await service.accounts.join(APPS.friends,{e164:phone,personId:null},{firstName:"Ari",age:29,consent:{sms:true,wording:APPS.friends.consent.text}});
@@ -124,7 +200,7 @@ test("canonical leave winning after the final async gate prevents dispatch admis
     for(let i=0;i<200;i++) {
       const [row]=await sql`select body,to_address from platform.outbound where id='leave-before-admission'`;
       if(row.body===null && row.to_address===null){erased=true;break;}
-      await Bun.sleep(5);
+      await sleep(5);
     }
     expect(erased).toBe(true);
     release();await sending;await leaving;

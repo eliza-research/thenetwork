@@ -1,3 +1,4 @@
+import { fileAt } from "../../../../core/src/runtime/files.ts";
 // The decision model on top of Clef's answers (clef.ts): pluggable weights.
 //
 //   head      z_d = (b_d + sum_f w_d[f] x[f] - mean_d) / sd_d     for d in face, body, overall
@@ -8,8 +9,8 @@
 // own zero-shot rating question for that dimension (overall also averages face and body), and the
 // calibration assumes the 7-level answers centre on "typical" with SD of about 1.2 levels. Replace it
 // with weights fitted on labelled pairs from our own raters (clef-fit/fit.ts; CLI
-// `bun run clef fit`, scripts/clef-fit.ts; runbook docs/results/2026-10-09-clef-fitting.md), then
-// recalibrate on the live member population (`bun run clef calibrate`) so 0 = the population mean and
+// `pnpm run clef fit`, scripts/clef-fit.ts; runbook docs/results/2026-10-09-clef-fitting.md), then
+// recalibrate on the live member population (`pnpm run clef calibrate`) so 0 = the population mean and
 // 1 = one population SD. Load a fitted file with `loadClefWeights(path)` (env CLEF_WEIGHTS_PATH on the
 // platform).
 
@@ -47,7 +48,7 @@ export interface ClefWeights {
 export const DEFAULT_CLEF_WEIGHTS: ClefWeights = {
   version: "placeholder-0",
   placeholder: true,
-  notes: "Placeholder: Clef's zero-shot rating per dimension, calibrated by assumption (mean 0.5, sd 0.2). Not fitted on any labels. Fit with `bun run clef fit` and recalibrate on the member population before relying on it.",
+  notes: "Placeholder: Clef's zero-shot rating per dimension, calibrated by assumption (mean 0.5, sd 0.2). Not fitted on any labels. Fit with `pnpm run clef fit` and recalibrate on the member population before relying on it.",
   heads: {
     face: { w: { "rate.face": 1 }, b: 0 },
     body: { w: { "rate.body": 1 }, b: 0 },
@@ -72,5 +73,5 @@ export function validateClefWeights(w: ClefWeights): ClefWeights {
 
 /** Load a weights JSON file (as written by the fit CLI). */
 export async function loadClefWeights(path: string): Promise<ClefWeights> {
-  return validateClefWeights(JSON.parse(await Bun.file(path).text()) as ClefWeights);
+  return validateClefWeights(JSON.parse(await fileAt(path).text()) as ClefWeights);
 }

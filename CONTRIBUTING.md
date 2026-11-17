@@ -35,18 +35,31 @@ needs approval. Link the specific story or rule when you propose a change.
   maintainer approval and an update to the product specification.
 - Add or update the story and its rules in `spec/<name>.md`. Put the Quint
   for a rule immediately below its prose. Follow the
-  [sync skill](.claude/skills/sync/SKILL.md).
+  [sync skill](.agents/skills/sync/SKILL.md) and the
+  [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
-  Run `bun run spec:sync` to publish the generated modules. Commit the
-  source spec and the published modules together.
+  Run `pnpm run spec:sync` to publish the generated modules. Commit the
+  source spec and the published modules together. Generation and snapshot
+  comparison reuse Quint runs under `.spec-cache/snapshots/` when their
+  effective inputs match. Both commands compile the current VibeLang shells.
 - Keep the relevant [whole-flow model](spec/models/README.md) consistent
   with the runtime. Compare the guards, outcomes, and invariants where
   the generated rule enters the flow.
-- Run `bun run check` for the Vibespec pipeline and the project commands in
-  section 6 for the application. The product owner runs `bun run accept`
-  after comparing the prose and Quint.
-- For work on the generator, run `bun run spec:selftest` and add a fixture
-  for each new class of error it detects.
+- Run `pnpm run check` for the Vibestack spec and the project commands in
+  section 6 for the application. The product owner compares each changed
+  rule with its Quint and records approval with `pnpm run accept`.
+  When every model is valid, the checker runs type checks and proofs alongside
+  the simulations. It shares Node's compile cache with child processes and
+  reuses verification results for unchanged inputs. Quint parses and
+  typechecks each harness one time for each check, and each simulation uses
+  the compiled harness. Each tool runs in its own process group, and a check
+  that stops also stops each tool that it started. See the
+  [check stages and cache rules](SPEC.md#stages-of-pnpm-check).
+- For work on the generator, follow the [Vibestack contributor guide](tools/vibestack/CONTRIBUTING.md#changing-the-tools)
+  and add a fixture for each new class of error it detects.
+- For a Vibestack browser property, cite the rule and run it on a locally
+  served fixture. Keep a failed trace for replay. The vendored toolchain's
+  self-test checks its own examples. [Browser checks](SPEC.md#exploring-the-page)
 
 ## 3. What is accepted and what is not
 
@@ -79,21 +92,21 @@ Maintainers close these. They can penalize the contributor under the project con
 
 ## 4. Setup
 
-You need [Bun](https://bun.sh) 1.4.2 (the version in `package.json`) and PostgreSQL 16 server and client programs on your PATH (`initdb`, `pg_ctl`, `psql`). On macOS: `brew install postgresql@16`.
+You need Node 26 (see `.nvmrc`), Corepack 0.35.0, pnpm 10.24.0 and PostgreSQL 16 server and client programs on your PATH (`initdb`, `pg_ctl`, `psql`). On macOS: `brew install postgresql@16`.
 
 ```bash
 cp .env.example .env                                   # never commit .env
-bun install --frozen-lockfile
-bun run spec:setup                                     # Node 24+ for Vibespec
-bun run packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
-bun run sim                                            # must pass before you start
+pnpm install --frozen-lockfile
+pnpm run spec:setup                                     # Node 26 with Corepack and pnpm 10.24.0
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
+pnpm run sim                                            # must pass before you start
 ```
 
 Caution: do not use port 54329. Another tool uses it.
 
 ## 5. Environment variables
 
-Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.example) has every name with no secret values. This table comes from a search of the code for `process.env`, `Bun.env` and every `env.<NAME>` read. It lists the variables you need to test and validate. The deploy-only variables are in section 5.2.
+Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.example) has every name with no secret values. This table comes from a search of the code for `process.env` and every `env.<NAME>` read. It lists the variables you need to test and validate. The deploy-only variables are in section 5.2.
 
 ### 5.1 Variables for testing and validation
 
@@ -109,23 +122,23 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 | `LLM_TIMEOUT_MS` | Timeout of one LLM request. Default 60000. 0 turns it off. | Optional | |
 | `LLM_MAX_RETRIES` | Retries per LLM call. Default 4. | Optional | |
 | `LLM_DEADLINE_MS` | Limit for one call with all its retries. Default 3 times the timeout. 0 turns it off. | Optional | |
-| `CLOUDFLARE_AI_TOKEN` | Cloudflare Workers AI token for Clef: the slop.date photo rater and the relay scam classifier. | `bun run relay-eval --live`, `bun run clef features --live`, live photo rating | Cloudflare dashboard, API token with Workers AI permission |
+| `CLOUDFLARE_AI_TOKEN` | Cloudflare Workers AI token for Clef: the slop.date photo rater and the relay scam classifier. | `pnpm run relay-eval --live`, `pnpm run clef features --live`, live photo rating | Cloudflare dashboard, API token with Workers AI permission |
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account of the Workers AI token. `scripts/wrangler.sh` also needs it. | With `CLOUDFLARE_AI_TOKEN` | Cloudflare dashboard |
 | `CLEF_MODEL` | Photo rater model: `clef` (default) or `clef-flash`. | Optional | |
 | `RELAY_CLEF_MODEL` | Relay classifier model: `clef-flash` (default) or `clef`. | Optional | |
 | `CLEF_RATINGS` | Photo ratings. Unset or `on` means on. `off` turns them off. | Optional | |
-| `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused. | Optional | `bun run clef fit` output |
+| `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused. | Optional | `pnpm run clef fit` output |
 | `OBSERVATORY_PG_PORT`, `OBSERVATORY_PG_DIR` | Port (default 54339) and data folder (default `runs/pg`) of the dev Postgres. The integration and e2e tests use it. | Optional | |
 | `PG_BIN_DIR` | Folder of the Postgres client programs, if they are not on PATH. | Optional | |
 | `REQUIRE_PG` | `1` makes a Postgres test or sim block fail instead of skip when there is no Postgres. CI sets it. | Optional. Set it to prove that no Postgres case skipped. | |
-| `NETWORK_DATABASE_URL` | The Postgres database of the service. `bun run platform:dev` and `bun run db:migrate` need a local one. | Platform dev (section 8) | `postgres://$USER@localhost:54339/<your db>` |
+| `NETWORK_DATABASE_URL` | The Postgres database of the service. `pnpm run platform:dev` and `pnpm run db:migrate` need a local one. | Platform dev (section 8) | `postgres://$USER@localhost:54339/<your db>` |
 | `DATABASE_URL` | Fallback database URL for the Observatory and the backend. | Optional | |
 | `PLATFORM_ENV` | `dev`, `staging` or `production`. `platform:dev` sets `dev`. Never set `production` locally. | Set by the dev scripts | |
 | `NETWORK_SERVICE_TOKENS` | Staff tokens (`role@app:token`, comma-separated). `platform:dev` prints dev tokens when it is unset. | Optional | Make your own |
 | `OBSERVATORY_TOKEN` | Admin token of the local Observatory. A random one is printed when it is unset. | Optional | |
 | `PIPELINE_DEBUG` | Any value prints the steps of the `pipeline` sim block. | Optional | |
 
-`bun run sim` deletes `SURPLUS_API_KEY`, `OPENAI_API_KEY` and `CLOUDFLARE_AI_TOKEN` from its own process before it starts (except the onboarding arm with `--llm`). So the offline gates never call a model, even when your `.env` has keys.
+`pnpm run sim` deletes `SURPLUS_API_KEY`, `OPENAI_API_KEY` and `CLOUDFLARE_AI_TOKEN` from its own process before it starts (except the onboarding arm with `--llm`). So the offline gates never call a model, even when your `.env` has keys.
 
 ### 5.2 Variables you must not set locally
 
@@ -139,16 +152,16 @@ The validation layer is the simulations plus the integration and e2e tests ([doc
 
 | Command | What it does | Needs |
 |---|---|---|
-| `bun run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline, pipeline-slop and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline, pipeline-slop and audit blocks (they skip without it) |
-| `bun run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
-| `bun run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
-| `bun run sim --with-capital` | Adds the slow network-capital block. | |
-| `bun run typecheck` | TypeScript for the packages, deploy, tests, scripts and sites. | |
-| `bun run test:integration` | Real Postgres, real HTTP servers, the full service. Includes the security suite. | Dev Postgres |
-| `bun run security` | The security suite alone (the file list is in AGENTS.md). | Dev Postgres |
-| `bun run test:e2e` | `tests/e2e`: the platform and notify through the running service. | Dev Postgres |
-| `bun run plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
-| `bun run sites:build` | The production build of the four sites. | |
+| `pnpm run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline, pipeline-slop and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline, pipeline-slop and audit blocks (they skip without it) |
+| `pnpm run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
+| `pnpm run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
+| `pnpm run sim --with-capital` | Adds the slow network-capital block. | |
+| `pnpm run typecheck` | TypeScript for the packages, deploy, tests, scripts and sites. | |
+| `pnpm run test:integration` | Real Postgres, real HTTP servers, the full service. Includes the security suite. | Dev Postgres |
+| `pnpm run security` | The security suite alone (the file list is in AGENTS.md). | Dev Postgres |
+| `pnpm run test:e2e` | `tests/e2e`: the platform and notify through the running service. | Dev Postgres |
+| `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
+| `pnpm run sites:build` | The production build of the four sites. | |
 
 CI (`.github/workflows/ci.yml`) runs all of these with no secrets. CI never calls an LLM. So your PR must also show a real-LLM run (section 7.2).
 
@@ -173,12 +186,12 @@ Real LLM calls are required for evidence. Mocked LLM output is not proof. Set `S
 
 | What it measures | Command |
 |---|---|
-| The simulated world with LLM persona agents (the members' words come from the LLM) | `bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm` |
+| The simulated world with LLM persona agents (the members' words come from the LLM) | `node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm` |
 | The same, with LLM persona bios too | add `--llm-personas` |
 | LLM judges of sent proactive messages (quality and privacy audit) | add `--judge 20` |
-| slop.date onboarding with the LLM reader arm | `bun run sim --only onboard --llm` |
-| The relay scam classifier on Clef (Workers AI) | `bun run relay-eval --live --budget-usd 1` |
-| Clef photo features (consented photos only) | `bun run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl --budget-usd 5 --live` |
+| slop.date onboarding with the LLM reader arm | `pnpm run sim --only onboard --llm` |
+| The relay scam classifier on Clef (Workers AI) | `pnpm run relay-eval --live --budget-usd 1` |
+| Clef photo features (consented photos only) | `pnpm run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl --budget-usd 5 --live` |
 
 The service's engine judge is off by default. For a bounded real-model qualification, use `NETWORK_ENGINE_JUDGE=1` with the budget, request limit and dry-run command in [the service README](packages/network/service/README.md#matching-judge-in-staging). This does not enable matching, approve proposals or enable sends. The sim adapter (`packages/sim/src/engineAdapter.ts`) still does not supply an LLM to the engine. If your change touches `judge*.ts`, agree the measurement method with a maintainer in the issue before you start.
 
@@ -200,18 +213,18 @@ Commands to measure matching:
 
 ```bash
 # The ConsentNetwork on the NYC world: arms and scenarios
-bun run packages/network/harness/experiment.ts --days 21 --seed 1
-bun run packages/network/harness/scenarios.ts [scenario_id]
+node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed 1
+node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts [scenario_id]
 
 # The simulated world, and one scenario with pass^k
-bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
-bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
 
-# Per-app worlds (bun run sim runs their official gates)
-bun run packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
+# Per-app worlds (pnpm run sim runs their official gates)
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
   --population '{"catfish":0.005,"bodyTypes":true}' --world '{"verification":true,"relay":true,"review":3,"widen":true,"checkin":true,"photos":1,"rater":true}'
-bun run packages/sim/src/apps/peon/cli.ts --seeds 13-16
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/peon/cli.ts --seeds 13-16
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8
 ```
 
 [docs/runbook-simulation.md](docs/runbook-simulation.md) explains the simulation. [docs/results/](docs/results/) shows the standard for a report.
@@ -232,7 +245,7 @@ The integration points:
 Start the local platform. It sends nothing. The login codes are printed in the service log.
 
 ```bash
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev bun run platform:dev
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev pnpm run platform:dev
 ```
 
 Open the sites at `127.0.0.1`, not `localhost`. The MCP pages check the origin. A web client (ChatGPT, Grok, Muse) cannot reach `127.0.0.1`. Test web clients against a staging URL that a maintainer gives you. Do not deploy anything yourself.
@@ -280,8 +293,8 @@ These numbers measure real progress. A change to line coverage or test count is 
 | Members with a first outcome in 14 days | Simulated world run; pilot | 60% or more (PRD 28.2) |
 | Pair recall and member recall | Simulated world run | Higher is better |
 | Exposure fairness (Gini, members with no proposal) | Simulated world run | Lower is better |
-| Gate values per app (second dates, hires, repeat meetups) | `bun run sim` | Blocking gates pass. Tracked gates move toward the target. |
-| Relay recall and false-hold rate | `bun run relay-eval` on heldout-2 | Higher recall, lower false holds |
+| Gate values per app (second dates, hires, repeat meetups) | `pnpm run sim` | Blocking gates pass. Tracked gates move toward the target. |
+| Relay recall and false-hold rate | `pnpm run relay-eval` on heldout-2 | Higher recall, lower false holds |
 | Canary leaks, invariant violations, minor contacts | Every simulated run | Always 0 |
 
 Safety scores are gates. A PR that makes a canary leak, an invariant violation or a minor contact non-zero is not accepted, even if other scores improve.
@@ -342,8 +355,8 @@ Every PR must include each item. Write `N/A: <reason>` only when an item does no
 - [ ] Real-LLM evidence: commands and output, provider and exact model ID, number of calls and cost.
 - [ ] Agent clients tested (section 8): client and version, provider, model, result.
 - [ ] Logs or video when a flow is involved.
-- [ ] `bun run sim`, `bun run typecheck`, `bun run test:integration` and `bun run test:e2e` pass. Paste the summary lines.
-- [ ] Spec, generated modules, and related flow model agree. Include Vibespec check results and any open obligations.
+- [ ] `pnpm run sim`, `pnpm run typecheck`, `pnpm run test:integration` and `pnpm run test:e2e` pass. Paste the summary lines.
+- [ ] Spec, generated modules, and related flow model agree. Include Vibestack check results and any open obligations.
 - [ ] Test steps and the expected result of each step.
 - [ ] Risks and trade-offs.
 - [ ] No UI change, or the broken-flow exception with before and after video (section 9).

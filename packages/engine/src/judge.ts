@@ -2,7 +2,7 @@
 // fact-citing internal explanation FIRST, then per-dimension scores with calibration anchors, the
 // dealbreaker flag, the verdict, the confidence (match_probability, certainty), and LAST a short
 // shareable "why" per participant (the only member-facing text, which explain.ts accepts only if
-// it passes the leak checker). Verdicts are cached by participant profile revisions and expire
+// it passes the leak checker). Verdicts are cached by the exact judge request and expire
 // (ME-008: no permanent zeros). Failures are never cached.
 //
 // Input (judgeContext.ts): "matchable" visibility = pass 3's context minus private context
@@ -15,12 +15,11 @@
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { JudgeCache, passCacheKey, passMessages, ReplyFields, runCachedPass, runPass, type JudgeRunStats } from "./judgeCommon.ts";
+import { JudgeCache, passCacheKey, passMessages, ReplyFields, runCachedPass, runPass, type JudgeRequest, type JudgeRunStats } from "./judgeCommon.ts";
 import { judgePackOf } from "./pack.ts";
 import { deepDecision, type DeepVerdict } from "./judgeDeep.ts";
 import { screenDecision, type ScreenVerdict } from "./judgeScreen.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
-import { JUDGE_PROMPT_VERSION } from "./packs/network/prompts.ts";
 import type { World } from "./world.ts";
 
 // The Network's pass-2 prompts moved verbatim to packs/network/prompts.ts (networkPack.judge.rubric);
@@ -35,8 +34,9 @@ export const judgeVersionOf = (w: World): JudgeVersion => (w.cfg.judge.pass2Cont
 /** The pack's pass-2 prompt for a version: "v3" reads the "matchable" context, "v2.1" the "compact" one. */
 const rubricPass = (w: World, v: JudgeVersion) => judgePackOf(w).rubric[v === "v3" ? "matchable" : "compact"];
 
-export function judgeCacheKey(w: World, c: Candidate, version = JUDGE_PROMPT_VERSION): string {
-  return passCacheKey(w, c, version);
+export function judgeCacheKey(w: World, c: Candidate, version?: string, model?: string): string {
+  const request = prepareRubric(w, c, w.cfg.judge.maxTokens);
+  return passCacheKey(w, c, version === undefined ? request : { ...request, version }, model);
 }
 
 /** Pass-2 messages for the given prompt version (default: the engine config's choice). */
@@ -79,15 +79,21 @@ export function parseVerdict(raw: unknown, refs: Record<string, MemberId>): Judg
   };
 }
 
+function prepareRubric(w: World, c: Candidate, maxTokens: number): JudgeRequest<JudgeVerdict> {
+  const version = judgeVersionOf(w);
+  const { messages, refs } = buildJudgeMessages(w, c, version);
+  return { pass: "rubric", version: rubricPass(w, version).version, messages, refs,
+    settings: { maxTokens, temperature: 0.2 }, parse: raw => parseVerdict(raw, refs) };
+}
+
 export async function judgeOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<JudgeVerdict> {
-  const { messages, refs } = buildJudgeMessages(w, c);
-  return runPass(llm, messages, raw => parseVerdict(raw, refs), maxTokens, 0.2);
+  return runPass(llm, prepareRubric(w, c, maxTokens));
 }
 
 /** Pass 2 over candidates. Returns key -> verdict (null on failure). */
 export async function judgeCandidates(w: World, cands: Candidate[], llm: LLM, cache: JudgeCache, stats: JudgeRunStats,
-  log: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[]): Promise<Map<string, JudgeVerdict | null>> {
-  return runCachedPass(w, cands, rubricPass(w, judgeVersionOf(w)).version, cache, stats, c => judgeOne(w, c, llm, w.cfg.judge.maxTokens), log);
+  log: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[], model?: string): Promise<Map<string, JudgeVerdict | null>> {
+  return runCachedPass(w, cands, llm, cache, stats, c => prepareRubric(w, c, w.cfg.judge.maxTokens), log, model);
 }
 
 // ---- decisions (engine rules, exported for the evals) ---------------------------------------------

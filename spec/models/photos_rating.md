@@ -8,7 +8,7 @@ An adult slop.date member needs their photos and private scores managed under th
 
 Check photo limits, adult eligibility, erasure, private scores, and consent for probe photos. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production uses the generated [photo eligibility and limits](../photoPolicy.md).
+Production uses the generated [photo eligibility and limits](../photoPolicy.md), [storage and removal transitions](../photoRetention.md), and [rating attempt transitions](../photoRating.md).
 
 Imported from `quint/photos_rating.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -114,6 +114,7 @@ module photos_rating {
     rateDue: bool,          // an upload or delete awaits its rate() call (PH:525, PH:608)
     ratePc: str,            // idle | checked | read | returned | passed | written | dropping
     rateIds: Set[int],
+    rateSelection: Set[int],   // the bounded model fits all current photo rows in a single selection
     // requests in flight
     upl: int -> str,        // idle | checked | counted | put | bytes | refused | unbytes (PH:505-528)
     used: Set[int],         // request ids already spent
@@ -149,7 +150,7 @@ module photos_rating {
     swept: bool,
     reconciled: bool,
     // crash residue that this branch does not fix (see the invariants)
-    rateWriteCrash: bool,   // Q-photos_rating-2: a crash between onRating and check 3 after a change
+    rateWriteCrash: bool,   // authority changes after a committed publication and the cleanup stops
     // A crash inside a staff or forget saga that nothing resumes (SD-005 / X8, Q-photos_rating-3). Each residue is
     // scoped to what the crash left: the photo ids a saga had still to delete, or the rating it had still to drop.
     // A rule leaves out only that residue; any other photo or rating is still checked.
@@ -171,6 +172,7 @@ module photos_rating {
   def mayTakeNow(s: State): bool = not(s.banned) and adultNow(s)
   /** PH:535-544 ratingRefusal(): mayTake, a live membership, and every rated photo still there. */
   def ratingOk(s: State, ids: Set[int]): bool = mayTakeNow(s) and LIVE.contains(s.membership) and ids.subseteq(s.rows)
+  def ratingSelectionOk(s: State): bool = ratingOk(s, s.rateIds) and s.rateSelection == s.rows
 
   def quiescent(s: State): bool = and {
     UPLOADS.forall(u => s.upl.get(u) == "idle"),
@@ -222,7 +224,7 @@ module photos_rating {
     age: ADULT_AGE, netAge: ADULT_AGE, ageFail: false, banned: false, deleted: false, membership: "active", netMember: true,
     profileConsent: false,
     objects: Set(), rows: Set(), hidden: Set(), rowVersion: UPLOADS.mapBy(u => ""), uplHeader: UPLOADS.mapBy(u => ""),
-    rating: false, ratingFrom: Set(), rateDue: false, ratePc: "idle", rateIds: Set(),
+    rating: false, ratingFrom: Set(), rateDue: false, ratePc: "idle", rateIds: Set(), rateSelection: Set(),
     upl: UPLOADS.mapBy(u => "idle"), used: Set(), rmPc: "idle", rmId: 0,
     ageSaga: "idle", verifySaga: "idle", banSaga: "idle", leaveSaga: "idle", delSaga: "idle",
     sagaIds: SAGAS.mapBy(k => Set()),
@@ -317,7 +319,7 @@ module photos_rating {
     st.ratePc == "checked",
     val ids = st.rows.intersect(st.objects)
     if (ids == Set()) st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateNoPhotos" }
-    else st' = { ...st, ratePc: "read", rateIds: ids, last: "rateRead" },
+    else st' = { ...st, ratePc: "read", rateIds: ids, rateSelection: st.rows, last: "rateRead" },
   }
   /** PH:564-565: the rater call (oracle). A null score or an error (after withRetry) ends the run. */
   action rateReturn(score: bool): bool = all {
@@ -325,21 +327,22 @@ module photos_rating {
     if (score) st' = { ...st, ratePc: "returned", last: "rateScore" }
     else st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateNoScore" },
   }
-  /** PH:567-571: the second ratingRefusal with the photo ids. */
+  /** Recheck the photo selection and authority after the provider returns. */
   action rateCheck2: bool = all {
     st.ratePc == "returned",
-    if (ratingOk(st, st.rateIds)) st' = { ...st, ratePc: "passed", last: "rateCheck2" }
+    if (ratingSelectionOk(st)) st' = { ...st, ratePc: "passed", last: "rateCheck2" }
     else st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateDiscarded" },
   }
-  /** PH:572 onRating = SV:1879 writeRating: writes when a membership row exists (any state). */
+  /** The production write checks the current authority and selection in its transaction. */
   action rateWrite: bool = all {
     st.ratePc == "passed",
-    st' = { ...st, ratePc: "written", rating: true, ratingFrom: st.rateIds, last: "rateWrite" },
+    if (ratingSelectionOk(st)) st' = { ...st, ratePc: "written", rating: true, ratingFrom: st.rateIds, last: "rateWrite" }
+    else st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateWriteRefused" },
   }
   /** PH:573-578: the third ratingRefusal; a refusal drops the rating (onRemoved). */
   action rateCheck3: bool = all {
     st.ratePc == "written",
-    if (ratingOk(st, st.rateIds)) st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateKept" }
+    if (ratingSelectionOk(st)) st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateKept" }
     else st' = { ...st, ratePc: "dropping", last: "rateCheck3Refused" },
   }
   action rateDrop: bool = all {
@@ -643,9 +646,8 @@ module photos_rating {
   val bytesMatchRow: bool = quiescent(st) implies bytesMatchRowIn(purged(st))
   /**
    * Rule: no rating for a minor (decision 13; AGENTS "Adults only, scores never shown"). Q-photos_rating-1 (fixed 4fe59a5).
-   * Full rule; Q-photos_rating-2 (not fixed): the age saga can end between check 2 and onRating, and a
-   * crash before check 3 (PH:572-573) keeps the new score with no photo and a lowered member age, so the
-   * purge does not see it. In safety only without that crash.
+   * Publication checks again after check 2, so a completed age change cannot leave a newly written score
+   * (Q-photos_rating-2). The condition still scopes the check to runs with no crash during post-write cleanup.
    */
   def noRatingForMinorIn(s: State): bool = s.rating implies (s.age >= 18 and not(s.deleted))
   val noRatingForMinor: bool = quiescent(st) implies noRatingForMinorIn(purged(st))
@@ -654,7 +656,7 @@ module photos_rating {
    * Rule: a rating only for a verified adult with a live membership who is not banned, from photos that
    * still exist (PH:535-544; SV:1918 failed age check; SV:2030 ban). SD-176 (stale rating from a deleted photo, fixed 1a48ff7).
    * Full rule; it still fails on SD-005 (a crash between the ban commit and dropRatings, identity_sagas
-   * module), on a crash in the other staff and forget sagas (X8), and on Q-photos_rating-2. In safety only without those crashes.
+   * module) and on a crash in the other staff and forget sagas (X8). In safety only without those crashes.
    */
   def ratingOnlyForEligibleIn(s: State): bool =
     s.rating implies (not(s.ageFail) and not(s.banned) and LIVE.contains(s.membership) and s.ratingFrom.subseteq(s.rows))
@@ -738,13 +740,13 @@ module photos_rating {
   run staleHeaderTest =
     init.then(uploadStart(1, "old")).expect(st.upl.get(1) == "idle" and st.rows == Set())
 
-  /** The rater runs while the age drops: check 3 drops the score (PH:573-578). */
+  /** An age change after the write still ends the attempt at the post-write check. */
   run lateRatingDroppedTest =
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadPut(1)).then(uploadBytes(1)).then(uploadShow(1))
-      .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2)
+      .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite)
       .then(ageCommit).then(ageHide).then(ageEnd).then(ageDropRatings).then(ageMembers)
-      .then(rateWrite).then(rateCheck3).then(rateDrop)
+      .then(rateCheck3).then(rateDrop)
       .expect(not(st.rating) and st.rows == Set() and settled(st) and safety)
 
   /** SD-052 fixed: the upload passes mayTake, the age drops, then show checks again and refuses; the bytes go. */
@@ -821,14 +823,23 @@ module photos_rating {
       .then(all { reconcileDue(st), purgeAges }).then(ageHide).then(ageEnd).then(ageDropRatings).then(ageMembers)
       .expect(st.netAge == MINOR_AGE and settled(st) and safety)
 
-  /** Q-photos_rating-2 (not fixed): the age saga ends between check 2 and onRating, then a crash before check 3. */
-  run q2RateWriteCrashTest =
+  /** Q-photos_rating-2: a completed age change refuses publication rather than needing cleanup. */
+  run q2RateWriteRefusedAfterAgeChangeTest =
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadPut(1)).then(uploadBytes(1)).then(uploadShow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2)
       .then(ageCommit).then(ageHide).then(ageEnd).then(ageDropRatings).then(ageMembers)
-      .then(rateWrite).then(crash)
-      .expect(st.rating and st.age < 18 and settled(st) and not(noRatingForMinor) and st.rateWriteCrash and safety)
+      .then(rateWrite)
+      .expect(not(st.rating) and st.age < 18 and settled(st) and noRatingForMinor and not(st.rateWriteCrash) and safety)
+
+  /** A newly uploaded photo supersedes an in-flight score even when the earlier photo still exists. */
+  run changedPhotoSelectionTest =
+    init
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadPut(1)).then(uploadBytes(1)).then(uploadShow(1))
+      .then(rateStart).then(rateRead)
+      .then(uploadStart(2, CONSENT)).then(uploadCount(2)).then(uploadPut(2)).then(uploadBytes(2)).then(uploadShow(2))
+      .then(rateReturn(true)).then(rateCheck2)
+      .expect(not(st.rating) and st.rows == Set(1, 2) and st.rateDue and st.last == "rateDiscarded")
 
   /** Q-photos_rating-3 (not fixed): a crash after the leave's forget and before deleteFor keeps the photos. */
   run q3LeaveCrashAfterForgetTest =

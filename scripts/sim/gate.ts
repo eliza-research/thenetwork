@@ -1,13 +1,21 @@
-// Gates for `bun run sim`: every check is a named gate that passes or fails, blocking or tracked.
+import { isDeepStrictEqual } from "node:util";
+import { createHash as hashForNode } from "node:crypto";
+import { partialDeepStrictEqual } from "node:assert/strict";
+// Gates for `pnpm run sim`: every check is a named gate that passes or fails, blocking or tracked.
 // `expect` is a small assertion helper (the subset of matchers the ported simulation checks use):
 // a failed expectation throws, and `Block.run` turns the throw into a failed gate with its message.
-// No bun:test: the validation layer is the simulation CLI (founder decision 2026-10-08).
+// This validation block runs through the simulation CLI.
 
 export interface Gate { block: string; name: string; pass: boolean; blocking: boolean; detail?: string; ms?: number }
 
 const show = (x: unknown) => { try { const s = JSON.stringify(x); return s === undefined ? String(x) : s.length > 400 ? `${s.slice(0, 400)}...` : s; } catch { return String(x); } };
 
 class ExpectError extends Error {}
+
+function matchesObject(actual: unknown, expected: object): boolean {
+  try { partialDeepStrictEqual(actual, expected); return true; }
+  catch { return false; }
+}
 
 function matchers(actual: unknown, negate: boolean) {
   const check = (ok: boolean, what: string, expected?: unknown) => {
@@ -16,8 +24,8 @@ function matchers(actual: unknown, negate: boolean) {
   const num = () => actual as number;
   return {
     toBe: (e: unknown) => check(Object.is(actual, e), "to be", e),
-    toEqual: (e: unknown) => check(Bun.deepEquals(actual, e), "to equal", e),
-    toMatchObject: (e: object) => check(Bun.deepMatch(e, actual as object), "to match", e),
+    toEqual: (e: unknown) => check(isDeepStrictEqual(actual, e), "to equal", e),
+    toMatchObject: (e: object) => check(matchesObject(actual, e), "to match", e),
     toBeGreaterThan: (e: number) => check(num() > e, "to be >", e),
     toBeGreaterThanOrEqual: (e: number) => check(num() >= e, "to be >=", e),
     toBeLessThan: (e: number) => check(num() < e, "to be <", e),
@@ -62,9 +70,9 @@ export class Block {
   }
 }
 
-/** A short digest of a run's outputs: `bun run sim --json` before and after a refactor must match. */
+/** A short digest of a run's outputs: `pnpm run sim --json` before and after a refactor must match. */
 export function digest(x: unknown): string {
-  return new Bun.CryptoHasher("sha256").update(JSON.stringify(x)).digest("hex").slice(0, 16);
+  return hashForNode("sha256").update(JSON.stringify(x)).digest("hex").slice(0, 16);
 }
 
 export function print(g: Gate): void {

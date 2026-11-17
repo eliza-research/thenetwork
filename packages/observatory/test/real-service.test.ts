@@ -2,8 +2,9 @@
 // own database login: a simulated run is written to Postgres, the real service runs on that database,
 // and the Observatory's real mode sends review, safety and matching-switch commands to it and reads the
 // result back. Without the service, real mode stays read-only. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, SimClock } from "@thenetwork/core";
 import { NetworkService } from "../../network/service/service.ts";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
@@ -20,7 +21,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
   let url: string;
   let svc: NetworkService;
   let clock: SimClock;
-  let http: ReturnType<typeof Bun.serve>;
+  let http: HttpServer;
   let real: RealSource;
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
   beforeAll(async () => {
@@ -37,7 +38,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     await g.dispose();
     // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
     svc = new NetworkService({ url, clock, tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
-    http = Bun.serve({
+    http = await serveHttp({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
         seen.push({ path: new URL(req.url).pathname, staff: req.headers.get("x-network-staff-id"), body: req.method === "POST" ? await req.clone().json() : undefined });
@@ -47,7 +48,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     real = new RealSource({ url, pollMs: 3_600_000, pushMs: 3_600_000, service: { url: http.url.href, token: SERVICE_TOKEN } });
     await real.init();
   }, T);
-  afterAll(async () => { await real?.dispose(); http?.stop(true); await svc?.close(); await dropTestDb(); });
+  afterAll(async () => { await real?.dispose(); await http?.stop(true); await svc?.close(); await dropTestDb(); });
 
   test("review: the decision goes to the service with the staff id, is stored by the service, and real mode shows it; a refusal comes back with the Network's reason", async () => {
     const s = real.state();
@@ -55,9 +56,10 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     expect(s.env.service).toBe(http.url.href.replace(/\/$/, ""));
     const item = s.opportunities.find(o => o.state === "IN_REVIEW")!;
     expect(item).toBeDefined();
-    const r = await real.control({ type: "review", oppId: item.id, decision: "reject", reason: "tone", note: "too vague", secondsSpent: 25 }, "rev@example.org");
+    const revision = item.review?.rerolls ?? 0;
+    const r = await real.control({ type: "review", oppId: item.id, decision: "reject", reason: "tone", note: "too vague", secondsSpent: 25, revision }, "rev@example.org");
     expect(r).toEqual({ ok: true });
-    expect(seen.find(x => x.path.startsWith("/review/"))).toEqual({ path: `/review/${item.id}`, staff: "rev@example.org", body: { decision: "reject", reason: "tone", note: "too vague", secondsSpent: 25 } });
+    expect(seen.find(x => x.path.startsWith("/review/"))).toEqual({ path: `/review/${item.id}`, staff: "rev@example.org", body: { decision: "reject", reason: "tone", note: "too vague", secondsSpent: 25, revision } });
     // Read back from the database (the service wrote it; this connection did not).
     const after = real.state().opportunities.find(o => o.id === item.id)!;
     expect(after.state).not.toBe("IN_REVIEW");
@@ -66,10 +68,10 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     expect(after.review!.reviewer).toBe(REVIEWER);
     // OBS-10: time on one item counts at most 30 minutes.
     const next = real.state().opportunities.find(o => o.state === "IN_REVIEW")!;
-    expect(await real.control({ type: "review", oppId: next.id, decision: "reject", reason: "tone", secondsSpent: 99_999 }, REVIEWER)).toEqual({ ok: true });
+    expect(await real.control({ type: "review", oppId: next.id, decision: "reject", reason: "tone", secondsSpent: 99_999, revision: next.review?.rerolls ?? 0 }, REVIEWER)).toEqual({ ok: true });
     expect(real.state().opportunities.find(o => o.id === next.id)!.review).toMatchObject({ reviewer: REVIEWER, secondsSpent: 1800 });
     // Again: the item no longer waits.
-    expect(await real.control({ type: "review", oppId: item.id, decision: "approve" }, "rev@example.org")).toMatchObject({ ok: false, code: "not_in_review", error: "that opportunity is not waiting for review" });
+    expect(await real.control({ type: "review", oppId: item.id, decision: "approve", revision }, "rev@example.org")).toMatchObject({ ok: false, code: "not_in_review", error: "that opportunity is not waiting for review" });
     // The connection itself still cannot write.
     const conn = (real as unknown as { sql: SQL }).sql;
     const err = await conn`update network.review_items set note = 'x'`.then(() => "changed", e => String((e as Error).message));
@@ -96,7 +98,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     expect(seen.filter(x => x.path === "/matching").map(x => [x.staff, x.body])).toEqual([["admin@example.org", { on: false }]]);
     // Matching off: an approval is refused with the Network's reason.
     const item = real.state().opportunities.find(o => o.state === "IN_REVIEW");
-    if (item) expect(await real.control({ type: "review", oppId: item.id, decision: "approve" }, "rev@example.org")).toMatchObject({ ok: false, code: "matching_paused" });
+    if (item) expect(await real.control({ type: "review", oppId: item.id, decision: "approve", revision: item.review?.rerolls ?? 0 }, "rev@example.org")).toMatchObject({ ok: false, code: "matching_paused" });
   }, T);
 
   test("health: the service's state is in the alerts strip; a service that does not answer is a bad alert and actions refuse", async () => {
@@ -113,7 +115,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     expect(at(7)).toContain("warn:service_tick");
     expect(at(20)).toContain("bad:service_tick");
     expect(at(20)).not.toContain("info:service_ok");
-    http.stop(true);
+    await http.stop(true);
     await real.control({ type: "refresh" });
     expect(keys()).toContain("bad:service_down");
     expect(await real.control({ type: "matching", on: true }, "admin@example.org")).toMatchObject({ ok: false, code: "service_unavailable" });

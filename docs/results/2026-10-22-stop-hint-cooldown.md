@@ -1,5 +1,7 @@
 # STOP hint interval — 22 October 2026
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-22-stop-hint-cooldown.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 A person who sent STOP could receive two START hints one minute apart.
 The two messages crossed a fixed 30-day counting boundary.
 The accepted requirement limits hints to one per number and app in 30 days
@@ -23,20 +25,20 @@ counter recorded every attempt.
 ## Reproduction and verification
 
 Base: `d617f7b155c2863d7f7dee2693e85e770889e229`.
-Bun 1.4.2, macOS, dedicated local PostgreSQL, `REQUIRE_PG=1`.
+the former runtime 1.4.2, macOS, dedicated local PostgreSQL, `REQUIRE_PG=1`.
 The existing integration case uses signed inbound HTTP, real database state,
 a controlled clock, fictional phone numbers, and a dry-run delivery adapter.
 The service uses seed 1. Clock offsets determine this case. One member and one
 stranger exercise the changed case.
 
 ```sh
-bun install --frozen-lockfile --ignore-scripts
-REQUIRE_PG=1 bun test --conditions eliza-source packages/network/test/service-platform.test.ts -t 'after STOP, a later'
-bun run typecheck
-REQUIRE_PG=1 bun run test:integration
-REQUIRE_PG=1 bun run test:e2e
-bun run plugins/build.ts --check
-bun run sites:build
+pnpm install --frozen-lockfile --ignore-scripts
+REQUIRE_PG=1 pnpm exec vitest run --conditions eliza-source packages/network/test/service-platform.test.ts -t 'after STOP, a later'
+pnpm run typecheck
+REQUIRE_PG=1 pnpm run test:integration
+REQUIRE_PG=1 pnpm run test:e2e
+node --import tsx --env-file-if-exists=.env plugins/build.ts --check
+pnpm run sites:build
 ```
 
 Use a dedicated `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` for isolation.

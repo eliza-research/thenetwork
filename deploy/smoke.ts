@@ -1,6 +1,6 @@
 // Smoke check for one deployed site (or a local `wrangler dev`). Read-only GETs, no secrets.
-//   bun run deploy/smoke.ts https://slop-date-site.example.workers.dev slop          # static files
-//   bun run deploy/smoke.ts https://ntwrk.party ntwrk --api                            # plus /api/app
+//   node --import tsx deploy/smoke.ts https://slop-date-site.example.workers.dev slop   # static files
+//   node --import tsx deploy/smoke.ts https://ntwrk.party ntwrk --api                    # plus /api/app
 // Exits 1 with one line per failed check. CI runs it after every deploy (deploy-sites.yml).
 
 const SKILL: Record<string, string> = { ntwrk: "ntwrk-party", slop: "slop-date", peon: "peon-biz", friends: "friends-help" };
@@ -72,7 +72,7 @@ export async function smoke(base: string, app: string, opts: { api?: boolean; fe
 if (import.meta.main) {
   const [base, app, ...rest] = process.argv.slice(2);
   if (!base || !app) {
-    console.error("usage: bun run deploy/smoke.ts <origin> <ntwrk|slop|peon|friends> [--api]");
+    console.error("usage: node --import tsx deploy/smoke.ts <origin> <ntwrk|slop|peon|friends> [--api]");
     process.exit(2);
   }
   const checks = await smoke(base, app, { api: rest.includes("--api") });

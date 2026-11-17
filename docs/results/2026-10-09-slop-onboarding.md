@@ -1,11 +1,13 @@
 # slop.date onboarding: free-text understanding, read-back and the next question (2026-10-09)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-09-slop-onboarding.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This is the understanding side of critical path item 4 (docs/mvp-plan.md) and prototype P4: free text from a slop.date member becomes the slop facet tags that the engine reads (`packages/engine/src/packs/slop/profile.ts`). The member confirms a read-back, and the agent asks one question at a time until the hard fields are known. The network service owns the conversation loop. This report gives the design, the gate results and the integration notes for that service.
 
 - Code: `packages/engine/src/packs/slop/extract.ts` (the rules, the profile, the tags, the optional LLM reader), `packages/engine/src/packs/slop/onboard.ts` (read-back, corrections, next question). Exports are in `packages/engine/src/packs/slop/index.ts`.
 - Corpus: `evals/slop-onboarding/` (444 hand-written SMS rows, append-only).
-- Gates: the `onboard` block of `bun run sim` (`scripts/sim/onboard.ts`), in the default run.
-- LLM use: none for any number here. `bun run sim` clears the provider keys. The LLM arm runs only with `bun run sim --only onboard --llm`, and it was not run for this report.
+- Gates: the `onboard` block of `pnpm run sim` (`scripts/sim/onboard.ts`), in the default run.
+- LLM use: none for any number here. `pnpm run sim` clears the provider keys. The LLM arm runs only with `pnpm run sim --only onboard --llm`, and it was not run for this report.
 - Not touched: `packages/network` (`classify.ts`, `extract.ts`, `service/packs.ts` were read only). They belong to another session.
 
 ## Result in brief
@@ -19,10 +21,10 @@ This is the understanding side of critical path item 4 (docs/mvp-plan.md) and pr
 ## Commands
 
 ```bash
-bun run sim --only onboard            # corpus gates + persona sim (seeds 13-14, 100 per city); about 15 s
-bun run sim --only onboard --quick    # seed 13, 40 per city
-bun run sim --only onboard --llm      # adds the LLM arm (tracked only; needs SURPLUS_API_KEY or OPENAI_API_KEY)
-bun run sim                           # the whole validation run (onboard is in the default blocks)
+pnpm run sim --only onboard            # corpus gates + persona sim (seeds 13-14, 100 per city); about 15 s
+pnpm run sim --only onboard --quick    # seed 13, 40 per city
+pnpm run sim --only onboard --llm      # adds the LLM arm (tracked only; needs SURPLUS_API_KEY or OPENAI_API_KEY)
+pnpm run sim                           # the whole validation run (onboard is in the default blocks)
 ```
 
 ## 1. Design
@@ -99,9 +101,9 @@ Each question is asked at most twice (`MAX_ASKS_PER_QUESTION`, the same as the p
 - An age that the LLM reads can only mark a minor. It never raises an age and never declines (a decline deletes data, so it needs an explicit rules form).
 - The reader is never called for a minor or a declined person.
 
-A scripted-reader gate in `bun run sim` (no model) checks these rules: the flag is off by default, quotes are required, the reader never overrides a confident rules value, and an LLM age only marks a minor. The live arm (`--llm`) reports the same corpus and a 20-per-city sim as tracked gates. Run it for P4's "rules only against rules plus the LLM reader" comparison, then add its numbers here.
+A scripted-reader gate in `pnpm run sim` (no model) checks these rules: the flag is off by default, quotes are required, the reader never overrides a confident rules value, and an LLM age only marks a minor. The live arm (`--llm`) reports the same corpus and a 20-per-city sim as tracked gates. Run it for P4's "rules only against rules plus the LLM reader" comparison, then add its numbers here.
 
-## 2. Gates (`bun run sim --only onboard`, rules only)
+## 2. Gates (`pnpm run sim --only onboard`, rules only)
 
 | Gate | Blocking | Result |
 |---|---|---|
@@ -177,4 +179,4 @@ save(memberId, p);
 ## 5. Two other implementations considered
 
 1. **Extend `packages/network/service/packs.ts` `parseOrientation` and its neighbors.** That code is in another session's package, and it has no evidence spans, confidences or ambiguity handling. For example, "bi" maps to men and women, "queer" to everyone, and "a mix" to everyone. Each of these guesses would fail the ambiguous gate.
-2. **LLM first, with rules as a check.** This is simpler to write, but it costs a model call on every message, it is not deterministic in `bun run sim`, and it cannot be gated offline. Rules first, with the LLM only filling gaps, keeps the 0-wrong gates deterministic and makes the LLM optional (P4 compares both arms).
+2. **LLM first, with rules as a check.** This is simpler to write, but it costs a model call on every message, it is not deterministic in `pnpm run sim`, and it cannot be gated offline. Rules first, with the LLM only filling gaps, keeps the 0-wrong gates deterministic and makes the LLM optional (P4 compares both arms).

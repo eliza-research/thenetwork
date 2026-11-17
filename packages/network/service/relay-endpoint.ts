@@ -28,7 +28,7 @@
 // and recorded history; a replay reads that again (an unknown acceptance is recovered by the queue's
 // receipt-only lookup, never by a second send).
 import { createHash } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Clock, MemberId } from "@thenetwork/core";
 import { RELAY_PATH, type RelaySendResponse } from "../../core/src/svc/contract.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";

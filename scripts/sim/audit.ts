@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The audit block: regression gates for the P0 and P1 findings of the 2026-10-08 audit
 // (docs/audit/2026-10-08-weaknesses.md) in network, platform, sites and deploy whose fix had no gate
 // after the 2026-10-08 cleanup deleted the unit tests. The status of every finding, and which gate or
@@ -12,11 +13,14 @@
 // re-check (it needs a real-mode source), and the NetworkService under a login that is only
 // network_service (as production runs it), restarted. Blocking when the dev Postgres runs, tracked as
 // skipped when it does not. Fakes only: a fake Blooio, phones +1 212 555 01xx.
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
+import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
 import { INTERESTS } from "../../packages/engine/src/packs/network/vocabulary.ts";
+import { pairKey } from "../../packages/engine/src/world.ts";
 import { PolicyPersonaAgent, World } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas } from "../../packages/network/harness/index.ts";
 import { ConsentNetwork } from "../../packages/network/src/index.ts";
@@ -31,7 +35,7 @@ type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (r: RunRecord[], kind: string) => r.filter((x): x is Log => x.type === "network_log" && x.kind === kind);
 const outbound = (r: RunRecord[]) => r.filter((x): x is Msg => x.type === "message" && x.msg.direction === "outbound" && !x.msg.system);
-const REPO = join(import.meta.dir, "../..");
+const REPO = join(import.meta.dirname, "../..");
 
 export async function auditBlock(b: Block): Promise<void> {
   await networkGates(b);
@@ -47,10 +51,17 @@ export async function auditBlock(b: Block): Promise<void> {
 async function networkGates(b: Block) {
   const seed = 3, days = 9;
   const personas = await nycPersonas();
-  const start = (await Bun.file(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
-  const net = new ConsentNetwork({ seed, review: "auto" });
+  const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  const net = new ConsentNetwork({ seed, review: "auto", engine: { cities: ["nyc"] } });
   const R: RunRecord[] = [];
-  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => R.push(r) });
+  const rosterAtNo = new Map<Log, readonly MemberId[]>();
+  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {
+    R.push(r);
+    if (r.type !== "network_log" || (r.kind !== "probe_answer" && r.kind !== "time_answer")
+      || r.detail.yes !== false || r.detail.expired || r.detail.plan) return;
+    // The answer is logged before a replacement or other roster change takes effect.
+    rosterAtNo.set(r, [...(net.opps.get(String(r.detail.oppId))?.participants ?? [])]);
+  } });
   await w.begin();
   await w.advanceTo(start + (days - 1) * DAY);
 
@@ -106,16 +117,29 @@ async function networkGates(b: Block) {
   await w.complete();
 
   await b.run("network-consent-5: after a probe \"no\", the pair is not probed again (no later opportunity holds the member and the person they declined)", () => {
-    const parts = new Map<string, MemberId[]>();
-    for (const l of logs(R, "probe_started")) parts.set(String((l.detail.proposal as { id: string }).id), (l.detail.proposal as { participants: MemberId[] }).participants);
-    const noes = logs(R, "probe_answer").filter(l => l.detail.yes === false && !l.detail.expired && !l.detail.plan);
-    expect(noes.length).toBeGreaterThan(5);
+    expect(rosterAtNo.size).toBeGreaterThan(5);
+    const started = new Set<string>();
+    const declined = new Map<string, string>();
     const again: string[] = [];
-    for (const n of noes) {
-      const m = String(n.detail.memberId), others = (parts.get(String(n.detail.oppId)) ?? []).filter(x => x !== m);
-      for (const l of logs(R, "probe_started").filter(l => l.t > n.t && !l.detail.plan)) {
-        const p = (l.detail.proposal as { id: string; participants: MemberId[] });
-        if (p.participants.includes(m) && others.some(o => p.participants.includes(o))) again.push(`${n.detail.oppId} -> ${p.id}`);
+    for (const l of R) {
+      if (l.type !== "network_log") continue;
+      const atNo = rosterAtNo.get(l);
+      if (atNo) {
+        const member = String(l.detail.memberId);
+        expect(atNo.includes(member)).toBe(true);
+        for (const peer of atNo) {
+          if (peer !== member) declined.set(pairKey(member, peer), String(l.detail.oppId));
+        }
+      }
+      if ((l.kind !== "probe_started" && l.kind !== "probe_replaced") || l.detail.plan) continue;
+      const { id, participants } = l.detail.proposal as { id: string; participants: MemberId[] };
+      if (l.kind === "probe_started") started.add(id);
+      if (!started.has(id)) continue; // Plan replacements do not carry the plan flag.
+      for (const [index, member] of participants.entries()) {
+        for (const peer of participants.slice(index + 1)) {
+          const source = declined.get(pairKey(member, peer));
+          if (source) again.push(`${source} -> ${id} (${member}, ${peer})`);
+        }
       }
     }
     expect(again).toEqual([]);
@@ -260,11 +284,14 @@ async function sitesGates(b: Block) {
       }
     });
 
-    await b.run("platform-5: the legacy phone form renders Turnstile; agent-only sites ship no Join form", () => {
+    await b.run("platform-5: the peon.biz join page carries the Turnstile site key and loads the page script that renders the check; agent-only sites ship no Join form", () => {
       for (const s of SITES) {
         if (s.app === "peon") {
-          const page = readFileSync(join(built[s.domain]!.out, "join.html"), "utf8");
-          expect([s.domain, page.includes('content="0x4AAAAAAAsimauditkey"') && page.includes("data-turnstile")]).toEqual([s.domain, true]);
+          const out = built[s.domain]!.out;
+          const page = readFileSync(join(out, "join.html"), "utf8");
+          const script = page.match(/<script type="module"[^>]* src="\/([^"]+\.js)"/)?.[1];
+          const renders = script !== undefined && readFileSync(join(out, script), "utf8").includes("https://challenges.cloudflare.com");
+          expect([s.domain, page.includes('<meta name="turnstile-sitekey" content="0x4AAAAAAAsimauditkey">') && renders]).toEqual([s.domain, true]);
         } else expect([s.domain, existsSync(join(built[s.domain]!.out, "join.html"))]).toEqual([s.domain, false]);
       }
     });
@@ -275,15 +302,15 @@ async function sitesGates(b: Block) {
       try {
         // A scratch site (no scripts) whose terms say "Draft. Not yet in effect."; the real files are not touched.
         const page = (body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>t</title></head><body>${body}</body></html>`;
-        await Bun.write(join(copy, "public", "index.html"), page("<p>slop.date</p>"));
-        await Bun.write(join(copy, "public", "terms.html"), page("<p>Draft. Not yet in effect.</p>"));
+        await writePath(join(copy, "public", "index.html"), page("<p>slop.date</p>"));
+        await writePath(join(copy, "public", "terms.html"), page("<p>Draft. Not yet in effect.</p>"));
         const draft = await buildSite({ ...s, src: join(copy, "public") }, join(copy, "dist"), env);
         expect(draft.ok).toBe(false);
         expect(draft.logs.join("\n")).toMatch(/draft legal text/);
         // The same scratch site without the marker builds: the refusal is the marker, nothing else.
-        await Bun.write(join(copy, "public", "terms.html"), page("<p>Terms.</p>"));
+        await writePath(join(copy, "public", "terms.html"), page("<p>Terms.</p>"));
         expect((await buildSite({ ...s, src: join(copy, "public") }, join(copy, "dist"), env)).ok).toBe(true);
-        for (const x of SITES) expect([x.domain, DRAFT_MARKERS.some(m => m.test(readFileSync(join(x.src, "terms.html"), "utf8")))]).toEqual([x.domain, false]);
+        for (const x of SITES) expect([x.domain, DRAFT_MARKERS.some(m => m.test(readFileSync(join(built[x.domain]!.out, "terms.html"), "utf8")))]).toEqual([x.domain, false]);
       } finally { rmSync(copy, { recursive: true, force: true }); }
     });
 
@@ -306,7 +333,7 @@ async function sitesGates(b: Block) {
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 
-  await b.run("sites-infra-1: every POST from the sites' API client is JSON (settings stop and log out are not refused with 415)", async () => {
+  await b.run("sites-infra-1: every POST from the sites' typed API client is JSON (stop and log out are not refused with 415)", async () => {
     const seen: { method: string; type: string | null; body: unknown }[] = [];
     const real = globalThis.fetch;
     globalThis.fetch = (async (_url: string, init?: RequestInit) => {
@@ -314,9 +341,9 @@ async function sitesGates(b: Block) {
       return Response.json({ ok: true });
     }) as unknown as typeof fetch;
     try {
-      const { api } = await import("../../sites/shared/api.ts");
-      await api.logout();
-      await api.stop();
+      const { call } = await import("../../packages/ui/src/api/client.ts");
+      await call("POST", "/api/auth/logout");
+      await call("POST", "/api/me/stop");
     } finally { globalThis.fetch = real; }
     expect(seen.length).toBe(2);
     for (const s of seen) { expect(s.type).toMatch(/^application\/json/); expect(typeof s.body).toBe("string"); }
@@ -337,7 +364,7 @@ async function deployGuard(b: Block) {
     const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "audit-sim-no-account", NTWRK_ALLOW_DEPLOY: "" };
     const ran: string[] = [];
     for (const args of refuse) {
-      const p = Bun.spawnSync(["bash", join(REPO, "scripts/wrangler.sh"), ...args], { env, stdout: "pipe", stderr: "pipe" });
+      const p = spawnProcessSync(["bash", join(REPO, "scripts/wrangler.sh"), ...args], { env, stdout: "pipe", stderr: "pipe" });
       if (p.exitCode !== 3 || !/refusing to run/.test(p.stderr.toString())) ran.push(`${args.join(" ")} -> exit ${p.exitCode}`);
     }
     expect(ran).toEqual([]);
@@ -370,7 +397,7 @@ async function consoleSockets(b: Block) {
       };
       const engineer = await open(E), reviewer = await open(R);
       await srv.setMode("real");
-      expect(await Promise.race([engineer.closed, Bun.sleep(5000).then(() => -1)])).toBe(WS_FORBIDDEN);
+      expect(await Promise.race([engineer.closed, waitForMs(5000).then(() => -1)])).toBe(WS_FORBIDDEN);
       expect(reviewer.ws.readyState).toBe(WebSocket.OPEN);
       // A new engineer socket in real mode is refused at the upgrade.
       const t = await fetch(`${srv.url}/api/ws-ticket?app=ntwrk`, { method: "POST", headers: { authorization: `Bearer ${E}` } });
@@ -390,7 +417,7 @@ async function serviceLogin(b: Block) {
   if (!pgAvailable) { b.track("network-service-M1: skipped (no Postgres on this machine)", false); return; }
   const pg = await import("../../packages/platform/test/pg.ts");
   const { DEV_PG_PORT } = await import("../../packages/observatory/db/dev-pg.ts");
-  const { SQL } = await import("bun");
+  const { SQL } = await import("../../packages/core/src/runtime/postgres.ts");
   const { MINUTE, SimClock } = await import("../../packages/core/src/index.ts");
   const H = await import("./pipeline/harness.ts");
   let url: string;
@@ -432,7 +459,8 @@ async function serviceLogin(b: Block) {
       expect(ana).toBeTruthy();
       expect(rt.memberOf(C)).toBeUndefined();
       expect(rt.net.memberList().some(m => m.id === ana)).toBe(true);
-      expect(await admin`select app_id, count(*)::int as n from network.members group by 1 order by 1`).toEqual([{ app_id: "friends", n: 1 }, { app_id: "slop", n: 1 }]);
+      const members = await admin<{ app_id: string; n: number }[]>`select app_id, count(*)::int as n from network.members group by 1 order by 1`;
+      expect([...members]).toEqual([{ app_id: "friends", n: 1 }, { app_id: "slop", n: 1 }]);
       expect((await admin`select id, jsonb_array_length(state->'members')::int as n from network.network_state where id in ('friends:nyc', 'slop:nyc') order by 1`).map((r: any) => r.n)).toEqual([1, 1]);
       expect((await admin`select state from platform.consent_events where e164 = ${B} and app_id is null`).map((r: any) => r.state)).toEqual(["opted_out"]);
       expect(fake.to(A).length).toBeGreaterThanOrEqual(4);

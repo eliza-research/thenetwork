@@ -1,8 +1,8 @@
 // Game mode with the consent-first Network (the default): NYC only, human review before any
 // contact (PRD 32.8), probes before reveals, real venues, growth joiners, scenario levels, the age
 // policy, private facets behind the truth lens, the judge scorer, and Postgres parity.
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, afterEach, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, MINUTE } from "@thenetwork/core";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { GameSource } from "../src/sources/game.ts";

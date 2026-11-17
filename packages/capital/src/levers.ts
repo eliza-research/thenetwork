@@ -3,7 +3,7 @@
 // only changes how much work the Network does for this member's own intents, and its engine part
 // touches only judge-effort knobs (never weights, thresholds, budgets or exposure).
 import type { EngineConfigInput } from "../../engine/src/config.ts";
-import { capitalEffortBand, reachFromBands, vouchCapacityFromCounts } from "../../core/src/generated/capitalLevers.ts";
+import { capitalEffortBand, reachFromBands, vouchCapacityFromCounts, vouchInPeriod } from "../../core/src/generated/capitalLevers.ts";
 import { DAY } from "../../core/src/clock.ts";
 import { DEFAULT_CAPITAL, type CapitalConfig } from "./config.ts";
 import type { LedgerEntry } from "./types.ts";
@@ -74,9 +74,11 @@ const recentPenalty = (entries: readonly LedgerEntry[], at: number, days: number
 export function vouchCapacity(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): number {
   const v = cfg.levers.vouch;
   if (recentPenalty(entries, at, v.abuseLockDays)) return 0;
+  // spec/capitalLevers.md, "Vouch capacity counts only the vouches and stakes of its rolling period"
+  const inPeriod = (e: LedgerEntry) => vouchInPeriod(e.t, at, v.periodDays * DAY);
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
-  const good = entries.filter(e => e.category === "vouch" && e.t <= at && !reversed.has(e.id)).length;
-  const lost = entries.filter(e => e.category === "vouch_stake" && e.t <= at).length;
+  const good = entries.filter(e => e.category === "vouch" && inPeriod(e) && !reversed.has(e.id)).length;
+  const lost = entries.filter(e => e.category === "vouch_stake" && inPeriod(e)).length;
   return vouchCapacityFromCounts(good, lost, v.base, v.perGood, v.perLost, v.maxBonus, v.max);
 }
 

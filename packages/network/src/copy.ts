@@ -24,6 +24,7 @@ export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the
 /** The copy brand of an app in the registry: "The Network" reads "the Network" inside a sentence. */
 export const brandOf = (app: { name: string; brand: { agentName: string } }): CopyBrand => ({ agent: app.brand.agentName, name: app.name.replace(/^The /, "the ") });
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const REPORT_SAFETY_HINT = " If you're ever in danger, call 911 first.";
 
 /** Every member-facing text for one app. No text asks a member to reply "cancel" (a bare CANCEL is STOP). */
 export function copyFor(b: CopyBrand) {
@@ -52,7 +53,7 @@ export function copyFor(b: CopyBrand) {
   /** Plans buddy: asking for plans is not consent to meet a stranger, so both people are asked first. */
   plansBuddyProbe: (venue: string, when: string, area: string | undefined, times?: string) =>
     `Quick check, no names yet: someone ${area ? `near ${area}` : "nearby"} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
-  /** The one re-engagement after 14 days of silence (F28). */
+  /** The one re-engagement after 30 days of silence (F28). */
   reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these?",
   requestConfirm: (why: string, when: string, times?: string) => times
     ? `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it? I could do ${times}; tell me which works, or no.`
@@ -78,10 +79,20 @@ export function copyFor(b: CopyBrand) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
+  whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
+  noBookingToCancel: "I couldn't find a matching upcoming meeting.",
+  whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
+  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed New York starts in 24-hour time.",
+  rescheduleUnavailable: "I couldn't apply that time change.",
+  reschedulePending: "The time change needs everyone's acceptance.",
+  rescheduleDeclined: "Thanks. I closed that time change request.",
+  rescheduleOffer: (original: string, proposed: string, ref: string) =>
+    `Could your meeting move from ${original} to ${proposed}, New York time? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
+  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */
-  calendarOptIn: "Thanks. I'll only use free/busy from your calendar, never what's in it. Reply CALENDAR OFF anytime to stop.",
+  calendarOptIn: "I’ve saved your choice. I’ll use only free/busy if you have an authorized calendar. Reply CALENDAR OFF anytime to stop.",
   calendarOff: "Done, I won't use your calendar.",
   /** Opt-in weekly check-in (founder decision 4d). */
   weeklyOptIn: "Done. Once a week I'll ask what your week looks like. Reply WEEKLY OFF anytime to stop.",
@@ -92,6 +103,7 @@ export function copyFor(b: CopyBrand) {
   /** A member on watch asked for an introduction: nothing starts until a person has looked. */
   requestOnWatch: "I can't start new introductions for you right now. A person on our team will look at your account first.",
   requestAck: "On it. I'll check with a couple of people and get back to you within a day.",
+  homeHelpSafetyReview: "A team member needs to review requests that involve entering a home. I haven't contacted anyone or shared an address.",
   /** Matching is paused (the admin switch): the request waits as a standing request. */
   requestWaiting: "Got it. I'm not starting new introductions right now, but I'll keep your request open and look again soon.",
   /** A standing request found a match on a later try; sent only after a reviewer approved it. */
@@ -104,6 +116,7 @@ export function copyFor(b: CopyBrand) {
   plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
+  dayOfCheckIn: (when: string, venue: string) => `Still good for ${when} at ${venue}? Tell me if you're running late or can't make it.`,
   /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */
   dropNotice: (_first: string, keep: boolean) => keep
     ? `Quick update: one person can't make it now, sorry. The rest of you are still on.`
@@ -114,6 +127,17 @@ export function copyFor(b: CopyBrand) {
   /** A member names a friend to invite where no invite link can be sent: nothing is promised. */
   invitesNotOpen: (friend: string) => `Thanks! I can't send invite links yet, so nothing went to ${friend}. They're welcome to sign up for ${b.name} themselves.`,
   inviteSent: (friend: string) => `Done: here's an invite link for ${friend}. I'll welcome them when they join.`,
+  forwardInvite: (url: string) => `You can forward this invite link:\n${url}`,
+  inviteVouchQuestion: (first: string) => `How long and how well have you known ${first}? For example, “2 years, well” or “3 weeks, met once”.`,
+  inviteVouchReadback: (first: string, relationship: string, durationMonths: number, depth: "met_once" | "somewhat" | "well") => {
+    const duration = durationMonths === 0 ? "less than a month" : durationMonths === 1 ? "1 month" : `${durationMonths} months`;
+    const level = { met_once: "met once", somewhat: "know somewhat", well: "know well" }[depth];
+    return `Your vouch for ${first} is ${relationship}, ${duration}, ${level}. Reply CONFIRM INVITE to request a link you can forward.`;
+  },
+  inviteVouchConfirm: "Reply CONFIRM INVITE to request the link, or CANCEL INVITE to stop.",
+  inviteCancelled: "I cleared your invitation request.",
+  inviteInReview: (reference?: string) => reference ? `Your invite is waiting for review. To check it, reply CHECK INVITE ${reference}.` : "Your invite is waiting for review.",
+  inviteUnavailable: "I couldn't make an invite link right now.",
   inviteeJoined: (friend: string) => `${friend} just joined. Thanks for bringing them in.`,
   secondEncounter: (others: string) => `You and ${others} both said you'd meet again. Want me to find a time?`,
   // Safety and boundaries.
@@ -123,9 +147,10 @@ export function copyFor(b: CopyBrand) {
   noInjection: "I can't help with that.",
   giveSpace: "I won't pass that along. If someone hasn't replied, please give them space.",
   blocked: "Done. You won't be matched with them, and they won't be told.",
+  immediateDanger: "If you're in immediate danger, call local emergency services now. In the U.S., call 911.",
   /** A report about someone the member did not meet through the Network, or a name that matches nobody: no claim about who they are. */
-  reportUnmatched: "Thanks for telling me. I couldn't match that name to someone you met through me. If you're ever in danger, call 911 first.",
-  reported: "Thanks for telling me. I've blocked them for you and flagged this for the safety team. If you're ever in danger, call 911 first.",
+  reportUnmatched: (immediateDanger = false) => `Thanks for telling me. I couldn't match that name to someone you met through me.${immediateDanger ? "" : REPORT_SAFETY_HINT}`,
+  reported: (immediateDanger = false) => `Thanks for telling me. I've blocked them for you and flagged this for the safety team.${immediateDanger ? "" : REPORT_SAFETY_HINT}`,
   /** A block by a name that is not someone they met through the Network: the same words whether or not the name is a member's (no membership oracle). */
   blockUnmatched: "I couldn't match that name to someone you met through me. If they're a member, they won't be matched with you, and they won't be told.",
   /** "block him" or a name two of their counterparts share: which one. Only names of people the member was introduced to. */
@@ -137,6 +162,7 @@ export function copyFor(b: CopyBrand) {
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
   minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
   minorConcierge: (topic: string, ideas: string) => `For ${topic}, ${ideas}. Happy to suggest more anytime.`,
+  emptyIntentFollowup: "I haven't found a match I can offer yet. Text “Show me public events” for ideas you can try on your own.",
   stopWelcomeBack: "Welcome back. I'll only reach out when something looks worth it.",
   // Plans (plans v1.1). The probe itself is the engine's buildPlanProbe (no names, leak-checked).
   /** The booked plan, sent only once enough people said yes: names, time, public place, own way. Silence for 48 hours = in. */
@@ -171,7 +197,7 @@ export type Copy = ReturnType<typeof copyFor>;
 /** The Network's copy (ntwrk). Other apps: copyFor(brandOf(app)). */
 export const copy: Copy = copyFor(NTWRK_BRAND);
 
-const OFFER = "Next time I can skip the time question: reply CALENDAR to share your calendar's free/busy, or WEEKLY for a short weekly check-in.";
+const OFFER = "For future plans, reply CALENDAR to allow free/busy from an authorized calendar, or WEEKLY for a short weekly check-in.";
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
 

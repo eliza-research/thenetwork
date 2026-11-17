@@ -1,7 +1,7 @@
 // Feature extraction for fitting: run Clef over a folder of CONSENTED photos of VERIFIED ADULTS and
 // cache the answers as feature rows (one JSONL row per photo). File access and the rater are injected
 // (scripts/clef-fit.ts wires the file system and WorkersAIClefRater); this module never touches the
-// network itself, and nothing here runs in `bun run sim` except against a fake fetch.
+// network itself, and nothing here runs in `pnpm run sim` except against a fake fetch.
 //
 // Eligibility (checked BEFORE a photo is read): a consent-manifest row for the photo with a consent
 // reference, an age, and ageVerified === true, passing `canRatePhotos`. Photos a rater flagged in the
