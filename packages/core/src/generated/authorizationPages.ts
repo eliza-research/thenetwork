@@ -343,6 +343,32 @@ export function lawConsentNamesClientAndScopes(view: AuthView, clientNamed: bool
   return !isConsentView(view) || (local_1.client !== "NoClientShown" && local_1.claimNote && local_1.returnHost && local_1.scopeList);
 }
 
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function offersSignupConfirmation(view: AuthView, signupAvailable: boolean): boolean {
+  return view === "ConsentView" && signupAvailable;
+}
+
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function showsSignupConfirmation(view: AuthView, signupSaved: boolean): boolean {
+  return view === "ConsentView" && signupSaved;
+}
+
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function lawConsentRetryHasNoSignup(signupAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return !offersSignupConfirmation("ConsentRetryView", signupAvailable);
+}
+
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function lawSignupNoticeRequiresSave(view: AuthView): boolean {
+  //@ ensures \result === true
+  return !showsSignupConfirmation(view, false);
+}
+
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeName(scope: Scope): string {

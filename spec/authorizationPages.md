@@ -240,6 +240,24 @@ pure def lawOnlyConsentPagesNameAClient(view: AuthView, clientNamed: bool): bool
   not(isConsentView(view)) implies consentParts(view, clientNamed).client == NoClientShown
 ```
 
+### A verified person can choose a separate signup step during connector authorization
+
+The ordinary consent page offers "Finish signup" only when the server confirms signup is available for this request. The choice opens a transient same-site form. The person enters their first name, age and home city, supplies an invitation when they have one or the app requires it, and accepts the app's current text-message consent. The form includes that consent version and the browser's signup proof. It does not ask for a phone number or code. A person can return to connector consent without submitting signup fields. A successful signup returns to the separate connector consent page with a signup confirmation. Only the ordinary "Allow" action grants assistant access.
+
+```quint
+pure def offersSignupConfirmation(view: AuthView, signupAvailable: bool): bool =
+  view == ConsentView and signupAvailable
+
+pure def showsSignupConfirmation(view: AuthView, signupSaved: bool): bool =
+  view == ConsentView and signupSaved
+
+pure def lawConsentRetryHasNoSignup(signupAvailable: bool): bool =
+  not(offersSignupConfirmation(ConsentRetryView, signupAvailable))
+
+pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
+  not(showsSignupConfirmation(view, false))
+```
+
 ### Each scope shows as one short sentence, never as its scope name
 
 The connector server knows three scopes. The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. The page never shows the scope name of the server.
