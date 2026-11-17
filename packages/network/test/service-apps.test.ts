@@ -563,12 +563,36 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect((await call(FR, "GET", "/api/me")).body.membership.state).toBe("paused");
     expect((await memberOf("slop", p))!.opted_out).toBe(true);
     expect((await memberOf(FR, p))!.opted_out).toBe(true);
-    // Export: this app's own data only.
+    // spec/accountPrivacy.md, "An export includes the member's own facts and photo metadata"
+    const friends = (await memberOf(FR, p))!;
+    const slop = (await memberOf("slop", p))!;
+    const takenAt = clock.now();
+    const personId = (await s.accounts.personFor(p))!.id;
+    const photoId = "photo_export_fixture";
+    await sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+      values (${photoId}, ${personId}, 'slop', 'private/storage-key', 'image/jpeg', 1234, ${"f".repeat(64)}, 'fixture', ${new Date(takenAt)})`;
+    for (const [id, value, provenance, source, status, tags] of [
+      ["zip", "11222", "said", "web_join", "confirmed", []],
+      ["confirmed", "early evenings", "inferred", "google_calendar", "confirmed", []],
+      ["pending", "pending private suggestion", "inferred", "google_calendar", "proposed", []],
+      ["staff", "private staff assessment", "vouched", "staff", "confirmed", []],
+      ["rating", "private appearance rating", "said", "web_join", "confirmed", ["appearance:overall=0.7"]],
+    ] as const) {
+      await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+        values ('slop', ${`${slop.id}:export:${id}`}, ${slop.id}, 'fact', ${value}, ${sql.array([...tags], "TEXT")}, 'agent_private', ${provenance}, ${source}, 1, ${status}, ${new Date(takenAt)})`;
+    }
     const ex = await call(FR, "GET", "/api/me/export");
     expect(ex.body.app).toBe(FR);
+    expect(ex.body.network.member.id).toBe(friends.id);
     expect(ex.body.network.facets.map((f: any) => f.value)).toEqual(["climbing"]);
     expect(ex.body.network.messages.length).toBe(1);
+    expect(ex.body.network.photos).toEqual([]);
     expect(JSON.stringify(ex.body)).not.toContain("slop");
+    const slopExport = await call("slop", "GET", "/api/me/export");
+    expect(slopExport.status).toBe(200);
+    expect(slopExport.body.network.facets.map((f: any) => f.value).sort()).toEqual(["11222", "climbing", "early evenings"]);
+    expect(slopExport.body.network.photos).toEqual([{ id: photoId, createdAt: takenAt, bytes: 1234, contentType: "image/jpeg" }]);
+    expect(JSON.stringify(slopExport.body)).not.toMatch(/private\/storage-key|appearance:overall|private staff assessment|pending private suggestion/);
     // Leave the friends app: its member is forgotten, slop's membership stays.
     expect((await call(FR, "POST", "/api/me/delete", { scope: "app" })).status).toBe(200);
     const gone = (await sql`select account_status, name, person_id from network.members where app_id = ${FR}`)[0];

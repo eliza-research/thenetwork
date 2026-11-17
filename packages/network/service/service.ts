@@ -124,7 +124,8 @@ import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
 import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoStorage } from "../../platform/src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
-import { appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
+import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
+import { memberExportFacetAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
@@ -1082,7 +1083,7 @@ export class NetworkService implements RuntimeHost {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
         }
       },
-      onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
+      onExport: ctx => this.exportMember(ctx),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
       // The ages the Network itself would record from the text (statedAge uses the same rule).
       // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
@@ -1303,21 +1304,31 @@ export class NetworkService implements RuntimeHost {
     await rt.unitOfWork(n => { n.forgetMember(memberId); rt.unit.forget.add(memberId); });
   }
 
-  /** This app's own data about the member: what they told it, their own messages, and their opportunities (kind and state only). */
-  private async exportMember(app: AppInfo, memberId: MemberId) {
+  /** spec/accountPrivacy.md, "An export includes the member's own facts and photo metadata" */
+  private async exportMember({ app, memberId, personId }: MemberHookContext) {
     const a = app.id;
     const rt = this.runtimeFor(a);
     if (!rt) return null;
-    const [member, facets, intents, presence, messages, opps] = await rt.scoped(async tx => [
-      await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
-      await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId} and privacy_scope <> 'agent_private' order by id`,
-      await tx`select objective, category, status, created_at from network.intents where app_id = ${a} and member_id = ${memberId} order by created_at, id`,
-      await tx`select city, type, areas from network.presence where app_id = ${a} and member_id = ${memberId}`,
-      await tx`select direction, body, ts from network.messages where app_id = ${a} and member_id = ${memberId} order by ts, id`,
-      await tx`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
-        where p.app_id = ${a} and p.member_id = ${memberId} order by o.created_at, o.id`,
-    ]);
-    return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps] };
+    const data = await rt.scoped(async tx => {
+      const [member] = await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members
+        where app_id=${a} and id=${memberId} and person_id=${personId}::uuid and account_status<>'removed'`;
+      if (!member) return null;
+      const records = await tx<{ kind: string; value: string; tags: string[]; provenance: string; source: string | null; status: string; valid_from: Date; privacy_scope: string }[]>
+        `select kind, value, tags, provenance, source, status, valid_from, privacy_scope from network.facets
+          where app_id=${a} and member_id=${memberId} order by id`;
+      const facets = records.filter(facet => memberExportFacetAllowed(facet.privacy_scope, facet.status, facet.provenance, facet.source ?? "",
+        facet.tags.some(tag => tag.startsWith(APPEARANCE_PREFIX))))
+        .map(({ kind, value, tags, provenance, status, valid_from }) => ({ kind, value, tags, provenance, status, valid_from }));
+      const intents = await tx`select objective, category, status, created_at from network.intents
+        where app_id=${a} and member_id=${memberId} order by created_at, id`;
+      const presence = await tx`select city, type, areas from network.presence where app_id=${a} and member_id=${memberId}`;
+      const messages = await tx`select direction, body, ts from network.messages where app_id=${a} and member_id=${memberId} order by ts, id`;
+      const opportunities = await tx`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p
+        join network.opportunities o on o.app_id=p.app_id and o.id=p.opportunity_id
+        where p.app_id=${a} and p.member_id=${memberId} order by o.created_at, o.id`;
+      return { member, facets, intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opportunities] };
+    });
+    return data && { ...data, photos: await this.photos.list(personId, a) };
   }
 
   /**

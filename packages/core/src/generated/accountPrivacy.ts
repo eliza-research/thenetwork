@@ -160,6 +160,26 @@ export function recordConsentExport(privacy: PrivacyRequest): PrivacyRequest {
   return { ...privacy, phase: "CompletePrivacyRequest" };
 }
 
+/** Story: Read my own app data / An export includes the member's own facts and photo metadata (spec/accountPrivacy.md) */
+//@ pure
+export function memberExportFacetAllowed(visibility: string, status: string, provenance: string, facetSource: string, isAppearance: boolean): boolean {
+  return !isAppearance && (visibility !== "agent_private" || (status === "confirmed" && (provenance === "said" || facetSource === "gmail" || facetSource === "google_calendar")));
+}
+
+/** Story: Read my own app data / An export includes the member's own facts and photo metadata (spec/accountPrivacy.md) */
+//@ pure
+export function lawAppearanceNeverAppearsInExport(visibility: string, status: string, provenance: string, facetSource: string): boolean {
+  //@ ensures \result === true
+  return !memberExportFacetAllowed(visibility, status, provenance, facetSource, true);
+}
+
+/** Story: Read my own app data / An export includes the member's own facts and photo metadata (spec/accountPrivacy.md) */
+//@ pure
+export function lawPrivateExportNeedsConfirmation(provenance: string, facetSource: string, isAppearance: boolean): boolean {
+  //@ ensures \result === true
+  return !memberExportFacetAllowed("agent_private", "proposed", provenance, facetSource, isAppearance);
+}
+
 /** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function alwaysLeaveRecordsConsent(privacy: PrivacyRequest): boolean {

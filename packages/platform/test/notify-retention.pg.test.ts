@@ -87,4 +87,48 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     expect(await notify.signals(other.id)).toEqual(otherSignals);
     expect(await people.isSuppressed(accounts.phoneHash(phone))).toBe(true);
   });
+  // spec/accountPrivacy.md, "The service completes each operation in its own scope"
+  test("app leave and whole-account erasure remove scoped receipts and incoming photo relay records", async () => {
+    const receiverPhone = "+12125550177";
+    const receiver = await accounts.createPerson(receiverPhone, "inbound_message", 28);
+    const sender = await accounts.createPerson("+12125550178", "inbound_message", 30);
+    const received = new Date(now);
+    const memberships = [
+      { app: "slop", personId: receiver.id, memberId: "erase_relay_receiver" },
+      { app: "friends", personId: receiver.id, memberId: "erase_receipt_receiver" },
+      { app: "slop", personId: sender.id, memberId: "erase_relay_sender" },
+    ] as const;
+    for (const membership of memberships) {
+      await people.putMembership({ ...membership, state: "active", review: null, firstName: "Fixture", profile: {}, joinedAt: now, leftAt: null });
+      await people.sql`insert into network.members(id,app_id,person_id,home_city,age)
+        values(${membership.memberId},${membership.app},${membership.personId},'nyc',30)`;
+      await people.sql`insert into platform.profile_suggestion_connection_receipts(request_nonce,request_hash,event_id,operation,app_id,person_id,member_id,user_id,organization_id,chat_id,connection_id,revoked_at)
+        values(gen_random_uuid(),${"a".repeat(64)},'fixture','disconnect',${membership.app},${membership.personId},${membership.memberId},'user-fixture','org-fixture','chat-fixture','connection-fixture',${received})`;
+    }
+    const photo = "erasure_relay_photo";
+    await people.sql`insert into platform.photos(id,person_id,app_id,storage_key,content_type,bytes,sha256,consent_version,created_at)
+      values(${photo},${sender.id},'slop','fixture/erasure-photo','image/jpeg',100,${"b".repeat(64)},'fixture',${received})`;
+    await people.sql`insert into platform.photo_relay_items
+      (id,app_id,sender_person_id,recipient_person_id,photo_id,thread_id,sender_member_id,recipient_member_id,content_sha256,
+       content_type,content_bytes,consent_id,consented_at,expires_at,policy_version,policy_notice,notice,state)
+      values(${`pri_${"c".repeat(32)}`},'slop',${sender.id},${receiver.id},${photo},'fixture-thread',
+        ${memberships[2].memberId},${memberships[0].memberId},${"b".repeat(64)},'image/jpeg',100,'fixture-consent',${received},
+        ${new Date(now + 60_000)},'fixture','fixture','fixture','pending')`;
+
+    const receipts = () => people.sql`select app_id,person_id from platform.profile_suggestion_connection_receipts order by app_id,person_id`;
+    const incoming = () => people.sql`select id from platform.photo_relay_items where recipient_person_id=${receiver.id}`;
+    const who = { e164: receiverPhone, personId: receiver.id };
+    await accounts.leave(APPS.friends, who);
+    expect(await receipts()).toEqual(expect.arrayContaining([
+      { app_id: "slop", person_id: receiver.id }, { app_id: "slop", person_id: sender.id },
+    ]));
+    expect(await receipts()).toHaveLength(2);
+    expect(await incoming()).toHaveLength(1);
+
+    await accounts.deleteAll(who);
+    expect(await receipts()).toEqual([{ app_id: "slop", person_id: sender.id }]);
+    expect(await incoming()).toHaveLength(0);
+    expect(await people.sql`select id from platform.photos where id=${photo}`).toEqual([{ id: photo }]);
+  });
+
 });

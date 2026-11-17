@@ -90,9 +90,25 @@ pure def recordConsentExport(privacy: PrivacyRequest): PrivacyRequest =
   { ...privacy, phase: CompletePrivacyRequest }
 ```
 
+### An export includes the member's own facts and photo metadata
+
+Read the Network record for the same app, person and member. Include its exported facts, own messages and opportunities. Include a private fact only when it is confirmed and the person stated it or accepted it from an authorized source. The former Gmail import can appear here only as a confirmed fact the person already accepted. Exclude appearance ratings and internal private assessments. Include the person's photo ID, upload time, size and content type for this app. Keep photo content, storage keys and ratings private.
+
+```quint
+pure def memberExportFacetAllowed(visibility: str, status: str, provenance: str, facetSource: str, isAppearance: bool): bool =
+  not(isAppearance) and (visibility != "agent_private" or (status == "confirmed"
+    and (provenance == "said" or facetSource == "gmail" or facetSource == "google_calendar")))
+
+pure def lawAppearanceNeverAppearsInExport(visibility: str, status: str, provenance: str, facetSource: str): bool =
+  not(memberExportFacetAllowed(visibility, status, provenance, facetSource, true))
+
+pure def lawPrivateExportNeedsConfirmation(provenance: str, facetSource: str, isAppearance: bool): bool =
+  not(memberExportFacetAllowed("agent_private", "proposed", provenance, facetSource, isAppearance))
+```
+
 ### The service completes each operation in its own scope
 
-A completed leave has recorded app opt-out. Full erasure follows the age and app cleanup steps. A profile in an export requires its own app membership.
+A completed leave has recorded app opt-out. Full erasure follows the age and app cleanup steps. A profile in an export requires its own app membership. Removing a membership also deletes its imported suggestions and connection receipts, and the photo relay items addressed to that member in the app. The sending person's photo and records belonging to other current memberships stay with their owners.
 
 ```quint
 pure def alwaysLeaveRecordsConsent(privacy: PrivacyRequest): bool =
