@@ -790,16 +790,19 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   // An ordinal word right before "works" is the same pick ("second works" names the second option
   // just as "second one works" does); without it the plain-yes fallback booked every option.
-  // A conjunction after the ordinal ("first and third works", "second, third work") picks both
-  // ordinals, so the fix never turns a safe ask-again into a half pick.
+  // A conjunction after the ordinal picks the ordinals only when a pick word follows the
+  // last one in the chain ("first and third works", "second, third work",
+  // "first, second and third work"); a bare conjunction ("first and third") stays
+  // unclear, so the fix never turns a safe ask-again into a half pick.
   const ORD_WORDS = "first|1st|earlier|earliest|second|2nd|middle|third|3rd|last|latest";
-  const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w})(?: (?:one|option|time|slot|works?|and (?:${ORD_WORDS})|or (?:${ORD_WORDS}))|, (?:${ORD_WORDS}))\\b|^\\W*(?:${w})\\W*$`, "g");
+  const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w})(?: (?:one|option|time|slot|works?)|(?: (?:and|or) (?:${ORD_WORDS})|, (?:${ORD_WORDS}))+(?: (?:one|option|time|slot|works?)))\\b|^\\W*(?:${w})\\W*$`, "g");
   // "last"/"latest" get their own matcher, not ord(): ord()'s "the X" and "time" forms would
   // also read "last time" as a pick, but "last time" means the previous occasion too
   // ("the last time we met was great" must stay unclear, not book the last option).
-  // So this only accepts a pick word (one/option/slot/works) or a conjunction after it,
-  // or the whole reply ("last", "the last"). "last time works" stays unpicked on purpose.
-  const ordLast = () => new RegExp(`\\b(?:last|latest)(?: (?:one|option|slot|works?|and (?:${ORD_WORDS})|or (?:${ORD_WORDS}))|, (?:${ORD_WORDS}))\\b|^\\W*(?:the )?(?:last|latest)\\W*$`, "g");
+  // So this only accepts a pick word (one/option/slot/works), a conjunction after it
+  // (with a pick word after the last ordinal in the chain), or the whole reply
+  // ("last", "the last"). "last time works" stays unpicked on purpose.
+  const ordLast = () => new RegExp(`\\b(?:last|latest)(?: (?:one|option|slot|works?)|(?: (?:and|or) (?:${ORD_WORDS})|, (?:${ORD_WORDS}))+(?: (?:one|option|slot|works?)))\\b|^\\W*(?:the )?(?:last|latest)\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
     [ord("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
     [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
