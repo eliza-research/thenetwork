@@ -22,10 +22,12 @@ const cancelWaitingForNotice = "a cancellation waits for a pending signed receip
 const feedbackReception = "post-meeting feedback reaches only a participant who received the booking";
 const feedbackWaitingForNotice = "post-meeting feedback waits for a pending signed receipt of booking details";
 const attendanceRequiresBooking = "attendance records require receipt of the participant's booking";
+const independentMeetingValue = "verified meeting value requires a distinct attendee's factual reply";
+const sentimentIsNotMeetingProof = "two positive ratings without attendance confirmation do not establish verified value";
 
 test.skipIf(!pgAvailable).each([
   calendarJourney, expiredBookingNotice, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
-  attendanceRequiresBooking,
+  attendanceRequiresBooking, independentMeetingValue, sentimentIsNotMeetingProof,
 ] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
   // spec/calendarInvite.md, "A calendar link follows the booked revision and the current owner"
@@ -98,10 +100,11 @@ test.skipIf(!pgAvailable).each([
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
-    if (scenario === feedbackReception || scenario === feedbackWaitingForNotice || scenario === attendanceRequiresBooking) {
+    const testsValueEvidence = scenario === independentMeetingValue || scenario === sentimentIsNotMeetingProof;
+    if (scenario === feedbackReception || scenario === feedbackWaitingForNotice || scenario === attendanceRequiresBooking || testsValueEvidence) {
       // spec/meetingSettlement.md, "Send feedback requests during the open attendance period"
       // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
-      const waiting = scenario === feedbackWaitingForNotice;
+      const waiting = scenario === feedbackWaitingForNotice || testsValueEvidence;
       if (!waiting) expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
       const [firstBooking] = await sql`select receipt.id,receipt.status,receipt.attempts from platform.outbound receipt
         join network.messages notice on notice.app_id=receipt.app_id and notice.id=receipt.id and notice.member_id=receipt.member_id
@@ -157,6 +160,15 @@ test.skipIf(!pgAvailable).each([
         expect((await send(answer)).status).toBe(200);
         expect(await feedbackData()).toMatchObject([{ from: ids[1], about: ids[0], sentiment: "positive", repeatConsent: true }]);
 
+        const verifiedValue = () => sql`select member_id,event->'with' as providers,event->'confirmedBy' as confirmation
+          from network.capital_events where app_id='friends' and type='value_received'`;
+        if (testsValueEvidence) {
+          const text = scenario === independentMeetingValue ? "We both came." : "It was great.";
+          expect((await send(turn("independent-feedback-answer", text, phones[0]))).status).toBe(200);
+          expect(await feedbackData()).toMatchObject([{ from: ids[1] }, { from: ids[0] }]);
+          expect(await verifiedValue()).toEqual([]);
+        }
+
         const afterDeadline = booked.meetingAt! + 4 * DAY + MINUTE;
         // An exact answer after settlement can affect private feedback but cannot rewrite attendance.
         clock.set(afterDeadline);
@@ -164,6 +176,13 @@ test.skipIf(!pgAvailable).each([
         expect(await attendance()).toEqual(expect.arrayContaining([
           { member_id: ids[0], counterparts: [ids[1]] }, { member_id: ids[1], counterparts: [ids[0]] },
         ]));
+        const expectedValue = scenario === independentMeetingValue ? [{ member_id: ids[1], providers: [ids[0]], confirmation: [ids[0]] }] : [];
+        expect(await verifiedValue()).toEqual(expectedValue);
+        if (testsValueEvidence) {
+          await rt.unitOfWork(n => n.tick(clock.now()));
+          expect(await verifiedValue()).toEqual(expectedValue);
+          return;
+        }
         const settled = async () => {
           const saved = (await rt.pg.load())!;
           const opportunity = saved.opps.find(opp => opp.id === id)!;

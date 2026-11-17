@@ -272,3 +272,15 @@ pure def counterpartConfirmsAttendance(came: bool, reportsMissing: bool): bool =
 pure def requestAttendanceSatisfied(requesterAttended: bool, anotherAttended: bool): bool =
   requesterAttended and anotherAttended
 ```
+
+### Verified value needs an independent attendance confirmation
+
+A worthwhile answer records the member's own experience during the open attendance period. At settlement, only another attendee's timely reply to their own delivered feedback prompt can corroborate that the meeting took place. The second member must explicitly confirm that the pair met or that the whole group attended. Positive sentiment by itself supplies no attendance confirmation. Count only receipt-backed attendees as confirmers and keep the existing ledger checks on vouch eligibility and relationships.
+
+```quint
+pure def verifiedMeetingValueAllowed(attended: bool, worthwhile: bool, independentConfirmers: int): bool =
+  attended and worthwhile and independentConfirmers > 0
+
+pure def lawMeetingValueCannotConfirmItself(attended: bool, worthwhile: bool): bool =
+  not(verifiedMeetingValueAllowed(attended, worthwhile, 0))
+```

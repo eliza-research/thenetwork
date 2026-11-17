@@ -52,7 +52,7 @@ import {
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
-  settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
+  settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement, verifiedMeetingValueAllowed,
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalBookingReceiptCurrent, lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice, lateArrivalReportTimeCurrent } from "../../core/src/generated/groupLateArrival.ts";
 import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
@@ -580,8 +580,9 @@ interface Opp {
   replacementFor?: string;
   /** When the booked plan reached each member, who confirmed it in words, and who confirmed by silence (48 h). */
   bookedAt?: Record<MemberId, number>; explicit?: MemberId[]; confirmed?: MemberId[];
-  /** Post-plan answers: came, would do it again, reported someone missing, and who they named as there. */
-  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[] }>;
+  /** Private post-meeting facts and whether the member valued the experience. */
+  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[];
+    worthwhile?: true; confirmedRoster?: true }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
   /**
@@ -1267,7 +1268,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
-    if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
+    const factualFeedback = c.kind === "other" && this.explicitlyConfirmsAttendance(body, true);
+    if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || ((c.kind === "feedback_like" || factualFeedback) && aw?.kind !== "interview")) {
       // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
       const o = aw?.kind === "feedback" ? this.opps.get(aw.oppId!) : this.feedbackDue(m, now);
       if (o && this.feedbackCandidate(m.id, o, now)) {
@@ -3719,6 +3721,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return receipt?.kind === "accepted" ? receipt.at : undefined;
   }
 
+  private explicitlyConfirmsAttendance(body: string, pair: boolean): boolean {
+    return (body.match(/[^.!?]+[.!?]?/g) ?? []).some(part => {
+      const clause = part.trim().replace(/[.!]$/, "").replace(/^yes,?\s+/i, "");
+      if (/^(?:(?:everyone|we all|all of us) (?:came|made it|showed up|met(?: up)?)|everyone was there|(?:we all|all of us) were there)$/i.test(clause)) return true;
+      return pair && /^(?:we(?: both)?|both of us) (?:came|made it|showed up|met(?: up)?|were there)$/i.test(clause);
+    });
+  }
+
   private onFeedback(m: MemberState, o: Opp, body: string, f: ReturnType<typeof feedbackOf>, attendanceOpen: boolean) {
     o.feedbackFrom.add(m.id);
     // The world turns this into its "feedback" run record (flags only: the text is not kept).
@@ -3731,8 +3741,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const crewId = attendanceOpen && o.plan ? this.planPost(m, o, body, f) : undefined;
     if (attendanceOpen) {
       if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: otherMissing, named: others.filter(x => this.namedIn(body, x)) } };
-      const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
-      if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
+      const own = o.post?.[m.id];
+      if (own?.came && !otherMissing) {
+        if (f.sentiment === "positive" || own.again) own.worthwhile = true;
+        if (this.explicitlyConfirmsAttendance(body, others.length === 1)) own.confirmedRoster = true;
+      }
       this.helpFeedback(m, o, f);
       if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
       else m.completedSinceNoShow++;
@@ -3990,6 +4003,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const origin = this.originOf(o);
     for (const { p, vouchers, organizerVerified, finding } of findings) {
       const key = `${o.id}:${p}`;
+      const confirmers = vouchers.filter(x => said(x)?.confirmedRoster);
+      // spec/meetingSettlement.md, "Verified value needs an independent attendance confirmation"
+      if (verifiedMeetingValueAllowed(finding.mark === "Attended", !!said(p)?.worthwhile, confirmers.length)) {
+        this.emit({ type: "value_received", member: p, with: confirmers, confirmedBy: confirmers }, key);
+      }
       if (finding.mark === "Attended") {
         const verifiedBy: ("counterpart" | "organizer")[] = [...(vouchers.length ? ["counterpart" as const] : []), ...(organizerVerified ? ["organizer" as const] : [])];
         this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...vouchers, ...(organizerVerified && host ? [host] : [])] }, key);

@@ -363,6 +363,19 @@ export function chooseCheckIn(hostResponded: boolean, hostReportsMissing: boolea
   return !hostResponded ? "NoCheckIn" : (hostReportsMissing ? "MissingNames" : (hasNames ? "PresentNames" : "BookedParticipants"));
 }
 
+/** Story: Ask for feedback and close attendance once / Verified value needs an independent attendance confirmation (spec/meetingSettlement.md) */
+//@ pure
+export function verifiedMeetingValueAllowed(attended: boolean, worthwhile: boolean, independentConfirmers: number): boolean {
+  return attended && worthwhile && independentConfirmers > 0;
+}
+
+/** Story: Ask for feedback and close attendance once / Verified value needs an independent attendance confirmation (spec/meetingSettlement.md) */
+//@ pure
+export function lawMeetingValueCannotConfirmItself(attended: boolean, worthwhile: boolean): boolean {
+  //@ ensures \result === true
+  return !verifiedMeetingValueAllowed(attended, worthwhile, 0);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: MeetingSettlement, event: Event): boolean {
