@@ -50,7 +50,8 @@ import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
-  restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
+  meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
+  settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
@@ -564,6 +565,8 @@ interface Opp {
   lateArrivalReported?: Record<MemberId, number>;
   /** Participants who answered the feedback question. */
   feedbackFrom: Set<MemberId>;
+  /** Local simulator delivery at its own channel. Persisted runtimes read committed provider receipts instead. */
+  feedbackPromptedAt?: Partial<Record<MemberId, number>>;
   /** Original completed meeting behind this review item. */
   repeatFrom?: string;
   /** Exact gathering consent behind this review item. Never part of member-facing copy. */
@@ -1238,14 +1241,23 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
     if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
-      // Feedback is only for a meeting that already happened. An acknowledgement ("See you there.",
-      // "ok") is not an answer to "How did it go?": it belongs to another message, so it gets no reply
-      // and the question stays open.
-      const o = aw?.kind === "feedback" ? this.opps.get(aw.oppId!) : this.feedbackDue(m);
-      const f = feedbackOf(body);
-      const ack = c.kind === "ack" && f.sentiment === "neutral" && !f.selfNoShow && !f.otherNoShow && !(o?.plan && planAgainOf(body) !== "unclear");
-      if (o && !ack) { m.awaiting = undefined; return this.onFeedback(m, o, body, f); }
-      return;
+      // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+      const o = aw?.kind === "feedback" ? this.opps.get(aw.oppId!) : this.feedbackDue(m, now);
+      if (o && this.feedbackCandidate(m.id, o, now)) {
+        const f = feedbackOf(body);
+        const ack = c.kind === "ack" && f.sentiment === "neutral" && !f.selfNoShow && !f.otherNoShow && !(o.plan && planAgainOf(body) !== "unclear");
+        const receiptAt = this.feedbackReceiptAt(o, m.id);
+        const receivedAt = msg.signedReceivedAt ?? msg.ts;
+        if (!ack && meetingFeedbackReplyAllowed(this.memberReply && !msg.reaction, true, receiptAt !== undefined,
+          receiptAt ?? -1, receivedAt, now)) {
+          if (m.awaiting?.kind === "feedback" && m.awaiting.oppId === o.id) m.awaiting = undefined;
+          const start = o.meetingAt!;
+          return this.onFeedback(m, o, body, f, meetingFeedbackCanSettle(!!o.finalized, receivedAt - start, now - start));
+        }
+        return;
+      }
+      if (m.awaiting?.kind === "feedback" && m.awaiting === aw) m.awaiting = undefined;
+      if (c.kind === "feedback_like") return;
     }
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
     // A growth ask's answer can be just the friend's name ("My friend Maya!", "Maya").
@@ -1525,7 +1537,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       for (const set of [o.primed, o.contacted, o.reminded, o.feedbackFrom]) set.delete(id);
       o.status.delete(id); delete o.explanations[id];
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
-      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "lateArrivalReported"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
+      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "feedbackPromptedAt", "lateArrivalReported"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
       for (const k of ["explicit", "confirmed", "bookedTold", "dayBeforeReminded", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
       if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
@@ -3662,14 +3674,21 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   // ================================================================== feedback & growth
-  /** The most recent meeting this member went to, already held, that they have not given feedback on. */
-  private feedbackDue(m: MemberState): Opp | undefined {
-    const now = this.now();
-    return [...this.opps.values()].reverse().find(o => o.stage === "done" && o.status.get(m.id) === "yes" && !o.feedbackFrom.has(m.id)
-      && o.meetingAt !== undefined && o.meetingAt <= now && now - o.meetingAt < 7 * DAY);
+  private feedbackCandidate(id: MemberId, o: Opp, now: number): boolean {
+    return o.meetingAt !== undefined && meetingFeedbackCandidate(o.stage === "done", o.status.get(id) === "yes", o.feedbackFrom.has(id), now - o.meetingAt);
   }
 
-  private onFeedback(m: MemberState, o: Opp, body: string, f = feedbackOf(body)) {
+  private feedbackDue(m: MemberState, now: number): Opp | undefined {
+    return [...this.opps.values()].reverse().find(o => this.feedbackCandidate(m.id, o, now));
+  }
+
+  private feedbackReceiptAt(o: Opp, id: MemberId): number | undefined {
+    if (!this.ctx.initialInviteReceipt) return o.feedbackPromptedAt?.[id];
+    const receipt = this.ctx.initialInviteReceipt(meetingFeedbackKey(o.id, id, o.scheduleRevision));
+    return receipt?.kind === "accepted" ? receipt.at : undefined;
+  }
+
+  private onFeedback(m: MemberState, o: Opp, body: string, f: ReturnType<typeof feedbackOf>, attendanceOpen: boolean) {
     o.feedbackFrom.add(m.id);
     // The world turns this into its "feedback" run record (flags only: the text is not kept).
     // Privacy (network-consent-25): what the answer said, as flags; never the member's words.
@@ -3677,14 +3696,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     const others = o.participants.filter(p => p !== m.id && o.status.get(p) === "yes");
     // The post-meeting answer is the attendance check-in (NC: mutual check-in; the host's check-in list).
     // Plans also ask "would you do it again with this group?" (would_interact_again edges, crews).
-    const crewId = o.plan ? this.planPost(m, o, body, f) : undefined;
-    if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named: others.filter(x => this.namedIn(body, x)) } };
-    const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
-    if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
-    this.helpFeedback(m, o, f);
+    const otherMissing = f.otherNoShow || NOBODY_CAME.test(body);
+    const crewId = attendanceOpen && o.plan ? this.planPost(m, o, body, f) : undefined;
+    if (attendanceOpen) {
+      if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: otherMissing, named: others.filter(x => this.namedIn(body, x)) } };
+      const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
+      if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
+      this.helpFeedback(m, o, f);
+      if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
+      else m.completedSinceNoShow++;
+      this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
+    }
     const repeatConsent = !o.plan && !o.seat && o.participants.length === 2 && recordsRepeatConsent(
       deliveredInvitee(o.status.get(m.id) === "yes", o.bookedAt?.[m.id] !== undefined),
-      explicitRepeatRequest(body), f.sentiment === "negative", f.selfNoShow || !!o.post?.[m.id]?.otherNoShow,
+      explicitRepeatRequest(body), f.sentiment === "negative", f.selfNoShow || otherMissing,
     );
     // The check-in after a date (AppHooks.postDateReports): harassment, lying, a no-show or an unsafe
     // date is a report about the other person, a block between them, and a staff case.
@@ -3701,8 +3726,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       const a = plans.activityById.get(o.plan!.activityId)!;
       this.send(m, `${copy.feedbackThanks} ${copy.crewOffer(a.label)}`, { type: "crew_offer", crew: { crewId, activity: a.id } }, "reply", { about: others, hook: { t: "crew_offer", crewId } });
     } else this.ack(m, copy.feedbackThanks);
-    if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
-    else m.completedSinceNoShow++;
     for (const other of others) {
       this.feedback.push({ id: `fb${this.feedback.length + 1}`, from: m.id, about: other, opportunityId: o.id, at: this.now(), sentiment: f.sentiment, wouldMeetAgain: f.again, ...(repeatConsent ? { repeatConsent: true } : {}) });
       const k = pairKey(m.id, other);
@@ -3716,9 +3739,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
-    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
-    if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
+    if (attendanceOpen && !crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
       this.growthAsk(m, this.copy.growthAsk, "after_good_meeting");
     }
@@ -3919,10 +3941,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       const reply = said(p);
       const vouchers = confirms.filter(x => x !== p);
       const organizerVerified = checkIn.includes(p);
+      const promptAt = this.feedbackReceiptAt(o, p);
       const finding = countAttendance({
         saidAttended: reply?.came === true, saidAbsent: reply?.came === false, hasFeedback: !!reply,
         counterpartVerified: vouchers.length > 0, organizerVerified, pairMeeting: going.length === 2,
         reportedMissing: foundMissing.some(x => x !== p), explicitReply: (o.explicit ?? []).includes(p),
+        receivedFeedbackPrompt: promptAt !== undefined && meetingFeedbackWindow(promptAt - o.meetingAt!),
       });
       return { p, vouchers, organizerVerified, finding };
     });
@@ -5986,6 +6010,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (invitationJoins.length) meta = { ...meta, invitationJoins };
     const idPrefix = invitationJoins.length ? "invite-notice:" : kind === "reengage" ? reengagementDeliveryPrefix : "";
     const delivery = this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
+    const hook = o.hook;
+    if (hook?.t === "feedback" && !this.ctx.initialInviteReceipt && delivery.status === "delivered") {
+      const meeting = this.opps.get(hook.oppId);
+      if (meeting) (meeting.feedbackPromptedAt ??= {})[m.id] = delivery.ts;
+    }
     if (proactive && (this.ctx.initialInviteReceipt || delivery.status === "delivered")) {
       const opportunityId = o.hook?.t === "probe" || o.hook?.t === "plan_probe" ? o.hook.oppId : undefined;
       const seen = m.pendingAsks.some(invite => invite.deliveryId === delivery.id || (opportunityId !== undefined && invite.opportunityId === opportunityId));
@@ -5999,7 +6028,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       : meta.privateInviteVouch ? "Private invitation reply"
       : sentStandaloneNotice ? "Invitation join notice"
       : deliveredInviteJoins.length ? baseBody : text;
-    const hook = o.hook;
     const consentProbe = hook?.t === "probe" || hook?.t === "plan_probe" || hook?.t === "times" ? hook.oppId : null;
     m.lastSent = { body: storedText, at: now, consentProbe, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
     if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.(delivery.id);

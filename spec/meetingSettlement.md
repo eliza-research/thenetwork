@@ -198,28 +198,52 @@ pure def lawClosedAttendanceStopsFeedbackClaim(acceptedSeat: bool, exactRequest:
   queuedMeetingFeedbackClaim(false, acceptedSeat, exactRequest, elapsedMs, receivedBooking, receiptMayArrive) == RefuseMeetingFeedback
 ```
 
+### A feedback reply needs receipt of its exact prompt
+
+Take feedback from the participant's own text about the current completed booking. Accept one answer per participant. Require a positive receipt of that participant's exact prompt for this opportunity and schedule revision. The text must arrive at or after receipt and by the time it is handled. A late answer can enter private feedback within seven days of the meeting. Once attendance settles or its four-day period expires, a late answer cannot change attendance, reliability, capital or crew formation. A member can report a safety issue through the independent report flow at any time it permits.
+
+```quint
+pure val meetingFeedbackReplyMs = 7 * 86400000
+
+pure def meetingFeedbackCandidate(completed: bool, acceptedSeat: bool, alreadyAnswered: bool, elapsedMs: int): bool =
+  completed and acceptedSeat and not(alreadyAnswered) and elapsedMs >= feedbackDelayMs and elapsedMs < meetingFeedbackReplyMs
+
+pure def meetingFeedbackReplyAllowed(ownText: bool, currentCandidate: bool, exactReceipt: bool, acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  ownText and currentCandidate and dayOfCheckInAnswerCurrent(exactReceipt, acceptedAt, receivedAt, handledAt)
+
+pure def meetingFeedbackCanSettle(finalized: bool, receivedElapsedMs: int, handledElapsedMs: int): bool =
+  not(finalized) and meetingFeedbackWindow(receivedElapsedMs) and meetingFeedbackWindow(handledElapsedMs)
+
+pure def lawFeedbackReplyNeedsReceipt(ownText: bool, currentCandidate: bool, acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  not(meetingFeedbackReplyAllowed(ownText, currentCandidate, false, acceptedAt, receivedAt, handledAt))
+
+pure def lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: int, handledElapsedMs: int): bool =
+  not(meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs))
+```
+
 ### Classify each attendee from the available reports
 
-Only participants with an accepted invitation and a delivered booking count as booked. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. Across pairs and groups, a participant left unaccounted for with no reply gets a reliability no-show when someone who came reported a missing participant.
+Only participants with an accepted invitation and a delivered booking count as booked. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.
 
 ```quint
 type AttendanceMark = Attended | Absent | Ghosted | NoFinding
 type AttendanceEvidence = {
   saidAttended: bool, saidAbsent: bool, hasFeedback: bool, counterpartVerified: bool,
-  organizerVerified: bool, pairMeeting: bool, reportedMissing: bool, explicitReply: bool,
+  organizerVerified: bool, pairMeeting: bool, reportedMissing: bool, explicitReply: bool, receivedFeedbackPrompt: bool,
 }
 type AttendanceFinding = { mark: AttendanceMark, logFeedback: bool, reliabilityNoShow: bool }
 
 pure def deliveredInvitee(accepted: bool, bookingDelivered: bool): bool = accepted and bookingDelivered
 
 pure def countAttendance(evidence: AttendanceEvidence): AttendanceFinding =
+  val corroboratedMissing = evidence.reportedMissing and evidence.receivedFeedbackPrompt
   val mark =
     if (evidence.saidAttended or (not(evidence.saidAbsent) and (evidence.counterpartVerified or evidence.organizerVerified))) Attended
     else if (evidence.saidAbsent) Absent
-    else if (evidence.pairMeeting and evidence.reportedMissing) (if (evidence.explicitReply) Absent else Ghosted)
+    else if (evidence.pairMeeting and corroboratedMissing) (if (evidence.explicitReply) Absent else Ghosted)
     else NoFinding
   { mark: mark, logFeedback: mark == Attended and evidence.hasFeedback,
-    reliabilityNoShow: mark != Attended and not(evidence.hasFeedback) and evidence.reportedMissing }
+    reliabilityNoShow: mark != Attended and not(evidence.hasFeedback) and corroboratedMissing }
 ```
 
 ### A host's check-in uses the host's response

@@ -33,6 +33,7 @@ import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEli
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
+import { meetingFeedbackCandidate } from "../../core/src/generated/meetingSettlement.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
@@ -42,7 +43,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -801,8 +802,20 @@ export class NetworkRuntime {
     await this.refreshProbeReplyReceipts(state);
     const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
-    const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string; type: "scheduling" | "reminder" }>();
+    const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string; type: "scheduling" | "reminder" | "feedback_request" }>();
+    const now = this.clock.now();
     for (const opp of state?.opps ?? []) {
+      if (opp.stage === "done" && opp.meetingAt !== undefined) {
+        for (const [memberId, status] of opp.status) {
+          if (status !== "yes") continue;
+          // An unresolved settlement can still use an earlier exact receipt when a worker's tick runs late.
+          const needsSettlementReceipt = !opp.finalized && !opp.post?.[memberId];
+          const canAnswer = meetingFeedbackCandidate(true, true, opp.feedbackFrom.includes(memberId), now - opp.meetingAt);
+          if (!needsSettlementReceipt && !canAnswer) continue;
+          const key = meetingFeedbackKey(opp.id, memberId, opp.scheduleRevision);
+          exactReplies.set(key, { key, memberId, oppId: opp.id, type: "feedback_request" });
+        }
+      }
       const draft = opp.reschedule;
       if (!draft || opp.stage !== "scheduled") continue;
       for (const memberId of draft.offered) {
@@ -834,12 +847,12 @@ export class NetworkRuntime {
       where m.app_id=${this.app.id} and m.direction='outbound' and (
         (m.id=any(${tx.array(ids, "TEXT")}) and m.proactive) or
         (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')) or
-        (m.id=any(${tx.array([...exactReplies.keys()], "TEXT")}) and m.type in ('scheduling','reminder')))`);
+        (m.id=any(${tx.array([...exactReplies.keys()], "TEXT")}) and m.type in ('scheduling','reminder','feedback_request')))`);
     for (const row of rows) {
       const exact = exactReplies.get(row.id);
       if (exact && (row.type !== exact.type || row.member_id !== exact.memberId || row.outbound_member_id !== exact.memberId
         || row.opportunity_id !== exact.oppId)) continue;
-      // Check-in replies and reschedule votes require provider acceptance of their exact prompt.
+      // Check-in and feedback replies and reschedule votes require acceptance of their exact prompt.
       const acceptedAt = exact ? row.sent_at : row.accepted_at;
       if (acceptedAt && /^(accepted|sent|delivered|read)$/.test(row.status)) {
         this.initialInviteReceipts.set(exact?.key ?? row.id, { kind: "accepted", at: acceptedAt.getTime() });

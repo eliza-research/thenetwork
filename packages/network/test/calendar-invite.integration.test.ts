@@ -98,6 +98,7 @@ test.skipIf(!pgAvailable).each([
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
     if (scenario === feedbackReception || scenario === feedbackWaitingForNotice) {
       // spec/meetingSettlement.md, "Send feedback requests during the open attendance period"
+      // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
       const waiting = scenario === feedbackWaitingForNotice;
       if (!waiting) expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
       const [firstBooking] = await sql`select receipt.id,receipt.status,receipt.attempts from platform.outbound receipt
@@ -122,15 +123,53 @@ test.skipIf(!pgAvailable).each([
       const feedbackSends = () => delivered.filter(call => feedbackKeys.has(call.idempotencyKey));
       expect(feedbackSends()).toEqual([expect.objectContaining({ to: phones[waiting ? 0 : 1],
         text: expect.stringContaining(waiting ? "Blair" : "Ari") })]);
+      const feedbackText = "It was great. I would definitely meet again.";
+      const feedbackData = async () => (await rt.pg.load())!.feedback.filter(record => record.opportunityId === id);
       if (waiting) {
+        const beforePrompt = turn("feedback-before-prompt", feedbackText, phones[1]);
+        expect((await send(beforePrompt)).status).toBe(200);
+        expect(await feedbackData()).toEqual([]);
         expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
         clock.advance(5 * MINUTE);
         await rt.deliver();
         await rt.deliver();
         expect((await feedbackState()).map(row => [row.status, row.attempts])).toEqual([["accepted", 1], ["accepted", 1]]);
         expect(feedbackSends().map(message => message.to)).toEqual(phones);
+        expect((await send({ ...beforePrompt, messageId: "feedback-delayed" })).status).toBe(200);
+        expect((await send({ ...turn("feedback-future", feedbackText, phones[1]), receivedAt: clock.now() + MINUTE })).status).toBe(200);
+        expect(await feedbackData()).toEqual([]);
+        const answer = turn("feedback-on-time", feedbackText, phones[1]);
+        expect((await send(answer)).status).toBe(200);
+        expect((await send(answer)).status).toBe(200);
+        expect(await feedbackData()).toMatchObject([{ from: ids[1], about: ids[0], sentiment: "positive", repeatConsent: true }]);
+
+        const afterDeadline = booked.meetingAt! + 4 * DAY + MINUTE;
+        // An exact answer after settlement can affect private feedback but cannot rewrite attendance.
+        clock.set(afterDeadline);
+        await rt.unitOfWork(n => n.tick(clock.now()));
+        const settled = async () => {
+          const saved = (await rt.pg.load())!;
+          const opportunity = saved.opps.find(opp => opp.id === id)!;
+          const member = saved.members.find(m => m.id === ids[0])!;
+          return { finalized: opportunity.finalized, post: opportunity.post, noShows: member.noShows,
+            completedSinceNoShow: member.completedSinceNoShow, interactions: saved.interactions.filter(record => record.id.startsWith(`${id}:fb:`)) };
+        };
+        const closed = await settled();
+        expect(closed).toMatchObject({ finalized: true });
+        expect((await send(turn("feedback-after-settlement", feedbackText, phones[0]))).status).toBe(200);
+        expect(await feedbackData()).toMatchObject([{ from: ids[1] }, { from: ids[0], about: ids[1], sentiment: "positive" }]);
+        expect(await settled()).toEqual(closed);
       } else {
         expect(delivered.some(call => call.idempotencyKey === `tn:${firstBooking.id}`)).toBe(false);
+        expect((await send(turn("feedback-peer-absent", "I went, but the other person never showed up.", phones[1]))).status).toBe(200);
+        expect(await feedbackData()).toMatchObject([{ from: ids[1], about: ids[0], sentiment: "negative" }]);
+        clock.set(booked.meetingAt! + 4 * DAY + MINUTE);
+        await rt.unitOfWork(n => n.tick(clock.now()));
+        const missed = (await rt.pg.load())!.members.find(member => member.id === ids[0]);
+        expect(missed?.noShows).toBe(0);
+        expect((await send(turn("feedback-independent-report", "Report Ari, he kept harassing me.", phones[1]))).status).toBe(200);
+        expect((await rt.pg.load())!.reports).toMatchObject([{ reporterId: ids[1], subjectId: ids[0], kind: "harassment", source: "message" }]);
+        expect(await feedbackData()).toHaveLength(1);
       }
       return;
     }

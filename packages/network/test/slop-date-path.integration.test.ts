@@ -13,6 +13,7 @@ import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
@@ -218,6 +219,15 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     if (meetingAt > clock.now()) await run(s, clock, meetingAt - clock.now() + 3 * HOUR, HOUR);
     for (let i = 0; i < 48 && !(await inbox(rae)).some(m => /How did your date with/.test(m.body)); i++) await run(s, clock, HOUR, HOUR);
     expect(await last(rae)).toMatch(/How did your date with/);
+    // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+    const [prompt] = await sql<{ id: string; body: string }[]>`select id,body from network.messages
+      where app_id='slop' and member_id=${rae} and opportunity_id=${item.oppId} and type='feedback_request' and direction='outbound'`;
+    const syntheticHistory = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records an accepted prompt"); } } });
+    await sql.begin(async tx => {
+      await syntheticHistory.recordCollected(tx, [{ id: prompt!.id, memberId: rae, to: RAE, kind: "transactional", text: prompt!.body }]);
+      await syntheticHistory.collectedReceipt(tx, [prompt!.id], "accepted", clock.now());
+    });
     await text(s, clock, RAE, "He was really rude and kept harassing me after I said I wanted to leave.");
 
     const reports = await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json() as any;

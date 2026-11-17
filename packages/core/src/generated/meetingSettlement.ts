@@ -16,7 +16,7 @@ export type MeetingFeedbackClaim = "SendMeetingFeedback" | "WaitForMeetingBookin
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean }
+export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
@@ -37,6 +37,8 @@ export const feedbackDelayHours: number = 3;
 export const settlementDelayDays: number = 4;
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export const meetingFeedbackPrefix: string = "meeting-feedback:";
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+export const meetingFeedbackReplyMs: number = exact_meetingSettlement(7 * 86400000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
@@ -278,6 +280,38 @@ export function lawClosedAttendanceStopsFeedbackClaim(acceptedSeat: boolean, exa
   return queuedMeetingFeedbackClaim(false, acceptedSeat, exactRequest, elapsedMs, receivedBooking, receiptMayArrive) === "RefuseMeetingFeedback";
 }
 
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+//@ pure
+export function meetingFeedbackCandidate(completed: boolean, acceptedSeat: boolean, alreadyAnswered: boolean, elapsedMs: number): boolean {
+  return completed && acceptedSeat && !alreadyAnswered && elapsedMs >= feedbackDelayMs && elapsedMs < meetingFeedbackReplyMs;
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+//@ pure
+export function meetingFeedbackReplyAllowed(ownText: boolean, currentCandidate: boolean, exactReceipt: boolean, acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  return ownText && currentCandidate && dayOfCheckInAnswerCurrent(exactReceipt, acceptedAt, receivedAt, handledAt);
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+//@ pure
+export function meetingFeedbackCanSettle(finalized: boolean, receivedElapsedMs: number, handledElapsedMs: number): boolean {
+  return !finalized && meetingFeedbackWindow(receivedElapsedMs) && meetingFeedbackWindow(handledElapsedMs);
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+//@ pure
+export function lawFeedbackReplyNeedsReceipt(ownText: boolean, currentCandidate: boolean, acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !meetingFeedbackReplyAllowed(ownText, currentCandidate, false, acceptedAt, receivedAt, handledAt);
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+//@ pure
+export function lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: number, handledElapsedMs: number): boolean {
+  //@ ensures \result === true
+  return !meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs);
+}
+
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): boolean {
@@ -287,14 +321,9 @@ export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
-  const local_1: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && evidence.reportedMissing ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
-  return { mark: local_1, logFeedback: local_1 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_1 !== "Attended" && !evidence.hasFeedback && evidence.reportedMissing };
-}
-
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
-//@ pure
-export function organizerCanVerify(booked: boolean, came: boolean): boolean {
-  return booked && came;
+  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
+  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
+  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
 }
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
@@ -307,6 +336,12 @@ export function counterpartConfirmsAttendance(came: boolean, reportsMissing: boo
 //@ pure
 export function requestAttendanceSatisfied(requesterAttended: boolean, anotherAttended: boolean): boolean {
   return requesterAttended && anotherAttended;
+}
+
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
+//@ pure
+export function organizerCanVerify(booked: boolean, came: boolean): boolean {
+  return booked && came;
 }
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
