@@ -3329,7 +3329,8 @@ export class NetworkService implements RuntimeHost {
         const rt = await this.runtimeOfMember(handled.app, memberId);
         const replyIds = handled.replyIds;
         const bookingRuntime = rt ?? this.runtimeFor(handled.app);
-        if (bookingRuntime && await bookingRuntime.scoped(tx => originalBookingNoticeStale(tx, bookingRuntime.app.id, bookingRuntime.pg.id, replyIds))) {
+        if (bookingRuntime && await bookingRuntime.scoped(tx =>
+          originalBookingNoticeStale(tx, bookingRuntime.app.id, bookingRuntime.pg.id, replyIds, this.clock))) {
           return json({ error: "turn_booking_changed", retryable: false }, 409);
         }
         if (bookingRuntime && !await bookingRuntime.scoped(tx =>

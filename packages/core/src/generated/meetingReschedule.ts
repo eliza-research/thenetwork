@@ -70,8 +70,15 @@ export function lawExpiredRescheduleCannotCommit(ownAnswer: boolean, exactRecipi
 
 /** Story: Change the time only when everyone agrees / The original booking notice belongs to the original confirmed seat (spec/meetingReschedule.md) */
 //@ pure
-export function originalBookingNoticeCurrent(scheduled: boolean, confirmedSeat: boolean, originalRevision: boolean): boolean {
-  return scheduled && confirmedSeat && originalRevision;
+export function originalBookingNoticeCurrent(scheduled: boolean, confirmedSeat: boolean, originalRevision: boolean, remainingMs: number): boolean {
+  return scheduled && confirmedSeat && originalRevision && remainingMs > 0;
+}
+
+/** Story: Change the time only when everyone agrees / The original booking notice belongs to the original confirmed seat (spec/meetingReschedule.md) */
+//@ pure
+export function lawBookingStartEndsOriginalNotice(scheduled: boolean, confirmedSeat: boolean, originalRevision: boolean): boolean {
+  //@ ensures \result === true
+  return !originalBookingNoticeCurrent(scheduled, confirmedSeat, originalRevision, 0);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

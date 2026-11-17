@@ -10,15 +10,18 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { bookedReminderKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
-import { localBookingStart } from "../src/rescheduling.ts";
+import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
 
-test.skipIf(!pgAvailable)("a signed calendar request downloads the current booking with no participant details", async () => {
+const calendarJourney = "a signed calendar request downloads the current booking with no participant details";
+const expiredBookingNotice = "an original booking notice cannot send or replay once the meeting starts";
+
+test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
   // spec/calendarInvite.md, "A calendar link follows the booked revision and the current owner"
   const url = await migratedDb("calendar_invite");
   const sql = new SQL(url);
-  const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
+  const clock = new SimClock(Date.UTC(2026, 10, scenario === expiredBookingNotice ? 19 : 16, 16));
   const secret = "a-synthetic-calendar-invite-fixture-secret";
   const phones = ["+12125550288", "+12125550289"];
   const app = APPS.friends;
@@ -74,6 +77,8 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     clock.set(world.clock.now());
     const awaiting = world.net.exportState();
     await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: awaiting.members, opps: awaiting.opps }));
+    const adapter = rt.adapter as BlooioAdapter;
+    if (scenario === expiredBookingNotice) await adapter.lineSafety("review", "hold the booking notice");
     const confirm = turn("calendar-booking", "yes", phones[1]);
     const bookingReply = await (await send(confirm)).json();
     expect(bookingReply.replies.join(" ")).toContain("You're both in");
@@ -81,13 +86,31 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
+    if (scenario === expiredBookingNotice) {
+      // spec/meetingReschedule.md, "The original booking notice belongs to the original confirmed seat"
+      const [held] = await sql`select queued.id,queued.status,queued.attempts from platform.outbound queued
+        join network.messages notice on notice.app_id=queued.app_id and notice.id=queued.id and notice.member_id=queued.member_id
+        where notice.opportunity_id=${id} and notice.type='proposal' and notice.member_id=${ids[0]!}`;
+      expect(held).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+      expect(booked.meetingAt! - clock.now()).toBeLessThan(3 * DAY);
+      clock.set(booked.meetingAt!);
+      await adapter.lineSafety(undefined);
+      await rt.deliver();
+      const [state] = await sql`select status,attempts from platform.outbound where id=${held.id}`;
+      const replay = await send(confirm);
+      expect({ status: state.status, attempts: state.attempts, replay: replay.status,
+        providerCalls: delivered.filter(call => call.idempotencyKey === `tn:${held.id}`).length })
+        .toEqual({ status: "suppressed_ineligible", attempts: 0, replay: 409, providerCalls: 0 });
+      expect(await replay.json()).toMatchObject({ error: "turn_booking_changed" });
+      return;
+    }
     // spec/meetingSettlement.md, "Claim a reminder only after the member received the current booking notice"
     const reminderAt = Math.max(clock.now(), booked.meetingAt! - DAY);
     expect(booked.meetingAt! - reminderAt).toBeGreaterThan(12 * HOUR);
     clock.set(reminderAt);
-    const reminder = (memberId: string) => bookedReminderKey("day-before-reminder", id, memberId, booked.scheduleRevision);
-    const reminderState = async (memberId: string) => (await sql`select status,attempts from platform.outbound where id=${reminder(memberId)}`)[0];
-    const reminderSends = (memberId: string) => delivered.filter(request => request.idempotencyKey === `tn:${reminder(memberId)}`);
+    const reminder = (memberId: string, revision = 0) => bookedReminderKey("day-before-reminder", id, memberId, revision);
+    const reminderState = async (memberId: string, revision = 0) => (await sql`select status,attempts from platform.outbound where id=${reminder(memberId, revision)}`)[0];
+    const reminderSends = (memberId: string, revision = 0) => delivered.filter(request => request.idempotencyKey === `tn:${reminder(memberId, revision)}`);
     await rt.unitOfWork(n => n.tick(clock.now()));
     expect(await reminderState(ids[0]!)).toMatchObject({ status: "accepted", attempts: 1 });
     expect(await reminderState(ids[1]!)).toMatchObject({ status: "retry_scheduled", attempts: 0 });
@@ -163,6 +186,37 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     expect(await pendingDraft()).toMatchObject({ accepted: [ids[1]] });
     expect((await send(turn("calendar-reschedule-decline", code!))).status).toBe(200);
     expect((await send(propose)).status).toBe(409);
+
+    const freshMove = turn("calendar-reschedule-new", propose.text);
+    const freshOffer = await (await send(freshMove)).json();
+    const proposerYes = /RESCHEDULE YES [a-p]{16}/.exec(freshOffer.replies.join(" "))![0];
+    expect((await acceptCollected(freshMove, freshOffer.replyIds)).status).toBe(200);
+    const freshPeerOffer = delivered.findLast(message => message.to === phones[1] && message.text.includes("Reply RESCHEDULE YES"));
+    const freshPeerYes = /RESCHEDULE YES [a-p]{16}/.exec(freshPeerOffer?.text ?? "")![0];
+    expect(freshPeerYes).not.toBe(peerYes);
+    expect((await send(turn("calendar-reschedule-new-proposer", proposerYes))).status).toBe(200);
+    const finalVote = turn("calendar-reschedule-new-peer", freshPeerYes, phones[1]);
+    const movedReply = await (await send(finalVote)).json();
+    const moved = (await rt.pg.load())!.opps.find(opp => opp.id === id)!;
+    expect(moved).toMatchObject({ stage: "scheduled", meetingAt: proposedAt, scheduleRevision: 1 });
+    expect(movedReply.replyIds).toEqual([rescheduleUpdateKey(id, 1, ids[1]!)]);
+    const [originalReceipt] = await sql`select status,sent_at from platform.outbound where id=${bookingReply.replyIds[0]}`;
+    const [revisedReceipt] = await sql`select status,sent_at from platform.outbound where id=${movedReply.replyIds[0]}`;
+    expect(originalReceipt).toMatchObject({ status: "sent", sent_at: expect.any(Date) });
+    expect(revisedReceipt).toEqual({ status: "collected", sent_at: null });
+
+    // The accepted original notices cannot authorize a reminder for the new schedule.
+    clock.set(proposedAt - DAY);
+    await rt.unitOfWork(n => n.tick(clock.now()));
+    expect(await reminderState(ids[0]!, 1)).toMatchObject({ status: "accepted", attempts: 1 });
+    expect(await reminderState(ids[1]!, 1)).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+    expect(reminderSends(ids[1]!, 1)).toEqual([]);
+    expect((await acceptCollected(finalVote, movedReply.replyIds)).status).toBe(200);
+    clock.advance(5 * MINUTE);
+    await rt.deliver();
+    await rt.deliver();
+    expect(await reminderState(ids[1]!, 1)).toMatchObject({ status: "accepted", attempts: 1 });
+    expect(reminderSends(ids[1]!, 1)).toHaveLength(1);
 
     const stopped = turn("calendar-stop-target");
     const latest = await (await send(stopped)).json();

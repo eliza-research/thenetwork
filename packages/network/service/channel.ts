@@ -87,9 +87,9 @@ async function reengagementAdmission(tx: SQL, row: QueueRow, runtimeId: string, 
       entry.heldHighAt ?? 0, entry.ts.getTime(), now) ? { ok: true } : refused;
 }
 
-export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[]): Promise<boolean> {
+export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[], clock: Clock): Promise<boolean> {
   if (!ids.length) return false;
-  const rows = await tx<{ scheduled: boolean; confirmed: boolean | null; revision: number | null }[]>`select
+  const rows = await tx<{ scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null }[]>`select opp.meeting_at,
     (booking.id is not null and opp.state='SCHEDULED') as scheduled,
     (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision
     from network.messages msg
@@ -97,8 +97,10 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
     left join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=msg.opportunity_id and seat.member_id=msg.member_id
     left join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
     left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int) on booking.id=msg.opportunity_id
-    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.type='proposal' and msg.opportunity_id is not null`;
-  return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true, (row.revision ?? 0) === 0));
+    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.direction='outbound' and msg.type='proposal' and msg.opportunity_id is not null`;
+  const now = clock.now();
+  return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
+    (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now));
 }
 
 function terminalNotice(row: QueueRow): TerminalNotice | undefined {
@@ -444,7 +446,7 @@ export class BlooioAdapter implements ChannelAdapter {
           const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, this.o.clock.now());
           if (!event.ok) return event;
         }
-        if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_changed" };
+        if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], this.o.clock)) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(reengagementDeliveryPrefix)) return reengagementAdmission(tx, row, rt.pg.id, this.o.clock.now());
