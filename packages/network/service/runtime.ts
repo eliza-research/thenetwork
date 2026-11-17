@@ -819,7 +819,8 @@ export class NetworkRuntime {
     await this.refreshProbeReplyReceipts(state);
     const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
-    const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string; type: "scheduling" | "reminder" | "feedback_request" }>();
+    const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
+      type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
     const lateArrivalGroups = (state?.opps ?? []).filter(opp => opp.stage === "scheduled" && opp.review?.decision === "approve"
       && !opp.review.invalidated && !opp.seat && opp.participants.length >= lateArrivalMinimumRoster
@@ -856,6 +857,10 @@ export class NetworkRuntime {
         const key = bookedReminderKey("day-of-checkin", awaiting.oppId, member.id, awaiting.bookedCheckIn.revision);
         exactReplies.set(key, { key, memberId: member.id, oppId: awaiting.oppId, type: "reminder" });
       }
+      if (awaiting?.kind === "crew" && awaiting.crewOfferReceiptId) {
+        const key = awaiting.crewOfferReceiptId;
+        exactReplies.set(key, { key, memberId: member.id, oppId: null, type: "crew_offer" });
+      }
       // An unrelated inbound clears the unanswered ledger, but the exact open replacement question can still be answered.
       if (awaiting?.kind === "probe" && awaiting.oppId && replacements.has(awaiting.oppId)) pending.push(replacementProbeKey(awaiting.oppId, member.id));
       const repeat = awaiting?.kind === "probe" && awaiting.oppId ? gathering.get(awaiting.oppId) : undefined;
@@ -872,12 +877,12 @@ export class NetworkRuntime {
       where m.app_id=${this.app.id} and m.direction='outbound' and (
         (m.id=any(${tx.array(ids, "TEXT")}) and m.proactive) or
         (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')) or
-        (m.id=any(${tx.array([...exactReplies.keys()], "TEXT")}) and m.type in ('scheduling','reminder','feedback_request')))`);
+        (m.id=any(${tx.array([...exactReplies.keys()], "TEXT")}) and m.type in ('scheduling','reminder','feedback_request','crew_offer')))`);
     for (const row of rows) {
       const exact = exactReplies.get(row.id);
       if (exact && (row.type !== exact.type || row.member_id !== exact.memberId || row.outbound_member_id !== exact.memberId
         || row.opportunity_id !== exact.oppId)) continue;
-      // Check-in and feedback replies and reschedule votes require acceptance of their exact prompt.
+      // Replies to check-ins, feedback prompts, crew offers and reschedule offers require exact acceptance.
       const acceptedAt = exact ? row.sent_at : row.accepted_at;
       if (acceptedAt && /^(accepted|sent|delivered|read)$/.test(row.status)) {
         this.initialInviteReceipts.set(exact?.key ?? row.id, { kind: "accepted", at: acceptedAt.getTime() });

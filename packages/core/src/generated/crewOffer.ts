@@ -74,6 +74,19 @@ export function alwaysAnswersComeFromInvitees(offer: CrewOfferState): boolean {
   return !offer.yes.some((id: string) => !offer.offered.includes(id)) && !offer.no.some((id: string) => !offer.offered.includes(id));
 }
 
+/** Story: Opt in to a recurring crew / A crew reply follows acceptance of its exact offer (spec/crewOffer.md) */
+//@ pure
+export function crewOfferReplyCurrent(memberReply: boolean, accepted: boolean, openedAt: number, stagedAt: number, acceptedAt: number, receivedAt: number, now: number): boolean {
+  return memberReply && accepted && openedAt <= stagedAt && stagedAt <= acceptedAt && acceptedAt <= receivedAt && receivedAt <= now && exact_crewOffer(now - openedAt) <= crewOfferWindowMs;
+}
+
+/** Story: Opt in to a recurring crew / A crew reply follows acceptance of its exact offer (spec/crewOffer.md) */
+//@ pure
+export function lawCrewReplyNeedsExactAcceptance(memberReply: boolean, openedAt: number, stagedAt: number, acceptedAt: number, receivedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !crewOfferReplyCurrent(memberReply, false, openedAt, stagedAt, acceptedAt, receivedAt, now);
+}
+
 /** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function canFinishCrewAnswers(offer: CrewOfferState): boolean {

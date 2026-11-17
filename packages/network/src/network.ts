@@ -35,7 +35,7 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
-import { crewHandoffDue, crewMemberWindowAvailable, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
+import { crewHandoffDue, crewMemberWindowAvailable, crewOfferReplyCurrent, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestSearchAllowed, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -417,7 +417,7 @@ interface MemberState {
   awaiting?: {
     kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting";
     oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean;
-    probeReceiptId?: string;
+    probeReceiptId?: string; crewOfferReceiptId?: string;
     bookedCheckIn?: { meetingAt: number; revision: number };
   };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
@@ -1201,7 +1201,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!mcp && this.weeklyOptIn(m, body)) return;
     if (aw?.kind === "crew" && aw.crewId) {
       const yn = this.yesNoOf(body);
-      if (yn === "yes" || yn === "no") { m.awaiting = undefined; return this.onCrewAnswer(m, aw.crewId, yn === "yes"); }
+      if (yn === "yes" || yn === "no") {
+        const offer = this.crewOffers.find(c => c.crew.id === aw.crewId && !c.resolved);
+        const receipt = aw.crewOfferReceiptId ? this.ctx.initialInviteReceipt?.(aw.crewOfferReceiptId) : undefined;
+        const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+        // spec/crewOffer.md, "A crew reply follows acceptance of its exact offer"
+        if (!offer || !crewOfferReplyCurrent(this.memberReply && !msg.reaction, acceptedAt !== undefined, offer.at,
+          aw.at, acceptedAt ?? -1, msg.signedReceivedAt ?? msg.ts, now)) return "open" as const;
+        m.awaiting = undefined;
+        return this.onCrewAnswer(m, offer, yn === "yes");
+      }
     }
     if (aw?.kind === "booked") {
       // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
@@ -4652,14 +4661,12 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** A member's answer to a crew offer. When everyone answered (or after 3 days) the crew forms with those who opted in (>= 3), or not at all. */
-  private onCrewAnswer(m: MemberState, crewId: string, yes: boolean) {
-    const offer = this.crewOffers.find(c => c.crew.id === crewId && !c.resolved);
-    if (!offer) return;
+  private onCrewAnswer(m: MemberState, offer: CrewOffer, yes: boolean) {
     const before = crewOfferState(offer);
     const answered = stepCrewOffer(before, { type: "recordCrewAnswer", memberId: m.id, accepted: yes });
     if (answered === before) return;
     offer.yes = answered.yes; offer.no = answered.no;
-    this.ctx.log("crew_answer", { crewId, memberId: m.id, yes });
+    this.ctx.log("crew_answer", { crewId: offer.crew.id, memberId: m.id, yes });
     if (yes) this.ack(m, copy.crewYes);
     else this.ack(m, "No problem.");
     if (stepCrewOffer(answered, { type: "finishCrewAnswers" }).phase === "Resolved") this.resolveCrew(offer);
@@ -6249,7 +6256,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       };
       case "crew_offer": return {
         valid: () => this.crewOffers.some(c => c.crew.id === h.crewId && !c.resolved),
-        onSent: () => this.expect(m, { kind: "crew", crewId: h.crewId, at: now() }),
+        onSent: messageId => this.expect(m, { kind: "crew", crewId: h.crewId, at: now(), crewOfferReceiptId: messageId }),
       };
       case "group_late": return {
         valid: () => !!o && this.groupLateArrivalPartyCurrent(h.from) && this.groupLateArrivalPartyCurrent(m.id)
