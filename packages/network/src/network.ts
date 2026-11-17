@@ -92,6 +92,7 @@ import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../.
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
+import { publicEventRevision } from "./public-event-revision.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
   standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue,
@@ -5362,7 +5363,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!eventId) return;
     const event = this.snapshotCached().events?.find(value => value.id === eventId);
     if (event?.listing) {
-      o.publicEventRevision = sha256(stableStringify(event));
+      o.publicEventRevision = publicEventRevision(event);
       o.anchorWindow = { start: event.start, end: event.end };
       o.venueArea = event.area;
     }
@@ -5372,7 +5373,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o.publicEventRevision) return undefined;
     const id = o.plan?.eventId ?? o.anchor?.id;
     const event = this.snapshotCached().events?.find(value => value.id === id);
-    return event?.listing && publicEventRevisionMatches(o.publicEventRevision, sha256(stableStringify(event))) ? event : undefined;
+    return event?.listing && publicEventRevisionMatches(o.publicEventRevision, publicEventRevision(event)) ? event : undefined;
   }
 
   /** Revalidate the reviewed pair's exact standing intents, including after a restart. */

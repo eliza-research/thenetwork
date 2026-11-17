@@ -31,6 +31,7 @@ import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupRepl
 import { effectiveParticipation } from "./snapshot.ts";
 import { lockGatheringAdmission, monthlyGatheringInvitePrefix } from "./monthly-gathering-delivery.ts";
 import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./monthly-gathering-notices.ts";
+import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -379,6 +380,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
+        if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
@@ -402,6 +404,10 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) return rt.gatheringNoticeAdmission(tx, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix) && !await rt.gatheringRepeatClaim(tx, row)) return { ok: false, reason: "gathering_repeat_changed" };
+        if (row.oppId) {
+          const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, this.o.clock.now());
+          if (!event.ok) return event;
+        }
         if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());

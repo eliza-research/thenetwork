@@ -62,6 +62,18 @@ pure def publicEventMemberAllowsMatch(adult: bool, categoryAllowed: bool, eventF
   adult and categoryAllowed and eventFormatAllowed
 ```
 
+### A queued event contact still needs the reviewed listing at final claim
+
+Recheck the exact published listing and each active participant's adult eligibility, category choice and event format when claiming a queued invitation, booking confirmation or reminder. Use the persisted opportunity and message to bind this check. Read the current catalog under the lock that serializes publication with the outbound claim. A moved, expired or removed listing cannot authorize the old contact. A cancellation or unrelated message follows its own claim rules.
+
+```quint
+pure def publicEventClaimAllowed(sameListing: bool, exactContact: bool, participantsEligible: bool): bool =
+  sameListing and exactContact and participantsEligible
+
+pure def lawMovedPublicEventCannotAuthorizeClaim(exactContact: bool, participantsEligible: bool): bool =
+  not(publicEventClaimAllowed(false, exactContact, participantsEligible))
+```
+
 ### A closed event opportunity without contact does not use a matching slot
 
 After an unsent public event opportunity closes, it is no longer an active duplicate or a charged introduction. A corrected listing can become a new opportunity that needs its own review. The existing limits still apply to a review rejection and to recorded contacts.

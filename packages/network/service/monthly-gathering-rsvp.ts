@@ -8,7 +8,8 @@ import { lowestAge } from "../../platform/src/age.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import type { MemberCommandOwner } from "./member-command.ts";
-import { gatheringVenueStillCurrent, lockGatheringListing, type StoredGatheringVenue } from "./monthly-gatherings.ts";
+import { gatheringVenueStillCurrent, type StoredGatheringVenue } from "./monthly-gatherings.ts";
+import { lockPublicEventCatalog } from "./public-events.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 
 export interface GatheringRsvpKey { id: string; revision: number }
@@ -67,7 +68,7 @@ function gathering(tx: SQL, app: AppInfo, key: GatheringRsvpKey, lock: boolean) 
 
 async function currentRsvpListing(tx: SQL, event: GatheringRow, withdrawing: boolean, now: number): Promise<boolean> {
   if (!gatheringRsvpNeedsListingCheck(event.venue_kind === "listing", withdrawing, now < event.starts_at.getTime())) return true;
-  await lockGatheringListing(tx);
+  await lockPublicEventCatalog(tx);
   return gatheringVenueStillCurrent(tx, event, now);
 }
 

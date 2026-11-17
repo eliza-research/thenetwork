@@ -73,6 +73,19 @@ export function publicEventMemberAllowsMatch(adult: boolean, categoryAllowed: bo
   return adult && categoryAllowed && eventFormatAllowed;
 }
 
+/** Story: Find a current public event / A queued event contact still needs the reviewed listing at final claim (spec/publicEventCatalog.md) */
+//@ pure
+export function publicEventClaimAllowed(sameListing: boolean, exactContact: boolean, participantsEligible: boolean): boolean {
+  return sameListing && exactContact && participantsEligible;
+}
+
+/** Story: Find a current public event / A queued event contact still needs the reviewed listing at final claim (spec/publicEventCatalog.md) */
+//@ pure
+export function lawMovedPublicEventCannotAuthorizeClaim(exactContact: boolean, participantsEligible: boolean): boolean {
+  //@ ensures \result === true
+  return !publicEventClaimAllowed(false, exactContact, participantsEligible);
+}
+
 /** Story: Find a current public event / A closed event opportunity without contact does not use a matching slot (spec/publicEventCatalog.md) */
 //@ pure
 export function closedPublicEventIsUnsent(bound: boolean, closed: boolean, contacted: boolean): boolean {

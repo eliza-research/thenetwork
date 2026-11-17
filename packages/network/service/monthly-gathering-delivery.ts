@@ -9,7 +9,8 @@ import type { AppInfo } from "../../platform/src/apps.ts";
 import { gatheringEventPreference, storedGatheringInviteRecipientCurrent, type NetworkState } from "../src/network.ts";
 import { BlooioAdapter } from "./channel.ts";
 import { currentGatheringMember, gatheringRsvpReference, type GatheringRsvpKey } from "./monthly-gathering-rsvp.ts";
-import { gatheringVenueStillCurrent, lockGatheringListing } from "./monthly-gatherings.ts";
+import { gatheringVenueStillCurrent } from "./monthly-gatherings.ts";
+import { lockPublicEventCatalog } from "./public-events.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 export { monthlyGatheringInvitePrefix };
@@ -112,7 +113,7 @@ export async function lockGatheringAdmission(tx: SQL, app: string, runtimeId: st
   if (app !== "ntwrk" || row.app !== app || !key) return;
   await tx`select id from network.network_state where id=${runtimeId} and app_id=${app} for share`;
   const [event] = await tx<{ venue_kind: string }[]>`select venue_kind from network.monthly_gatherings where app_id=${app} and id=${key.id} for share`;
-  if (event?.venue_kind === "listing") await lockGatheringListing(tx);
+  if (event?.venue_kind === "listing") await lockPublicEventCatalog(tx);
 }
 
 /** Last app-owned check, inside the persisted outbound claim after the shared send gates. */
