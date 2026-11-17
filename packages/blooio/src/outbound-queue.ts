@@ -665,7 +665,7 @@ export class OutboundQueue {
 
   private request(row: QueueRow): SendRequest {
     return {from:this.line,to:row.to,text:row.text,...(row.mediaUrls.length?{mediaUrls:row.mediaUrls}:{}),idempotencyKey:`tn:${row.id}`,
-      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,...(row.approvedPhotos?.length?{approvedPhotos:row.approvedPhotos}:{})}};
+      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,createdAt:row.createdAt,...(row.approvedPhotos?.length?{approvedPhotos:row.approvedPhotos}:{})}};
   }
 
   /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
