@@ -89,7 +89,7 @@ export function statusText(status: StatusLine, agent: AgentId, links: Pick<Landi
 }
 
 /** The path and the link text of each page that the footer can link. */
-export const sitePageLinks: Record<SitePage, { href: string; label: string }> = {
+export const sitePageLinks: Partial<Record<SitePage, { href: string; label: string }>> = {
   LandingPage: { href: "/", label: "Home" },
   PrivacyPage: { href: "/privacy", label: "Privacy" },
   TermsPage: { href: "/terms", label: "Terms" },

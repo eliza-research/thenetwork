@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import type { Outbound } from "../../packages/network/service/channel.ts";
 import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
+import { buttonPageLink } from "../../packages/notify/src/links.ts";
 import { connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
@@ -196,5 +197,56 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     // Recorded once: a second tick (or a second replica) sends nothing more.
     await st.svc.notifyTick();
     expect((await sql`select 1 from network.messages where app_id = 'peon' and member_id = ${m.id} and type = 'notify'`).length).toBe(1);
+  }, T);
+
+  test("the public SMS handoff fills an assistant prompt without opening or revealing the update", async () => {
+    // spec/sitePages.md, "The update handoff accepts only a canonical reference on the hub"
+    const phone = newPhone();
+    const { b, res } = await webJoin(st, "peon", phone, { age: 30 });
+    expect(res.status).toBe(200);
+    const { person_id: personId } = await member("peon", phone);
+    const summary = "Your interview is at the Greenpoint library.";
+    const notify = st.svc.notify!;
+    const now = st.clock.now();
+    const { item } = await notify.add({ personId, app: "peon", eventType: "reminder", subjectId: "sms-handoff", urgency: "requested", summary }, now);
+    const reference = "T-7F3K9Q";
+    expect(await notify.store.insertToken({ token: reference, personId, itemIds: [item.id], issuedAt: now, expiresAt: now + 60_000 })).toBe(true);
+    const { pathname } = new URL(buttonPageLink(reference));
+
+    const page = await st.site("ntwrk", `${pathname}?redirect=https://outside.invalid`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(page.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    expect(page.headers.has("set-cookie")).toBe(false);
+    expect(page.headers.has("location")).toBe(false);
+    const html = await page.text();
+    expect(html).not.toMatch(/<script|outside\.invalid|T-ZZZZZZ/i);
+    expect(html).not.toContain(summary);
+    expect(html).not.toContain(personId);
+    const prompt = encodeURIComponent(`Ask The Network for update ${reference}`);
+    for (const href of [`https://chatgpt.com/?prompt=${prompt}`, `https://claude.ai/new?q=${prompt}`, `https://grok.com/?q=${prompt}`]) {
+      expect(html).toContain(`href="${href}"`);
+    }
+    const unknown = "T-AAAAAA";
+    expect(await (await st.site("ntwrk", `/t/${unknown}`)).text()).toBe(html.replaceAll(reference, unknown));
+    const head = await st.site("ntwrk", pathname, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    const post = await st.site("ntwrk", pathname, { method: "POST" });
+    expect(post.status).toBe(405);
+    expect(post.headers.get("allow")).toBe("GET, HEAD");
+    expect((await st.site("peon", pathname)).status).toBe(404);
+    for (const bad of ["/t", "/t/", "/t/t-7f3k9q", `${pathname}/`, `${pathname}%3C`, "/_update-handoff.html", "/%5Fupdate-handoff.html"]) {
+      expect((await st.site("ntwrk", bad)).status, bad).toBe(404);
+    }
+    expect((await sql`select redeemed_at from notify.task_tokens where token=${reference}`)[0]?.redeemed_at).toBeNull();
+
+    const connected = await connectMcp(st, "peon", phone, { browser: b, redirect: CLAUDE });
+    const bearer = connected.token?.access_token;
+    if (!bearer) throw new Error("missing authorized connector");
+    expect((await updates(bearer, { update_token: reference })).updates).toEqual([
+      { summary, kind: "reminder", at: expect.any(String) },
+    ]);
   }, T);
 });

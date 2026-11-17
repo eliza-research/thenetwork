@@ -1,4 +1,4 @@
-// spec/sitePages.md, "Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page"
+// spec/sitePages.md, "Every site serves public pages and each special page has one site"
 import type { LandingLinks } from "@thenetwork/ui";
 import { type Brand, accents, appKeys, joinModes, logoMarks } from "../../../packages/core/src/generated/brandIdentity.ts";
 import { type SitePage, sitePageList } from "../../../packages/core/src/generated/sitePages.ts";
@@ -18,7 +18,7 @@ export interface SiteData {
 /** The pages that need the page script: the landing page (Copy, the agent tiles and Messages) and the browser join flow. */
 export type ScriptPage = "LandingPage" | "JoinPage";
 
-/** True when the page ships the page script. The legal pages and the not-found page are complete without it. */
+/** True when the page ships the page script. The other pages are complete without it. */
 export function pageNeedsScript(page: SitePage): page is ScriptPage {
   switch (page) {
     case "LandingPage":
@@ -27,6 +27,7 @@ export function pageNeedsScript(page: SitePage): page is ScriptPage {
     case "PrivacyPage":
     case "TermsPage":
     case "NotFoundPage":
+    case "UpdateHandoffPage":
       return false;
     default: {
       const unknownPage: never = page;

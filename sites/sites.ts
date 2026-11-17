@@ -1,5 +1,5 @@
 // The four app sites. One shared backend serves /api/*, /mcp and /oauth/* for all of them
-// (deploy/router.ts forwards those paths; everything else is a static file from dist/).
+// (deploy/router.ts forwards those paths and serves the update handoff). Public pages are built into dist/.
 // The pages come from one React app (apps/site), prerendered per brand; this file adds what
 // Cloudflare serves as it is: _headers, _worker.js, _routes.json, the skill files and static/.
 import { createHash } from "node:crypto";
@@ -13,7 +13,7 @@ import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 import { siteApp } from "../apps/site/prerender.ts";
 import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
-import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType } from "../packages/core/src/generated/sitePages.ts";
+import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType, updateHandoffAssetPath } from "../packages/core/src/generated/sitePages.ts";
 import { brandFor } from "../packages/core/src/generated/brandIdentity.ts";
 import {
   type AgentSignup,
@@ -88,9 +88,10 @@ export const PAGE_FILES: Record<SitePage, string> = {
   TermsPage: "terms.html",
   NotFoundPage: "404.html",
   JoinPage: "join.html",
+  UpdateHandoffPage: updateHandoffAssetPath.slice(1) + ".html",
 };
 
-/** The pages of one site (spec/sitePages.md: only peon.biz keeps the browser join page). */
+/** The pages of one site, including the pages that are specific to one site. */
 export function pages(s: Site): SitePage[] {
   return sitePageList.filter((page) => siteHasPage(s.key, page));
 }
@@ -296,7 +297,7 @@ function writeSkills(s: Site, outdir: string, env: Record<string, string | undef
 
 /** The router every site runs on its backend paths (Pages advanced mode _worker.js): an entry with the default export only. */
 export const ROUTER = join(here, "../deploy/pages-worker.ts");
-/** dist/_routes.json for Cloudflare Pages: the Worker runs on the backend paths only (deploy/router.ts RUN_WORKER_FIRST). */
+/** dist/_routes.json for Cloudflare Pages: the public paths that run the Worker. */
 export const routesFile = (): string => JSON.stringify({ version: 1, include: RUN_WORKER_FIRST, exclude: [] }, null, 2) + "\n";
 
 /** Words that must never ship in a production build (audit sites-infra-14). */
@@ -332,8 +333,7 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     for (const page of pages(s)) write(join(outdir, PAGE_FILES[page]), app.page(s.key, page, input));
     if (existsSync(s.src)) cpSync(s.src, outdir, { recursive: true });
     write(join(outdir, "_headers"), headersFile());
-    // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json runs it only on the
-    // backend paths (every other path is a static file, served without the Worker).
+    // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json lists the paths that run it.
     const worker = await buildWorker({
       entryPoints: [ROUTER], bundle: true, platform: "browser", format: "esm", minify: true,
       outfile: join(outdir, "_worker.js"), write: false, logLevel: "silent",

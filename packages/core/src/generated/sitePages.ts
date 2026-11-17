@@ -2,16 +2,16 @@
 //@ backend dafny
 import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
 
-/** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
-export type SitePage = "LandingPage" | "PrivacyPage" | "TermsPage" | "NotFoundPage" | "JoinPage";
+/** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
+export type SitePage = "LandingPage" | "PrivacyPage" | "TermsPage" | "NotFoundPage" | "JoinPage" | "UpdateHandoffPage";
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export type SmsTermsItem = "SmsProgram" | "SmsOptIn" | "SmsFrequency" | "SmsStopEverything" | "SmsLeaveOne" | "SmsStartAgain" | "SmsHelp" | "SmsCosts" | "SmsNoMarketingShare";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
-export type PathKind = "RootPath" | "PrivacyPath" | "TermsPath" | "JoinPath" | "SettingsPath" | "SkillPath" | "CatalogIndexPath" | "OwnCatalogSkillPath" | "OtherCatalogSkillPath" | "BackendPath" | "RobotsPath" | "UnknownPath";
+export type PathKind = "RootPath" | "PrivacyPath" | "TermsPath" | "JoinPath" | "SettingsPath" | "SkillPath" | "CatalogIndexPath" | "OwnCatalogSkillPath" | "OtherCatalogSkillPath" | "BackendPath" | "RobotsPath" | "UpdateHandoffPath" | "MalformedUpdateHandoffPath" | "UnknownPath";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export type RequestMethod = "GetMethod" | "HeadMethod" | "OtherMethod";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
-export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJoin" | "ServeSkill" | "ServeCatalog" | "ServeRobots" | "ForwardToBackend" | "ServeNotFound" | "RefuseRetired" | "RedirectToLanding" | "RefuseMethod";
+export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJoin" | "ServeSkill" | "ServeCatalog" | "ServeRobots" | "ServeUpdateHandoff" | "RefuseUpdateHandoff" | "RefuseUpdateMethod" | "ForwardToBackend" | "ServeNotFound" | "RefuseRetired" | "RedirectToLanding" | "RefuseMethod";
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean }
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
@@ -19,36 +19,38 @@ export type OptInWay = "OptInOnJoinPage" | "OptInInAgent" | "OptInByText";
 /** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
 export type SkillDoc = "RootSkill" | "CatalogIndex" | "CatalogSkill";
 
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
+export const skillAllowOrigin: string = "*";
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
+export const skillCacheSeconds: number = 300;
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export const smsTermsAnchor: string = "sms";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export const retiredSettingsPaths: string[] = ["/settings", "/settings/", "/settings.html"];
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export const retiredJoinPaths: string[] = ["/join", "/join/", "/join.html"];
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
-export const skillAllowOrigin: string = "*";
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
-export const skillCacheSeconds: number = 300;
+/** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
+export const updateHandoffAssetPath: string = "/_update-handoff";
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export const smsTermsItems: SmsTermsItem[] = ["SmsProgram", "SmsOptIn", "SmsFrequency", "SmsStopEverything", "SmsLeaveOne", "SmsStartAgain", "SmsHelp", "SmsCosts", "SmsNoMarketingShare"];
-/** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
-export const sitePageList: SitePage[] = ["LandingPage", "PrivacyPage", "TermsPage", "NotFoundPage", "JoinPage"];
+/** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
+export const sitePageList: SitePage[] = ["LandingPage", "PrivacyPage", "TermsPage", "NotFoundPage", "JoinPage", "UpdateHandoffPage"];
 /** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
 export const footerLinks: SitePage[] = ["PrivacyPage", "TermsPage"];
 
-/** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
+/** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
 //@ pure
 export function keepsBrowserJoin(app: brandIdentity_AppKey): boolean {
   return brandIdentity_siteUsesPart(app, "PartJoinFlow");
 }
 
-/** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
+/** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
 //@ pure
 export function siteHasPage(app: brandIdentity_AppKey, page: SitePage): boolean {
-  return page !== "JoinPage" || keepsBrowserJoin(app);
+  return page === "JoinPage" ? keepsBrowserJoin(app) : (page === "UpdateHandoffPage" ? app === "Ntwrk" : true);
 }
 
-/** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
+/** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
 //@ pure
 export function lawJoinPageOnlyOnPeon(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
@@ -72,7 +74,7 @@ export function lawSmsTermsCoverStopAndLeave(termsItem: SmsTermsItem): boolean {
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 //@ pure
 export function routeFor(app: brandIdentity_AppKey, path: PathKind, method: RequestMethod): SiteRoute {
-  return path === "SettingsPath" ? "RefuseRetired" : (path === "JoinPath" && !keepsBrowserJoin(app) && method === "OtherMethod" ? "RefuseMethod" : (path === "JoinPath" && !keepsBrowserJoin(app) ? "RedirectToLanding" : (path === "BackendPath" ? "ForwardToBackend" : (path === "RootPath" ? "ServeLanding" : (path === "PrivacyPath" ? "ServePrivacy" : (path === "TermsPath" ? "ServeTerms" : (path === "JoinPath" ? "ServeJoin" : (path === "SkillPath" || path === "OwnCatalogSkillPath" ? "ServeSkill" : (path === "OtherCatalogSkillPath" && app === "Ntwrk" ? "ServeSkill" : (path === "CatalogIndexPath" ? "ServeCatalog" : (path === "RobotsPath" ? "ServeRobots" : "ServeNotFound")))))))))));
+  return path === "SettingsPath" ? "RefuseRetired" : (path === "JoinPath" && !keepsBrowserJoin(app) && method === "OtherMethod" ? "RefuseMethod" : (path === "JoinPath" && !keepsBrowserJoin(app) ? "RedirectToLanding" : (path === "MalformedUpdateHandoffPath" || (path === "UpdateHandoffPath" && !siteHasPage(app, "UpdateHandoffPage")) ? "RefuseUpdateHandoff" : (path === "UpdateHandoffPath" && method === "OtherMethod" ? "RefuseUpdateMethod" : (path === "UpdateHandoffPath" ? "ServeUpdateHandoff" : (path === "BackendPath" ? "ForwardToBackend" : (path === "RootPath" ? "ServeLanding" : (path === "PrivacyPath" ? "ServePrivacy" : (path === "TermsPath" ? "ServeTerms" : (path === "JoinPath" ? "ServeJoin" : (path === "SkillPath" || path === "OwnCatalogSkillPath" ? "ServeSkill" : (path === "OtherCatalogSkillPath" && app === "Ntwrk" ? "ServeSkill" : (path === "CatalogIndexPath" ? "ServeCatalog" : (path === "RobotsPath" ? "ServeRobots" : "ServeNotFound"))))))))))))));
 }
 
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
@@ -105,7 +107,7 @@ export function isRetiredRoute(route: SiteRoute): boolean {
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 //@ pure
 export function answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer {
-  return route === "RefuseRetired" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true } as SiteAnswer) : (route === "RefuseMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer)))));
+  return route === "RefuseRetired" || route === "RefuseUpdateHandoff" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true } as SiteAnswer) : (route === "RefuseMethod" || route === "RefuseUpdateMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ServeUpdateHandoff" ? ({ status: 200, noStore: true, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer))))));
 }
 
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
@@ -136,16 +138,16 @@ export function hasOptInWay(app: brandIdentity_AppKey, way: OptInWay): boolean {
 
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
 //@ pure
-export function mayLinkTo(app: brandIdentity_AppKey, path: PathKind): boolean {
-  const local_0: SiteRoute = routeFor(app, path, "GetMethod");
-  return !isRetiredRoute(local_0) && local_0 !== "ServeNotFound" && local_0 !== "ForwardToBackend";
+export function lawTermsAlwaysOfferText(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return hasOptInWay(app, "OptInByText");
 }
 
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
 //@ pure
-export function lawTermsAlwaysOfferText(app: brandIdentity_AppKey): boolean {
-  //@ ensures \result === true
-  return hasOptInWay(app, "OptInByText");
+export function mayLinkTo(app: brandIdentity_AppKey, path: PathKind): boolean {
+  const local_0: SiteRoute = routeFor(app, path, "GetMethod");
+  return !isRetiredRoute(local_0) && local_0 !== "ServeNotFound" && local_0 !== "ForwardToBackend" && local_0 !== "RefuseUpdateHandoff";
 }
 
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
@@ -158,13 +160,13 @@ export function lawTermsNameOnlyAServedJoinPage(app: brandIdentity_AppKey, way: 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
 //@ pure
 export function servesPage(route: SiteRoute): boolean {
-  return route === "ServeLanding" || route === "ServePrivacy" || route === "ServeTerms" || route === "ServeJoin" || route === "ServeNotFound";
+  return route === "ServeLanding" || route === "ServePrivacy" || route === "ServeTerms" || route === "ServeJoin" || route === "ServeUpdateHandoff" || route === "ServeNotFound";
 }
 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
 //@ pure
 export function pageOfRoute(route: SiteRoute): SitePage {
-  return route === "ServeLanding" ? "LandingPage" : (route === "ServePrivacy" ? "PrivacyPage" : (route === "ServeTerms" ? "TermsPage" : (route === "ServeJoin" ? "JoinPage" : "NotFoundPage")));
+  return route === "ServeLanding" ? "LandingPage" : (route === "ServePrivacy" ? "PrivacyPage" : (route === "ServeTerms" ? "TermsPage" : (route === "ServeJoin" ? "JoinPage" : (route === "ServeUpdateHandoff" ? "UpdateHandoffPage" : "NotFoundPage"))));
 }
 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
@@ -180,6 +182,20 @@ export function lawServedPagesExist(app: brandIdentity_AppKey, path: PathKind, m
   //@ ensures \result === true
   const local_1: SiteRoute = routeFor(app, path, method);
   return !servesPage(local_1) || siteHasPage(app, pageOfRoute(local_1));
+}
+
+/** Story: Open an update text in my assistant / The update handoff accepts only a canonical reference on the hub (spec/sitePages.md) */
+//@ pure
+export function lawUpdateHandoffServesOnlyHubReads(app: brandIdentity_AppKey, path: PathKind, method: RequestMethod): boolean {
+  //@ ensures \result === true
+  return (routeFor(app, path, method) === "ServeUpdateHandoff") === (app === "Ntwrk" && path === "UpdateHandoffPath" && method !== "OtherMethod");
+}
+
+/** Story: Open an update text in my assistant / The update handoff accepts only a canonical reference on the hub (spec/sitePages.md) */
+//@ pure
+export function lawUpdateHandoffNeverUsesTheBackend(app: brandIdentity_AppKey, path: PathKind, method: RequestMethod): boolean {
+  //@ ensures \result === true
+  return !(path === "UpdateHandoffPath" || path === "MalformedUpdateHandoffPath") || (routeFor(app, path, method) !== "ForwardToBackend" && answerFor(routeFor(app, path, method), method).noStore);
 }
 
 /** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md) */

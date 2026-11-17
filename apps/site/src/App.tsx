@@ -1,4 +1,4 @@
-// spec/sitePages.md, "Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page"
+// spec/sitePages.md, "Every site serves public pages and each special page has one site"
 import { JoinView, type LegalText, LandingView, LegalDocument, NotFoundView, PageShell, useJoin, useLanding } from "@thenetwork/ui";
 import type { Brand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import type { SitePage } from "../../../packages/core/src/generated/sitePages.ts";
@@ -6,7 +6,7 @@ import type { SiteData } from "./site.ts";
 
 /** The page to show: a legal page carries its text, which only the prerender reads. */
 export type SiteView =
-  | { page: Exclude<SitePage, "PrivacyPage" | "TermsPage"> }
+  | { page: Exclude<SitePage, "PrivacyPage" | "TermsPage" | "UpdateHandoffPage"> }
   | { page: "PrivacyPage" | "TermsPage"; legal: LegalText };
 
 export interface AppProps {

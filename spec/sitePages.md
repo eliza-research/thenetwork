@@ -1,25 +1,28 @@
 # Site pages
 
-This spec owns the page set of each public site and the route that each request path gets. The site router (the Pages Worker of each site) gets only the retired paths and the backend paths. It classifies the path and the method, calls these decisions, and writes the response. The static host gets every other path, and serves the pages, the agent skill files and robots.txt. Its answers must agree with the same decisions. The shared backend answers every backend path. Brand data comes from [brand identity](./brandIdentity.md). The landing page itself is in [landing entry](./landingEntry.md).
+This spec owns the page set of each public site and the route that each request path gets. The site router (the Pages Worker of each site) gets the retired paths, the update handoff paths and the backend paths. It classifies the path and the method, calls these decisions, and writes the response. The static host gets every other path, and serves the pages, the agent skill files and robots.txt. Its answers must agree with the same decisions. The shared backend answers every backend path. Brand data comes from [brand identity](./brandIdentity.md). The landing page itself is in [landing entry](./landingEntry.md).
 
 ## Story: Read the pages of the site
 
 > As a person who opens a site, I want a small set of pages that each link the privacy policy and the terms, so that I can find the legal text from any page.
 
-### Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page
+### Every site serves public pages and each special page has one site
 
-The page set is the same on every site. peon.biz keeps its browser join page. The other sites send a person to their agent or to Messages to join.
+Each site has a landing page, a privacy page, terms and a not-found page. peon.biz keeps its browser join page. The other sites send a person to their agent or to Messages to join. ntwrk.party hosts the update handoff for all apps.
 
 ```quint
 import brandIdentity.* from "./brandIdentity"
 
-type SitePage = LandingPage | PrivacyPage | TermsPage | NotFoundPage | JoinPage
+type SitePage = LandingPage | PrivacyPage | TermsPage | NotFoundPage | JoinPage | UpdateHandoffPage
 
-pure val sitePageList: List[SitePage] = List(LandingPage, PrivacyPage, TermsPage, NotFoundPage, JoinPage)
+pure val sitePageList: List[SitePage] = List(LandingPage, PrivacyPage, TermsPage, NotFoundPage, JoinPage, UpdateHandoffPage)
 
 pure def keepsBrowserJoin(app: AppKey): bool = siteUsesPart(app, PartJoinFlow)
 
-pure def siteHasPage(app: AppKey, page: SitePage): bool = page != JoinPage or keepsBrowserJoin(app)
+pure def siteHasPage(app: AppKey, page: SitePage): bool =
+  if (page == JoinPage) keepsBrowserJoin(app)
+  else if (page == UpdateHandoffPage) app == Ntwrk
+  else true
 
 pure def lawJoinPageOnlyOnPeon(app: AppKey): bool = siteHasPage(app, JoinPage) iff (app == Peon)
 ```
@@ -58,22 +61,28 @@ pure def lawSmsTermsCoverStopAndLeave(termsItem: SmsTermsItem): bool =
 
 ### A request routes by its path kind, the site and the method
 
-The router tests retired paths first, then backend paths, then static files. The settings paths are retired on every site. The join paths are retired on every site that does not keep a browser join. A GET or HEAD to a retired join path goes to the landing page. Another method on a retired join path is refused.
+The router classifies retired paths, update handoff paths and backend paths before static files. The settings paths are retired on every site. The join paths are retired on every site that does not keep a browser join. A GET or HEAD to a retired join path goes to the landing page. Another method on a retired join path is refused.
 
 ```quint
 type PathKind = RootPath | PrivacyPath | TermsPath | JoinPath | SettingsPath | SkillPath |
-  CatalogIndexPath | OwnCatalogSkillPath | OtherCatalogSkillPath | BackendPath | RobotsPath | UnknownPath
+  CatalogIndexPath | OwnCatalogSkillPath | OtherCatalogSkillPath | BackendPath | RobotsPath |
+  UpdateHandoffPath | MalformedUpdateHandoffPath | UnknownPath
 type RequestMethod = GetMethod | HeadMethod | OtherMethod
 type SiteRoute = ServeLanding | ServePrivacy | ServeTerms | ServeJoin | ServeSkill | ServeCatalog |
-  ServeRobots | ForwardToBackend | ServeNotFound | RefuseRetired | RedirectToLanding | RefuseMethod
+  ServeRobots | ServeUpdateHandoff | RefuseUpdateHandoff | RefuseUpdateMethod | ForwardToBackend | ServeNotFound |
+  RefuseRetired | RedirectToLanding | RefuseMethod
 
 pure val retiredSettingsPaths: Set[str] = Set("/settings", "/settings/", "/settings.html")
 pure val retiredJoinPaths: Set[str] = Set("/join", "/join/", "/join.html")
+pure val updateHandoffAssetPath = "/_update-handoff"
 
 pure def routeFor(app: AppKey, path: PathKind, method: RequestMethod): SiteRoute =
   if (path == SettingsPath) RefuseRetired
   else if (path == JoinPath and not(keepsBrowserJoin(app)) and method == OtherMethod) RefuseMethod
   else if (path == JoinPath and not(keepsBrowserJoin(app))) RedirectToLanding
+  else if (path == MalformedUpdateHandoffPath or (path == UpdateHandoffPath and not(siteHasPage(app, UpdateHandoffPage)))) RefuseUpdateHandoff
+  else if (path == UpdateHandoffPath and method == OtherMethod) RefuseUpdateMethod
+  else if (path == UpdateHandoffPath) ServeUpdateHandoff
   else if (path == BackendPath) ForwardToBackend
   else if (path == RootPath) ServeLanding
   else if (path == PrivacyPath) ServePrivacy
@@ -106,9 +115,10 @@ pure def isRetiredRoute(route: SiteRoute): bool =
   route == RefuseRetired or route == RedirectToLanding or route == RefuseMethod
 
 pure def answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer =
-  if (route == RefuseRetired) { status: 404, noStore: true, hasBody: method != HeadMethod, toLanding: false }
+  if (route == RefuseRetired or route == RefuseUpdateHandoff) { status: 404, noStore: true, hasBody: method != HeadMethod, toLanding: false }
   else if (route == RedirectToLanding) { status: 302, noStore: true, hasBody: false, toLanding: true }
-  else if (route == RefuseMethod) { status: 405, noStore: true, hasBody: false, toLanding: false }
+  else if (route == RefuseMethod or route == RefuseUpdateMethod) { status: 405, noStore: true, hasBody: false, toLanding: false }
+  else if (route == ServeUpdateHandoff) { status: 200, noStore: true, hasBody: method != HeadMethod, toLanding: false }
   else if (route == ForwardToBackend) { status: 0, noStore: false, hasBody: false, toLanding: false }
   else if (route == ServeNotFound) { status: 404, noStore: false, hasBody: method != HeadMethod, toLanding: false }
   else { status: 200, noStore: false, hasBody: method != HeadMethod, toLanding: false }
@@ -134,7 +144,7 @@ pure def hasOptInWay(app: AppKey, way: OptInWay): bool = optInWays(app).includes
 
 pure def mayLinkTo(app: AppKey, path: PathKind): bool =
   val route = routeFor(app, path, GetMethod)
-  not(isRetiredRoute(route)) and route != ServeNotFound and route != ForwardToBackend
+  not(isRetiredRoute(route)) and route != ServeNotFound and route != ForwardToBackend and route != RefuseUpdateHandoff
 
 pure def lawTermsNameOnlyAServedJoinPage(app: AppKey, way: OptInWay): bool =
   (way == OptInOnJoinPage and hasOptInWay(app, way)) implies mayLinkTo(app, JoinPath)
@@ -148,13 +158,15 @@ A path that is not a page, a skill file, robots.txt or a backend path shows the 
 
 ```quint
 pure def servesPage(route: SiteRoute): bool =
-  route == ServeLanding or route == ServePrivacy or route == ServeTerms or route == ServeJoin or route == ServeNotFound
+  route == ServeLanding or route == ServePrivacy or route == ServeTerms or route == ServeJoin or
+    route == ServeUpdateHandoff or route == ServeNotFound
 
 pure def pageOfRoute(route: SiteRoute): SitePage =
   if (route == ServeLanding) LandingPage
   else if (route == ServePrivacy) PrivacyPage
   else if (route == ServeTerms) TermsPage
   else if (route == ServeJoin) JoinPage
+  else if (route == ServeUpdateHandoff) UpdateHandoffPage
   else NotFoundPage
 
 pure def lawServedPagesExist(app: AppKey, path: PathKind, method: RequestMethod): bool =
@@ -163,6 +175,24 @@ pure def lawServedPagesExist(app: AppKey, path: PathKind, method: RequestMethod)
 
 pure def lawUnknownPathsShowNotFound(app: AppKey, method: RequestMethod): bool =
   routeFor(app, UnknownPath, method) == ServeNotFound
+```
+
+## Story: Open an update text in my assistant
+
+> As a person who receives an update link by text, I want to choose my assistant without exposing my update on the web.
+
+### The update handoff accepts only a canonical reference on the hub
+
+Only `GET` and `HEAD` to `/t/<reference>` on ntwrk.party serve the handoff. The route takes the exact uppercase reference from the path in the format used by the notification service. Malformed paths and direct requests for the private build template answer 404. A non-read method on a valid hub path answers 405. The handoff is not cached, indexed, or sent as a referrer. It has no script or automatic redirect. It uses no account session or notification lookup and contains only assistant links derived from the reference. The assistant reads an update through its authenticated connector as specified in [agent entry](agentEntry.md).
+
+```quint
+pure def lawUpdateHandoffServesOnlyHubReads(app: AppKey, path: PathKind, method: RequestMethod): bool =
+  (routeFor(app, path, method) == ServeUpdateHandoff) iff
+    (app == Ntwrk and path == UpdateHandoffPath and method != OtherMethod)
+
+pure def lawUpdateHandoffNeverUsesTheBackend(app: AppKey, path: PathKind, method: RequestMethod): bool =
+  (path == UpdateHandoffPath or path == MalformedUpdateHandoffPath) implies
+    (routeFor(app, path, method) != ForwardToBackend and answerFor(routeFor(app, path, method), method).noStore)
 ```
 
 ## Story: Let my agent read the signup skill from the site

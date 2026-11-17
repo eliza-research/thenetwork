@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { build } from "esbuild";
 import { parse as parseToml } from "smol-toml";
 import { PROXY_HEADERS, proxySignature, verifyProxyHeaders } from "../packages/platform/src/proxy.ts";
-import { handle, isBackendPath, MAX_BODY_BYTES, RETIRED_SITE_PATHS, RETIRED_SIGNUP_PATHS, RUN_WORKER_FIRST, UNKNOWN_IP, type Env } from "./router.ts";
+import { handle, isBackendPath, MAX_BODY_BYTES, RETIRED_SITE_PATHS, RETIRED_SIGNUP_PATHS, RUN_WORKER_FIRST, UNKNOWN_IP, UPDATE_HANDOFF_PATHS, type Env } from "./router.ts";
 
 const SECRET = "test-proxy-secret";
 const NOW = Date.UTC(2026, 9, 8, 15, 0, 0);
@@ -63,7 +63,7 @@ describe("which paths reach the backend", () => {
     expect(a).toEqual([p]);
   });
 
-  test("every site is a Pages project whose build runs this router on backend paths and retired account pages", async () => {
+  test("every site is a Pages project with the router mounted on backend paths, retired paths and update handoff paths", async () => {
     const { SITES, routesFile } = await import("../sites/sites.ts");
     expect(JSON.parse(routesFile())).toEqual({ version: 1, include: RUN_WORKER_FIRST, exclude: [] });
     // The built _worker.js exports only the default handler (workerd refuses any other named export:
@@ -83,10 +83,10 @@ describe("which paths reach the backend", () => {
       expect(toml.vars.BACKEND_ORIGIN, s.domain).toBe("https://api.ntwrk.party");
       expect("PLATFORM_PROXY_SECRET" in toml.vars, `${s.domain} must not hold the secret`).toBe(false);
     }
-    // Backend patterns forward; retired account routes must run the Worker without forwarding.
+    // Backend patterns forward. Local routing also requires the Worker.
     for (const pat of RUN_WORKER_FIRST) {
       const sample = pat.endsWith("*") ? pat.slice(0, -1) + "x" : pat;
-      expect(isBackendPath(sample), pat).toBe(![...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS].includes(pat));
+      expect(isBackendPath(sample), pat).toBe(![...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS].includes(pat));
     }
   });
 });
@@ -112,6 +112,27 @@ describe("the built Pages _worker.js", () => {
         await worker.fetch(new Request("https://slop-date.pages.dev/api/app"), { ASSETS: assets, PLATFORM_PROXY_SECRET: SECRET, BACKEND_ORIGIN: "https://staging.example" });
       } finally { globalThis.fetch = realFetch; }
       expect(seen).toEqual(["https://api.ntwrk.party/api/app slop.date", "https://staging.example/api/app slop.date"]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("the hub worker renders an update handoff with its built static page", async () => {
+    const { buildSite, PAGE_FILES, site } = await import("../sites/sites.ts");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "pages-handoff-"));
+    try {
+      expect((await buildSite(site("ntwrk"), dir)).ok).toBe(true);
+      const worker = (await import(join(dir, "_worker.js"))).default as { fetch(r: Request, e: Partial<Env>): Promise<Response> };
+      const assets = { fetch: async (request: Request) => {
+        expect(request.url).toBe("https://ntwrk.party/_update-handoff");
+        expect(request.headers.has("cookie")).toBe(false);
+        return new Response(readFileSync(join(dir, PAGE_FILES.UpdateHandoffPage), "utf8"));
+      } };
+      const path = "https://ntwrk.party/t/T-7F3K9Q?candidate=ignored";
+      const res = await worker.fetch(new Request(path, { headers: { cookie: "sid_ntwrk=private" } }), { ASSETS: assets });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('href="https://claude.ai/new?q=Ask%20The%20Network%20for%20update%20T-7F3K9Q"');
+      expect((await worker.fetch(new Request("https://ntwrk.party/_update-handoff"), { ASSETS: assets })).status).toBe(404);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

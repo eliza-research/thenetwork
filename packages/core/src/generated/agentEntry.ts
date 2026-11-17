@@ -31,6 +31,10 @@ export type Event =
 export const noSkill: string = "";
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const updatePromptLead: string = "Ask The Network for update ";
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
+export const updateHandoffPrefix: string = "/t/";
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
+export const linkedAssistants: LinkedAssistant[] = ["ChatGptAssistant", "ClaudeAssistant", "GrokAssistant"];
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export const initial: Entry = { phase: "NotArrived", entry: "NoEntry", app: "Ntwrk", skill: noSkill };
 

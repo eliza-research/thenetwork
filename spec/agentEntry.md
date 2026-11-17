@@ -109,7 +109,7 @@ pure def stepUpdateShownOnlyByTheUpdatesTool(before: Entry, via: str, after: Ent
 
 ### An update text links to an assistant only when the person uses one
 
-An update text carries only the reference, in the prompt `Ask The Network for update T-7F3K9Q`, and nothing else about the update. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update itself goes in the text thread. On iMessage, the text links straight to the assistant with the prompt filled in. On SMS and Telegram, the text links to one ntwrk.party page with a button for each assistant. Each assistant link fills the prompt and never sends it: ChatGPT takes `?prompt=`, because its `?q=` sends the prompt at once on the web.
+An update text carries only the reference, in the prompt `Ask The Network for update T-7F3K9Q`, and nothing else about the update. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update itself goes in the text thread. On iMessage, the text links straight to the assistant with the prompt filled in. On SMS and Telegram, the text links to `https://ntwrk.party/t/<reference>` with a button for each assistant. The handoff uses the reference from the path and does not look up the update, check whether it exists, or use account data. A valid reference always produces the same page structure. Each assistant link fills the prompt and never sends it: ChatGPT takes `?prompt=`, because its `?q=` sends the prompt at once on the web.
 
 ```quint
 type Channel = IMessage | Sms | Telegram
@@ -117,6 +117,8 @@ type LinkedAssistant = ChatGptAssistant | ClaudeAssistant | GrokAssistant
 type UpdateDelivery = InThread | AssistantLink | ButtonPage
 
 pure val updatePromptLead = "Ask The Network for update "
+pure val updateHandoffPrefix = "/t/"
+pure val linkedAssistants: List[LinkedAssistant] = List(ChatGptAssistant, ClaudeAssistant, GrokAssistant)
 
 pure def updateLinkTemplate(assistant: LinkedAssistant): str =
   if (assistant == ChatGptAssistant) "https://chatgpt.com/?prompt={q}"

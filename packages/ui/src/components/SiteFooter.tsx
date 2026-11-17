@@ -17,11 +17,14 @@ export type SiteFooterProps = Omit<ComponentProps<"footer">, "children"> & {
 export function SiteFooter({ pages = footerLinks, className, ...props }: SiteFooterProps) {
   return (
     <footer className={cn("flex flex-wrap gap-x-5 gap-y-1.5 pt-5 pb-7 text-sm", className)} {...props}>
-      {pages.map((page) => (
-        <Link key={page} variant="quiet" href={sitePageLinks[page].href} className="font-normal text-muted-foreground hover:text-foreground">
-          {sitePageLinks[page].label}
-        </Link>
-      ))}
+      {pages.map((page) => {
+        const link = sitePageLinks[page];
+        return link ? (
+          <Link key={page} variant="quiet" href={link.href} className="font-normal text-muted-foreground hover:text-foreground">
+            {link.label}
+          </Link>
+        ) : null;
+      })}
     </footer>
   );
 }

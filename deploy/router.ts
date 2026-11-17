@@ -2,7 +2,7 @@
 // The Worker in front of each site: a Cloudflare Pages advanced-mode _worker.js (founder decision 8),
 // built by sites/sites.ts. The generated routeFor and answerFor (packages/core/src/generated/sitePages.ts)
 // decide each request that the Worker runs on: backend paths go to env.BACKEND_ORIGIN (same path and
-// query), retired settings and join paths get the retired answer, and every other path is a static file
+// query), retired settings and join paths get the retired answer, update links open the handoff, and every other path is a static file
 // from env.ASSETS (dist/, with _headers). dist/_routes.json lists the same paths, so Cloudflare runs this
 // Worker only for them (the build and router checks keep the route list aligned).
 //
@@ -23,9 +23,11 @@
 
 import { isProxyHeader, signProxyHeaders, signedPath } from "../packages/platform/src/proxy.ts";
 import { readCapped } from "../packages/platform/src/body.ts";
+import { updateHandoffPrefix } from "../packages/core/src/generated/agentEntry.ts";
 import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
-import { answerFor, isRetiredRoute, type PathKind, type RequestMethod, retiredJoinPaths, retiredSettingsPaths, routeFor, type SiteRoute } from "../packages/core/src/generated/sitePages.ts";
+import { answerFor, isRetiredRoute, type PathKind, type RequestMethod, retiredJoinPaths, retiredSettingsPaths, routeFor, type SiteRoute, updateHandoffAssetPath } from "../packages/core/src/generated/sitePages.ts";
 import { type AppId, isAppId } from "../packages/core/src/types.ts";
+import { TOKEN_PATTERN, UPDATE_HANDOFF_TEMPLATE_REFERENCE } from "../packages/notify/src/reference.ts";
 
 export { isProxyHeader };
 /** The IP the router signs when Cloudflare names none (never in production; wrangler dev may omit it). */
@@ -38,8 +40,10 @@ export const MAX_BODY_BYTES = 9 * 1024 * 1024;
 export const RETIRED_SITE_PATHS: readonly string[] = retiredSettingsPaths;
 /** The retired join paths; only a site that keeps the browser join serves them (spec/sitePages.md). */
 export const RETIRED_SIGNUP_PATHS: readonly string[] = retiredJoinPaths;
-/** Cloudflare Pages _routes.json "include" (sites/sites.ts routesFile): the retired paths and the backend paths. */
-export const RUN_WORKER_FIRST = [...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, "/api", "/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/oauth-*"];
+const updateHandoffRoot = updateHandoffPrefix.slice(0, -1);
+export const UPDATE_HANDOFF_PATHS = [updateHandoffRoot, `${updateHandoffPrefix}*`, `${updateHandoffAssetPath}*`];
+/** Cloudflare Pages _routes.json includes the handoff, retired paths and backend paths. */
+export const RUN_WORKER_FIRST = [...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS, "/api", "/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/oauth-*"];
 
 const appKeys: Readonly<Record<AppId, AppKey>> = { ntwrk: "Ntwrk", slop: "Slop", peon: "Peon", friends: "Friends" };
 
@@ -47,6 +51,8 @@ const appKeys: Readonly<Record<AppId, AppKey>> = { ntwrk: "Ntwrk", slop: "Slop",
 export function workerPathKind(pathname: string): PathKind | undefined {
   if (RETIRED_SITE_PATHS.includes(pathname)) return "SettingsPath";
   if (RETIRED_SIGNUP_PATHS.includes(pathname)) return "JoinPath";
+  if (pathname.startsWith(updateHandoffPrefix) && TOKEN_PATTERN.test(pathname.slice(updateHandoffPrefix.length))) return "UpdateHandoffPath";
+  if (pathname === updateHandoffRoot || pathname.startsWith(updateHandoffPrefix) || pathname.startsWith(updateHandoffAssetPath)) return "MalformedUpdateHandoffPath";
   if (isBackendPath(pathname)) return "BackendPath";
   return undefined;
 }
@@ -76,6 +82,38 @@ export function retiredSitePage(req: Request, app: string): Response | null {
   if (answer.status === 405) headers.allow = "GET, HEAD";
   if (answer.hasBody) headers["content-type"] = "text/plain; charset=utf-8";
   return new Response(answer.hasBody ? "Not found" : null, { status: answer.status, headers });
+}
+
+/** The public handoff serves static choices using only the canonical reference in the request path. */
+export async function updateHandoffPage(req: Request, app: string, asset: Env["ASSETS"]["fetch"]): Promise<Response | null> {
+  const url = new URL(req.url);
+  const kind = workerPathKind(url.pathname);
+  if (kind !== "UpdateHandoffPath" && kind !== "MalformedUpdateHandoffPath") return null;
+  if (!isAppId(app)) return jsonError(503, "proxy_not_configured");
+  const method = requestMethod(req.method);
+  const route = routeFor(appKeys[app], kind, method);
+  const answer = answerFor(route, method);
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "referrer-policy": "no-referrer",
+    "strict-transport-security": "max-age=31536000; includeSubDomains",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "x-robots-tag": "noindex, nofollow",
+  });
+  if (route !== "ServeUpdateHandoff") {
+    if (answer.status === 405) headers.set("allow", "GET, HEAD");
+    if (answer.hasBody) headers.set("content-type", "text/plain; charset=utf-8");
+    return new Response(answer.hasBody ? "Not found" : null, { status: answer.status, headers });
+  }
+  const template = await asset(new Request(new URL(updateHandoffAssetPath, url)));
+  if (template.status !== 200) return new Response(null, { status: 503, headers });
+  const html = await template.text();
+  if (!html.includes(UPDATE_HANDOFF_TEMPLATE_REFERENCE)) return new Response(null, { status: 503, headers });
+  const reference = url.pathname.slice(updateHandoffPrefix.length);
+  headers.set("content-type", "text/html; charset=utf-8");
+  return new Response(answer.hasBody ? html.replaceAll(UPDATE_HANDOFF_TEMPLATE_REFERENCE, reference) : null, { status: answer.status, headers });
 }
 
 /** True for a path that belongs to the shared backend. */
@@ -109,8 +147,10 @@ export function proxyHeaders(o: { secret: string; method: string; url: URL; host
   return signProxyHeaders(o.secret, { method: o.method, path: signedPath(o.url), host: o.host, ip: o.ip || UNKNOWN_IP, ts: Math.floor(o.now / 1000) });
 }
 
-/** Answers one request: a retired path, a backend path forwarded with signed proxy headers, or a static file. */
+/** Answers one request: a handoff, a retired path, a forwarded backend path, or a static file. */
 export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fetch, now: () => number = Date.now): Promise<Response> {
+  const handoff = await updateHandoffPage(req, env.APP_ID, (asset) => env.ASSETS.fetch(asset));
+  if (handoff) return handoff;
   const retired = retiredSitePage(req, env.APP_ID);
   if (retired) return retired;
   const url = new URL(req.url);

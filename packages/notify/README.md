@@ -40,7 +40,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 - **Producers that don't already text.** Today every update is texted by the Network itself and only recorded here. Moving a member to "updates by link in my assistant" means having the engine add the item to the inbox instead of texting it, then letting `dispatch` choose the surface.
 - **Member settings.** There is no setting for a preferred surface yet ("send my updates to Claude"). `Recipient.prefs.explicit` is ready for one.
-- **Button page.** The `ntwrk.party/t/<token>` page is not built yet.
+- **Button page.** The Pages router serves `ntwrk.party/t/<token>` as a script-free assistant chooser. The page uses the reference from the URL without looking up an inbox. The chosen assistant reads the update through its authenticated connector.
 
 ## Device test
 

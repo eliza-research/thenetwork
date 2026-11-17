@@ -6,12 +6,12 @@
 
 import { randomInt } from "node:crypto";
 import type { Surface } from "./types.ts";
+export { TOKEN_PATTERN } from "./reference.ts";
 
 /** Crockford-style alphabet without 0/1/I/L/O/U, so tokens survive being read aloud or retyped. */
 const ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 export const TOKEN_LENGTH = 6;
 export const TOKEN_TTL_MS = 7 * 24 * 3600_000;
-export const TOKEN_PATTERN = /^T-[2-9A-HJKMNP-TV-Z]{6}$/;
 
 export interface TaskToken {
   token: string;
