@@ -199,7 +199,7 @@ export function lawFriendTableNeedsMoreThanOneCompatiblePeer(compatibleCandidate
 /** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 //@ pure
 export function partnerCount(s: FriendsRun, memberId: string): number {
-  return ("$" + memberId) in s.partnerCounts ? get_friendsWeek(s.partnerCounts, "$" + memberId) : 0;
+  return lookup0_friendsWeek(s.partnerCounts, memberId, 0);
 }
 
 /** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
@@ -315,14 +315,15 @@ export function initialHolds(): FriendsRun {
   return initial;
 }
 
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup0_friendsWeek(m: Record<string, number>, k: string, otherwise: number): number {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_friendsWeek(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
-}
-
-/** What a map holds for a key, which it must hold. */
-export function get_friendsWeek<K extends string | number, T>(m: Record<K, T>, key: K): T {
-  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
-  return m[key];
 }

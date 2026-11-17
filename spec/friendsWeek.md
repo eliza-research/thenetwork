@@ -124,7 +124,7 @@ An activity partner reservation pairs two different members and uses one allowan
 type PartnerPair = { first: str, second: str }
 
 pure def partnerCount(s: FriendsRun, memberId: str): int =
-  if (s.partnerCounts.keys().contains(memberId)) s.partnerCounts.get(memberId) else 0
+  s.partnerCounts.getOr(memberId, 0)
 
 pure def canReservePartner(s: FriendsRun, pair: PartnerPair, limit: int): bool =
   s.phase == PartnerIntros and pair.first != pair.second and

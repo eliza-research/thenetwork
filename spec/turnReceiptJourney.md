@@ -26,6 +26,18 @@ pure def delivery(report: DeliveryReport): str =
   else if (report == RejectedReport) "rejected"
   else "accepted"
 
+pure def hasReceipt(r: ReceiptObservation): bool =
+  match r {
+    | NoReceipt => false
+    | _ => true
+  }
+
+pure def receiptIs(r: ReceiptObservation, report: DeliveryReport): bool =
+  match r {
+    | SavedReceipt(saved) => saved.report == report
+    | _ => false
+  }
+
 pure def replyStatusFor(receipt: ReceiptObservation): str =
   match receipt {
     | NoReceipt => "collected"
@@ -33,9 +45,9 @@ pure def replyStatusFor(receipt: ReceiptObservation): str =
   }
 
 pure def alwaysReplyStatusMatchesReceipt(s: ReceiptJourney): bool = s.replyStatus == replyStatusFor(s.receipt)
-pure def sometimesStoresAnUnknownReceipt(s: ReceiptJourney): bool = s.receipt == SavedReceipt({ report: UnknownReport })
-pure def sometimesStoresAnAcceptedReceipt(s: ReceiptJourney): bool = s.receipt == SavedReceipt({ report: AcceptedReport })
-pure def sometimesStoresARejectedReceipt(s: ReceiptJourney): bool = s.receipt == SavedReceipt({ report: RejectedReport })
+pure def sometimesStoresAnUnknownReceipt(s: ReceiptJourney): bool = receiptIs(s.receipt, UnknownReport)
+pure def sometimesStoresAnAcceptedReceipt(s: ReceiptJourney): bool = receiptIs(s.receipt, AcceptedReport)
+pure def sometimesStoresARejectedReceipt(s: ReceiptJourney): bool = receiptIs(s.receipt, RejectedReport)
 ```
 
 ### An exact replay leaves both records unchanged
@@ -46,13 +58,13 @@ An identical report returns a replay. A different report after a final result re
 pure def canReportDelivery(s: ReceiptJourney, report: DeliveryReport): bool = true
 pure def reportDelivery(s: ReceiptJourney, report: DeliveryReport): ReceiptJourneyStep =
   val incoming = SavedReceipt({ report: report })
-  val previous = Receipt::readPrevious({ phase: Receipt::CheckingPrevious }, s.receipt == incoming,
-    s.receipt != NoReceipt, s.receipt == SavedReceipt({ report: UnknownReport }), Receipt::receiptFinal(delivery(report)))
+  val previous = Receipt::readPrevious({ phase: Receipt::CheckingPrevious }, receiptIs(s.receipt, report),
+    hasReceipt(s.receipt), receiptIs(s.receipt, UnknownReport), Receipt::receiptFinal(delivery(report)))
   if (Receipt::canCheckScope(previous))
     { state: { receipt: incoming, replyStatus: replyStatusFor(incoming) }, out: List(ReportStored) }
   else
     { state: s, out: List(if (previous.phase == Receipt::Replayed) ReportReplayed else ReportConflict) }
 
 pure def stepAStoredFinalReportStays(before: ReceiptJourney, after: ReceiptJourney): bool =
-  (before.receipt != NoReceipt and before.receipt != SavedReceipt({ report: UnknownReport })) implies after == before
+  (hasReceipt(before.receipt) and not(receiptIs(before.receipt, UnknownReport))) implies after == before
 ```

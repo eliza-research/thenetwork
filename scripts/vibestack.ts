@@ -60,6 +60,7 @@ export function prepareProject(project: string, files: Map<string, string>, appT
   if (appTypes) writeFileSync(join(project, "tsconfig.json"), JSON.stringify({
     extends: join(root, "tsconfig.json"),
     compilerOptions: { typeRoots: [join(root, "node_modules/@types")] },
+    vibe: { sidecarDir: ".vibe/declarations" },
   }) + "\n");
   for (const [file, contents] of files) writeProjectedSpec(project, file, contents);
 }

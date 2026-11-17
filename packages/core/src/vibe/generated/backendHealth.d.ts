@@ -17,24 +17,30 @@ export type Event = {
     type: "checkAdmission";
     serving: boolean;
 } | {
-    type: "checkTicks";
-    late: boolean;
-} | {
     type: "checkDatabase";
     reachable: boolean;
+} | {
+    type: "checkTicks";
+    late: boolean;
 };
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 export declare const initial: BackendHealth;
 /** Every `always` rule at once. Holds initially and after every transition. */
 export declare function inv(current: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
+export declare function reportsStatus(s: BackendHealth, status: HealthStatus): boolean;
+/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 export declare function canCheckAdmission(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 export declare function checkAdmission(s: BackendHealth, serving: boolean): BackendHealth;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-export declare function stepReportIsFinal(before: BackendHealth, after: BackendHealth): boolean;
+export declare function canCheckDatabase(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function canCheckTicks(s: BackendHealth): boolean;
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
+export declare function stepReportIsFinal(before: BackendHealth, after: BackendHealth): boolean;
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
+export declare function checkDatabase(s: BackendHealth, reachable: boolean): BackendHealth;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function checkTicks(s: BackendHealth, late: boolean): BackendHealth;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
@@ -45,10 +51,6 @@ export declare function sometimesReportsDraining(s: BackendHealth): boolean;
 export declare function sometimesReportsDatabaseDown(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function sometimesReportsLateTick(s: BackendHealth): boolean;
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-export declare function canCheckDatabase(s: BackendHealth): boolean;
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-export declare function checkDatabase(s: BackendHealth, reachable: boolean): BackendHealth;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: BackendHealth, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

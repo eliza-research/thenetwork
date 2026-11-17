@@ -5,13 +5,19 @@ export const initial = M.initial;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) @throws {never} */
+export function reportsStatus(s, status) { return M.reportsStatus(s, status); }
+/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) @throws {never} */
 export function canCheckAdmission(s) { return M.canCheckAdmission(s); }
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) @throws {never} */
 export function checkAdmission(s, serving) { return M.checkAdmission(s, serving); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export function stepReportIsFinal(before, after) { return M.stepReportIsFinal(before, after); }
+export function canCheckDatabase(s) { return M.canCheckDatabase(s); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function canCheckTicks(s) { return M.canCheckTicks(s); }
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
+export function stepReportIsFinal(before, after) { return M.stepReportIsFinal(before, after); }
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
+export function checkDatabase(s, reachable) { return M.checkDatabase(s, reachable); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function checkTicks(s, late) { return M.checkTicks(s, late); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
@@ -22,10 +28,6 @@ export function sometimesReportsDraining(s) { return M.sometimesReportsDraining(
 export function sometimesReportsDatabaseDown(s) { return M.sometimesReportsDatabaseDown(s); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function sometimesReportsLateTick(s) { return M.sometimesReportsLateTick(s); }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export function canCheckDatabase(s) { return M.canCheckDatabase(s); }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export function checkDatabase(s, reachable) { return M.checkDatabase(s, reachable); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

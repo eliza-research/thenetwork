@@ -24,7 +24,7 @@ pure def questionSubjectAllowed(s: AskRun, adult: bool, supportedMarket: bool): 
   s.phase == PlanningQuestions and adult and supportedMarket
 
 pure def countReservedQuestions(s: AskRun, memberId: str): int =
-  if (s.counts.keys().contains(memberId)) s.counts.get(memberId) else 0
+  s.counts.getOr(memberId, 0)
 
 pure def canReserveQuestion(s: AskRun, memberId: str, adult: bool, supportedMarket: bool): bool =
   questionSubjectAllowed(s, adult, supportedMarket)
