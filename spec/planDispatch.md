@@ -25,7 +25,7 @@ pure def lawBookedLaneRespectsLateJoinCutoff(booked: bool): bool =
 Check the member's current eligibility for the seat. A Friends replacement also needs current pair values with the other members still in the plan. A Friends partner invitation checks both partners under the [one-to-one rules](planDecision.md#both-friends-activity-partners-need-prior-group-attendance). If the seat is ineligible or the recipient will be away during the plan interval, the quorum runner treats this seat as unavailable. Eligible and present members proceed to the contact window checks.
 
 ```quint
-type InvitePhase = CheckingSeat | CheckingPresence | CheckingWindow | CheckingAllowance | RenderingInvite |
+type InvitePhase = CheckingSeat | CheckingPresence | CheckingAvailability | CheckingWindow | CheckingAllowance | RenderingInvite |
   SendingInvite | InviteSent | DeliveryNotConfirmed | Deferred | Unavailable
 type PlanDispatch = { phase: InvitePhase, reason: str }
 
@@ -37,7 +37,25 @@ pure def checkSeat(invite: PlanDispatch, eligible: bool): PlanDispatch =
 
 pure def canCheckPresence(invite: PlanDispatch): bool = invite.phase == CheckingPresence
 pure def checkPresence(invite: PlanDispatch, present: bool): PlanDispatch =
-  if (present) { ...invite, phase: CheckingWindow } else { phase: Unavailable, reason: "away" }
+  if (present) { ...invite, phase: CheckingAvailability } else { phase: Unavailable, reason: "away" }
+```
+
+### Recheck the member's current availability before contacting them
+
+The member's latest check-in applies when it has already been recorded and its period includes the start of the reviewed activity. When it applies, one stated window must cover the whole activity. A current calendar conflict also makes the seat unavailable. An unavailable seat can open a reviewed alternate without recording a member refusal. Recheck the recipient's stated window again on a persisted provider claim. This rule controls new invitations. A later explicit yes to a delivered invitation is still consent for its exact slot.
+
+```quint
+pure def statedPlanWindowAllows(statedAt: int, statedUntil: int, now: int, slotStart: int, coversSlot: bool): bool =
+  statedAt > now or statedUntil <= slotStart or coversSlot
+
+pure def lawCurrentExcludedWindowStopsPlan(statedAt: int, statedUntil: int, now: int, slotStart: int): bool =
+  (statedAt <= now and statedUntil > slotStart) implies not(statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false))
+
+pure def canCheckAvailability(invite: PlanDispatch): bool = invite.phase == CheckingAvailability
+
+pure def checkAvailability(invite: PlanDispatch, statedAllows: bool, calendarAllows: bool): PlanDispatch =
+  if (statedAllows and calendarAllows) { ...invite, phase: CheckingWindow }
+  else { phase: Unavailable, reason: "plan_availability_changed" }
 ```
 
 ### Wait for the send window, earlier questions, and the right allowance

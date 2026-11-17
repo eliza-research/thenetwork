@@ -11,7 +11,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, planWindowMatchesStated, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
@@ -257,7 +257,7 @@ type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
 };
 
 /** Called after the queue locks the member row that owns these settings. */
-async function probeAdmission(tx: SQL, row: QueueRow, now: number): Promise<RecipientCheck> {
+async function probeAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<RecipientCheck> {
   if (row.kind !== "proactive" || !row.memberId) return { ok: true };
   const [probe] = await tx<QueuedProbe[]>`select msg.type,opp.category,member.prefs,member.participation_state,member.participation_window,member.opted_out
     from network.messages msg join network.members member on member.app_id=msg.app_id and member.id=msg.member_id
@@ -268,7 +268,18 @@ async function probeAdmission(tx: SQL, row: QueueRow, now: number): Promise<Reci
   const categories = probe.prefs?.categoriesOptIn;
   const categoryAllowed = probe.category !== null && Array.isArray(categories) && categories.includes(probe.category)
     && (probe.category !== "romance" || probe.prefs?.romanceOptIn === true);
-  return queuedProbePolicy(true, paused, categoryAllowed) === "Proceed" ? { ok: true } : { ok: false, reason: "matching_settings_changed" };
+  if (queuedProbePolicy(true, paused, categoryAllowed) !== "Proceed") return { ok: false, reason: "matching_settings_changed" };
+  if (probe.type !== "plan_probe") return { ok: true };
+
+  // lockPeerOpportunityContact already shares the exact runtime row against
+  // updates to either the plan or the recipient's check-in state.
+  const [current] = await tx<{ activity_window: Parameters<typeof planWindowMatchesStated>[1] | null; stated: Parameters<typeof planWindowMatchesStated>[0] | null }[]>`select plan.plan->'window' as activity_window, member.stated
+    from network.network_state saved
+    join lateral jsonb_to_recordset(saved.state->'opps') as plan(id text,plan jsonb) on plan.id=${row.oppId ?? null}
+    join lateral jsonb_to_recordset(saved.state->'members') as member(id text,stated jsonb) on member.id=${row.memberId}
+    where saved.app_id=${row.app} and saved.id=${runtimeId}`;
+  return current?.activity_window && planWindowMatchesStated(current.stated ?? undefined, current.activity_window, now)
+    ? { ok: true } : { ok: false, reason: "plan_availability_changed" };
 }
 
 /** Recheck the reviewed replacement and its still-pending probe under the runtime state lock. */
@@ -288,7 +299,7 @@ async function replacementProbeAdmission(tx: SQL, row: QueueRow, runtimeId: stri
     && run?.stage === "probing" && replacement.participants.includes(row.memberId) && run.answers[row.memberId] === "pending"
     && replacement.participants.every(id => run.answers[id] === "pending" || run.answers[id] === "yes");
   if (!recoveryPlanCanProceed(sourceClosed, pending, now < replacement.plan.probeDeadline)) return refused;
-  return probeAdmission(tx, row, now);
+  return probeAdmission(tx, row, runtimeId, now);
 }
 
 /** One message the Network sent in a unit of work. `id` is the Network's idempotency key and the network.messages id. */
@@ -558,7 +569,7 @@ export class BlooioAdapter implements ChannelAdapter {
         const reminder = bookedReminderKind(row.id);
         if (reminder) return bookedReminderAdmission(tx, row, reminder, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(meetingFeedbackPrefix)) return meetingFeedbackAdmission(tx, row, rt.pg.id, this.o.clock.now());
-        return probeAdmission(tx, row, this.o.clock.now());
+        return probeAdmission(tx, row, rt.pg.id, this.o.clock.now());
       },
       claimed: async (row, tx) => {
         if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) await rt.expectedInvitationClaimed(tx, row);

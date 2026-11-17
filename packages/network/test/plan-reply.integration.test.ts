@@ -39,6 +39,47 @@ async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
 }
 
 describe("plan probe replies", () => {
+  test("a reviewed generic plan backfills a seat whose new stated window excludes the activity", async () => {
+    const primary = ["a", "b", "c"];
+    const ids = [...primary, "d"];
+    const w = new Mini(ids.map(id => ({ ...climber(id), area: "Inwood" })), { review: "human", plans: false });
+    await w.onboard(...ids);
+    const now = w.clock.now();
+    const start = Date.UTC(2026, 9, 10, 14);
+    const window = { start, end: start + 4 * HOUR };
+    const plan: plans.Plan = {
+      id: "generic_reviewed_stated_window", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
+      place: { name: "Inwood Hill Park", area: "Inwood" }, window, invited: primary, alternates: ["d"],
+      partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: start - 30 * HOUR,
+      score: 0.8, u: {}, familiar: {}, createdAt: now, category: "social",
+    };
+    const initial = w.net.exportState();
+    for (const member of initial.members) member.stated = { windows: [window], at: now, until: now + 7 * DAY };
+    initial.members.find(member => member.id === "a")!.awaiting = { kind: "checkin", at: now };
+    w.net.importState(initial);
+    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    const item = w.net.reviewQueue()[0]!;
+    expect(item.proposal.participants).toEqual(primary);
+    w.clock.advance(MINUTE);
+    await w.say("a", "I'm free Sunday afternoon.");
+    const latest = w.net.exportState().members.find(member => member.id === "a")!.stated;
+    expect(latest?.windows).toHaveLength(1);
+    expect(latest!.windows[0]!.start).toBeGreaterThan(window.end);
+    w.restart();
+
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    await w.run(HOUR);
+    const probes = w.sent.filter(message => message.meta.type === "plan_probe" && message.meta.plan?.planId === item.oppId);
+    expect(probes.map(message => message.to)).not.toContain("a");
+    expect(await w.runUntil(() => ["b", "c", "d"].every(id => w.probed(id)), DAY)).toBe(true);
+    expect(w.sent.filter(message => message.meta.type === "plan_probe" && message.meta.plan?.planId === item.oppId)
+      .map(message => message.to).sort()).toEqual(["b", "c", "d"]);
+    expect(w.net.plansCounters.planNo).toBe(0);
+    expect(w.meetings).toEqual([]);
+    for (const id of ["b", "c", "d"]) await w.say(id, "Yes, that time works.");
+    expect(w.meetings).toMatchObject([{ proposalId: item.oppId, participants: ["b", "c", "d"], at: start }]);
+  });
+
   test("reviewed plan replies respect the deadline after a restart and allow booked late joins", async () => {
     // spec/planDecision.md, "Only a pending member can change an open plan"; spec/planDecision.md, "Booking requires a pending acceptance that meets quorum"
     const ids = ["a", "b", "c", "d", "e", "f"];

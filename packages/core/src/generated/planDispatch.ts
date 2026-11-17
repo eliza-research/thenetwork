@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
-export type InvitePhase = "CheckingSeat" | "CheckingPresence" | "CheckingWindow" | "CheckingAllowance" | "RenderingInvite" | "SendingInvite" | "InviteSent" | "DeliveryNotConfirmed" | "Deferred" | "Unavailable";
+export type InvitePhase = "CheckingSeat" | "CheckingPresence" | "CheckingAvailability" | "CheckingWindow" | "CheckingAllowance" | "RenderingInvite" | "SendingInvite" | "InviteSent" | "DeliveryNotConfirmed" | "Deferred" | "Unavailable";
 /** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 export interface PlanDispatch { phase: InvitePhase; reason: string }
 
@@ -10,6 +10,7 @@ export interface PlanDispatch { phase: InvitePhase; reason: string }
 export type Event =
   | { type: "checkSeat"; eligible: boolean }
   | { type: "checkPresence"; present: boolean }
+  | { type: "checkAvailability"; statedAllows: boolean; calendarAllows: boolean }
   | { type: "checkWindow"; busy: boolean; windowOpen: boolean; awaitingAnswer: boolean; sentToday: boolean }
   | { type: "checkAllowance"; admitted: boolean }
   | { type: "renderInvite"; usable: boolean }
@@ -66,7 +67,33 @@ export function canCheckPresence(invite: PlanDispatch): boolean {
 //@ pure
 export function checkPresence(invite: PlanDispatch, present: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canCheckPresence(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "checkPresence", \result)
-  return present ? ({ ...invite, phase: "CheckingWindow" } as PlanDispatch) : ({ phase: "Unavailable", reason: "away" } as PlanDispatch);
+  return present ? ({ ...invite, phase: "CheckingAvailability" } as PlanDispatch) : ({ phase: "Unavailable", reason: "away" } as PlanDispatch);
+}
+
+/** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
+//@ pure
+export function statedPlanWindowAllows(statedAt: number, statedUntil: number, now: number, slotStart: number, coversSlot: boolean): boolean {
+  return statedAt > now || statedUntil <= slotStart || coversSlot;
+}
+
+/** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
+//@ pure
+export function lawCurrentExcludedWindowStopsPlan(statedAt: number, statedUntil: number, now: number, slotStart: number): boolean {
+  //@ ensures \result === true
+  return !(statedAt <= now && statedUntil > slotStart) || !statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false);
+}
+
+/** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
+//@ pure
+export function canCheckAvailability(invite: PlanDispatch): boolean {
+  return invite.phase === "CheckingAvailability";
+}
+
+/** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
+//@ pure
+export function checkAvailability(invite: PlanDispatch, statedAllows: boolean, calendarAllows: boolean): PlanDispatch {
+  //@ ensures (inv(invite) && canCheckAvailability(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "checkAvailability", \result)
+  return statedAllows && calendarAllows ? ({ ...invite, phase: "CheckingWindow" } as PlanDispatch) : ({ phase: "Unavailable", reason: "plan_availability_changed" } as PlanDispatch);
 }
 
 /** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md) */
@@ -151,6 +178,7 @@ export function lawPlanReplyNeedsAcceptance(memberReply: boolean, receivedAt: nu
 export function enabled(current: PlanDispatch, event: Event): boolean {
   if (event.type === "checkSeat") return canCheckSeat(current);
   if (event.type === "checkPresence") return canCheckPresence(current);
+  if (event.type === "checkAvailability") return canCheckAvailability(current);
   if (event.type === "checkWindow") return canCheckWindow(current);
   if (event.type === "checkAllowance") return canCheckAllowance(current);
   if (event.type === "renderInvite") return canRenderInvite(current);
@@ -165,6 +193,7 @@ export function step(current: PlanDispatch, event: Event): PlanDispatch {
   //@ ensures inv(\result)
   if (event.type === "checkSeat") return canCheckSeat(current) ? checkSeat(current, event.eligible) : current;
   if (event.type === "checkPresence") return canCheckPresence(current) ? checkPresence(current, event.present) : current;
+  if (event.type === "checkAvailability") return canCheckAvailability(current) ? checkAvailability(current, event.statedAllows, event.calendarAllows) : current;
   if (event.type === "checkWindow") return canCheckWindow(current) ? checkWindow(current, event.busy, event.windowOpen, event.awaitingAnswer, event.sentToday) : current;
   if (event.type === "checkAllowance") return canCheckAllowance(current) ? checkAllowance(current, event.admitted) : current;
   if (event.type === "renderInvite") return canRenderInvite(current) ? renderInvite(current, event.usable) : current;
@@ -188,6 +217,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "checkSeat" && typeof raw.eligible === "boolean") return { type: "checkSeat", eligible: raw.eligible };
   if (raw.type === "checkPresence" && typeof raw.present === "boolean") return { type: "checkPresence", present: raw.present };
+  if (raw.type === "checkAvailability" && typeof raw.statedAllows === "boolean" && typeof raw.calendarAllows === "boolean") return { type: "checkAvailability", statedAllows: raw.statedAllows, calendarAllows: raw.calendarAllows };
   if (raw.type === "checkWindow" && typeof raw.busy === "boolean" && typeof raw.windowOpen === "boolean" && typeof raw.awaitingAnswer === "boolean" && typeof raw.sentToday === "boolean") return { type: "checkWindow", busy: raw.busy, windowOpen: raw.windowOpen, awaitingAnswer: raw.awaitingAnswer, sentToday: raw.sentToday };
   if (raw.type === "checkAllowance" && typeof raw.admitted === "boolean") return { type: "checkAllowance", admitted: raw.admitted };
   if (raw.type === "renderInvite" && typeof raw.usable === "boolean") return { type: "renderInvite", usable: raw.usable };
@@ -209,7 +239,7 @@ export function parseState(x: unknown): PlanDispatch | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "CheckingSeat" || raw.phase === "CheckingPresence" || raw.phase === "CheckingWindow" || raw.phase === "CheckingAllowance" || raw.phase === "RenderingInvite" || raw.phase === "SendingInvite" || raw.phase === "InviteSent" || raw.phase === "DeliveryNotConfirmed" || raw.phase === "Deferred" || raw.phase === "Unavailable") && typeof raw.reason === "string" && Object.keys(raw).length === 2)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "CheckingSeat" || raw.phase === "CheckingPresence" || raw.phase === "CheckingAvailability" || raw.phase === "CheckingWindow" || raw.phase === "CheckingAllowance" || raw.phase === "RenderingInvite" || raw.phase === "SendingInvite" || raw.phase === "InviteSent" || raw.phase === "DeliveryNotConfirmed" || raw.phase === "Deferred" || raw.phase === "Unavailable") && typeof raw.reason === "string" && Object.keys(raw).length === 2)) return undefined;
   const parsed: PlanDispatch = ({ phase: raw.phase, reason: raw.reason });
   return inv(parsed) ? parsed : undefined;
 }

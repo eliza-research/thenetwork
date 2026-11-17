@@ -12,9 +12,9 @@ import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
 
-const scenes = ["fresh consent", "expired delivery", "withdrawn identity"] as const;
+const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability"] as const;
 
-test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its reviewed replacement (%s)", async scene => {
+test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current admission (%s)", async scene => {
   // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
   // spec/bookedGroupReplacement.md, "A replacement uses a current reviewed alternate and a viable slot"
   // spec/bookedGroupReplacement.md, "The next plan needs fresh review and all three separate acceptances"
@@ -128,7 +128,32 @@ test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its r
     if (!original) throw new Error("The original plan did not reach staff review");
     expect(original.proposal.participants).toEqual(invited);
     expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+    if (scene === "changed queued availability") await adapter.queue.setLineSafety("review");
     expect((await approve(original)).status).toBe(200);
+    if (scene === "changed queued availability") {
+      // spec/planDispatch.md, "Recheck the member's current availability before contacting them"
+      const waiting = await messages(original.oppId, "plan_probe");
+      expect(waiting).toHaveLength(3);
+      expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+      const changedAt = clock.now() + 1;
+      clock.set(changedAt);
+      await runtime().unitOfWork(net => {
+        const saved = net.exportState();
+        const member = saved.members.find(candidate => candidate.id === ari)!;
+        member.stated = { at: changedAt, until: now + 7 * DAY,
+          windows: [{ start: plan.window.end + HOUR, end: plan.window.end + 5 * HOUR }] };
+        net.importState(saved);
+      });
+      clock.set(changedAt + HOUR);
+      await adapter.queue.setLineSafety(undefined);
+      await runtime().deliver();
+      const [withheld] = await sql`select outbound.status,outbound.attempts from platform.outbound outbound join network.messages msg
+        on msg.app_id=outbound.app_id and msg.id=outbound.id and msg.member_id=outbound.member_id
+        where outbound.app_id=${app.id} and outbound.member_id=${ari} and msg.opportunity_id=${original.oppId} and msg.type='plan_probe'`;
+      expect(withheld).toEqual({ status: "suppressed_ineligible", attempts: 0 });
+      expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual([people[1].e164, people[2].e164]);
+      return;
+    }
     const probed = people.filter((_, index) => invited.includes(ids[index]!));
     expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual(probed.map(person => person.e164));
     const firstOriginalYes = turn("original-ari-yes", people[0].e164, "yes");

@@ -78,7 +78,7 @@ import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/bou
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
-import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, planTurnDue, statedPlanWindowAllows, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
@@ -1396,8 +1396,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!member || !this.checkRecipient(id, "scheduling", { about: [...roster], reply: false }).ok
         || this.bookedNear(id, start, o.id)) return false;
       const availability = this.evidence(member, now, o.id);
-      const stated = member.stated;
-      return (!stated || stated.until <= start || stated.windows.some(window => window.start <= slot.start && window.end >= slot.end))
+      return planWindowMatchesStated(member.stated, slot, now)
         && attention.availabilityProb(availability, slot, now) > 0;
     });
   }
@@ -4368,7 +4367,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return roster.every(id => {
       const evidence = this.planEvidence(this.member(id), now);
       return this.inNyc(id, now, slot.end) && !this.bookedNear(id, slot.start)
-        && (!evidence.stated || evidence.stated.until <= slot.start || evidence.stated.windows.some(w => w.start <= slot.start && w.end >= slot.end))
+        && planWindowMatchesStated(evidence.stated, slot, now)
         && plans.hasWindow(evidence, slot, now, this.pcfg) > 0;
     });
   }
@@ -4453,12 +4452,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const publicEventIssue = o.stage === "probing" ? this.publicEventRefusal(o) : undefined;
     if (publicEventIssue) return this.close(o, publicEventIssue);
     if (!o.planRun) return;
-    // spec/planDispatch.md, "Only an open plan can invite a pending member"
-    const booked = o.stage === "scheduled";
-    if (!planLaneOpen(o.stage === "probing", booked, booked && !(now > o.plan!.window.start - this.pcfg.lateJoinHours * HOUR))) return;
-    for (const [id, answer] of Object.entries(o.planRun.answers)) {
-      if (planTurnDue(answer === "pending", o.contacted.has(id))) this.planProbe(o, id, now);
-    }
+    for (const id of Object.keys(o.planRun.answers)) this.planProbe(o, id, now);
   }
 
   /**
@@ -4472,6 +4466,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   private planProbe(o: Opp, id: MemberId, now: number) {
     const m = this.members.get(id);
     if (!m || !o.plan || !o.planRun) return;
+    // A prior seat can close or backfill the plan while the same pass is in progress.
+    const booked = o.stage === "scheduled";
+    if (!planLaneOpen(o.stage === "probing", booked, booked && now <= o.plan.window.start - this.pcfg.lateJoinHours * HOUR)
+      || !planTurnDue(o.planRun.answers[id] === "pending", o.contacted.has(id))) return;
     const about = o.participants.filter(peer => peer === id || (o.stage === "scheduled"
       ? o.status.get(peer) === "yes" : activeOpportunityParticipant(o, peer)));
     const friends = this.appPack()?.id === "friends";
@@ -4485,18 +4483,23 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (seat.phase !== "CheckingPresence") return this.planAnswer(o, id, false, true);
     // Away from New York (an announced trip) at any time from now to the plan: never asked.
     const presence = stepPlanDispatch(seat, { type: "checkPresence", present: this.inNyc(id, now, o.plan.window.end) });
-    if (presence.phase !== "CheckingWindow") {
+    if (presence.phase !== "CheckingAvailability") {
       this.refuse(id, "probe", presence.reason);
       return this.planAnswer(o, id, false, true);
     }
-    if (!this.calendarAllows([id], o.plan.window, now)) return this.planAnswer(o, id, false, true);
+    const availability = stepPlanDispatch(presence, { type: "checkAvailability",
+      statedAllows: planWindowMatchesStated(m.stated, o.plan.window, now), calendarAllows: this.calendarAllows([id], o.plan.window, now) });
+    if (availability.phase !== "CheckingWindow") {
+      this.refuse(id, "probe", availability.reason);
+      return this.planAnswer(o, id, false, true);
+    }
     // In another open opportunity: the plan probe waits (one open question at a time) until the deadline.
     // spec/planDispatch.md, "Wait for the send window, earlier questions, and the right allowance"
     const busy = this.busy(m.id, o.id);
     const windowOpen = !busy && this.timingOk(m, "slot", now);
     const awaitingAnswer = windowOpen && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked" || this.questionHoldUntil(m, now) !== undefined);
     const day = windowOpen && !awaitingAnswer ? nyParts(now).day : undefined;
-    const window = stepPlanDispatch(presence, { type: "checkWindow", busy, windowOpen, awaitingAnswer, sentToday: day !== undefined && m.planDay === day });
+    const window = stepPlanDispatch(availability, { type: "checkWindow", busy, windowOpen, awaitingAnswer, sentToday: day !== undefined && m.planDay === day });
     if (window.phase !== "CheckingAllowance" || day === undefined) return this.planDefer(o, id, window.reason, now);
     const invitationPlan = { ...o.plan, invited: about };
     const allowance = !o.replacementFor && this.pcfg.allowance.enabled && plans.planAllowanceEligible(this.planEvidence(m, now), !!m.weekly, now);
@@ -7315,6 +7318,12 @@ export function storedGroupLateArrivalCurrent(state: NetworkState, delivery: Lat
 }
 
 /** The stored member's calendar choice still applies to an adult who can schedule meetings. */
+/** Exact activity-window admission for the planner, live dispatch and a persisted provider claim. */
+export function planWindowMatchesStated(stated: plans.StatedWindows | undefined, slot: attention.TimeSlot, now: number): boolean {
+  return !stated || statedPlanWindowAllows(stated.at, stated.until, now, slot.start,
+    stated.windows.some(window => window.start <= slot.start && window.end >= slot.end));
+}
+
 export function storedCalendarOwnerOptedIn(state: NetworkState | undefined, id: MemberId): boolean {
   const member = state?.members.find(m => m.id === id);
   if (!state || !member?.calendar || state.declinedIds.includes(id)) return false;
