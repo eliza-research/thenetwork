@@ -7,7 +7,7 @@ import { staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyS
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
+import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant, StaffBanProjection } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -221,7 +221,7 @@ export class PgPeopleStore implements PeopleStore {
     return !!r?.x;
   }
 
-  async ban(b: Ban) {
+  async ban(b: Ban, options?: { deduplicateScope?: boolean }) {
     // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
     await this.sql.begin(async tx => {
       // The same key as Accounts.share's withLock: a share in flight finishes first or sees the ban.
@@ -229,12 +229,24 @@ export class PgPeopleStore implements PeopleStore {
         await tx`select pg_advisory_xact_lock(hashtext(${`platform:profile-share:${b.personId}`}))`;
         await lockPersonPhone(tx, b.personId);
       }
+      if (options?.deduplicateScope && b.personId && (await this.staffBans(b.personId, b.scope, b.phoneHash ? [b.phoneHash] : [], tx)).length) return;
       await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
         values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
       if (b.personId) await tx`update platform.share_grants set revoked_at = ${ts(b.at)} where person_id = ${b.personId} and revoked_at is null`;
       await tx`delete from platform.pending_texts where phone_hash = ${b.phoneHash}
         or phone_hash in (select phone_hash from platform.people where id = ${b.personId}::uuid and phone_hash is not null)`;
     });
+  }
+  async staffBans(personId: string, scope: Ban["scope"], phoneHashes: readonly string[], db = this.sql): Promise<StaffBanProjection[]> {
+    const filter = scope === "person" ? db`scope='person' and person_id=${personId}::uuid` : db`phone_hash=any(${phoneHashes}::text[])`;
+    const rows = await db`select id,scope,person_id,phone_hash,reason,report_id,banned_by,at,projection_completed_at
+      from platform.bans where ${filter} order by at,id`;
+    return rows.map(r => ({ id: r.id, scope: r.scope, personId: r.person_id, phoneHash: r.phone_hash, reason: r.reason,
+      reportId: r.report_id, bannedBy: r.banned_by, at: ms(r.at)!, projectedAt: ms(r.projection_completed_at) }));
+  }
+  async completeStaffBans(ids: readonly string[], at: number): Promise<void> {
+    if (ids.length) await this.sql`update platform.bans set projection_completed_at=${ts(at)}
+      where id=any(${ids}::text[]) and projection_completed_at is null`;
   }
   async isBanned(phoneHash: string, personId?: string | null, db = this.sql) {
     const [r] = await db`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;

@@ -150,10 +150,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const allowPersist = new Promise<void>(resolve => { release = resolve; });
     const persistBan = s.people.ban.bind(s.people);
     let snapshotStatus: string | undefined;
-    s.people.ban = async ban => {
+    s.people.ban = async (ban, options) => {
       entered();
       await allowPersist;
-      await persistBan(ban);
+      await persistBan(ban, options);
       const rt = s.runtimeFor("friends")!;
       const member = (await memberOf("friends", phone))!;
       const snapshot = await rt.scoped(tx => loadSnapshot(tx, clock.now(), { app: "friends" }));
@@ -209,6 +209,38 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       release();
       await joining;
     }
+  });
+
+  // spec/staffSafetyService.md, "An interrupted ban resumes from its saved authority"
+  test("staff retry completes a durable ban after a process restart without recording another ban", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Mara, 32")).toBe("joined");
+    const primary = (await memberOf("slop", phone))!;
+    const web = site(s, clock, otp);
+    await web.login("friends", phone);
+    expect((await web.join("friends", 32, "Mara")).status).toBe(200);
+    const peer = (await memberOf("friends", phone))!;
+    s.people.suppress = async () => { throw new Error("fixture: process ended after saving the ban"); };
+    const path = "/apps/slop/safety/ban";
+    const body = { memberId: primary.id, by: "phone", note: "original confirmed case" };
+    expect((await staff(s, "saf-tok", "POST", path, body)).status).toBe(503);
+    expect(await sql`select reason,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, projection_completed_at: null }]);
+    expect(await memberOf("friends", phone)).toMatchObject({ account_status: "active" });
+    await s.close();
+
+    const { s: restarted } = service(clock);
+    const retry = await staff(restarted, "saf-tok", "POST", path, { ...body, note: "retry after restart" });
+    expect(await retry.json()).toEqual({ ok: true });
+    expect(await memberOf("slop", phone)).toMatchObject({ account_status: "restricted" });
+    expect(await memberOf("friends", phone)).toMatchObject({ account_status: "restricted" });
+    expect(await restarted.runtimeFor("friends")!.readState(n => n.trust.level(peer.id))).toBe("hold");
+    expect(await sql`select reason,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, projection_completed_at: new Date(clock.now()) }]);
+    const duplicate = await staff(restarted, "saf-tok", "POST", path, body);
+    expect(await duplicate.json()).toEqual({ ok: false, reason: "already_banned" });
   });
 
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {

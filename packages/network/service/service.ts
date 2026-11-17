@@ -2787,31 +2787,45 @@ export class NetworkService implements RuntimeHost {
     const hashes = await this.people.phoneHashesOf(personId);
     const phones = stepStaffSafety(admission, { type: "readStaffBanPhones", hasPhone: hashes.length > 0 });
     if (phones.phase !== "ReadingExistingBan") return this.refused(user, rt, "ban", target, "no_phone");
-    const already = phones.phoneOnly
-      ? (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean)
-      : await this.people.isBanned("", personId);
-    const admitted = stepStaffSafety(phones, { type: "checkExistingStaffBan", alreadyBanned: already });
-    if (admitted.phase !== "ApplyingPersonBan" && admitted.phase !== "ApplyingPhoneBan") return this.refused(user, rt, "ban", target, "already_banned");
-    return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
+    const previous = await this.people.staffBans(personId, by, hashes);
+    const already = phones.phoneOnly ? hashes.every(hash => previous.some(ban => ban.phoneHash === hash)) : previous.length > 0;
+    const pendingProjection = previous.some(ban => ban.projectedAt === null);
+    const admitted = stepStaffSafety(phones, { type: "checkExistingStaffBan", alreadyBanned: already, pendingProjection });
+    const resuming = admitted.phase === "ResumingBanProjection";
+    if (admitted.phase !== "ApplyingPersonBan" && admitted.phase !== "ApplyingPhoneBan" && !resuming) {
+      return this.refused(user, rt, "ban", target, "already_banned");
+    }
+    return this.audited(rt, user, target, { safety: "ban", by, reportId: (resuming ? previous.find(b => b.projectedAt === null)?.reportId : reportId) ?? null, resuming }, async () => {
       const at = this.clock.now();
-      const rows: Ban[] = admitted.phase === "ApplyingPersonBan"
-        ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
-          ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
-        : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
-      for (const b of rows) await this.people.ban(b);
+      if (!resuming) {
+        const rows: Ban[] = (hashes.length ? hashes : [null]).map(phoneHash => ({
+          id: `ban_${randomUUID()}`, scope: by, personId, phoneHash, reason: note, reportId: reportId ?? null, bannedBy: user.id, at,
+        }));
+        for (const ban of rows) await this.people.ban(ban, { deduplicateScope: true });
+      }
+      const pending = (await this.people.staffBans(personId, by, hashes)).filter(ban => ban.projectedAt === null);
+      const saved = pending[0];
+      if (!saved) return { ok: true };
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       await this.people.restrictBannedMemberships(personId);
       const { members } = await this.membersOfPerson(rt, memberId, personId);
-      let out: ActionResult = { ok: true };
       for (const x of members) {
-        await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
-        const mine = x.rt === rt && x.memberId === memberId;
-        const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
-        if (mine) out = r;
+        const r = await x.rt.unitOfWork(n => {
+          const ownReport = saved.reportId && n.safetyReports().some(report => report.id === saved.reportId && report.subjectId === x.memberId)
+            ? saved.reportId : undefined;
+          const marked = n.markBanned(x.memberId, saved.bannedBy, saved.reason, ownReport);
+          if (marked.ok) x.rt.unit.memberCommand = async tx => {
+            await tx`update network.members set account_status='restricted'
+              where app_id=${x.rt.app.id} and id=${x.memberId} and person_id=${personId}::uuid and account_status not in ('removed','invited')`;
+          };
+          return marked;
+        });
+        if (!r.ok) return r;
       }
-      return out;
+      await this.people.completeStaffBans(pending.map(ban => ban.id), this.clock.now());
+      return { ok: true };
     });
   }
 

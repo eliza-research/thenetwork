@@ -30,7 +30,7 @@ The runtime checks that the member and any supplied report match. Apply holds on
 ```quint
 type ServiceSafetyPhase =
   ServiceSafetyStarting | HoldRemainingTargets | HoldDidNotApply | BanNeedsCrossApp | BanNoPerson |
-  ReadingBanPhones | BanNoPhone | ReadingExistingBan | BanAlreadyExists | ApplyingPhoneBan | ApplyingPersonBan |
+  ReadingBanPhones | BanNoPhone | ReadingExistingBan | BanAlreadyExists | ApplyingPhoneBan | ApplyingPersonBan | ResumingBanProjection |
   PerformingAuditedAction | RecordingAuditResult
 type ServiceSafetyFlow = { phase: ServiceSafetyPhase, phoneOnly: bool }
 pure val initial: ServiceSafetyFlow = { phase: ServiceSafetyStarting, phoneOnly: false }
@@ -86,7 +86,7 @@ pure def staffAgeClearSummary(refused: bool, anyCleared: bool): StaffClearSummar
 
 ### Both ban scopes require authority on every app and a linked person
 
-A phone ban requires at least one keyed phone hash. Check whether every selected phone is already banned. A person ban can proceed without a phone and checks for an existing person ban. An already-applied ban is refused. After admission the service records ban rows, suppresses the person's current phones and drops private appearance ratings.
+A phone ban requires at least one keyed phone hash. Check whether every selected phone is already banned. A person ban can proceed without a phone and checks for an existing person ban. After admission the service records ban rows, suppresses the person's current phones and drops private appearance ratings.
 
 ```quint
 pure def canStartStaffBan(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting
@@ -99,11 +99,24 @@ pure def readStaffBanPhones(flow: ServiceSafetyFlow, hasPhone: bool): ServiceSaf
   { ...flow, phase: if (flow.phoneOnly and not(hasPhone)) BanNoPhone else ReadingExistingBan }
 
 pure def canCheckExistingStaffBan(flow: ServiceSafetyFlow): bool = flow.phase == ReadingExistingBan
-pure def checkExistingStaffBan(flow: ServiceSafetyFlow, alreadyBanned: bool): ServiceSafetyFlow =
-  { ...flow, phase: if (alreadyBanned) BanAlreadyExists else if (flow.phoneOnly) ApplyingPhoneBan else ApplyingPersonBan }
+pure def checkExistingStaffBan(flow: ServiceSafetyFlow, alreadyBanned: bool, pendingProjection: bool): ServiceSafetyFlow =
+  { ...flow, phase: if (alreadyBanned and pendingProjection) ResumingBanProjection
+    else if (alreadyBanned) BanAlreadyExists else if (flow.phoneOnly) ApplyingPhoneBan else ApplyingPersonBan }
 
 pure def sometimesAppliesPhoneBan(flow: ServiceSafetyFlow): bool = flow.phase == ApplyingPhoneBan
 pure def sometimesAppliesPersonBan(flow: ServiceSafetyFlow): bool = flow.phase == ApplyingPersonBan
+```
+
+### An interrupted ban resumes from its saved authority
+
+Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, and all current app restrictions finish. An authorized retry uses the original decision and finishes pending work without writing another ban. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
+
+```quint
+pure def lawIncompleteRecordedBanCanResume(flow: ServiceSafetyFlow): bool =
+  checkExistingStaffBan(flow, true, true).phase == ResumingBanProjection
+
+pure def lawCompletedBanCannotResume(flow: ServiceSafetyFlow): bool =
+  checkExistingStaffBan(flow, true, false).phase == BanAlreadyExists
 ```
 
 ### Live enrollment and ban projection use the current person

@@ -89,6 +89,7 @@ module identity_sagas {
     grants: Set[(int, str)],              // live MCP OAuth grants of (person, app)
     cloudGrant: Set[str],                 // live (not revoked) Cloud-origin oauth.grants rows by phone_key
     bans: Set[BanRow],                    // platform.bans
+    completedBans: Set[BanRow],           // platform.bans.projection_completed_at
     suppression: Set[str],                // platform.suppression
     floors: Set[str],                     // platform.age_floor rows
     ledger: Set[Ev],                      // platform.consent_events
@@ -289,16 +290,19 @@ module identity_sagas {
   pure def banUnfinishedIn(w0: World, p: int): bool = APPS.exists(a =>
     Set("active", "paused", "onboarding").contains(w0.mem.get((p, a))) or w0.net.get((p, a)) == "active")
 
-  // The guards of service.ts ban: a Network member, no_phone, and already_banned only for a ban that
-  // reached every step (e361184).
+  pure def banScopeRows(w0: World, p: int, scope: str): Set[BanRow] =
+    w0.bans.filter(b => if (scope == "person") b.scope == "person" and b.person == p
+      else w0.people.get(p).hash != "" and b.hash == w0.people.get(p).hash)
+
+  // A recorded ban can resume until the runtime projection receipt commits.
   pure def banGuard(w0: World, p: int, scope: str): str = {
     val hashes = if (w0.people.get(p).hash == "") Set() else Set(w0.people.get(p).hash)
     val member = APPS.exists(a => NET_LIVE.contains(w0.net.get((p, a))))
-    val already = if (scope == "person") codeBanned(w0, "", p) else hashes.forall(h => codeBanned(w0, h, 0))
+    val rows = banScopeRows(w0, p, scope)
     if (not(member)) "not_member"
     else if (scope == "phone" and hashes == Set()) "no_phone"
-    else if (already and not(banUnfinishedIn(w0, p))) "already_banned"
-    else if (already) "finish"
+    else if (rows != Set() and rows.subseteq(w0.completedBans)) "already_banned"
+    else if (rows != Set()) "finish"
     else "start"
   }
 
@@ -560,6 +564,7 @@ module identity_sagas {
       grants: Set((1, "slop"), (1, "peon")),
       cloudGrant: if (cloudA) Set("A") else Set(),
       bans: Set(),
+      completedBans: Set(),
       suppression: if (suppB) Set("B") else Set(),
       floors: Set("A"),
       ledger: Set({ ph: "A", app: "slop", out: false, at: 0, seq: 1 }, { ph: "A", app: "peon", out: false, at: 0, seq: 2 }),
@@ -833,15 +838,14 @@ module identity_sagas {
         set3({ ...w, mem: w.mem.keys().mapBy(k => if (k._1 == p and Set("onboarding", "active", "paused").contains(w.mem.get(k))) "restricted" else w.mem.get(k)) },
           { ...s, ban: { ...b, pc: 5, left: left } }, { ...g, last: "ban: current memberships restricted", args: [] })
       } else if (b.pc == 5 and b.left.contains(a) and not(b.marked.contains(a))) {
-        // markBanned in a unit (the Network holds the member).
-        set3({ ...w, netBanned: w.netBanned.union(Set((p, a))) },
-          { ...s, ban: { ...b, marked: b.marked.union(Set(a)) } }, { ...g, last: "ban: network member held (app)", args: [a] })
+        // The runtime holds and restricts the exact member in one transaction.
+        set3({ ...w, netBanned: w.netBanned.union(Set((p, a))), net: w.net.set((p, a), "restricted") },
+          { ...s, ban: { ...b, marked: b.marked.union(Set(a)) } }, { ...g, last: "ban: network hold and restriction committed (app)", args: [a] })
       } else if (b.pc == 5 and b.left.contains(a)) {
-        // Last step for this member (e361184): account_status = 'restricted' (no status filter).
-        set3({ ...w, net: w.net.set((p, a), "restricted") },
-          { ...s, ban: { ...b, left: b.left.exclude(Set(a)) } }, { ...g, last: "ban: network member restricted (app)", args: [a] })
+        set3(w, { ...s, ban: { ...b, left: b.left.exclude(Set(a)) } }, { ...g, last: "ban: app projection finished", args: [a] })
       } else if (b.pc == 5 and b.left == Set()) {
-        set3(w, { ...s, ban: { ...b, pc: 0 } }, { ...g, banPending: g.banPending.exclude(Set(p)), banDone: g.banDone + 1, last: "ban: audit result, done", args: [] })
+        set3({ ...w, completedBans: w.completedBans.union(banScopeRows(w, p, b.scope)) }, { ...s, ban: { ...b, pc: 0 } },
+          { ...g, banPending: g.banPending.exclude(Set(p)), banDone: g.banDone + 1, last: "ban: projection receipt and audit result", args: [] })
       } else blocked,
     }
   }
@@ -1202,14 +1206,14 @@ module identity_sagas {
       .then(banStart(1, "person"))
       .expect(g.banRefused == 1)
 
-  // e361184: a stop between markBanned and the status write leaves the member `active`; the retry runs.
+  // The hold and restriction have committed. A crash before completion leaves a resumable ban.
   run banCrashAfterMarkTest =
     init0
       .then(banStart(1, "phone"))
       .then(banStep("slop")).then(banStep("slop")).then(banStep("slop")).then(banStep("slop"))
       .then(banStep("slop"))
       .then(crash("ban"))
-      .expect(w.netBanned.contains((1, "slop")) and w.net.get((1, "slop")) == "active" and banRetryOk(1) and retryCompletes)
+      .expect(w.netBanned.contains((1, "slop")) and w.net.get((1, "slop")) == "restricted" and banRetryOk(1) and retryCompletes)
 
   // Q-identity_sagas-3: a new Peon membership commits before the ban. The projection includes it.
   run banJoinRaceTest =

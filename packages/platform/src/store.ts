@@ -46,6 +46,7 @@ export type AppLeaveAdmission = { ok: true; membership?: Membership } | { ok: fa
  * Delete everything keeps it.
  */
 export interface Ban { id: string; scope: "phone" | "person"; personId: string | null; phoneHash: string | null; reason: string; reportId: string | null; bannedBy: string; at: number }
+export interface StaffBanProjection extends Ban { projectedAt: number | null }
 export interface ShareGrant { personId: string; fromApp: AppId; toApp: AppId; fields: string[]; grantedAt: number; revokedAt: number | null }
 export interface OtpChallenge {
   id: string; app: AppId; e164: string; provider: string;
@@ -136,7 +137,9 @@ export interface PeopleStore {
   isBlocked(a: string, b: string): Promise<boolean>;
 
   /** Record a ban (never changed or removed by the service), revoke the person's profile-share grants and delete the phone's pending text flows, in one transaction. */
-  ban(b: Ban): Promise<void>;
+  ban(b: Ban, options?: { deduplicateScope?: boolean }): Promise<void>;
+  staffBans(personId: string, scope: Ban["scope"], phoneHashes: readonly string[]): Promise<StaffBanProjection[]>;
+  completeStaffBans(ids: readonly string[], at: number): Promise<void>;
   /** True when this phone hash, or this person (a person-scope ban), is banned. */
   isBanned(phoneHash: string, personId?: string | null): Promise<boolean>;
   /** The phone hashes of a person's verified phones (a person ban covers each). */
@@ -316,8 +319,10 @@ export class MemoryPeopleStore implements PeopleStore {
   async isBlocked(a: string, b: string) { return this.blocks.has(`${a}:${b}`) || this.blocks.has(`${b}:${a}`); }
 
   readonly bans: Ban[] = [];
-  async ban(b: Ban) {
+  private readonly banProjectionAt = new Map<string, number>();
+  async ban(b: Ban, options?: { deduplicateScope?: boolean }) {
     const recordBan = async () => {
+      if (options?.deduplicateScope && b.personId && (await this.staffBans(b.personId, b.scope, b.phoneHash ? [b.phoneHash] : [])).length) return;
       if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b });
       for (const g of this.grants.values()) if (b.personId && g.personId === b.personId && g.revokedAt === null) g.revokedAt = b.at;
       const hashes = [...(b.phoneHash ? [b.phoneHash] : []), ...(b.personId ? await this.phoneHashesOf(b.personId) : [])];
@@ -325,6 +330,13 @@ export class MemoryPeopleStore implements PeopleStore {
     };
     if (b.personId) await this.withLock(`profile-share:${b.personId}`, () => this.withLock(`person-phone-binding:${b.personId}`, recordBan));
     else await recordBan();
+  }
+  async staffBans(personId: string, scope: Ban["scope"], phoneHashes: readonly string[]): Promise<StaffBanProjection[]> {
+    return this.bans.filter(b => scope === "person" ? b.scope === "person" && b.personId === personId : b.phoneHash !== null && phoneHashes.includes(b.phoneHash))
+      .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)).map(b => ({ ...b, projectedAt: this.banProjectionAt.get(b.id) ?? null }));
+  }
+  async completeStaffBans(ids: readonly string[], at: number): Promise<void> {
+    for (const id of ids) if (!this.banProjectionAt.has(id)) this.banProjectionAt.set(id, at);
   }
   async isBanned(phoneHash: string, personId?: string | null) {
     return this.bans.some(b => (b.phoneHash !== null && b.phoneHash === phoneHash) || (b.scope === "person" && !!personId && b.personId === personId));
