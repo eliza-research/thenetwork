@@ -6236,7 +6236,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     let text = body;
     const approvedLink = (value: string) => {
-      if (kind === "reveal") return this.approvedPublicEventLink(meta.proposalId, m.id, value);
+      if (kind === "reveal") return this.approvedBookingLink(meta.proposalId, m.id, value, o.key);
       const link = o.memberInviteLink;
       if (!link) return undefined;
       const presentOnce = value.endsWith(`\n${link}`) && value.indexOf(link) === value.lastIndexOf(link);
