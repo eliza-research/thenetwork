@@ -101,11 +101,25 @@ module plan_crew {
     not(watch.contains(m)), watch' = watch.union(Set(m)),
     now' = now, optedOut' = optedOut, minors' = minors, keepCrew,
   }
-  /** A minor signal (network.ts:721). */
+  /**
+   * A minor signal (network.ts:721), and a decline for an age under the join age (declineUnderMinAge). dropMember
+   * closes every open session of a crew the minor belongs to: the minor knows its time and place
+   * (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"). It also
+   * removes the crew from the Network's crews and resolves its open offer unformed, so the crew stays ended after
+   * forget deletes the minor's id. Abstraction: the model keeps the crew and its members, and crewKnownToAMinor
+   * refuses every later session and the forming, which has the same effect on sessions.
+   */
   action minorSignal(m: str): bool = all {
     not(minors.contains(m)), minors' = minors.union(Set(m)),
-    now' = now, optedOut' = optedOut, watch' = watch, keepCrew,
+    crewOpps' = if (crewMembers.contains(m)) crewOpps.keys().mapBy(k => if (crewOpps.get(k) == "review") "failed" else crewOpps.get(k)) else crewOpps,
+    crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
+    crewSessions' = crewSessions, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
+    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold,
+    now' = now, optedOut' = optedOut, watch' = watch,
   }
+
+  /** spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows". */
+  def crewKnownToAMinor: bool = crewMembers.exists(id => minors.contains(id))
 
   // ------------------------------------------------------------------------------------------------
   // Crew actions
@@ -113,11 +127,13 @@ module plan_crew {
   // resolveCrew (formal-main network.ts:3460-3473): a yes counts only from a member who may still take a seat
   // (planSeatOk with busyOk: not a minor, not opted out, trust ok); crewOptIn needs CREW_MIN of them, and only
   // they hear crewFormed or crewNotFormed.
+  // A crew whose invitees include a known minor never forms (recurrenceAllowed).
   action resolveCrew(yes0: Set[str]): bool = {
     val yes = yes0.filter(id => seatOk(id))
+    val forms = yes.size() >= CREW_MIN and not(crewKnownToAMinor)
     all {
-      crewStage' = if (yes.size() >= CREW_MIN) "formed" else "none",
-      crewMembers' = if (yes.size() >= CREW_MIN) crewMembers.intersect(yes) else crewMembers,
+      crewStage' = if (forms) "formed" else "none",
+      crewMembers' = if (forms) crewMembers.intersect(yes) else crewMembers,
       crewTold' = crewTold.union(yes),
     }
   }
@@ -154,7 +170,7 @@ module plan_crew {
   action crewTick = crewTickWithVenue(true)
 
   action crewTickWithVenue(venueCurrent: bool): bool = all {
-    crewStage == "formed", not(crewHandedOff),
+    crewStage == "formed", not(crewHandedOff), not(crewKnownToAMinor),
     crewOpps.keys().forall(k => crewOpps.get(k) != "review"),
     val held = crewOpps.keys().filter(k => crewOpps.get(k) == "held").size()
     val slot = crewWeek
@@ -239,7 +255,11 @@ module plan_crew {
   /** A crew forms only with members who opted in (crewOptIn, founder decision 2026-10-08). */
   val crewOptedIn: bool = crewStage == "formed" implies (crewMembers.subseteq(crewYes) and crewMembers.size() >= CREW_MIN)
 
-  val safety: bool = and { sessionSlotOnce, handoffCountsSessions, crewOptedIn }
+  /** No session of a crew waits in review while a crew member is a known minor. */
+  val noSessionAMinorKnows: bool =
+    crewKnownToAMinor implies crewOpps.keys().forall(k => crewOpps.get(k) != "review")
+
+  val safety: bool = and { sessionSlotOnce, handoffCountsSessions, crewOptedIn, noSessionAMinorKnows }
 
   // The invariant of the skipped defect (SD-444 notice part). It fails today; see its comment.
   val skippedDefects: bool = crewEndHeard
@@ -287,6 +307,16 @@ module plan_crew {
       .expect(not(crewHandedOff) and crewSessions.length() == 5)
       .then(crewTick)
       .expect(crewHandedOff and crewSessions.length() == 5 and handoffCountsSessions and not(crewEndHeard) and safety)
+
+  /** A crew member found to be a minor ends the crew: the open session closes and no new session follows. */
+  run minorEndsCrewTest =
+    init
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick)
+      .then(minorSignal("b"))
+      .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
+      .then(crewWeekPass).then(crewTick)
+      .fail()
 
   /** A member who goes on watch leaves the crew short of seats: no session is proposed. */
   run crewSeatsTest =

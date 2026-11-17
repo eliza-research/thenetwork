@@ -67,7 +67,7 @@ import {
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
 } from "./rescheduling.ts";
 import {
-  bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
+  bookedGroupCanContinue, bookedReplyCurrent, closesForMinor, initial as initialOpportunity, minorCloseTellsAcceptor, recurrenceAllowed, releasesPartialAcceptance, step as stepOpportunity,
   acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
@@ -81,7 +81,8 @@ import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
 import { engineQuestionDeliveryPrefix } from "../../core/src/generated/engineAsks.ts";
-import { weeklyCheckinEvidence, weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
+import { isPlanAlternate, weeklyCheckinEvidence, weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
+import { poolEligible } from "../../core/src/generated/groupFormation.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
@@ -552,6 +553,8 @@ interface Opp {
   lane?: EngineProposal["lane"]; cofounderIntents?: EngineProposal["cofounderIntents"];
   /** The stage it was in when it closed, and why (console). */
   closedFrom?: string; closedReason?: string;
+  /** A member who was asked about it, or a member of its crew, later had a minor signal. Names nobody, so it stays after a decline deletes them. */
+  minorKnew?: true;
   sameDay: boolean;
   /** Members a probe or a reveal actually reached. */
   contacted: Set<MemberId>;
@@ -1093,6 +1096,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (a !== undefined) c = { ...c, statedAge: Math.min(a, c.statedAge ?? a), explicitAge: a, minorSignal: c.minorSignal || isMinor(a) };
     }
     if (c.statedAge !== undefined && (m.statedAge === undefined || c.statedAge < m.statedAge)) m.statedAge = c.statedAge;
+    // Reading the record can make the member a minor (a record age that arrived late): that is a new signal too.
+    const wasMinor = m.minor;
     const attested = this.attestedAge(m);
     const known = attested ?? m.statedAge;
     // Decline (and delete) only on the attested age under the join age, or an explicit age under it
@@ -1121,7 +1126,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.ageUnknown) { m.ageUnknown = false; this.ctx.log("age_resolved", { memberId: m.id, minor: m.minor }); if (m.stage !== "new") this.ledgerJoined(m); }
     }
     const age = Math.min(...[attested, m.statedAge].filter(validAge));
-    if ((isMinor(age) || c.minorSignal) && !m.minor) {
+    if ((isMinor(age) || c.minorSignal || m.minor) && !wasMinor) {
       m.minor = true; m.minorSignal = true;
       // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
       this.minorAfterContact(m.id);
@@ -1614,6 +1619,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     // (network-consent-3); the platform hears the age so other apps stop matching the person (-12).
     this.minorAfterContact(m.id);
     if (age !== undefined) this.opts.onAgeStated?.(m.id, age, { explicit: true, declined: true });
+    // An age under the join age is a minor signal: the minors-policy drop runs first, while the Network still
+    // knows what the person was asked about, and forget only deletes after it
+    // (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
+    m.minor = true; m.minorSignal = true;
+    this.dropMember(m.id, "minors policy");
     const decline = this.app.id === "ntwrk" ? UNDER_MIN_AGE_DECLINE : this.app.brand.underAge;
     if (currentDanger) this.safetyReply(m, decline, true);
     else this.send(m, decline, { type: "info" }, "safety");
@@ -3706,14 +3716,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   /**
    * A participant drops out of a booked meeting. `ack` = they told us (reply to them). The others
    * hear it is off (pairs) or still on (groups of 3 or more), never why. `minorClose`: the drop is a
-   * minor signal, so the others hear it at once (SendOpts.minorClose).
+   * minor signal, so the booking closes whatever its size and the others hear it at once (SendOpts.minorClose).
    */
   private handleDrop(m: MemberState, o: Opp, ack = true, explicitWithdrawal = false, minorClose = false) {
     if (o.stage !== "scheduled" || o.status.get(m.id) !== "yes") return;
     const now = this.now();
     const acceptedAndTold = o.bookedAt?.[m.id] !== undefined && o.bookedTold?.includes(m.id) === true;
-    // Counted as a reveal decision only for a member the booked plan reached who had not confirmed it.
-    if (o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id)) this.counters.revealNo++;
+    // Counted as a reveal decision only for a member the booked plan reached who had not confirmed it. A minor
+    // signal is not the member's decision.
+    if (!minorClose && o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id)) this.counters.revealNo++;
     o.status.set(m.id, "dropped");
     this.counters.bookedCancelled++;
     // The member called it off (they told us, or opted out): plan_cancelled. Free with notice (NC flake rules).
@@ -3723,21 +3734,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = [...new Set(o.participants)].filter(p => o.status.get(p) === "yes");
-    const keep = groupCanContinue(still.length);
+    // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"
+    const keep = bookedGroupCanContinue(still.length, minorClose);
     if (!keep) {
-      const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });
-      if (next.phase !== "Closed") return;
-      this.expireReveals(o);
-      o.closedFrom = o.stage;
-      o.closedReason = "participant dropped";
-      o.stage = STAGE_BY_PHASE[next.phase];
-      // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
-      for (const id of o.participants) {
-        const participant = this.members.get(id);
-        if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
-      }
-      this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
-      for (const id of still) this.sendBookedCancellation(o, id, copy.dropNotice(m.first, false), minorClose);
+      if (!this.closeBooking(o, minorClose ? "minors policy" : "participant dropped", minorClose)) return;
       const booked = still.filter(id => o.bookedAt?.[id] !== undefined && o.bookedTold?.includes(id));
       // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
       if (canTryGroupReplacement({
@@ -3752,7 +3752,37 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, true), { type: "cancellation", proposalId: o.id }, "cancellation",
-      { hook: { t: "drop_notice", oppId: o.id }, ...(minorClose ? { minorClose } : {}) });
+      { hook: { t: "drop_notice", oppId: o.id } });
+  }
+
+  /**
+   * Close a booked opportunity. The members still going whom the booked plan reached hear that it is off, never
+   * why, and only before it starts (sendBookedCancellation). At a minor signal the Network removed the queued
+   * booked plan of a member it had not reached yet: that member said yes and hears the same notice, before the
+   * start. Returns whether it closed.
+   */
+  private closeBooking(o: Opp, reason: string, minorClose: boolean): boolean {
+    const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });
+    if (next.phase !== "Closed") return false;
+    const now = this.now();
+    const still = [...new Set(o.participants)].filter(p => o.status.get(p) === "yes");
+    this.expireReveals(o);
+    o.closedFrom = o.stage;
+    o.closedReason = reason;
+    o.stage = STAGE_BY_PHASE[next.phase];
+    // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
+    for (const id of o.participants) {
+      const participant = this.members.get(id);
+      if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
+    }
+    this.ctx.log("opportunity_closed", { proposalId: o.id, reason });
+    for (const id of still) {
+      const member = this.members.get(id);
+      if (!minorClose || o.bookedTold?.includes(id)) this.sendBookedCancellation(o, id, copy.dropNotice("", false), minorClose);
+      else if (member && (o.meetingAt ?? now) > now) this.send(member, copy.dropNotice("", false), { type: "cancellation", proposalId: o.id }, "cancellation",
+        { key: `${bookedCancellationPrefix}${o.id}:${id}`, minorClose });
+    }
+    return true;
   }
 
   private sendBookedCancellation(o: Opp, id: MemberId, text: string, minorClose = false) {
@@ -3795,6 +3825,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       } else if (!wasProbing && status === "yes" && reason !== "blocked") {
         this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation", minorClose);
         told.add(id);
+      } else if (reason === "minors policy" && minorCloseTellsAcceptor(current, o.contacted.has(id), status === "available", m.minor, o.requester === id)) {
+        // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"
+        this.send(m, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation", { key: `opportunity-release:${o.id}:${id}`, ...minorClose });
       }
     }
     if (o.requester) {
@@ -3818,6 +3851,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", { proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason });
   }
 
+  /**
+   * Does the member know about the opportunity: asked about it, or a member of the recurring crew whose
+   * session it is (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
+   */
+  private minorKnows(id: MemberId): (o: Opp) => boolean {
+    const crews = new Set(this.crews.filter(c => c.members.includes(id)).map(c => c.id));
+    return o => o.contacted.has(id) || (!!o.plan?.crewId && crews.has(o.plan.crewId));
+  }
+
   /** Remove a member from everything open (opt-out, hold, minor signal, decline). */
   private dropMember(id: MemberId, reason: string) {
     const member = this.members.get(id);
@@ -3828,11 +3870,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       return !seat || seatOwnerOf(seat) !== id;
     });
     const minor = reason === "minors policy";
+    const told = this.minorKnows(id);
     if (minor) {
-      // spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person":
+      // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows": the mark
+      // stays after a decline deletes the minor's id.
+      for (const o of this.opps.values()) if (told(o)) o.minorKnew = true;
+      // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person":
       // of the queued sends about an opportunity the minor was on, an alternate for or asked about, a
       // cancellation goes now and nothing else ever goes.
-      const involved = new Set([...this.opps.values()].filter(o => o.participants.includes(id) || o.alternates.includes(id) || o.contacted.has(id)).map(o => o.id));
+      const involved = new Set([...this.opps.values()].filter(o => o.participants.includes(id) || o.alternates.includes(id) || told(o)).map(o => o.id));
       const queued = this.deferred.filter(d => involved.has(d.meta.proposalId ?? (d.o.hook && "oppId" in d.o.hook ? d.o.hook.oppId : "")));
       this.deferred = this.deferred.filter(d => !queued.includes(d));
       for (const d of queued) {
@@ -3845,24 +3891,38 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!OPEN_STAGES.has(o.stage)) continue;
       const participant = o.participants.includes(id);
       // A probe already sent counts even when the person declined or was replaced before the age signal.
-      const closeForMinor = closesForMinor(opportunityLifecycle(o), minor, participant, o.alternates.includes(id), o.contacted.has(id));
+      const closeForMinor = closesForMinor(opportunityLifecycle(o), minor, participant, o.alternates.includes(id), told(o));
       // Anyone dropped (minor signal, opt-out, hold) leaves every open alternate list.
       o.alternates = o.alternates.filter(x => x !== id);
-      if (closeForMinor) { this.close(o, reason); continue; }
+      if (closeForMinor) {
+        // A minor who is going leaves a booking through the drop path, which closes it (bookedGroupCanContinue);
+        // any other booking closes in the same way, so the adults hear it is off only before it starts.
+        if (o.stage === "scheduled" && member && o.status.get(id) === "yes") this.handleDrop(member, o, false, false, true);
+        else if (o.stage === "scheduled") this.closeBooking(o, reason, true);
+        else this.close(o, reason);
+        continue;
+      }
       if (!participant) continue;
       if (o.stage === "review") this.close(o, reason);
       else if (o.stage === "probing" && o.plan) this.planOut(o, id);
       else if (o.stage === "probing") { o.status.set(id, "unavailable"); this.replaceOrClose(o, id); }
       else if (o.stage === "scheduled") {
-        const m = this.members.get(id);
-        if (m && o.status.get(id) === "yes") this.handleDrop(m, o, false, false, minor);
+        if (member && o.status.get(id) === "yes") this.handleDrop(member, o, false);
         else if (activeOpportunityParticipant(o, id)) {
-          if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
+          if (member?.awaiting?.oppId === o.id) member.awaiting = undefined;
           if (o.plan) this.planOut(o, id);
           else o.status.set(id, "unavailable");
         }
       }
     }
+    if (!minor) return;
+    // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows": the crews
+    // and open crew offers the minor is in end now, so they stay ended after forget takes the id out of them.
+    for (const crew of this.crews.filter(c => c.members.includes(id))) {
+      this.crews.splice(this.crews.indexOf(crew), 1);
+      this.ctx.log("crew_ended", { crewId: crew.id, reason });
+    }
+    for (const offer of this.crewOffers) if (!offer.resolved && offer.crew.members.includes(id)) this.resolveCrew(offer);
   }
 
   // ================================================================== feedback & growth
@@ -4313,10 +4373,23 @@ export class ConsentNetwork implements NetworkUnderTest {
     return out;
   }
 
+  /** An adult now: the record read again, no minor signal, and the lowest age on record or stated is an adult age. */
+  private adultMember(id: MemberId): boolean {
+    const m = this.members.get(id);
+    if (!m) return false;
+    this.syncRecord(m);
+    return !m.minor && !m.minorSignal && canBeMatched(this.ageOf(m));
+  }
+
+  /** A member the Network still knows who is not an adult now (adultMember). */
+  private knownMinor(id: MemberId): boolean { return this.members.has(id) && !this.adultMember(id); }
+
+  /** The known minors among `ids` (knownMinor). */
+  private knownMinorsIn(ids: MemberId[]): MemberId[] { return ids.filter(id => this.knownMinor(id)); }
+
   /** May this member take a seat in a plan now: an active adult, reachable, not on hold, not in another open opportunity. */
   private planSeatOk(m: MemberState, exceptOpp?: string, o: { busyOk?: boolean } = {}): boolean {
-    this.syncRecord(m);
-    return !m.minor && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && !this.reportHeld(m.id) && validAge(m.age ?? m.statedAge) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
+    return this.adultMember(m.id) && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && !this.reportHeld(m.id) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
   }
 
   private planFriendSeatFits(world: EngineWorld, id: MemberId, peers: readonly MemberId[], mode: "discovery" | "existingPlan"): boolean {
@@ -4433,6 +4506,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const offer = this.crewOffers.find(c => c.planId === o.id);
     const crewActive = !!offer && (!offer.resolved || this.crews.some(c => c.id === offer.crew.id));
     if (!friendsRepeatSourceAllowed(o.stage === "done", !!o.finalized, crewActive, alreadyOffered)) return;
+    // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
+    const asked = [...o.contacted];
+    if (!recurrenceAllowed(asked, this.knownMinorsIn(asked), !!o.minorKnew)) return;
     const venue = this.replacementVenue(plan);
     if (!venue?.public) return;
     const attendees = [...new Set(o.participants)].filter(id => {
@@ -4547,8 +4623,18 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
-  /** One plan = one review item (plans ask 3). */
-  private submitPlan(plan: plans.Plan, now: number, replacementFor?: string): Opp {
+  /**
+   * One plan = one review item (plans ask 3). Every member in a role is checked again now, whoever built the
+   * plan: an invitee or host who is not an adult stops the plan, and an alternate who is not an adult leaves it
+   * (spec/groupFormation.md, "Only eligible adults enter the group search"; spec/planFormation.md, "Alternates
+   * must fit the entire offered group").
+   */
+  private submitPlan(plan0: plans.Plan, now: number, replacementFor?: string): Opp | undefined {
+    if (![...plan0.invited, ...(plan0.hostId ? [plan0.hostId] : [])].every(id => poolEligible(this.adultMember(id)))) {
+      this.ctx.log("plan_refused", { planId: plan0.id, reason: "minors policy" });
+      return undefined;
+    }
+    const plan = { ...plan0, alternates: plan0.alternates.filter(id => isPlanAlternate(this.adultMember(id), true)) };
     const a = plans.activityById.get(plan.activityId)!;
     const prop = plans.planToProposal(plan, this.pcfg);
     const o = this.newOpp({
@@ -4568,7 +4654,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   private beginPlan(o: Opp) {
     o.plan = { ...o.plan!, invited: [...o.participants], alternates: [...o.alternates] };
     o.deadline = o.plan.probeDeadline;
-    o.planRun = plans.startPlanRun(o.plan);
+    // spec/planFormation.md, "Alternates must fit the entire offered group": the bench holds adults only.
+    o.planRun = plans.startPlanRun(o.plan, { canMatch: id => isPlanAlternate(this.adultMember(id), true) });
     for (const p of o.participants) o.status.set(p, o.planRun.answers[p] === "pending" ? "probing" : "queued");
     this.counters.oppsStarted++;
     this.ctx.log("probe_started", { proposal: this.toProposal(o), origin: o.origin, primed: [], runId: o.runId, reviewer: o.review?.reviewer, plan: { activityId: o.plan.activityId, quorum: o.plan.quorum, start: o.plan.window.start } });
@@ -4697,15 +4784,18 @@ export class ConsentNetwork implements NetworkUnderTest {
   private planAnswer(o: Opp, id: MemberId, yes: boolean, silent = false, onRecorded?: () => void) {
     if (!o.planRun) return;
     const now = this.now();
+    // spec/planFormation.md, "Alternates must fit the entire offered group": an adult at the moment of the promotion, in every app.
     // spec/planDecision.md, "A Friends replacement needs a current pair value with every remaining member"
     let world: EngineWorld | undefined;
-    const canMatch = this.appPack()?.id === "friends" ? (alternate: MemberId): boolean => {
-      const member = this.members.get(alternate);
-      if (!member || !this.planSeatOk(member, o.id, { busyOk: true })) return false;
+    const friends = this.appPack()?.id === "friends";
+    const canMatch = (alternate: MemberId): boolean => {
+      const adult = this.adultMember(alternate);
+      if (!adult || !friends) return isPlanAlternate(adult, true);
+      if (!this.planSeatOk(this.members.get(alternate)!, o.id, { busyOk: true })) return false;
       const peers = o.participants.filter(peer => peer !== alternate && (peer !== id || yes) && activeOpportunityParticipant(o, peer));
       world ??= this.planWorld(now, true);
-      return this.planFriendSeatFits(world, alternate, peers, "existingPlan");
-    } : undefined;
+      return isPlanAlternate(adult, this.planFriendSeatFits(world, alternate, peers, "existingPlan"));
+    };
     const { run, action } = plans.recordPlanAnswer(o.planRun, id, yes, now, this.pcfg, { canMatch });
     if (run === o.planRun) return;
     o.planRun = run;
@@ -4942,6 +5032,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     };
     // Already offered after this plan: a later "yes, again" from another attendee joins that one offer.
     const open = this.crewOffers.find(c => c.planId === o.id);
+    // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
+    if (!recurrenceAllowed([m.id], this.knownMinorsIn([m.id]), false)) return undefined;
     if (open) {
       const before = crewOfferState(open);
       const next = stepCrewOffer(before, { type: "extendOffer", memberId: m.id, enjoyedPlan: !!post[m.id]?.again });
@@ -4962,7 +5054,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const crew = plans.detectCrews(history, [...this.crews, ...this.crewOffers.map(c => c.crew)], id => !!w.get(id)?.isHost, this.pcfg)
       .find(candidate => candidate.members.includes(m.id));
-    if (!crew) return undefined;
+    if (!crew || !recurrenceAllowed(crew.members, this.knownMinorsIn(crew.members), false)) return undefined;
     const a = plans.activityById.get(crew.activityId)!;
     const { offered, yes, no } = stepCrewOffer(initialCrewOffer, { type: "openOffer", invitees: [...crew.members] });
     this.crewOffers.push({ crew, planId: o.id, at: this.now(), offered, yes, no });
@@ -4990,13 +5082,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private resolveCrew(offer: CrewOffer) {
     offer.resolved = true;
-    const formed = plans.crewOptIn(offer.crew, offer.yes, this.pcfg);
+    // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
+    const formed = recurrenceAllowed(offer.crew.members, this.knownMinorsIn(offer.crew.members), false) ? plans.crewOptIn(offer.crew, offer.yes, this.pcfg) : undefined;
     const a = plans.activityById.get(offer.crew.activityId)!;
     this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: offer.yes.length, offered: offer.offered.length });
     if (formed) { this.crews.push(formed); this.plansCounters.crewsFormed++; }
     for (const id of offer.yes) {
       const m = this.members.get(id);
-      if (m) this.send(m, formed ? copy.crewFormed(a.label) : copy.crewNotFormed, { type: "info" }, "info");
+      // A minor hears nothing more about a crew of adults.
+      if (m && !this.knownMinor(id)) this.send(m, formed ? copy.crewFormed(a.label) : copy.crewNotFormed, { type: "info" }, "info");
     }
   }
 
@@ -5020,7 +5114,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     let world: EngineWorld | undefined;
     for (const crew of this.crews) {
-      if (crew.handedOff) continue;
+      // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
+      if (crew.handedOff || !recurrenceAllowed(crew.members, this.knownMinorsIn(crew.members), false)) continue;
       const sessions = [...this.opps.values()].filter(o => o.plan?.crewId === crew.id);
       const openSession = sessions.some(o => OPEN_STAGES.has(o.stage));
       // spec/crewOffer.md, "Handoff counts booked sessions that reached feedback"
@@ -6273,7 +6368,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const survey = kind === "worthwhile" && !o.gatheringRsvpLogistics;
     const outreach = survey ? "unsolicited" : byTiming;
     const unsol = outreach === "unsolicited";
-    // spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person"
+    // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"
     const timing = o.minorClose ? "now" : this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
       const c = { outboundSinceInbound: m.outbound ?? 0 };
@@ -6955,7 +7050,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   private syncMember(m: MemberState) {
     if (!this.syncRecord(m)) return;
     m.pendingInviteDraft = undefined;
-    if (this.busy(m.id, undefined, true)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
+    // A minor leaves every open opportunity they are on, an alternate for or know about, not only the ones
+    // that keep them busy (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"),
+    // and every crew and open crew offer they are in ("A minor signal ends the recurring plans that the minor knows").
+    const knows = this.minorKnows(m.id);
+    const recurring = () => this.crews.some(c => c.members.includes(m.id)) || this.crewOffers.some(c => !c.resolved && c.crew.members.includes(m.id));
+    if (m.minor ? this.openOpps().some(o => o.participants.includes(m.id) || o.alternates.includes(m.id) || knows(o)) || recurring() : this.busy(m.id, undefined, true)) {
+      this.dropMember(m.id, m.minor ? "minors policy" : `account ${m.account}`);
+    }
   }
 
   member(id: MemberId): MemberState {

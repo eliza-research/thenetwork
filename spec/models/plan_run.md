@@ -212,8 +212,8 @@ module plan_run {
     note(o, ids.filter(id => not(e.minors.contains(id)) and not(e.watch.contains(id))))
 
   // ------------------------------------------------------------------------------------------------
-  // Engine: recordPlanAnswer (engine/src/plans.ts:568-591), group plans only, and without opts.canMatch
-  // (network.ts:3011 passes none).
+  // Engine: recordPlanAnswer (engine/src/plans.ts:568-591), group plans only. The network passes the adult gate
+  // as opts.canMatch in every app (beginPlan and planAnswer).
 
   pure def recordable(o: Opp, m: str): bool = o.runStage != "closed" and o.answers.get(m) == "pending"
 
@@ -238,9 +238,15 @@ module plan_run {
   pure def recordNo(e: Env, o1: Opp): (Opp, Act) =
     if (o1.runStage == "booked") (o1, NONE)
     else if (e.now < D and o1.bench.length() > 0) {
-      // nextOnBench without canMatch: the head of the bench.
-      val nx = o1.bench.head()
-      ({ ...o1, bench: o1.bench.tail(), answers: o1.answers.set(nx, "pending") }, { kind: "backfill", member: nx, going: Set() })
+      // nextOnBench with the network's adult gate (spec/planFormation.md, "Alternates must fit the entire offered
+      // group"): the first adult on the bench. Minors ahead of it leave the bench; the code also leaves the
+      // minors behind it there, and skips them in the same way later.
+      val adults = o1.bench.select(x => not(e.minors.contains(x)))
+      if (adults.length() == 0) closeIfUnmet(e, { ...o1, bench: List() })
+      else {
+        val nx = adults.head()
+        ({ ...o1, bench: adults.tail(), answers: o1.answers.set(nx, "pending") }, { kind: "backfill", member: nx, going: Set() })
+      }
     }
     else closeIfUnmet(e, o1)
 
@@ -264,15 +270,31 @@ module plan_run {
     }
 
   /** handleDrop (network.ts:2512): a booked participant drops out. */
-  pure def handleDrop(e: Env, o: Opp, m: str): Opp = {
+  pure def handleDrop(e: Env, o: Opp, m: str): Opp = handleDropFor(e, o, m, false)
+
+  pure def handleDropFor(e: Env, o: Opp, m: str, minorClose: bool): Opp = {
     val o1 = { ...setStatus(o, m, "dropped"),
                answers: if (o.runStage != "none") o.answers.set(m, "no") else o.answers }
     val still = yesMembers(o1)
-    // A group stays on with 3 or more yes (network.ts:2538, SD-078 fixed).
-    val keep = still.size() >= 3
-    val o2 = tellAll(e, o1, still.intersect(o1.bookedTold), "dropNotice")
-    if (keep) o2 else { ...o2, stage: "closed" }
+    // A group stays on with 3 or more yes (network.ts:2538, SD-078 fixed). A minor who leaves closes the
+    // booking whatever its size (spec/opportunityLifecycle.md, bookedGroupCanContinue).
+    val keep = not(minorClose) and still.size() >= 3
+    if (keep) tellAll(e, o1, still.intersect(o1.bookedTold), "dropNotice")
+    else closeBookingF(e, o1, if (minorClose) "minors policy" else "participant dropped")
   }
+
+  /**
+   * closeBooking (network.ts): a booked plan closes; the members still going whom the booked plan reached hear it
+   * is off, never why. At a minor signal every member still going hears it: the signal removed the queued booked
+   * plan of a member it did not reach yet. handleDrop uses it, and so does a minor signal from a member on the
+   * booked roster who is not going or who was asked and replaced.
+   */
+  pure def closeBookingF(e: Env, o: Opp, reason: str): Opp =
+    if (not(isOpen(o))) o
+    else {
+      val told = if (reason == "minors policy") yesMembers(o) else yesMembers(o).intersect(o.bookedTold)
+      { ...tellAll(e, o, told, "dropNotice"), stage: "closed", closedReason: reason }
+    }
 
   /** The reveal to `id` once the send-time recipient check passed: the names of everyone going. */
   pure def revealTo(e: Env, o: Opp, id: str, going: Set[str]): Opp = {
@@ -413,16 +435,19 @@ module plan_run {
       val wasAlternate = minor and o.alternates.contains(m)
       val o1 = { ...o, alternates: o.alternates.exclude(Set(m)), excused: o.excused.union(Set(m)) }
       if (wasAlternate and not(o1.participants.contains(m)) and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
-      // A minor who was asked and then replaced is still on the roster: the open plan closes (formal-main
-      // network.ts:2768-2770).
-      else if (minor and o1.contacted.contains(m) and not(o1.participants.contains(m)) and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
+      // A minor who was asked and then replaced is still on the roster: the plan closes, booked or not
+      // (spec/opportunityLifecycle.md, closesForMinor); a booked plan on closeBooking.
+      else if (minor and o1.contacted.contains(m) and not(o1.participants.contains(m)))
+        done(if (o1.stage == "scheduled") closeBookingF(e, o1, "minors policy") else closeF(e, o1, "minors policy"))
       else if (not(o1.participants.contains(m))) done(o1)
       else if (minor and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
       else if (o1.stage == "review") done(closeF(e, o1, "dropped"))
       else if (o1.stage == "probing") planOut(e, o1, m)
       // Only a member who is going leaves a booked plan (formal-main network.ts:2777): one who said no, is out or
       // still pending for a late join is not in it.
-      else if (o1.status.get(m) == "yes") done(handleDrop(e, o1, m))
+      else if (o1.status.get(m) == "yes") done(handleDropFor(e, o1, m, minor))
+      // A minor on the booked roster who is not going still closes it (closesForMinor: participant), on closeBooking.
+      else if (minor) done(closeBookingF(e, o1, "minors policy"))
       else done(o1)
     }
 
@@ -584,7 +609,7 @@ module plan_run {
     idle, plan.stage == "review",
     plan' = { ...withStatus(plan, plan.participants, "probing"),
               stage: "probing", runStage: "probing", invited: plan.participants,
-              answers: MEMBERS.mapBy(k => if (plan.participants.contains(k)) "pending" else ""), bench: BENCH0 },
+              answers: MEMBERS.mapBy(k => if (plan.participants.contains(k)) "pending" else ""), bench: BENCH0.select(x => not(minors.contains(x))) },
     now' = now, todo' = IDLE, keepEnv,
   }
 
@@ -872,6 +897,13 @@ module plan_run {
   val noMinorContact: bool =
     not(plan.minorMsg) and (plan.stage == "scheduled" implies yesMembers(plan).forall(id => not(minors.contains(id))))
 
+  /**
+   * A booking never stays on when a member on its roster or asked about it is a minor, whatever the size of the
+   * group (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
+   */
+  val minorEndsBooking: bool =
+    plan.stage == "scheduled" implies plan.participants.union(plan.contacted).forall(id => not(minors.contains(id)))
+
   /** A block between two members stops every message about one to the other (checkRecipient, AGENTS.md). */
   val noContactAcrossBlock: bool = not(plan.blockedMsg)
 
@@ -891,12 +923,12 @@ module plan_run {
   // The invariants hold between two units (`idle`); inside a unit, bookPlan or planFallback is still to run.
   val safety: bool = idle implies and {
     pairNeverBookedFromGroup, groupNeverShrinksToPair, noNameBeforeQuorum, planInvitedCurrent, noStaleRefusal,
-    noBookAfterDeadline, noDoubleBooking, yesSayerTold, noMinorContact, noContactAcrossBlock,
+    noBookAfterDeadline, noDoubleBooking, yesSayerTold, noMinorContact, minorEndsBooking, noContactAcrossBlock,
     noContactAfterStop, reviewBeforeContact, partnerPlanNotBooked,
   }
 
   // The guards that must hold whatever else changes (minors, blocks, STOP, review).
-  val guards: bool = idle implies and { noMinorContact, noContactAcrossBlock, noContactAfterStop, reviewBeforeContact }
+  val guards: bool = idle implies and { noMinorContact, minorEndsBooking, noContactAcrossBlock, noContactAfterStop, reviewBeforeContact }
 
   // The invariant of the skipped defect SD-479. It fails today; see its comment. (The SD-444 notice part is
   // in quint/plan_crew.qnt.)

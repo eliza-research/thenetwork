@@ -127,7 +127,7 @@ module opportunity {
   }
   type Req = { outcome: str, toldNone: bool }
   type Last = { act: str, o: str, m: str, x: str, dt: int }
-  // A job: the rest of the current unit (see the header). kind: close, replace, probes, reveal, drop, dm,
+  // A job: the rest of the current unit (see the header). kind: close, closeBooking, replace, probes, reveal, drop, dm,
   // forgetRest, deliver, refresh, adv, exp, expire. why: the close reason or the dropMember reason.
   type Job = { kind: str, o: str, m: str, why: str, ack: bool }
   type S = {
@@ -232,7 +232,7 @@ module opportunity {
   pure def sendNotice(s: S, m: str, kind: str, o: str, env: Env): S = sendNoticeAt(s, m, kind, o, "logistics", env)
 
   // A cancellation that a minor signal causes goes at once (SendOpts.minorClose): never into `deferred`
-  // (spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person").
+  // (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
   pure def noticeTiming(minorClose: bool): str = if (minorClose) "now" else "logistics"
 
   pure def sendNoticeAt(s: S, m: str, kind: str, o: str, timing: str, env: Env): S = {
@@ -282,7 +282,8 @@ module opportunity {
       val s1 = putO(s, o, { ...x, closedFrom: x.stage, closedReason: reason, stage: "closed", everTerminal: true })
       // Participants: clear their slot for this opportunity; tell the ones who said yes, when it was booked.
       // SD-263 (N:2587-2591): a yes to a probe that is not booked yet is released too, except the requester
-      // (the request path tells them) and never on a close for the minors policy.
+      // (the request path tells them). On a close for the minors policy in probing, each other member who got a
+      // probe and said yes hears it at once; the minor does not (spec/opportunityLifecycle.md, minorCloseTellsAcceptor).
       val s2 = partsOrdered(s1, o).foldl(s1, (acc, p) => {
         val a1 = clearAwFor(acc, p, o)
         if (mm(a1, p).forgotten) a1
@@ -290,6 +291,9 @@ module opportunity {
           sendNoticeAt(a1, p, "declined_quiet", o, noticeTiming(reason == "minors policy"), env)
         else if (wasProbing and p != x.requester and x.contacted.contains(p) and stat(a1, o, p) == "available"
                  and reason != "blocked" and reason != "minors policy") sendNotice(a1, p, "release", o, env)
+        else if (x.stage == "probing" and reason == "minors policy" and p != x.requester and x.contacted.contains(p)
+                 and stat(a1, o, p) == "available" and not(mm(a1, p).minor))
+          sendNoticeAt(a1, p, "release", o, noticeTiming(true), env)
         else a1
       })
       // The member request (N:2542-2557): a request still probing goes back to waiting.
@@ -358,21 +362,37 @@ module opportunity {
     val still = partsOrdered(s3, o).select(p => stat(s3, o, p) == "yes")
     // Only members who were told about the plan hear that it changed (N:2557). The drop_notice hook has no
     // onRefused (SD-249, skipped); it carries the meeting time (SD-248).
-    val s4 = still.foldl(s3, (acc, p) =>
-      if (not(op(acc, o).bookedTold.contains(p))) acc else sendNoticeAt(acc, p, "drop_notice", o, noticeTiming(minorClose), env))
     // network.ts:2693: a group stays on only with 3 or more still going ("two who are left said yes to a
     // group, not to a meeting of two"). A pair: keep is false, so the opportunity closes on handleDrop's own
-    // path (not close()).
-    val keep = still.length() >= 3
-    if (keep) s4
-    else {
-      val s5 = putO(s4, o, { ...op(s4, o), closedFrom: op(s4, o).stage, closedReason: "participant dropped", stage: "closed", everTerminal: true })
-      val released = partsOrdered(s5, o).foldl(s5, (acc, p) => clearAwFor(acc, p, o))
-      // SD-139 (N:2560-2563): the requester still says yes (another member called it off): the request waits again.
-      val x5 = op(released, o)
-      if (x5.requester != "" and stat(released, o, x5.requester) == "yes" and released.req.outcome == "booked") { ...released, req: { ...released.req, outcome: "none" } }
-      else released
-    }
+    // path, closeBooking (not close()). A minor who leaves closes the booking whatever its size: the adults do
+    // not meet at a time and place a minor was told (spec/opportunityLifecycle.md, bookedGroupCanContinue).
+    val keep = not(minorClose) and still.length() >= 3
+    if (keep) tellStill(s3, o, minorClose, env)
+    else closeBooking(s3, o, if (minorClose) "minors policy" else "participant dropped", minorClose, env)
+  }
+
+  /**
+   * The members still going whom the booked plan reached hear that it changed (N:2557). At a minor signal a
+   * member still going whom the booked plan did not reach yet hears it too: the signal removed their queued
+   * booked plan (withoutMinorQueue), and they said yes (closeBooking, network.ts).
+   */
+  pure def tellStill(s: S, o: str, minorClose: bool, env: Env): S =
+    partsOrdered(s, o).select(p => stat(s, o, p) == "yes").foldl(s, (acc, p) =>
+      if (not(minorClose) and not(op(acc, o).bookedTold.contains(p))) acc else sendNoticeAt(acc, p, "drop_notice", o, noticeTiming(minorClose), env))
+
+  /**
+   * closeBooking (network.ts): a booked opportunity closes; the members still going whom the booked plan reached
+   * (at a minor signal, every member still going) hear it is off (drop notices, never why). handleDrop uses it, and so does a minor signal from a member on the
+   * booked roster who is not going or who was asked and replaced. The reason is "minors policy" for a minor signal.
+   */
+  pure def closeBooking(s3: S, o: str, reason: str, minorClose: bool, env: Env): S = {
+    val s4 = tellStill(s3, o, minorClose, env)
+    val s5 = putO(s4, o, { ...op(s4, o), closedFrom: op(s4, o).stage, closedReason: reason, stage: "closed", everTerminal: true })
+    val released = partsOrdered(s5, o).foldl(s5, (acc, p) => clearAwFor(acc, p, o))
+    // SD-139 (N:2560-2563): the requester still says yes (another member called it off): the request waits again.
+    val x5 = op(released, o)
+    if (x5.requester != "" and stat(released, o, x5.requester) == "yes" and released.req.outcome == "booked") { ...released, req: { ...released.req, outcome: "none" } }
+    else released
   }
   pure def dropJob(o: str, m: str, ack: bool): Job = { ...J("drop", o, m, ""), ack: ack }
 
@@ -430,14 +450,17 @@ module opportunity {
       val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
       if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       // A minor who was asked and then replaced is still on the roster: the open item closes, booked or not
-      // (spec/opportunityLifecycle.md, closesForMinor).
-      else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m))) push(a1, [J("close", o, "", reason)])
+      // (spec/opportunityLifecycle.md, closesForMinor). A booking closes on closeBooking.
+      else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m)))
+        push(a1, [J(if (x.stage == "scheduled") "closeBooking" else "close", o, "", reason)])
       else if (not(x.parts.contains(m))) a1
       else if (minorReason and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "review") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "probing") push(setStat(a1, o, m, "unavailable"), [J("replace", o, m, "")])
       // SD-047 (N:2633): only a member who is going ("yes") leaves a booked meeting.
       else if (stat(a1, o, m) == "yes") push(a1, [{ ...dropJob(o, m, false), why: reason }])
+      // A minor on the booked roster who is not going still closes it (closesForMinor: participant), on closeBooking.
+      else if (minorReason) push(a1, [J("closeBooking", o, "", reason)])
       else a1
     }
   }
@@ -832,7 +855,7 @@ module opportunity {
   // deferred sends about an opportunity the minor was on, an alternate for or asked about, whatever its stage,
   // leave the queue: a cancellation (a release, a quiet decline, a drop notice) that is still valid goes now,
   // and a reveal or a feedback request never goes. "None yet" names no opportunity in the code (no proposalId)
-  // and stays (spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person").
+  // and stays (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
   pure def minorInvolved(s: S, o: str, m: str): bool =
     o != "" and (op(s, o).parts.contains(m) or op(s, o).alts.contains(m) or op(s, o).contacted.contains(m))
   pure def withoutMinorQueue(s: S, m: str, env: Env): S = {
@@ -857,6 +880,20 @@ module opportunity {
     val s1 = putM(s, m, { ...mm(s, m), forgotten: true })
     val s2 = if (m == "a") { ...s1, req: { outcome: "", toldNone: false } } else s1
     s' = { ...dropMember(push(s2, [J("forgetRest", "", m, "")]), m, "declined"), last: L("forget", "", m, ""), jobEnv: env },
+  }
+
+  // declineUnderMinAge (network.ts): a stated age under the join age. It is a minor signal: the minors-policy drop
+  // runs first, then forget (its dropMember with "declined", then forgetRest). Abstraction: `forgotten` is set
+  // when the unit starts; the code adds the id to declinedIds only in forget, but the minors-policy jobs send
+  // nothing to the minor (handleDrop without ack, closeBooking and close tell only the others).
+  action declineUnderAge(m: str, env: Env): bool = all {
+    idle,
+    not(mm(s, m).forgotten),
+    val s1 = withoutMinorQueue(putM(s, m, { ...mm(s, m), minor: true }), m, env)
+    val s2 = putM(s1, m, { ...mm(s1, m), forgotten: true })
+    val s3 = if (m == "a") { ...s2, req: { outcome: "", toldNone: false } } else s2
+    s' = { ...dropMember(dropMember(push(s3, [J("forgetRest", "", m, "")]), m, "declined"), m, "minors policy"),
+           last: L("decline", "", m, ""), jobEnv: env },
   }
 
   /** The rest of forget after dropMember (a job). */
@@ -930,6 +967,7 @@ module opportunity {
   def jobIs(kind: str): bool = s.jobs.length() > 0 and s.jobs.head().kind == kind
 
   action runClose = all { jobIs("close"), s' = close(popped, job.o, job.why, s.jobEnv) }
+  action runCloseBooking = all { jobIs("closeBooking"), s' = closeBooking(popped, job.o, job.why, job.why == "minors policy", s.jobEnv) }
   action runReplace = all { jobIs("replace"), s' = replaceOrClose(popped, job.o, job.m) }
   action runProbes = all { jobIs("probes"), s' = advanceProbes(popped, job.o, s.jobEnv) }
   action runReveal = all { jobIs("reveal"), s' = sendReveal(popped, job.o, job.m, s.jobEnv) }
@@ -947,7 +985,7 @@ module opportunity {
   action runExpire = all { jobIs("expire"), s' = expireSlots(popped) }
 
   action runJob = any {
-    runClose, runReplace, runProbes, runReveal, runDrop, runDm, runForgetRest, runDeliver, runRefresh, runAdv,
+    runClose, runCloseBooking, runReplace, runProbes, runReveal, runDrop, runDm, runForgetRest, runDeliver, runRefresh, runAdv,
     runExp, runExpire,
   }
 
@@ -981,7 +1019,9 @@ module opportunity {
       // A minor signal in half as many draws as the other life events (weights only: the reachable states do not
       // change). Since a minor who was asked and then replaced closes the item (network.ts:2768-2770), a minor signal
       // in one roll of 10 closes the member request before it is held in almost every trace (witness_requestFulfilled).
+      // An under-age decline is a minor signal too: it shares becomeMinor's roll, so the two together keep that rate.
       all { roll == 2, wide, becomeMinor(m, env) },
+      all { roll == 2, wide, declineUnderAge(m, env) },
       all { roll == 3, forget(m, env) },
       tick(dt, env),
       all { roll == 4, elapse(dt) },
@@ -1048,6 +1088,11 @@ module opportunity {
   val minorNever = MEMBERS.forall(m => mm(s, m).minor implies OPPS.forall(o =>
     OPEN.contains(op(s, o).stage) implies not(Set("queued", "probing", "available", "yes").contains(op(s, o).status.get(m)))))
 
+  // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": no booking
+  // stays on when a member on its roster or asked about it is a minor, whatever the size of the group.
+  val minorEndsBooking = MEMBERS.forall(m => mm(s, m).minor implies OPPS.forall(o =>
+    op(s, o).stage == "scheduled" implies not(op(s, o).parts.contains(m) or op(s, o).contacted.contains(m))))
+
   // AGENTS.md STOP: an opted-out member is out of everything open (dropMember).
   val stopWins = MEMBERS.forall(m => mm(s, m).optedOut implies OPPS.forall(o =>
     OPEN.contains(op(s, o).stage) implies not(Set("queued", "probing", "available", "yes").contains(op(s, o).status.get(m)))))
@@ -1113,7 +1158,7 @@ module opportunity {
   // The invariants hold between two units (`idle`); inside a unit, jobs are still to run.
   val safety = idle implies and {
     reviewGate, decidedBeforeDeadline, namesAfterAllYes, counterIsNotYes, slotOwnerAlive, noLostAnswer,
-    minorNever, stopWins, terminalStable, requestNotStuck, cancelReachesTold, partialAcceptReleased,
+    minorNever, minorEndsBooking, stopWins, terminalStable, requestNotStuck, cancelReachesTold, partialAcceptReleased,
     noShowOnce, bookedMembersTold, bookedSlotAlive, pauseNeedsUnansweredInvitations,
   }
 
@@ -1243,6 +1288,20 @@ module opportunity {
       .then(stop("b", ALL_OPEN)).then(settled)
       .then(start("b")).then(settled)
       .expect(op(s, "o1").parts == Set("a", "c") and mm(s, "b").aw.kind == "none" and slotOwnerAlive and safety)
+
+  // Review 2026-11-17 (minor-replaced-booked.integration.test.ts): a was asked about o2, said no and was replaced;
+  // b and c booked. Then a states an age under the join age: the decline is a minor signal, so the booking
+  // closes for the minors policy before forget deletes a's data, and b and c hear it is off.
+  run declinedAskedMemberClosesBookingTest =
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(answer("a", "no", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "b", ALL_OPEN)).then(settled).then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "c", ALL_OPEN)).then(settled).then(answer("c", "yes", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").stage == "scheduled")
+      .then(declineUnderAge("a", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").stage == "closed" and op(s, "o2").closedReason == "minors policy"
+              and op(s, "o2").cancelHeard == Set("b", "c") and minorEndsBooking and safety)
 
   // The common prefix: o1 is booked for a and b (lead 30 unless given).
   action bookO1(lead: int): bool =

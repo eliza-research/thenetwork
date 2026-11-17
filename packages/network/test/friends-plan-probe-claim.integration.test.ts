@@ -51,7 +51,7 @@ test.skipIf(!pgAvailable).each([
         size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: now + 2 * (scenario === "deadline reached" ? HOUR : DAY),
         score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
       };
-      const { id: oppId } = fixture.net["submitPlan"](plan, now);
+      const { id: oppId } = fixture.net["submitPlan"](plan, now)!;
       const saved = fixture.net.exportState();
       const opp = saved.opps.find(o => o.id === oppId)!;
       const deliveryId = friendsPlanProbeDeliveryKey(oppId, 0, second);

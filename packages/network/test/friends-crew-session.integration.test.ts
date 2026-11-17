@@ -90,7 +90,7 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
     place: { name: venue.name, area: venue.area }, window: { start: at, end: at + 90 * 60_000 },
     invited: ids, alternates: [], hostId: "a", partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
     probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
-  }, at - DAY);
+  }, at - DAY)!;
   const state = w.net.exportState();
   const completed = state.opps.find(o => o.id === source.id)!;
   completed.stage = "done";

@@ -59,7 +59,7 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
       const group = net["submitPlan"](plan, now);
       const partner = net["submitPlan"]({ ...plan, id: "preview_partner", window: offered[1]!, reviewedOptions: offered,
         invited: ids.slice(5), alternates: [], partner: true, size: { min: 2, target: 2, max: 2 }, quorum: 2, category: "hobby" }, now);
-      return [group.id, partner.id];
+      return [group!.id, partner!.id];
     });
     const item = (await rt.reviewQueue()).find(row => row.oppId === groupId);
     expect(item).toMatchObject({ origin: "planner", revision: 0 });

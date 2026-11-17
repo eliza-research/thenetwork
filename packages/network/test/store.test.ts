@@ -418,7 +418,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
     const oppId = w.net.reviewQueue()[0]!.oppId;
     const want = () => {
-      const p = w.net.reviewQueue()[0]!.proposal;
+      const p = w.net.exportState().opps.find(o => o.id === oppId)!;
       return [...p.participants.map(id => `participant:${id}`), ...p.alternates.filter(a => !p.participants.includes(a)).map(id => `alternate:${id}`)].sort();
     };
     const have = async () => (await store.sql`select role, member_id from network.participations where opportunity_id = ${oppId}`).map((r: any) => `${r.role}:${r.member_id}`).sort();
@@ -434,6 +434,9 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     w.net.importState(w.net.exportState());
     await w.say(alt, "I am 12 years old");
     expect(w.net.isDeclined(alt)).toBe(true);
+    // spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": the
+    // reviewed item that listed the alternate closes, and the alternate leaves it.
+    expect(w.net.exportState().opps.find(o => o.id === oppId)).toMatchObject({ stage: "closed", closedReason: "minors policy" });
     await store.save(w.net.exportState());
     expect(await have()).toEqual(want());
     expect((await store.sql`select 1 from network.participations where member_id = ${alt}`).length).toBe(0);
