@@ -8,7 +8,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
-import { localBookingStart } from "../src/rescheduling.ts";
+import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
@@ -105,6 +105,19 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     clock.set(booked.meetingAt! - DAY);
     for (const phone of phones) await adapter.engaged(phone);
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id=${app.id}`;
+    const stageBookingNotice = (opportunity: typeof booked, index: number) => {
+      const memberId = members[index]!.id;
+      const revision = opportunity.scheduleRevision ?? 0;
+      const id = revision > 0 ? rescheduleUpdateKey(opportunity.id, revision, memberId) : `fixture-booking:${opportunity.id}:${memberId}`;
+      rt.unit.sends.push({ id, memberId, to: phones[index], kind: "transactional", type: revision > 0 ? "scheduling" : "proposal",
+        oppId: opportunity.id, body: "Your meeting is booked at the park.", proactive: false, system: false, ts: clock.now() });
+      return id;
+    };
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: pair.net.exportState().members, opps: [booked] });
+      stageBookingNotice(booked, 0);
+      stageBookingNotice(booked, 1);
+    });
     const queueReminder = (i: number, memberId: string) => rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), opps: [booked] });
       rt.unit.sends.push({ id: `day-before-reminder:${planId}:${memberId}`, memberId, to: phones[i], kind: "transactional",
@@ -143,6 +156,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     await adapter.queue.setLineSafety(undefined);
     await rt.deliver();
     expect(await adapter.queue.statusOf(firstCheckIn)).toBe("suppressed_ineligible");
+    await rt.unitOfWork(() => { stageBookingNotice(revised, 0); });
     await rt.unitOfWork(net => net.tick(clock.now()));
     const revisedCheckIn = `day-of-checkin:${planId}:r1:${first}`;
     expect(await adapter.queue.statusOf(revisedCheckIn)).toBe("sent");
@@ -155,12 +169,16 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
 
     // A signed cancellation with an exact time belongs to that meeting, even with another reply pending.
-    const another = { ...booked, id: `${planId}-another`, meetingAt: booked.meetingAt! + DAY };
+    const previousSchedule = { ...booked, id: `${planId}-another`, meetingAt: booked.meetingAt! + DAY, scheduleRevision: 1 };
+    const another = { ...previousSchedule, meetingAt: previousSchedule.meetingAt + HOUR, scheduleRevision: 2 };
     await sql`update network.members set participation_state='normal' where app_id=${app.id} and id=${first!}`;
     for (const phone of phones) await adapter.engaged(phone);
-    await rt.unitOfWork(net => {
-      net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised, another] });
+    const receivedScheduleNotice = await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised, previousSchedule] });
+      return stageBookingNotice(previousSchedule, 1);
     });
+    expect(await adapter.queue.statusOf(receivedScheduleNotice)).toBe("sent");
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised, another] }));
     const pendingSlot = async () => (await rt.pg.load())?.members.find(member => member.id === first)?.awaiting;
     expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
     const cancelAt = (messageId: string, at: number) =>
@@ -181,8 +199,13 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
       const cancelledId = `${planId}-${suffix}`;
       await adapter.engaged(phones[0]!);
       await adapter.engaged(phones[1]!);
+      const booking = { ...booked, id: cancelledId };
+      const bookingNotice = await rt.unitOfWork(net => {
+        net.importState({ ...net.exportState(), members: pairedMembers, opps: [booking] });
+        return stageBookingNotice(booking, 1);
+      });
+      expect(await adapter.queue.statusOf(bookingNotice)).toBe("sent");
       await rt.unitOfWork(async net => {
-        net.importState({ ...net.exportState(), members: pairedMembers, opps: [{ ...booked, id: cancelledId }] });
         await net.onInbound({ id: `cancel-${suffix}`, memberId: first!, body: text, ts: clock.now(), channel: "sms" });
         rt.unit.sends.push({ id: `stale-${suffix}`, memberId: second!, to: phones[1], kind: "transactional",
           body: "The previous meeting reminder.", type: "reminder", oppId: cancelledId, proactive: false, system: false, ts: clock.now() });

@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import type { SendRequest } from "../../blooio/src/types.ts";
+import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
@@ -15,8 +16,11 @@ import { Mini } from "./mini.ts";
 
 const calendarJourney = "a signed calendar request downloads the current booking with no participant details";
 const expiredBookingNotice = "an original booking notice cannot send or replay once the meeting starts";
+const cancelAfterNotice = "a cancellation reaches a booked participant who received the details";
+const cancelBeforeNotice = "a cancellation stays private from a booked participant whose details never sent";
+const cancelWaitingForNotice = "a cancellation waits for a pending signed receipt of booking details";
 
-test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice] as const)("%s", async scenario => {
+test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
   // spec/calendarInvite.md, "A calendar link follows the booked revision and the current owner"
   const url = await migratedDb("calendar_invite");
@@ -78,7 +82,7 @@ test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice] as const)
     const awaiting = world.net.exportState();
     await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: awaiting.members, opps: awaiting.opps }));
     const adapter = rt.adapter as BlooioAdapter;
-    if (scenario === expiredBookingNotice) await adapter.lineSafety("review", "hold the booking notice");
+    if (scenario === expiredBookingNotice || scenario === cancelBeforeNotice) await adapter.lineSafety("review", "hold the booking notice");
     const confirm = turn("calendar-booking", "yes", phones[1]);
     const bookingReply = await (await send(confirm)).json();
     expect(bookingReply.replies.join(" ")).toContain("You're both in");
@@ -86,6 +90,47 @@ test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice] as const)
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
+    if (scenario === cancelAfterNotice || scenario === cancelBeforeNotice || scenario === cancelWaitingForNotice) {
+      // spec/meetingSettlement.md, "Claim a cancellation only for a member who received booking details"
+      const waitsForReceipt = scenario === cancelWaitingForNotice;
+      const counterpart = waitsForReceipt ? 1 : 0;
+      const counterpartReceived = scenario !== cancelBeforeNotice;
+      const [notice] = await sql`select queued.id,queued.status,queued.attempts,queued.sent_at from platform.outbound queued
+        join network.messages message on message.app_id=queued.app_id and message.id=queued.id and message.member_id=queued.member_id
+        where message.opportunity_id=${id} and message.type='proposal' and message.member_id=${ids[counterpart]!}`;
+      expect(notice).toMatchObject(waitsForReceipt ? { status: "collected", attempts: 0, sent_at: null } : counterpartReceived
+        ? { status: "accepted", attempts: 1, sent_at: expect.any(Date) }
+        : { status: "retry_scheduled", attempts: 0, sent_at: null });
+      if (!waitsForReceipt) expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+      const drop = turn("calendar-cancel", "I can't make it.", phones[1 - counterpart]);
+      expect(await (await send(drop)).json()).toMatchObject({ replies: [expect.stringContaining("thanks for the heads up")] });
+      expect(await sql`select state from network.opportunities where id=${id}`).toEqual([{ state: "CANCELLED" }]);
+      const cancellation = `${bookedCancellationPrefix}${id}:${ids[counterpart]!}`;
+      if (waitsForReceipt) {
+        expect(await sql`select status,attempts from platform.outbound where id=${cancellation}`)
+          .toEqual([{ status: "retry_scheduled", attempts: 0 }]);
+        expect(delivered.some(call => call.idempotencyKey === `tn:${cancellation}`)).toBe(false);
+        expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+      }
+      await adapter.lineSafety(undefined);
+      clock.advance(HOUR);
+      expect(clock.now()).toBeLessThan(booked.meetingAt!);
+      await rt.deliver();
+      await rt.deliver();
+      const [queued] = await sql`select status,attempts from platform.outbound where id=${cancellation}`;
+      const cancellations = delivered.filter(call => call.idempotencyKey === `tn:${cancellation}`);
+      expect({ ...queued, providerCalls: cancellations.length }).toEqual(counterpartReceived
+        ? { status: "accepted", attempts: 1, providerCalls: 1 }
+        : { status: "suppressed_ineligible", attempts: 0, providerCalls: 0 });
+      if (counterpartReceived) {
+        expect(cancellations[0]).toMatchObject({ to: phones[counterpart] });
+        expect(cancellations[0]?.text).not.toMatch(/Ari|Blair|declined|blocked/i);
+      } else {
+        expect(await adapter.queue.statusOf(notice.id)).toBe("expired");
+        expect(delivered.some(call => call.idempotencyKey === `tn:${notice.id}`)).toBe(false);
+      }
+      return;
+    }
     if (scenario === expiredBookingNotice) {
       // spec/meetingReschedule.md, "The original booking notice belongs to the original confirmed seat"
       const [held] = await sql`select queued.id,queued.status,queued.attempts from platform.outbound queued

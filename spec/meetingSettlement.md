@@ -64,6 +64,10 @@ The reminder claim requires a positive provider or signed gateway receipt for th
 type ReminderClaim = SendReminder | WaitForBookingNotice | RefuseReminder
 pure val bookingNoticeRetryMs = 5 * 60000
 
+pure def bookingNoticeReceived(receiptStatus: str, sentAt: int, checkedAt: int): bool =
+  (receiptStatus == "accepted" or receiptStatus == "sent" or receiptStatus == "delivered" or receiptStatus == "read")
+    and 0 <= sentAt and sentAt <= checkedAt
+
 pure def queuedReminderClaim(bookingCurrent: bool, noticeAccepted: bool, noticePending: bool): ReminderClaim =
   if (not(bookingCurrent)) RefuseReminder
   else if (noticeAccepted) SendReminder
@@ -75,6 +79,32 @@ pure def lawReminderClaimNeedsNotice(bookingCurrent: bool, noticePending: bool):
 
 pure def lawReminderCannotWaitOnExpiredBooking(noticeAccepted: bool, noticePending: bool): bool =
   queuedReminderClaim(false, noticeAccepted, noticePending) == RefuseReminder
+
+pure def lawFutureBookingReceiptIsNotEvidence(receiptStatus: str, sentAt: int, checkedAt: int): bool =
+  sentAt > checkedAt implies not(bookingNoticeReceived(receiptStatus, sentAt, checkedAt))
+```
+
+### Claim a cancellation only for a member who received booking details
+
+A recorded booking notice can be waiting in the queue. Require positive provider or signed gateway receipt for the same app, opportunity and member before sending a terminal cancellation. Receipt of the original booking or any committed updated schedule qualifies, since the participant may still expect to meet. An invitation, an offer to move the meeting, or a notice that never left the queue is insufficient. If the booking notice was already handed off and its receipt can still arrive, retry the same cancellation before the start. Keep the content neutral.
+
+```quint
+type BookedCancellationClaim = SendCancellation | WaitForCancellationReceipt | RefuseCancellation
+
+pure def bookingNoticeReceiptMayArrive(receiptStatus: str): bool =
+  receiptStatus == "collected" or receiptStatus == "send_unknown" or receiptStatus == "sending" or receiptStatus == "unknown_acceptance"
+
+pure def queuedBookingCancellationClaim(cancellationCurrent: bool, noticeAccepted: bool, receiptMayArrive: bool): BookedCancellationClaim =
+  if (not(cancellationCurrent)) RefuseCancellation
+  else if (noticeAccepted) SendCancellation
+  else if (receiptMayArrive) WaitForCancellationReceipt
+  else RefuseCancellation
+
+pure def lawCancellationClaimNeedsReceipt(cancellationCurrent: bool, receiptMayArrive: bool): bool =
+  queuedBookingCancellationClaim(cancellationCurrent, false, receiptMayArrive) != SendCancellation
+
+pure def lawStaleCancellationCannotWait(noticeAccepted: bool, receiptMayArrive: bool): bool =
+  queuedBookingCancellationClaim(false, noticeAccepted, receiptMayArrive) == RefuseCancellation
 ```
 
 ## Story: Check whether a booked participant is still coming

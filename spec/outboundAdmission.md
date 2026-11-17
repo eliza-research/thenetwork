@@ -29,7 +29,7 @@ pure def lawOptedOutOnlyGetsCompliance(compliance: bool): bool =
 
 ### A cancelled booking can notify a participant who received the booked plan
 
-Give a terminal booking cancellation one ID per opportunity and recipient. Before delivery, verify the exact stored cancellation, a cancelled booked plan, and an accepted seat that received its booking. A cancellation must arrive before the original meeting start. The text does not identify other participants or the reason. Verify consent, quiet hours, and text safety as for other cancellation messages.
+Give a terminal booking cancellation one ID per opportunity and recipient. An accepted seat with a recorded booking notice can get a queued cancellation. Before delivery, verify the exact stored cancellation, the cancelled booked plan, and [receipt of the booking notice](meetingSettlement.md#claim-a-cancellation-only-for-a-member-who-received-booking-details). A cancellation must arrive before the meeting start. The text does not identify other participants or the reason. Verify consent, quiet hours, and text safety as for other cancellation messages.
 
 ```quint
 pure val bookedCancellationPrefix = "booked-cancellation:"

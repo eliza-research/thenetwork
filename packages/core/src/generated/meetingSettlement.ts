@@ -5,6 +5,8 @@
 export interface ConfirmationChanges { recordWords: boolean; emitConfirmation: boolean }
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 export type ReminderClaim = "SendReminder" | "WaitForBookingNotice" | "RefuseReminder";
+/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
+export type BookedCancellationClaim = "SendCancellation" | "WaitForCancellationReceipt" | "RefuseCancellation";
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export type SettlementPhase = "BeforeFeedback" | "AwaitingAttendance" | "SettlementComplete";
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
@@ -102,8 +104,21 @@ export function lawDayBeforeReminderDoesNotRepeat(accepted: boolean, bookingDeli
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 //@ pure
+export function bookingNoticeReceived(receiptStatus: string, sentAt: number, checkedAt: number): boolean {
+  return (receiptStatus === "accepted" || receiptStatus === "sent" || receiptStatus === "delivered" || receiptStatus === "read") && 0 <= sentAt && sentAt <= checkedAt;
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
 export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boolean, noticePending: boolean): ReminderClaim {
   return !bookingCurrent ? "RefuseReminder" : (noticeAccepted ? "SendReminder" : (noticePending ? "WaitForBookingNotice" : "RefuseReminder"));
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawFutureBookingReceiptIsNotEvidence(receiptStatus: string, sentAt: number, checkedAt: number): boolean {
+  //@ ensures \result === true
+  return !(sentAt > checkedAt) || !bookingNoticeReceived(receiptStatus, sentAt, checkedAt);
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
@@ -118,6 +133,32 @@ export function lawReminderClaimNeedsNotice(bookingCurrent: boolean, noticePendi
 export function lawReminderCannotWaitOnExpiredBooking(noticeAccepted: boolean, noticePending: boolean): boolean {
   //@ ensures \result === true
   return queuedReminderClaim(false, noticeAccepted, noticePending) === "RefuseReminder";
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
+//@ pure
+export function bookingNoticeReceiptMayArrive(receiptStatus: string): boolean {
+  return receiptStatus === "collected" || receiptStatus === "send_unknown" || receiptStatus === "sending" || receiptStatus === "unknown_acceptance";
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
+//@ pure
+export function queuedBookingCancellationClaim(cancellationCurrent: boolean, noticeAccepted: boolean, receiptMayArrive: boolean): BookedCancellationClaim {
+  return !cancellationCurrent ? "RefuseCancellation" : (noticeAccepted ? "SendCancellation" : (receiptMayArrive ? "WaitForCancellationReceipt" : "RefuseCancellation"));
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
+//@ pure
+export function lawCancellationClaimNeedsReceipt(cancellationCurrent: boolean, receiptMayArrive: boolean): boolean {
+  //@ ensures \result === true
+  return queuedBookingCancellationClaim(cancellationCurrent, false, receiptMayArrive) !== "SendCancellation";
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
+//@ pure
+export function lawStaleCancellationCannotWait(noticeAccepted: boolean, receiptMayArrive: boolean): boolean {
+  //@ ensures \result === true
+  return queuedBookingCancellationClaim(false, noticeAccepted, receiptMayArrive) === "RefuseCancellation";
 }
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
