@@ -3,6 +3,8 @@
 
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export interface ConfirmationChanges { recordWords: boolean; emitConfirmation: boolean }
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+export type ReminderClaim = "SendReminder" | "WaitForBookingNotice" | "RefuseReminder";
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export type SettlementPhase = "BeforeFeedback" | "AwaitingAttendance" | "SettlementComplete";
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
@@ -21,6 +23,8 @@ export type Event =
   | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
   | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
 
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+export const bookingNoticeRetryMs: number = exact_meetingSettlement(5 * 60000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowHours: number = 48;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
@@ -94,6 +98,26 @@ export function lawDayBeforeReminderFollowsBooking(accepted: boolean, earlySent:
 export function lawDayBeforeReminderDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, remainingMs: number): boolean {
   //@ ensures \result === true
   return !dayBeforeReminderDue(accepted, bookingDelivered, true, remainingMs);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boolean, noticePending: boolean): ReminderClaim {
+  return !bookingCurrent ? "RefuseReminder" : (noticeAccepted ? "SendReminder" : (noticePending ? "WaitForBookingNotice" : "RefuseReminder"));
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawReminderClaimNeedsNotice(bookingCurrent: boolean, noticePending: boolean): boolean {
+  //@ ensures \result === true
+  return queuedReminderClaim(bookingCurrent, false, noticePending) !== "SendReminder";
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawReminderCannotWaitOnExpiredBooking(noticeAccepted: boolean, noticePending: boolean): boolean {
+  //@ ensures \result === true
+  return queuedReminderClaim(false, noticeAccepted, noticePending) === "RefuseReminder";
 }
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */

@@ -8,6 +8,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
+import { bookedReminderKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { localBookingStart } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
@@ -80,6 +81,23 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
+    // spec/meetingSettlement.md, "Claim a reminder only after the member received the current booking notice"
+    const reminderAt = Math.max(clock.now(), booked.meetingAt! - DAY);
+    expect(booked.meetingAt! - reminderAt).toBeGreaterThan(12 * HOUR);
+    clock.set(reminderAt);
+    const reminder = (memberId: string) => bookedReminderKey("day-before-reminder", id, memberId, booked.scheduleRevision);
+    const reminderState = async (memberId: string) => (await sql`select status,attempts from platform.outbound where id=${reminder(memberId)}`)[0];
+    const reminderSends = (memberId: string) => delivered.filter(request => request.idempotencyKey === `tn:${reminder(memberId)}`);
+    await rt.unitOfWork(n => n.tick(clock.now()));
+    expect(await reminderState(ids[0]!)).toMatchObject({ status: "accepted", attempts: 1 });
+    expect(await reminderState(ids[1]!)).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+    expect(reminderSends(ids[1]!)).toEqual([]);
+    expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+    clock.advance(5 * MINUTE);
+    await rt.deliver();
+    await rt.deliver();
+    expect(await reminderState(ids[1]!)).toMatchObject({ status: "accepted", attempts: 1 });
+    expect(reminderSends(ids[1]!)).toHaveLength(1);
     const save = (opportunity: typeof booked) => rt.unitOfWork(n => {
       n.importState({ ...n.exportState(), opps: [opportunity] });
     });

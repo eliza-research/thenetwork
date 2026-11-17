@@ -14,8 +14,8 @@ import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
-import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent } from "../src/rescheduling.ts";
-import { OutboundQueue, WAITING, type AppChecks, type MessageKind, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey } from "../src/rescheduling.ts";
+import { OutboundQueue, WAITING, type AppChecks, type ClaimCheck, type MessageKind, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import { APPS } from "../../platform/src/apps.ts";
@@ -23,6 +23,7 @@ import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
 import { originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
+import { bookingNoticeRetryMs, dayBeforeReminderEndMs, queuedReminderClaim } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
@@ -124,22 +125,47 @@ async function releaseAdmission(tx: SQL, row: QueueRow, kind: TerminalNotice, ru
   return allowed ? { ok: true } : { ok: false, reason: "opportunity_release_changed" };
 }
 
-async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedReminderKind, runtimeId: string, now: number): Promise<RecipientCheck> {
-  if (!row.memberId || !row.oppId || row.kind !== "transactional") {
-    return { ok: false, reason: "booking_reminder_changed" };
-  }
-  const [meeting] = await tx<{ meeting_at: Date | null; revision: number }[]>`select opp.meeting_at,
-    coalesce(schedule."scheduleRevision",0) as revision from network.messages msg
+async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedReminderKind, runtimeId: string, now: number): Promise<ClaimCheck> {
+  const refused = { ok: false, reason: "booking_reminder_changed" } as const;
+  if (!row.memberId || !row.oppId || row.kind !== "transactional") return refused;
+  const [meeting] = await tx<{ meeting_at: Date | null; revision: number; lane: string | null }[]>`select opp.meeting_at,
+    coalesce(schedule."scheduleRevision",0) as revision,schedule.lane from network.messages msg
     join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
     join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
-    join lateral jsonb_to_recordset(saved.state->'opps') as schedule(id text,"scheduleRevision" int) on schedule.id=opp.id
+    join lateral jsonb_to_recordset(saved.state->'opps') as schedule(id text,"scheduleRevision" int,lane text,stage text) on schedule.id=opp.id
     where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.opportunity_id=${row.oppId}
       and msg.direction='outbound' and msg.type='reminder' and msg.body=${row.text} and opp.state='SCHEDULED'
-      and seat.role='participant' and seat.status='confirmed'`;
-  return meeting?.meeting_at && row.id === bookedReminderKey(kind, row.oppId, row.memberId, meeting.revision)
-    && bookedReminderWindow(kind, now, meeting.meeting_at.getTime())
-    ? { ok: true } : { ok: false, reason: "booking_reminder_changed" };
+      and seat.role='participant' and seat.status='confirmed' and schedule.stage='scheduled'`;
+  if (!meeting?.meeting_at) return refused;
+  const start = meeting.meeting_at.getTime();
+  const current = row.id === bookedReminderKey(kind, row.oppId, row.memberId, meeting.revision)
+    && bookedReminderWindow(kind, now, start);
+  let status: string | undefined;
+  let accepted = false;
+  if (current) {
+    const key = rescheduleUpdateKey(row.oppId, meeting.revision, row.memberId);
+    const changed = meeting.lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;
+    const notices = await tx<{ status: string; sent_at: Date | null }[]>`select receipt.status,receipt.sent_at from network.messages notice
+      join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
+      where notice.app_id=${row.app} and notice.opportunity_id=${row.oppId} and notice.member_id=${row.memberId}
+        and notice.direction='outbound' and ${meeting.revision === 0 ? tx`notice.type='proposal'` : tx`notice.type='scheduling' and notice.id=${changed}`}
+      order by notice.id limit 2 for share of receipt`;
+    if (notices.length === 1) {
+      const notice = notices[0]!;
+      status = notice.status;
+      accepted = notice.sent_at !== null && notice.sent_at.getTime() <= now && /^(accepted|sent|delivered|read)$/.test(status);
+    }
+  }
+  const pending = status !== undefined && (WAITING.includes(status) || ["collected", "send_unknown", "parked_leak_review"].includes(status));
+  switch (queuedReminderClaim(current, accepted, pending)) {
+    case "SendReminder": return { ok: true };
+    case "WaitForBookingNotice": {
+      const cutoff = start - (kind === "day-before-reminder" ? dayBeforeReminderEndMs : 0);
+      return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, cutoff) };
+    }
+    default: return refused;
+  }
 }
 
 type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {

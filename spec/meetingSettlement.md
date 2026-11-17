@@ -33,7 +33,7 @@ pure def lawConfirmedDoesNotRepeat(accepted: bool, bookingDelivered: bool, words
 
 ### A day-before reminder has its own send window
 
-Start at 24 hours before the meeting. The day-before reminder can wait for the member's quiet hours to end before the 12-hour cutoff. Recheck the window, current schedule and accepted seat when a queued reminder is claimed. Check that the member already received the booking details. Aim to send the near-meeting reminder three hours before the meeting, or at the last available tick if the member's window would be closed then. The near reminder uses the period after the day-before cutoff. A job introduction has no booked meeting for the Network to remind people about. The usual contact and content rules apply.
+Start at 24 hours before the meeting. The day-before reminder can wait for the member's quiet hours to end before the 12-hour cutoff. Recheck the window, current schedule and accepted seat when a queued reminder is claimed. Aim to send the near-meeting reminder three hours before the meeting, or at the last available tick if the member's window would be closed then. The near reminder uses the period after the day-before cutoff. A job introduction has no booked meeting for the Network to remind people about. The usual contact and content rules apply.
 
 ```quint
 pure val dayBeforeReminderStartMs = 24 * 3600000
@@ -54,6 +54,27 @@ pure def lawDayBeforeReminderFollowsBooking(accepted: bool, earlySent: bool, rem
 
 pure def lawDayBeforeReminderDoesNotRepeat(accepted: bool, bookingDelivered: bool, remainingMs: int): bool =
   not(dayBeforeReminderDue(accepted, bookingDelivered, true, remainingMs))
+```
+
+### Claim a reminder only after the member received the current booking notice
+
+The reminder claim requires a positive provider or signed gateway receipt for this member's booking notice. A rescheduled meeting requires the notice for its current revision. A pending notice puts the reminder back in the queue with the same key while the window remains open. Refuse a reminder when the notice is absent or refused, the booking or seat is no longer current, or the window closes.
+
+```quint
+type ReminderClaim = SendReminder | WaitForBookingNotice | RefuseReminder
+pure val bookingNoticeRetryMs = 5 * 60000
+
+pure def queuedReminderClaim(bookingCurrent: bool, noticeAccepted: bool, noticePending: bool): ReminderClaim =
+  if (not(bookingCurrent)) RefuseReminder
+  else if (noticeAccepted) SendReminder
+  else if (noticePending) WaitForBookingNotice
+  else RefuseReminder
+
+pure def lawReminderClaimNeedsNotice(bookingCurrent: bool, noticePending: bool): bool =
+  queuedReminderClaim(bookingCurrent, false, noticePending) != SendReminder
+
+pure def lawReminderCannotWaitOnExpiredBooking(noticeAccepted: bool, noticePending: bool): bool =
+  queuedReminderClaim(false, noticeAccepted, noticePending) == RefuseReminder
 ```
 
 ## Story: Check whether a booked participant is still coming
