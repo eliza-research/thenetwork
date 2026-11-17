@@ -11,6 +11,8 @@ export type BookedCancellationClaim = "SendCancellation" | "WaitForCancellationR
 export type SettlementPhase = "BeforeFeedback" | "AwaitingAttendance" | "SettlementComplete";
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export interface MeetingSettlement { phase: SettlementPhase }
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+export type MeetingFeedbackClaim = "SendMeetingFeedback" | "WaitForMeetingBookingReceipt" | "RefuseMeetingFeedback";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
@@ -33,6 +35,8 @@ export const confirmationWindowHours: number = 48;
 export const feedbackDelayHours: number = 3;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const settlementDelayDays: number = 4;
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+export const meetingFeedbackPrefix: string = "meeting-feedback:";
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
@@ -41,6 +45,10 @@ export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 36000
 export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+export const feedbackDelayMs: number = exact_meetingSettlement(feedbackDelayHours * 3600000);
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+export const settlementDelayMs: number = exact_meetingSettlement(settlementDelayDays * 86400000);
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const initial: MeetingSettlement = { phase: "BeforeFeedback" };
 
@@ -242,6 +250,32 @@ export function stepSettlementStaysClosed(before: MeetingSettlement, after: Meet
 //@ pure
 export function sometimesResolvesAttendance(s: MeetingSettlement): boolean {
   return s.phase === "SettlementComplete";
+}
+
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+//@ pure
+export function meetingFeedbackWindow(elapsedMs: number): boolean {
+  return elapsedMs >= feedbackDelayMs && elapsedMs < settlementDelayMs;
+}
+
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+//@ pure
+export function queuedMeetingFeedbackClaim(completeAndOpen: boolean, acceptedSeat: boolean, exactRequest: boolean, elapsedMs: number, receivedBooking: boolean, receiptMayArrive: boolean): MeetingFeedbackClaim {
+  return !(completeAndOpen && acceptedSeat && exactRequest && meetingFeedbackWindow(elapsedMs)) ? "RefuseMeetingFeedback" : (receivedBooking ? "SendMeetingFeedback" : (receiptMayArrive ? "WaitForMeetingBookingReceipt" : "RefuseMeetingFeedback"));
+}
+
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+//@ pure
+export function lawFeedbackClaimNeedsBookingReceipt(completeAndOpen: boolean, acceptedSeat: boolean, exactRequest: boolean, elapsedMs: number, receiptMayArrive: boolean): boolean {
+  //@ ensures \result === true
+  return queuedMeetingFeedbackClaim(completeAndOpen, acceptedSeat, exactRequest, elapsedMs, false, receiptMayArrive) !== "SendMeetingFeedback";
+}
+
+/** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
+//@ pure
+export function lawClosedAttendanceStopsFeedbackClaim(acceptedSeat: boolean, exactRequest: boolean, elapsedMs: number, receivedBooking: boolean, receiptMayArrive: boolean): boolean {
+  //@ ensures \result === true
+  return queuedMeetingFeedbackClaim(false, acceptedSeat, exactRequest, elapsedMs, receivedBooking, receiptMayArrive) === "RefuseMeetingFeedback";
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */

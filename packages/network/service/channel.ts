@@ -11,7 +11,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
@@ -23,7 +23,7 @@ import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
 import { bookingNoticeRosterCurrent, originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
-import { bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetryMs, dayBeforeReminderEndMs, queuedBookingCancellationClaim, queuedReminderClaim } from "../../core/src/generated/meetingSettlement.ts";
+import { bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetryMs, dayBeforeReminderEndMs, meetingFeedbackPrefix, meetingFeedbackWindow, queuedBookingCancellationClaim, queuedMeetingFeedbackClaim, queuedReminderClaim, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
@@ -127,6 +127,18 @@ function receivedBookingNotice(receipt: BookingReceipt, now: number): boolean {
   return bookingNoticeReceived(receipt.status, receipt.sent_at?.getTime() ?? -1, now);
 }
 
+async function currentBookingReceipt(tx: SQL, app: string, oppId: string, memberId: MemberId,
+  revision: number, lane: string | null): Promise<BookingReceipt | undefined> {
+  const key = rescheduleUpdateKey(oppId, revision, memberId);
+  const changed = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;
+  const notices = await tx<BookingReceipt[]>`select receipt.status,receipt.sent_at from network.messages notice
+    join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
+    where notice.app_id=${app} and notice.opportunity_id=${oppId} and notice.member_id=${memberId}
+      and notice.direction='outbound' and ${revision === 0 ? tx`notice.type='proposal'` : tx`notice.type='scheduling' and notice.id=${changed}`}
+    order by notice.id limit 2 for share of receipt`;
+  return notices.length === 1 ? notices[0] : undefined;
+}
+
 async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, memberId: string,
   revision: number, lane: string | null): Promise<BookingReceipt[]> {
   const deliveryPrefix = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:` : "";
@@ -191,22 +203,9 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
   const start = meeting.meeting_at.getTime();
   const current = row.id === bookedReminderKey(kind, row.oppId, row.memberId, meeting.revision)
     && bookedReminderWindow(kind, now, start);
-  let status: string | undefined;
-  let accepted = false;
-  if (current) {
-    const key = rescheduleUpdateKey(row.oppId, meeting.revision, row.memberId);
-    const changed = meeting.lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;
-    const notices = await tx<BookingReceipt[]>`select receipt.status,receipt.sent_at from network.messages notice
-      join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
-      where notice.app_id=${row.app} and notice.opportunity_id=${row.oppId} and notice.member_id=${row.memberId}
-        and notice.direction='outbound' and ${meeting.revision === 0 ? tx`notice.type='proposal'` : tx`notice.type='scheduling' and notice.id=${changed}`}
-      order by notice.id limit 2 for share of receipt`;
-    if (notices.length === 1) {
-      const notice = notices[0]!;
-      status = notice.status;
-      accepted = receivedBookingNotice(notice, now);
-    }
-  }
+  const receipt = current ? await currentBookingReceipt(tx, row.app, row.oppId, row.memberId, meeting.revision, meeting.lane) : undefined;
+  const status = receipt?.status;
+  const accepted = !!receipt && receivedBookingNotice(receipt, now);
   const pending = status !== undefined && (WAITING.includes(status) || ["collected", "send_unknown", "parked_leak_review"].includes(status));
   switch (queuedReminderClaim(current, accepted, pending)) {
     case "SendReminder": return { ok: true };
@@ -214,6 +213,38 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
       const cutoff = start - (kind === "day-before-reminder" ? dayBeforeReminderEndMs : 0);
       return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, cutoff) };
     }
+    default: return refused;
+  }
+}
+
+/** spec/meetingSettlement.md, "Send feedback requests during the open attendance period" */
+async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<ClaimCheck> {
+  const refused = { ok: false, reason: "meeting_feedback_changed" } as const;
+  if (!row.memberId || !row.oppId || row.kind !== "transactional") return refused;
+  const [meeting] = await tx<{ meeting_at: Date | null; revision: number; lane: string | null; open: boolean; accepted: boolean }[]>`select
+      opp.meeting_at,coalesce(schedule."scheduleRevision",0) as revision,schedule.lane,
+      (opp.state='COMPLETED' and schedule.stage='done' and not coalesce(schedule.finalized,false)
+        and not coalesce(schedule."feedbackFrom" ? ${row.memberId},false)) as open,
+      (seat.role='participant' and seat.status='attended') as accepted
+    from network.messages msg
+    join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
+    join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
+    join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
+    join lateral jsonb_to_recordset(saved.state->'opps') as schedule(id text,"scheduleRevision" int,lane text,stage text,
+      finalized boolean,"feedbackFrom" jsonb) on schedule.id=opp.id
+    where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.opportunity_id=${row.oppId}
+      and msg.direction='outbound' and msg.type='feedback_request' and msg.body=${row.text}`;
+  if (!meeting?.meeting_at) return refused;
+  const start = meeting.meeting_at.getTime();
+  const elapsed = now - start;
+  const exact = row.id === meetingFeedbackKey(row.oppId, row.memberId, meeting.revision);
+  const receipt = meeting.open && meeting.accepted && exact && meetingFeedbackWindow(elapsed)
+    ? await currentBookingReceipt(tx, row.app, row.oppId, row.memberId, meeting.revision, meeting.lane) : undefined;
+  switch (queuedMeetingFeedbackClaim(meeting.open, meeting.accepted, exact, elapsed,
+    !!receipt && receivedBookingNotice(receipt, now), !!receipt && bookingNoticeReceiptMayArrive(receipt.status))) {
+    case "SendMeetingFeedback": return { ok: true };
+    case "WaitForMeetingBookingReceipt":
+      return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, start + settlementDelayMs) };
     default: return refused;
   }
 }
@@ -420,7 +451,8 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
       stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
         : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed"
-          : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""), terminalNotice(row) !== undefined)),
+          : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
+            terminalNotice(row) !== undefined || row.id.startsWith(meetingFeedbackPrefix))),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX),
       // A direct text to someone who is not a member of this app (no member on the row, none at the address)
@@ -465,7 +497,7 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix)
-          || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix)) {
+          || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix) || row.id.startsWith(meetingFeedbackPrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         else if (row.oppId) await tx`select saved.id from network.network_state saved
@@ -519,6 +551,7 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith(bookedCancellationPrefix)) return { ok: false, reason: "opportunity_release_changed" };
         const reminder = bookedReminderKind(row.id);
         if (reminder) return bookedReminderAdmission(tx, row, reminder, rt.pg.id, this.o.clock.now());
+        if (row.id.startsWith(meetingFeedbackPrefix)) return meetingFeedbackAdmission(tx, row, rt.pg.id, this.o.clock.now());
         return probeAdmission(tx, row, this.o.clock.now());
       },
       claimed: async (row, tx) => {

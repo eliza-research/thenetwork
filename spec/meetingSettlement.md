@@ -172,6 +172,32 @@ pure def stepSettlementStaysClosed(before: MeetingSettlement, after: MeetingSett
 pure def sometimesResolvesAttendance(s: MeetingSettlement): bool = s.phase == SettlementComplete
 ```
 
+### Send feedback requests during the open attendance period
+
+Completion opens the period when a feedback request can go out. Assign one request per opportunity, schedule revision and participant. Before delivery, verify the exact stored request, the completed opportunity, the participant's accepted seat and receipt of the current booked schedule. The participant must not have answered, and attendance must still be open. If a booking notice already went to a carrier or signed gateway and its result is unresolved, retry the same request while the period remains open. A queued booking notice that never left the service is insufficient. Keep consent, quiet hours and text safety in effect.
+
+```quint
+type MeetingFeedbackClaim = SendMeetingFeedback | WaitForMeetingBookingReceipt | RefuseMeetingFeedback
+pure val meetingFeedbackPrefix = "meeting-feedback:"
+pure val feedbackDelayMs = feedbackDelayHours * 3600000
+pure val settlementDelayMs = settlementDelayDays * 86400000
+
+pure def meetingFeedbackWindow(elapsedMs: int): bool =
+  elapsedMs >= feedbackDelayMs and elapsedMs < settlementDelayMs
+
+pure def queuedMeetingFeedbackClaim(completeAndOpen: bool, acceptedSeat: bool, exactRequest: bool, elapsedMs: int, receivedBooking: bool, receiptMayArrive: bool): MeetingFeedbackClaim =
+  if (not(completeAndOpen and acceptedSeat and exactRequest and meetingFeedbackWindow(elapsedMs))) RefuseMeetingFeedback
+  else if (receivedBooking) SendMeetingFeedback
+  else if (receiptMayArrive) WaitForMeetingBookingReceipt
+  else RefuseMeetingFeedback
+
+pure def lawFeedbackClaimNeedsBookingReceipt(completeAndOpen: bool, acceptedSeat: bool, exactRequest: bool, elapsedMs: int, receiptMayArrive: bool): bool =
+  queuedMeetingFeedbackClaim(completeAndOpen, acceptedSeat, exactRequest, elapsedMs, false, receiptMayArrive) != SendMeetingFeedback
+
+pure def lawClosedAttendanceStopsFeedbackClaim(acceptedSeat: bool, exactRequest: bool, elapsedMs: int, receivedBooking: bool, receiptMayArrive: bool): bool =
+  queuedMeetingFeedbackClaim(false, acceptedSeat, exactRequest, elapsedMs, receivedBooking, receiptMayArrive) == RefuseMeetingFeedback
+```
+
 ### Classify each attendee from the available reports
 
 Only participants with an accepted invitation and a delivered booking count as booked. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. Across pairs and groups, a participant left unaccounted for with no reply gets a reliability no-show when someone who came reported a missing participant.

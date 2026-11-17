@@ -19,8 +19,12 @@ const expiredBookingNotice = "an original booking notice cannot send or replay o
 const cancelAfterNotice = "a cancellation reaches a booked participant who received the details";
 const cancelBeforeNotice = "a cancellation stays private from a booked participant whose details never sent";
 const cancelWaitingForNotice = "a cancellation waits for a pending signed receipt of booking details";
+const feedbackReception = "post-meeting feedback reaches only a participant who received the booking";
+const feedbackWaitingForNotice = "post-meeting feedback waits for a pending signed receipt of booking details";
 
-test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice] as const)("%s", async scenario => {
+test.skipIf(!pgAvailable).each([
+  calendarJourney, expiredBookingNotice, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
+] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
   // spec/calendarInvite.md, "A calendar link follows the booked revision and the current owner"
   const url = await migratedDb("calendar_invite");
@@ -82,7 +86,9 @@ test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice, cancelAft
     const awaiting = world.net.exportState();
     await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: awaiting.members, opps: awaiting.opps }));
     const adapter = rt.adapter as BlooioAdapter;
-    if (scenario === expiredBookingNotice || scenario === cancelBeforeNotice) await adapter.lineSafety("review", "hold the booking notice");
+    if (scenario === expiredBookingNotice || scenario === cancelBeforeNotice || scenario === feedbackReception) {
+      await adapter.lineSafety("review", "hold the booking notice");
+    }
     const confirm = turn("calendar-booking", "yes", phones[1]);
     const bookingReply = await (await send(confirm)).json();
     expect(bookingReply.replies.join(" ")).toContain("You're both in");
@@ -90,6 +96,44 @@ test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice, cancelAft
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
+    if (scenario === feedbackReception || scenario === feedbackWaitingForNotice) {
+      // spec/meetingSettlement.md, "Send feedback requests during the open attendance period"
+      const waiting = scenario === feedbackWaitingForNotice;
+      if (!waiting) expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+      const [firstBooking] = await sql`select receipt.id,receipt.status,receipt.attempts from platform.outbound receipt
+        join network.messages notice on notice.app_id=receipt.app_id and notice.id=receipt.id and notice.member_id=receipt.member_id
+        where notice.opportunity_id=${id} and notice.type='proposal' and notice.member_id=${ids[0]!}`;
+      expect(firstBooking).toMatchObject(waiting ? { status: "accepted", attempts: 1 } : { status: "retry_scheduled", attempts: 0 });
+      clock.set(booked.meetingAt! + 3 * HOUR);
+      await adapter.lineSafety(undefined);
+      await rt.unitOfWork(n => n.tick(clock.now()));
+      expect(await sql`select state from network.opportunities where id=${id}`).toEqual([{ state: "COMPLETED" }]);
+      await rt.deliver();
+      const feedbackState = async () => await sql<{id: string; member_id: string; status: string; attempts: number}[]>`select
+        message.id,message.member_id,receipt.status,receipt.attempts
+        from network.messages message join platform.outbound receipt on receipt.app_id=message.app_id and receipt.id=message.id
+        where message.opportunity_id=${id} and message.type='feedback_request'`;
+      const feedback = await feedbackState();
+      expect(feedback).toEqual(expect.arrayContaining([
+        { id: expect.any(String), member_id: ids[0], ...(waiting ? { status: "accepted", attempts: 1 } : { status: "suppressed_ineligible", attempts: 0 }) },
+        { id: expect.any(String), member_id: ids[1], ...(waiting ? { status: "retry_scheduled", attempts: 0 } : { status: "accepted", attempts: 1 }) },
+      ]));
+      const feedbackKeys = new Set(feedback.map(message => `tn:${message.id}`));
+      const feedbackSends = () => delivered.filter(call => feedbackKeys.has(call.idempotencyKey));
+      expect(feedbackSends()).toEqual([expect.objectContaining({ to: phones[waiting ? 0 : 1],
+        text: expect.stringContaining(waiting ? "Blair" : "Ari") })]);
+      if (waiting) {
+        expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+        clock.advance(5 * MINUTE);
+        await rt.deliver();
+        await rt.deliver();
+        expect((await feedbackState()).map(row => [row.status, row.attempts])).toEqual([["accepted", 1], ["accepted", 1]]);
+        expect(feedbackSends().map(message => message.to)).toEqual(phones);
+      } else {
+        expect(delivered.some(call => call.idempotencyKey === `tn:${firstBooking.id}`)).toBe(false);
+      }
+      return;
+    }
     if (scenario === cancelAfterNotice || scenario === cancelBeforeNotice || scenario === cancelWaitingForNotice) {
       // spec/meetingSettlement.md, "Claim a cancellation only for a member who received booking details"
       const waitsForReceipt = scenario === cancelWaitingForNotice;

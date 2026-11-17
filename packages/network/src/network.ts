@@ -47,7 +47,7 @@ import {
   memberInviteUsesAllowance, memberInviteVouchWeak, memberInviteWithinBurstWindow, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
-  chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
+  chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
@@ -667,6 +667,7 @@ const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupati
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 
 const BOOKED_REMINDER_KINDS = ["day-before-reminder", "near-meeting-reminder", "day-of-checkin"] as const;
+export const meetingFeedbackKey = (oppId: string, memberId: MemberId, revision = 0): string => `${meetingFeedbackPrefix}${oppId}:r${revision}:${memberId}`;
 export type BookedReminderKind = typeof BOOKED_REMINDER_KINDS[number];
 export const replacementProbePrefix = "booked-group-replacement-probe:";
 
@@ -5001,7 +5002,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           const others = going.filter(x => x !== id).map(x => this.member(x).first).join(" and ") || "the group";
           this.send(m, o.plan ? copy.planFeedbackAsk(label) : this.opts.hooks?.checkIn?.(this.hookOpp(o), id, others) ?? copy.feedbackAsk(others), {
             type: "feedback_request", proposalId: o.id, ...(o.plan ? { plan: { planId: o.id, activity: o.plan.activityId } } : {}),
-          }, "feedback", { about: going, hook: { t: "feedback", oppId: o.id } });
+          }, "feedback", { about: going, key: meetingFeedbackKey(o.id, id, o.scheduleRevision), hook: { t: "feedback", oppId: o.id } });
         }
       }
     }
