@@ -35,7 +35,7 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
-import { crewHandoffDue, crewMemberWindowAvailable, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
+import { crewHandoffDue, crewMemberWindowAvailable, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestSearchAllowed, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -4709,13 +4709,19 @@ export class ConsentNetwork implements NetworkUnderTest {
         continue;
       }
       if (openSession) continue;
-      const v = PLAN_VENUES.find(x => x.id === crew.venueId);
-      const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
+      const venue = PLAN_VENUES.find(x => x.id === crew.venueId);
+      const activity = plans.activityById.get(crew.activityId);
+      if (!venue || !activity) continue;
+      const place = { name: venue.name, area: venue.area };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
       if (members.length < this.pcfg.crews.minMembers) continue;
       world ??= this.planWorld(now, true);
       const next = plans.crewSessionPlan(world, { ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
-      if (!next || crew.sessions.includes(next.id) || !members.every(id => this.crewWindowAvailable(this.member(id), next.window, now))) continue;
+      if (!next || crew.sessions.includes(next.id)) continue;
+      // spec/crewOffer.md, "A new recurring session uses a current public venue"
+      const open = plans.venueOpenForSlot(venue, next.window, activity.durationMin, world.cfg.timezones[crew.city] ?? NY);
+      if (!crewSessionVenueAllowed(venue.public, venue.city === crew.city, venue.activities.includes(activity.id), open)
+        || !members.every(id => this.crewWindowAvailable(this.member(id), next.window, now))) continue;
       const plan = this.withReach(next, now);
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;

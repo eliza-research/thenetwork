@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY, type Facet, type MemberId } from "@thenetwork/core";
+import { DAY, fromLocal, type Facet, type MemberId } from "@thenetwork/core";
 import { FRIENDS_PLANS, friendsPack, localEmbed, plans, resolveConfig, World, type EngineInput } from "@thenetwork/engine";
 import { CapitalLedger, ledgerReader } from "../src/capital.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
@@ -34,6 +34,38 @@ test("friends: a crew session is pair-gated on Friend profiles, and a block betw
 
   const blocked = new World({ ...snapshot, edges: [{ from: "b", to: "c", type: "blocked", strength: 1, explicit: true, createdAt: START - DAY }] }, cfg, localEmbed, friendsPack);
   expect(plans.crewSessionPlan(blocked, crew, START, place)).toBeNull();
+});
+
+// spec/crewOffer.md, "A new recurring session uses a current public venue"
+test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew checks its recorded venue before review: %s", async availability => {
+  const activity = "coffee_crawl";
+  const venue = PLAN_VENUES.find(v => v.activities.includes(activity));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const ids = ["a", "b", "c"];
+  const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
+    interests: ["coffee", "climbing"],
+  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard(...ids);
+  const start = availability === "closes_during_session" ? fromLocal(2026, 10, 10, venue.hours.weekend[1] - 1, "America/New_York") : Date.UTC(2026, 9, 10, 16);
+  const crew: plans.Crew = { id: "crew_availability", activityId: activity,
+    venueId: availability === "removed" ? "removed-public-venue" : venue.id, city: "nyc", members: ids,
+    cadenceDays: 7, hostRotation: ids, sessions: [], handedOff: false, slot: { start } };
+  const state = w.net.exportState();
+  state.plans!.crews.push(crew);
+  w.net.importState(state);
+  w.clock.advance(DAY);
+  await w.net.tick(w.clock.now());
+
+  const result = w.net.exportState();
+  const session = result.opps.find(o => o.plan?.crewId === crew.id);
+  const retained = result.plans?.crews.find(c => c.id === crew.id);
+  if (availability === "open") expect(session).toMatchObject({ stage: "review", participants: ids, plan: { venueId: venue.id, quorum: 3 } });
+  else expect(session).toBeUndefined();
+  expect(retained?.members).toEqual(ids);
+  expect(retained?.sessions).toHaveLength(availability === "open" ? 1 : 0);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });
 
 // spec/capitalLevers.md, "Earned organizing reach reserves the extra slots for low exposure"

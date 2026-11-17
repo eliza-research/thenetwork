@@ -140,6 +140,19 @@ export function crewMemberWindowAvailable(present: boolean, noNearbyBooking: boo
   return present && noNearbyBooking && statedAllows;
 }
 
+/** Story: Meet in a new recurring session / A new recurring session uses a current public venue (spec/crewOffer.md) */
+//@ pure
+export function crewSessionVenueAllowed(isPublic: boolean, sameCity: boolean, supportsActivity: boolean, fullWindowOpen: boolean): boolean {
+  return isPublic && sameCity && supportsActivity && fullWindowOpen;
+}
+
+/** Story: Meet in a new recurring session / A new recurring session uses a current public venue (spec/crewOffer.md) */
+//@ pure
+export function lawCrewCannotUseAClosingVenue(isPublic: boolean, sameCity: boolean, supportsActivity: boolean): boolean {
+  //@ ensures \result === true
+  return !crewSessionVenueAllowed(isPublic, sameCity, supportsActivity, false);
+}
+
 /** Story: Take over the recurring crew / Handoff counts booked sessions that reached feedback (spec/crewOffer.md) */
 //@ pure
 export function crewHandoffDue(openSession: boolean, completedCount: number, requiredCount: number): boolean {

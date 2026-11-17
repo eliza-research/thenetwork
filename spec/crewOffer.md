@@ -99,6 +99,18 @@ pure def crewMemberWindowAvailable(present: bool, noNearbyBooking: bool, statedA
   present and noNearbyBooking and statedAllows
 ```
 
+### A new recurring session uses a current public venue
+
+Resolve the crew's recorded venue in its city for the same activity before review. The venue must still be public and open for the full activity window. A missing venue or a closing time during the session prevents the proposal. Leave the occurrence uncounted and keep the crew available for a later planning pass. Existing pair, review and consent checks still apply.
+
+```quint
+pure def crewSessionVenueAllowed(isPublic: bool, sameCity: bool, supportsActivity: bool, fullWindowOpen: bool): bool =
+  isPublic and sameCity and supportsActivity and fullWindowOpen
+
+pure def lawCrewCannotUseAClosingVenue(isPublic: bool, sameCity: bool, supportsActivity: bool): bool =
+  not(crewSessionVenueAllowed(isPublic, sameCity, supportsActivity, false))
+```
+
 ## Story: Take over the recurring crew
 
 > As a crew member, I want the Network to organize the first sessions before the crew takes over.
