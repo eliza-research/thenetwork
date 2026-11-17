@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createSecretKey, hkdfSync, randomBytes } from "node:crypto";
 import {
-  expectedInviteChallengeCurrent, expectedInviteMayAccept, expectedInviteMayDecline, expectedInviteMayDispatch, expectedInviteMayStage,
+  expectedInviteChallengeCanReplay, expectedInviteChallengeCurrent, expectedInviteMayAccept, expectedInviteMayDecline,
+  expectedInviteMayDispatch, expectedInviteMayStage,
 } from "../../core/src/generated/expectedMemberInvitation.ts";
 import { memberInviteDraftMs, memberInviteWindowMs } from "../../core/src/generated/memberInvitation.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
@@ -126,6 +127,27 @@ export class ExpectedMemberInvitations {
         expires_at=excluded.expires_at,nonce=excluded.nonce,ciphertext=excluded.ciphertext,auth_tag=excluded.auth_tag
         where expected_member_invitations.queued_at is null returning token_hash`;
     if (changed.length === 1) return { code, expiresAt };
+  }
+
+  async challengeCanReplay(tx: SQL, input: InviteOwner & PrivateRecipient & { code: string; transportAvailable: boolean }): Promise<boolean> {
+    if (!input.transportAvailable || !CHALLENGE.test(input.code) || !isMemberInvitationLink(this.appInfo(input.app), input.link)) return false;
+    const tokenHash = memberInvitationHash(this.secret, input.app, input.link.slice(-43));
+    if (!tokenHash) return false;
+    const key = { app: input.app, inviterMemberId: input.inviterMemberId, tokenHash };
+    const hash = this.challengeHash(key, input.code);
+    const now = this.now();
+    const at = new Date(now);
+    const [pending] = await tx<PendingRow[]>`select pending.staged_at,pending.expires_at,pending.queued_at,
+      pending.nonce,pending.ciphertext,pending.auth_tag
+      from platform.expected_member_invitations pending join platform.member_invitations invite
+        on invite.app_id=pending.app_id and invite.token_hash=pending.token_hash
+      where pending.app_id=${key.app} and pending.token_hash=${tokenHash} and pending.challenge_hash=${hash}
+        and invite.inviter_member_id=${key.inviterMemberId} and invite.expected_recipient_hash is null and invite.redeemed_at is null
+        and invite.issued_at<=${at} and invite.expires_at>${at}`;
+    if (!pending) return false;
+    const recipient = this.open(key, hash, pending);
+    return expectedInviteChallengeCanReplay(input.transportAvailable, pending.queued_at === null,
+      recipient?.to === input.to && recipient.link === input.link, pending.staged_at.getTime(), now, pending.expires_at.getTime());
   }
 
   async confirm(

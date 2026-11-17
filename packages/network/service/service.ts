@@ -79,8 +79,13 @@ import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
 import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
-import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
+import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
+import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
+import { calendarPreferenceCommand } from "../../core/src/calendar-free-busy.ts";
+import { calendarOwnerPath } from "../../core/src/generated/calendarFreeBusy.ts";
+import type { CalendarOwnerRequest, CalendarSchedulingOwner } from "../../core/src/svc/calendar-scheduling.ts";
+import { calendarSchedulingBridgeFromEnv, type CalendarSchedulingBridge } from "./calendar-scheduling.ts";
 import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHelpDraft, type BoundedHomeHelpCommand } from "./bounded-home-help-intake.ts";
 import { boundedHomeHelpSenderCurrent, createBoundedHomeHelpAuthority } from "./bounded-home-help-authority.ts";
 import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit } from "./bounded-home-help-staff.ts";
@@ -97,7 +102,7 @@ import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
-import { RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, joinProfileText, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
@@ -207,6 +212,8 @@ export interface NetworkSpec { id: string; matchingEnabled?: boolean }
 export interface ServiceOptions {
   /** Optional trusted source-consent check; imports and promotions default to denied. */
   profileSuggestionIdentity?: SuggestionIdentityResolver;
+  /** Test or host transport for the separately configured calendar authority. */
+  calendarFreeBusyFetch?: typeof fetch;
   profileSuggestionAuthorization?: SuggestionAuthorization;
   profileSuggestionRevokedOwner?: SuggestionRevokedOwnerResolver;
   profileSuggestionWithdrawalOwner?: SuggestionWithdrawalOwnerResolver;
@@ -388,6 +395,7 @@ export class NetworkService implements RuntimeHost {
   private readonly relayClassifier?: RelayClassifierHook;
 
   private readonly routePolicy: NetworkRoutePolicy | undefined;
+  private readonly calendarScheduling?: CalendarSchedulingBridge;
 
   constructor(o: ServiceOptions) {
     this.relayClassifier = o.relayClassifier;
@@ -397,6 +405,7 @@ export class NetworkService implements RuntimeHost {
     this.log = o.log ?? console.log;
     this.env = o.env ?? process.env;
     this.routePolicy = networkRoutePolicy(this.env);
+    this.calendarScheduling = this.routePolicy ? undefined : calendarSchedulingBridgeFromEnv(this.env, () => this.clock.now(), o.calendarFreeBusyFetch);
     this.secret = o.webhookSecret;
     this.consoleToken = o.consoleToken || undefined;
     this.secrets = o.webhookSecrets ?? {};
@@ -419,6 +428,9 @@ export class NetworkService implements RuntimeHost {
     if (turnSecret && [...this.tokens.keys(), ...(this.consoleToken ? [this.consoleToken] : [])].some(t => safeEqual(t, turnSecret))) {
       throw new Error("SERVICE_TURN_SECRET must differ from NETWORK_SERVICE_CONSOLE_TOKEN and every NETWORK_SERVICE_TOKENS token");
     }
+    const calendarSecret = this.env.NETWORK_CALENDAR_FREE_BUSY_SECRET;
+    if (this.calendarScheduling && calendarSecret && [...this.tokens.keys(), ...(this.consoleToken ? [this.consoleToken] : [])].some(t => safeEqual(t, calendarSecret)))
+      throw new Error("NETWORK_CALENDAR_FREE_BUSY_SECRET must differ from console and staff tokens");
     const specs = o.networks?.length ? o.networks : [{ id: o.id ?? "ntwrk:nyc" }];
     // Each network's tick holds one connection for its advisory lock and needs more inside it: size the pool from the network count.
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });
@@ -455,7 +467,7 @@ export class NetworkService implements RuntimeHost {
       // every home that no network of the app serves.
       const mine = ids.filter(x => x.split(":")[0] === app);
       const cities = CONVERSATION_CITIES.filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
-      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, adapter: o.adapter }));
+      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
     this.photos = new PhotoService({
@@ -641,7 +653,14 @@ export class NetworkService implements RuntimeHost {
     return `${name} invited you to ${app.domain}, an app from The Network that helps people connect. Join if you want.\n${link}\nReply DECLINE INVITE or STOP to opt out.`;
   }
 
+  private expectedInvitationCarrier(rt: NetworkRuntime): BlooioAdapter | undefined {
+    const adapter = rt.adapter;
+    // Cloud requires an existing active account for this phone. This path only contacts new recipients.
+    return adapter instanceof BlooioAdapter && expectedInviteTransportAllows(adapter.name === "blooio", adapter.live) ? adapter : undefined;
+  }
+
   async admitExpectedInvitation(tx: SQL, rt: NetworkRuntime, row: {id: string; to: string; text: string}): Promise<boolean> {
+    if (!this.expectedInvitationCarrier(rt)) return false;
     const pending = await this.expectedInvitations.currentDelivery(tx, {app: rt.app.id, id: row.id, to: row.to, body: row.text});
     return !!pending && await this.invitationOwner(tx, rt.app, pending.inviterMemberId)
       && await this.eligibleExpectedInviteRecipient(tx, rt.app.id, row.to);
@@ -733,6 +752,15 @@ export class NetworkService implements RuntimeHost {
     const [row] = await this.runtimeFor(app)?.scoped(tx => tx`select home_city from network.members where app_id=${app} and id=${memberId} and account_status not in ('invited','removed')`) ?? [];
     return row ? this.runtimeForHome(app, row.home_city) : undefined;
   }
+  private async calendarSchedulingOwner(request: CalendarOwnerRequest): Promise<CalendarSchedulingOwner | undefined> {
+    const app = this.apps[request.app];
+    if (!app) return;
+    const binding = await this.accounts.activeMembership(app, { e164: request.e164, personId: null });
+    if (!binding) return;
+    const rt = await this.runtimeOfMember(request.app, binding.membership.memberId);
+    return rt?.calendarSchedulingOwner(request.e164, binding.membership.memberId);
+  }
+
   private copyOf(app: AppInfo): Copy {
     if (app.id === "ntwrk") return ntwrkCopy;
     let c = this.copies.get(app.id);
@@ -1923,7 +1951,8 @@ export class NetworkService implements RuntimeHost {
         return rt.unit.memberInvitation.status === "issued" ? "member_invitation" : "member_invitation_review";
       }
       return keyword || systemReply ? "handled" as const : disposition;
-    });
+    }, !fromAssistant && !kw && !calendarPreferenceCommand(ev.text) && this.inboundTurn()?.memberId === memberId
+      ? { kind: "member", memberId, reschedule: !!parseRescheduleCommand(ev.text) } : undefined);
   }
 
   private async cofounderIntentOwner(tx: SQL, rt: NetworkRuntime, memberId: MemberId, e164: string): Promise<boolean> {
@@ -2012,33 +2041,43 @@ export class NetworkService implements RuntimeHost {
     command: MemberInviteDeliveryCommand): Promise<void> {
     const app = rt.app.id;
     if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
+    const adapter = this.expectedInvitationCarrier(rt);
     let reply = memberInviteDeliveryReply("invalid");
-    if (command.kind === "stage") {
+    if (!adapter && (command.kind === "stage" || command.kind === "confirm")) {
+      reply = memberInviteDeliveryReply("forwarding");
+    } else if (command.kind === "stage") {
       const hash = isMemberInvitationLink(rt.app, command.link) && memberInvitationHash(this.hashKey, app, command.link.slice(-43));
       const draft = hash && command.e164 !== sender && await this.expectedInvitations.stage(tx, {
         app, inviterMemberId: memberId, tokenHash: hash, to: command.e164, link: command.link,
       });
       reply = draft ? memberInviteDeliveryPrompt(draft.code) : memberInviteDeliveryReply("unavailable");
-    }
-    if (command.kind === "confirm") {
-      const adapter = rt.adapter;
-      // The Cloud delivery owner requires a pre-existing Cloud account for proactive delivery.
-      if (adapter instanceof BlooioAdapter && adapter.name === "blooio" && adapter.live) {
-        let body: string | undefined;
-        await this.expectedInvitations.confirm(tx, {app, inviterMemberId: memberId, code: command.reference}, async (draftTx, pending) => {
-          if (pending.to === sender || !await this.eligibleExpectedInviteRecipient(draftTx, app, pending.to)) return false;
-          body = await this.expectedInvitationText(draftTx, rt.app, memberId, pending.link);
-          return body !== undefined;
-        }, async (draftTx, pending) => {
-          if (!body) throw new Error("Expected invitation copy is unavailable");
-          await adapter.queue.enqueue(draftTx, [{id: pending.id, to: pending.to, kind: "transactional", text: body, city: rt.city}]);
-          return body;
-        });
-      }
+    } else if (command.kind === "confirm" && adapter) {
+      let body: string | undefined;
+      await this.expectedInvitations.confirm(tx, {app, inviterMemberId: memberId, code: command.reference}, async (draftTx, pending) => {
+        if (pending.to === sender || !await this.eligibleExpectedInviteRecipient(draftTx, app, pending.to)) return false;
+        body = await this.expectedInvitationText(draftTx, rt.app, memberId, pending.link);
+        return body !== undefined;
+      }, async (draftTx, pending) => {
+        if (!body) throw new Error("Expected invitation copy is unavailable");
+        await adapter.queue.enqueue(draftTx, [{id: pending.id, to: pending.to, kind: "transactional", text: body, city: rt.city}]);
+        return body;
+      });
       reply = memberInviteDeliveryReply("queued");
     }
     rt.unit.atomicInvitationDeliveryReply = true;
     rt.collectedMemberReply(memberId, `invite-vouch:${messageId}`, reply, "member_invitation_delivery");
+  }
+
+  private async expectedInvitationReplyCurrent(tx: SQL, rt: NetworkRuntime, memberId: MemberId, text: string, replies: string[]): Promise<boolean> {
+    const command = memberInviteDeliveryCommand(text);
+    if (command?.kind !== "stage") return true;
+    const [body] = replies;
+    if (replies.length !== 1 || !body) return false;
+    if (body === memberInviteDeliveryReply("forwarding") || body === memberInviteDeliveryReply("unavailable")) return true;
+    const code = memberInviteDeliveryPromptCode(body);
+    return !!code && await this.expectedInvitations.challengeCanReplay(tx, {
+      app: rt.app.id, inviterMemberId: memberId, link: command.link, to: command.e164, code, transportAvailable: !!this.expectedInvitationCarrier(rt),
+    });
   }
 
   private async replyToInvitationReview(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string, id: string): Promise<void> {
@@ -2364,7 +2403,9 @@ export class NetworkService implements RuntimeHost {
   private async staffAction(rt: NetworkRuntime, user: StaffUser, action: string, target: { type: NonNullable<AuditEntry["targetType"]>; id: string }, detail: Row, fn: (n: NetworkRuntime["net"]) => ActionResult): Promise<ActionResult> {
     const base = { actor: user.id, roles: user.roles, action, targetType: target.type, targetId: target.id, mode: "real" as const, app: rt.app.id };
     await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { ...detail, network: rt.id, phase: "requested" } });
-    const r = await rt.unitOfWork(fn);
+    const calendar = action === "review" && target.type === "opportunity" && (detail.decision === "approve" || detail.decision === "edit")
+      ? { kind: "review" as const, opportunityId: target.id } : undefined;
+    const r = await rt.unitOfWork(fn, calendar);
     await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
       .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
@@ -3085,6 +3126,7 @@ export class NetworkService implements RuntimeHost {
         const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
         const current = rt && memberId && await rt.scoped(async tx => {
           if (!await this.invitationOwner(tx, rt.app, memberId, input.from)) return false;
+          if (handled.reason === "member_invitation_delivery") return this.expectedInvitationReplyCurrent(tx, rt, memberId, input.text, handled.replies);
           if (handled.reason !== "member_invitation_review") return true;
           const body = handled.replies[0];
           const reference = body?.match(/ CHECK INVITE (mir_[0-9a-f]{32})\.$/)?.[1];
@@ -3178,6 +3220,7 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if (url.pathname === RELAY_PHOTO_RESOLVE_PATH) return this.resolveRelayPhoto(req);
+    if (url.pathname === calendarOwnerPath && this.calendarScheduling) return this.calendarScheduling.ownerProof(req, input => this.calendarSchedulingOwner(input));
     if (url.pathname === LEARNING_CONSENT_CONTEXT_PATH) return learningConsentContextEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy }, req);
     if (url.pathname === PROFILE_REVIEW_WITHDRAWAL_PATH) {
       const resolver = this.suggestionWithdrawalOwner;

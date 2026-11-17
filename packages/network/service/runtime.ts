@@ -19,6 +19,10 @@
 //    SECURITY DEFINER function that returns ids only.
 import { DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
+import type { CalendarSchedulingObservation, CalendarSchedulingOwner } from "../../core/src/svc/calendar-scheduling.ts";
+import { schedulingCalendarMembers, type CalendarSchedulingBridge, type CalendarSchedulingTarget } from "./calendar-scheduling.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
@@ -37,7 +41,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, replacementProbeKey, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { ConsentNetwork, presentInNyc, relayDispatchCheck, replacementProbeKey, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
@@ -158,6 +162,7 @@ export interface RuntimeOptions {
   /** platform.networks.matching_enabled: false keeps matching off whatever the stored switch says. */
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
+  calendarScheduling?: CalendarSchedulingBridge;
   adapter?: ChannelAdapter | ((net: ConsentNetwork, rt: NetworkRuntime) => ChannelAdapter);
 }
 
@@ -176,6 +181,8 @@ export class NetworkRuntime {
   matchingAllowed: boolean;
   /** This app's engine pack, its engine config and its hooks (packs.ts). */
   readonly wiring: AppWiring;
+  private readonly calendarScheduling?: CalendarSchedulingBridge;
+  private readonly calendarViews = new AsyncLocalStorage<ReadonlyMap<MemberId, CalendarSchedulingObservation>>();
   private snap?: WorldSnapshot;
   private joinedInviteeNames = new Map<string, string>();
   private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
@@ -205,12 +212,14 @@ export class NetworkRuntime {
     this.pg = new PgStore(host.sql, o.id);
     this.store = this.serviceStore();
     this.wiring = appWiring(o.app.id);
+    this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
     const w = this.wiring;
     this.net = new ConsentNetwork({
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
+      ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
       engine: { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine },
       app: o.app, review: "human", store: this.store,
       onEngineRun: (log, proposals, at) => {
@@ -1064,10 +1073,56 @@ export class NetworkRuntime {
     });
   }
 
+  private async currentCalendarOwner(tx: SQL, e164: string, memberId: MemberId, localOptIn: boolean): Promise<CalendarSchedulingOwner | undefined> {
+    if (!localOptIn) return;
+    const accounts = this.host.accountsFor?.(tx) ?? this.host.accounts;
+    const binding = await accounts?.activeMembership(this.app, { e164, personId: null });
+    if (!binding || binding.membership.memberId !== memberId) return;
+    const [member] = await tx`select id,prefs,participation_state,participation_window from network.members where app_id=${this.app.id} and id=${memberId}
+      and person_id=${binding.person.id} and account_status='active' and not opted_out
+      and (select count(*) from platform.phone_identities phone where phone.person_id=${binding.person.id})=1`;
+    const adult = canBeMatched(await accounts!.lowestAge(e164, binding.person));
+    const exact = !!member && effectiveParticipation(member as Parameters<typeof effectiveParticipation>[0], this.clock.now()).state !== "paused";
+    if (calendarBridgeOwnerAllowed(adult, localOptIn, exact)) return { app: this.app.id, personId: binding.person.id, memberId };
+  }
+
+  async calendarSchedulingOwner(e164: string, memberId: MemberId): Promise<CalendarSchedulingOwner | undefined> {
+    const state = await this.pg.load();
+    return this.scoped(tx => this.currentCalendarOwner(tx, e164, memberId, storedCalendarOwnerOptedIn(state, memberId)));
+  }
+
+  private async withSchedulingCalendar<T>(target: CalendarSchedulingTarget | undefined, operation: () => Promise<T>): Promise<T> {
+    const bridge = this.calendarScheduling;
+    if (!bridge || !target) return operation();
+    const view = new Map<MemberId, CalendarSchedulingObservation>();
+    try {
+      const state = await this.pg.load();
+      const ids = state ? schedulingCalendarMembers(state, target, this.clock.now()).slice(0, 12) : [];
+      const owners = ids.length ? await this.scoped(async tx => {
+        const rows = await tx<{ member_id: string; e164: string }[]>`select m.id as member_id, ph.e164 from network.members m
+          join platform.phone_identities ph on ph.person_id=m.person_id and ph.hold is null
+          where m.app_id=${this.app.id} and m.id in ${tx(ids)} order by m.id,ph.e164`;
+        const canonical: CalendarSchedulingOwner[] = [];
+        for (const id of ids) {
+          const phones = rows.filter(row => row.member_id === id);
+          if (phones.length !== 1) continue;
+          const owner = await this.currentCalendarOwner(tx, phones[0]!.e164, id, true);
+          if (owner) canonical.push(owner);
+        }
+        return canonical;
+      }) : [];
+      await Promise.all(owners.map(async owner => {
+        const current = await bridge.load(owner);
+        if (current) view.set(owner.memberId, current);
+      }));
+    } catch { /* No valid calendar authority is available for this scheduling unit. */ view.clear(); }
+    return this.calendarViews.run(view, operation);
+  }
+
   /** One tick under the lock (skipped when another holder has it), then delivery. */
   async tick(): Promise<boolean> {
     const now = this.clock.now();
-    const ran = await runTick(this.net, this.store, now);
+    const ran = await this.withSchedulingCalendar({ kind: "tick" }, () => runTick(this.net, this.store, this.clock.now()));
     this.lastTick = { at: now, ran };
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
@@ -1078,8 +1133,8 @@ export class NetworkRuntime {
   }
 
   /** A unit that waits for the lock (an inbound message or a staff action), then delivery. */
-  async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T): Promise<T> {
-    const out = await runStored(this.net, this.store, fn);
+  async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T, scheduling?: CalendarSchedulingTarget): Promise<T> {
+    const out = await this.withSchedulingCalendar(scheduling, () => runStored(this.net, this.store, fn));
     await this.deliver();
     return out;
   }

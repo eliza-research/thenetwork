@@ -286,7 +286,8 @@ the link.
 
 The service-send path needs a carrier adapter that admits first contact.
 Eliza Cloud currently requires a Cloud account before it admits a proactive
-delivery. Keep the original link available for forwarding on that adapter.
+delivery. On that adapter or while delivery is disabled, the service returns
+the forwarding option without saving a draft or asking for a confirmation.
 
 The existing outbound queue applies consent, quiet hours, line limits and the
 leak check. A sent invitation names the inviter and gives the recipient

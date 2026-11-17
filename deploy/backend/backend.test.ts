@@ -11,6 +11,7 @@ import { migrate } from "../../packages/observatory/db/migrate.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
+import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
 import {
   BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
@@ -260,7 +261,7 @@ describe("routing", () => {
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
     for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
       "/internal/profile-suggestions/preview", "/internal/profile-suggestions/decide", "/internal/profile-suggestions/delete", "/internal/profile-suggestions/collect", "/internal/profile-suggestions/consent-context",
-      PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH]) {
+      PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath]) {
       const r = await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
       expect([p, r.status]).toEqual([p, 200]);
       expect(calls.at(-1)).toMatchObject({ kind: "staff", path: p });
@@ -269,6 +270,10 @@ describe("routing", () => {
     // The relay action's cap is 16 KiB (relay-endpoint.ts RELAY_MAX_BODY_BYTES): a larger declared body never reaches the service.
     const big = await b.publicFetch(new Request("http://api.example.test/internal/relay", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }));
     expect(big.status).toBe(413);
+    const oversizedCalendar = await b.publicFetch(new Request(`http://api.example.test${calendarOwnerPath}`, {
+      method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) },
+    }));
+    expect(oversizedCalendar.status).toBe(413);
     expect(calls.length).toBe(n);
     // The same size is fine on the turn route (256 KiB).
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);

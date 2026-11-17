@@ -30,6 +30,7 @@ export function memberInviteDeliveryCommand(text: string): MemberInviteDeliveryC
 }
 
 const reply = {
+  forwarding: "I can’t text a new invitee from this line. You can forward your invitation link yourself.",
   queued: "I've recorded your confirmation. An invitation gets at most one text.",
   unavailable: "I couldn't find a current invitation to send. You can ask me for an invitation to forward.",
   invalid: "Use SEND INVITE <your forwarding link> TO <their phone number>, or copy the exact confirmation command from my message.",
@@ -44,4 +45,10 @@ export function memberInviteDeliveryReply(outcome: keyof typeof reply): string {
 export function memberInviteDeliveryPrompt(reference: string): string {
   if (!REFERENCE.test(reference)) return reply.unavailable;
   return `If they are expecting one invitation text from me, reply CONFIRM EXPECTED INVITE ${reference}. You can also forward your link yourself.`;
+}
+
+/** A stale private prompt must never restore a draft just because it appears in a signed receipt. */
+export function memberInviteDeliveryPromptCode(body: string): string | undefined {
+  const reference = /\breply CONFIRM EXPECTED INVITE (mit_[a-p]{32})\./u.exec(body)?.[1];
+  return reference && body === memberInviteDeliveryPrompt(reference) ? reference : undefined;
 }

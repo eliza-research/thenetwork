@@ -10,6 +10,12 @@ export const calendarCoverageMaxMs: number = exact_calendarFreeBusy(8 * 86400000
 export const calendarBusyIntervalLimit: number = 256;
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 export const calendarSchedulingPurpose: string = "network-scheduling-free-busy-v1";
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+export const calendarOwnerPath: string = "/internal/calendar-scheduling-owner";
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+export const calendarPreloadPath: string = "/api/internal/network/calendar-scheduling";
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+export const calendarAuthorityLifetimeMs: number = exact_calendarFreeBusy(30 * 1000);
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 export const calendarSource: string = "google_calendar";
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
@@ -69,6 +75,31 @@ export function calendarSignal(valid: boolean, overlapsBusy: boolean, completeCo
 export function lawCalendarIncompleteCoverageIsNeverFree(valid: boolean, overlapsBusy: boolean): boolean {
   //@ ensures \result === true
   return calendarSignal(valid, overlapsBusy, false) !== "CalendarFree";
+}
+
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+//@ pure
+export function calendarBridgeProofCurrent(signed: boolean, exactRequest: boolean, exactOwner: boolean, issuedAt: number, expiresAt: number, now: number): boolean {
+  return signed && exactRequest && exactOwner && issuedAt >= 0 && issuedAt <= now && now < expiresAt && exact_calendarFreeBusy(expiresAt - issuedAt) <= calendarAuthorityLifetimeMs;
+}
+
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+//@ pure
+export function calendarBridgeOwnerAllowed(currentAdult: boolean, localOptIn: boolean, exactCanonicalMember: boolean): boolean {
+  return currentAdult && localOptIn && exactCanonicalMember;
+}
+
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+//@ pure
+export function calendarPreferenceMayApply(incomingAt: number, previousAt: number, requestedOn: boolean, previouslyEnabled: boolean): boolean {
+  return incomingAt >= 0 && (incomingAt > previousAt || (incomingAt === previousAt && !requestedOn && previouslyEnabled));
+}
+
+/** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
+//@ pure
+export function lawCalendarBridgeProofNeedsExactOwner(signed: boolean, exactRequest: boolean, issuedAt: number, expiresAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !calendarBridgeProofCurrent(signed, exactRequest, false, issuedAt, expiresAt, now);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

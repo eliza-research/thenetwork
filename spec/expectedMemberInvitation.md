@@ -17,7 +17,13 @@ confirmation that this exact recipient expects the invitation. The member
 must vouch for someone else. Use a private confirmation that expires in
 fifteen minutes. The member must already hold their current app's issued
 forwarding link. That link has passed ordinary vouch review and used its
-allowance. Check current recipient eligibility and suppression. A recipient
+allowance. Stage and confirm a private draft only while the configured
+carrier accepts first contact and live delivery is approved. If the carrier
+cannot send, give the inviter the forwarding option without storing the
+recipient or asking for confirmation. A prior prompt can be replayed only
+for its current exact owner, link, recipient and unconfirmed draft. Its
+expiry and the same carrier checks still apply. Check current recipient
+eligibility and suppression at confirmation. A recipient
 gets at most one service invitation in the rolling invitation window, even
 across apps. Commit the delivery key and recipient binding together with
 the existing invitation under the same concurrency controls.
@@ -64,6 +70,17 @@ pure def expectedInviteLive(now: int, expiresAt: int): bool = now >= 0 and now <
 
 pure def expectedInviteChallengeCurrent(issuedAt: int, now: int): bool =
   MemberInvite::memberInviteDraftCurrent(now - issuedAt)
+
+pure def expectedInviteTransportAllows(carrierAcceptsFirstContact: bool, liveApproved: bool): bool =
+  carrierAcceptsFirstContact and liveApproved
+
+pure def expectedInviteChallengeCanReplay(transportAvailable: bool, awaitingConfirmation: bool,
+  exactDraft: bool, issuedAt: int, now: int, expiresAt: int): bool =
+  transportAvailable and awaitingConfirmation and exactDraft and
+    expectedInviteChallengeCurrent(issuedAt, now) and expectedInviteLive(now, expiresAt)
+
+pure def lawUnavailableTransportCannotReplay(approvalPending: bool, exactDraft: bool, issuedAt: int, now: int, expiresAt: int): bool =
+  not(expectedInviteChallengeCanReplay(false, approvalPending, exactDraft, issuedAt, now, expiresAt))
 
 pure def expectedInviteMayStage(request: ExpectedInviteRequestFacts): bool =
   request.direct and request.confirmedExpected and request.exactTarget and request.distinctRecipient and

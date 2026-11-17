@@ -97,3 +97,9 @@ export function calendarAvailability(evidence: CalendarAvailabilityEvidence | un
     case "CalendarUnknown": return "unknown";
   }
 }
+
+/** Only the member's exact scheduling preference command changes local consent. */
+export function calendarPreferenceCommand(body: string): "enabled" | "disabled" | undefined {
+  const command = /^\W*(?:yes,?\s+)?calendar(\s+off)?\W*$/i.exec(body);
+  return command ? command[1] ? "disabled" : "enabled" : undefined;
+}

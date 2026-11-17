@@ -55,3 +55,36 @@ pure def calendarSignal(valid: bool, overlapsBusy: bool, completeCoverage: bool)
 pure def lawCalendarIncompleteCoverageIsNeverFree(valid: bool, overlapsBusy: bool): bool =
   calendarSignal(valid, overlapsBusy, false) != CalendarFree
 ```
+
+
+### Exchange fresh proofs for one member of one app
+
+The calendar service first proves the owner with a current verified Cloud account and its selected connection. Its signed owner request binds those identifiers to the member's verified phone and exact app. The Network returns a short-lived proof only when the same adult membership still allows calendars. Its reply contains the opaque person and member IDs, bound to the full request.
+
+Before reviewed scheduling work, the Network asks for one current scoped observation using only opaque person and member IDs, purpose, nonce and coverage. Both directions require the dedicated calendar service signature. Each successful response is bound to its request and expires within thirty seconds. The authority rechecks selected connection and scheduling consent before responding. HTTP errors, a wrong person, stale or out-of-window intervals, and revocation leave the unit without calendar evidence. The Network reloads its own consent before use and drops the in-memory observation at the end of the scheduling unit. A delayed enable cannot undo a newer disable. At the same event time, disable wins.
+
+```quint
+pure val calendarOwnerPath = "/internal/calendar-scheduling-owner"
+pure val calendarPreloadPath = "/api/internal/network/calendar-scheduling"
+pure val calendarAuthorityLifetimeMs = 30 * 1000
+
+pure def calendarBridgeProofCurrent(signed: bool, exactRequest: bool, exactOwner: bool, issuedAt: int, expiresAt: int, now: int): bool =
+  signed and exactRequest and exactOwner and issuedAt >= 0 and issuedAt <= now and now < expiresAt and expiresAt - issuedAt <= calendarAuthorityLifetimeMs
+
+pure def calendarBridgeOwnerAllowed(currentAdult: bool, localOptIn: bool, exactCanonicalMember: bool): bool =
+  currentAdult and localOptIn and exactCanonicalMember
+
+pure def calendarPreferenceMayApply(incomingAt: int, previousAt: int, requestedOn: bool, previouslyEnabled: bool): bool =
+  incomingAt >= 0 and (incomingAt > previousAt or (incomingAt == previousAt and not(requestedOn) and previouslyEnabled))
+
+pure def lawCalendarBridgeProofNeedsExactOwner(signed: bool, exactRequest: bool, issuedAt: int, expiresAt: int, now: int): bool =
+  not(calendarBridgeProofCurrent(signed, exactRequest, false, issuedAt, expiresAt, now))
+```
+
+## Service contract
+
+The Network owns `POST /internal/calendar-scheduling-owner`. Eliza Cloud calls it after verifying the Cloud account, its phone, and the chosen owned Google connection. The signed JSON request contains `app`, `e164`, `organizationId`, `userId`, `connectionId`, `purpose`, and `nonce`. The HMAC ID is `calendar-owner:<nonce>`. A successful response contains `app`, `personId`, `memberId`, `purpose`, `requestSha256`, `issuedAt`, and `expiresAt`.
+
+Eliza Cloud must implement `POST /api/internal/network/calendar-scheduling`. That request contains `app`, `personId`, `memberId`, `purpose`, `nonce`, and `coverage` with integer `start` and `end`. The HMAC ID is `calendar-read:<nonce>`. The response uses the same owner proof fields plus `grant` and `observation`. The grant contains `app`, `memberId`, `purpose`, `provider`, `connectionId`, `active`, `grantedAt`, and `expiresAt`. The observation contains `app`, `memberId`, `purpose`, `provider`, `connectionId`, `observedAt`, `coverage`, and `busy`. Every interval has only `start` and `end`. All timestamps are Unix milliseconds, the connection and nonce are UUIDs, and the provider is `google_calendar`. Use the purpose `network-scheduling-free-busy-v1` for both requests. A response may cover less than the requested window. The host treats the rest as unknown.
+
+Sign the exact path and raw body with `NETWORK_CALENDAR_FREE_BUSY_SECRET` using the existing service HMAC envelope. Both responses use the original request ID followed by `:proof` and bind the SHA-256 of the raw request body. The Network checks the signature and rejects replays to another request. The service preloads up to twelve known, opted-in participants for relevant reviewed scheduling at a time. The opt-in command alone makes no remote request. Provider revocation takes effect on the next preload. Within a scheduling unit, a proof can expire before work advances. Neither the observation nor the provider grant is saved.

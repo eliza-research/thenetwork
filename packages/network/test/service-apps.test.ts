@@ -17,6 +17,7 @@ import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, liveSendAllowed, type Outbound } from "../service/channel.ts";
+import { CloudChannelAdapter } from "../service/cloud-channel.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor, styleViolations } from "../src/copy.ts";
 import type { NetworkState } from "../src/network.ts";
@@ -1252,9 +1253,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
+    let deliveryLive = true;
     const { s, otp } = service(clock, {
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret }, networks: [{ id: "ntwrk:nyc" }],
-      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => true, log: () => {},
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => deliveryLive, log: () => {},
         provider: { kind: "sim", async send(request) {
           sent.push(request);
           return { providerMessageId: `expected-invite-fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
@@ -1279,18 +1281,29 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       const link = (response.replies.join("\n") as string).match(/https:\/\/ntwrk\.party\/SKILL\.md#invite=[A-Za-z0-9_-]{43}/)?.[0];
       if (!link) throw new Error("The default vouch flow did not return a forwarding link");
       expect(sent.some(request => request.to === phone)).toBe(false);
-      const requested = await send(turn(inviterPhone, `${id}-stage`, `SEND INVITE ${link} TO ${phone}`));
+      const stage = turn(inviterPhone, `${id}-stage`, `SEND INVITE ${link} TO ${phone}`);
+      const requested = await send(stage);
       expect(requested.status).toBe(200);
-      const prompt = (await requested.json()).replies.join("\n") as string;
+      const staged = await requested.json();
+      const prompt = staged.replies.join("\n") as string;
       expect(prompt).not.toContain(phone);
       expect(prompt).not.toContain(link);
       const confirmation = prompt.match(/CONFIRM EXPECTED INVITE mit_[a-p]{32}/)?.[0];
       if (!confirmation) throw new Error("The expected-invite receipt did not ask for confirmation");
       expect(sent.some(request => request.to === phone)).toBe(false);
-      return { input: turn(inviterPhone, `${id}-confirm`, confirmation), link, token: new URL(link).hash.slice("#invite=".length) };
+      expect(await (await send(stage)).json()).toEqual(staged);
+      return { input: turn(inviterPhone, `${id}-confirm`, confirmation), stage, link, token: new URL(link).hash.slice("#invite=".length) };
     }
 
-    const first = await prepare("expected-invite-first", "Maya", target);
+    const replaced = await prepare("expected-invite-first", "Maya", target);
+    const stage = { ...replaced.stage, messageId: "expected-invite-latest-stage" };
+    const staged = await send(stage);
+    expect(staged.status).toBe(200);
+    const challenge = (await staged.json()).replies.join("\n").match(/CONFIRM EXPECTED INVITE mit_[a-p]{32}/)?.[0];
+    if (!challenge) throw new Error("The current expected-invite draft has no confirmation reference");
+    const first = { ...replaced, stage, input: { ...replaced.input, messageId: "expected-invite-latest-confirm", text: challenge } };
+    expect((await send(replaced.stage)).status).toBe(409);
+    expect((await send(replaced.input)).status).toBe(200);
     expect(await queued()).toHaveLength(0);
     expect(await count(sql`select count(*)::int as n from platform.expected_member_invitations where ciphertext is not null and queued_at is null`)).toBe(1);
     const wrongCode = first.input.text.endsWith("p") ? "a" : "p";
@@ -1303,6 +1316,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const confirmed = await send(first.input);
     expect(confirmed.status).toBe(200);
     const confirmationReceipt = await confirmed.json();
+    const obsoletePrompt = await send(first.stage);
+    expect(obsoletePrompt.status).toBe(409);
+    expect(await obsoletePrompt.json()).toMatchObject({ error: "turn_invitation_changed" });
     const acknowledgement = confirmationReceipt.replies.join("\n") as string;
     expect(acknowledgement).toContain("recorded your confirmation");
     expect(acknowledgement).not.toMatch(/Maya|#invite=/);
@@ -1371,6 +1387,73 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await rt.adapter.deliver([]);
     expect(await queued()).toHaveLength(2);
     expect(sent.some(request => request.to === stoppedPhone && request.text.includes("#invite="))).toBe(false);
+    deliveryLive = false;
+    expect((await send(third.stage)).status).toBe(409);
+    const disabled = await send({ ...third.input, messageId: "expected-invite-confirm-disabled" });
+    expect(disabled.status).toBe(200);
+    expect((await disabled.json()).replies.join("\n")).toContain("You can forward your invitation link yourself.");
+    deliveryLive = true;
+    expect((await send(third.stage)).status).toBe(200);
+    clock.advance(15 * MINUTE);
+    expect((await send(third.stage)).status).toBe(409);
+  }, T);
+
+  // spec/expectedMemberInvitation.md, "Only a confirmed expected invitation can enter the shared line queue"
+  test("the Cloud line offers forwarding without storing a first-contact draft or fetching the carrier", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const cloudRequests: string[] = [];
+    const { s } = service(clock, {
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret }, networks: [{ id: "ntwrk:nyc" }],
+      adapter: (_net, rt) => new CloudChannelAdapter({ app: rt.app.id, from: LINE, clock, origin: "http://127.0.0.1", secret: signedInvitationSecret,
+        env: { PLATFORM_ENV: "dev", BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, log: () => {},
+        fetch: async url => {
+          cloudRequests.push(String(url));
+          return Response.json({ ok: false, error: "rejected", retryable: false }, { status: 422 });
+        },
+      }),
+    });
+    await s.start();
+    expect(s.runtimeFor("ntwrk")?.adapter).toMatchObject({ name: "eliza_cloud", live: true });
+    const inviterPhone = newPhone(), newRecipient = newPhone();
+    const invited = await s.accounts.invite(APPS.ntwrk, inviterPhone);
+    if (!invited) throw new Error("Missing staff invitation for the fixture");
+    const profile = (firstName: string) => ({ firstName, age: 30, consent: { sms: true as const, wording: APPS.ntwrk.consent.text } });
+    expect(await s.accounts.join(APPS.ntwrk, { e164: inviterPhone, personId: invited.personId }, profile("Ari"))).toMatchObject({ ok: true });
+    const send = invitationTurn(s, clock);
+    const turn = (messageId: string, text: string): TurnRequest => ({
+      from: inviterPhone, messageId, text, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk",
+    });
+    const { confirmation, response } = await confirmInvitationVouch(send, turn("cloud-forwarding-vouch", "Can you invite my friend Maya?"), "I know them well, for three years.");
+    const link = (response.replies.join("\n") as string).match(/https:\/\/ntwrk\.party\/SKILL\.md#invite=[A-Za-z0-9_-]{43}/)?.[0];
+    if (!link) throw new Error("The signed inviter did not get a forwarding link");
+    const cloudBefore = cloudRequests.length;
+    const replies = [];
+    for (const [index, phone] of [newRecipient, inviterPhone].entries()) {
+      const request = turn(`cloud-first-contact-${index}`, `SEND INVITE ${link} TO ${phone}`);
+      const stopped = await send(request);
+      expect(stopped.status).toBe(200);
+      const body = await stopped.json();
+      expect(body).toMatchObject({ outcome: "handled", reason: "member_invitation_delivery" });
+      expect(body.replies.join("\n")).toContain("You can forward your invitation link yourself.");
+      expect(body.replies.join("\n")).not.toMatch(/CONFIRM EXPECTED INVITE|#invite=/);
+      expect(body.replies.join("\n")).not.toContain(phone);
+      expect(await (await send(request)).json()).toEqual(body);
+      replies.push(body.replies);
+    }
+    expect(replies[0]).toEqual(replies[1]);
+    const unsupported = await send(turn("cloud-first-contact-confirm", `CONFIRM EXPECTED INVITE mit_${"a".repeat(32)}`));
+    expect(unsupported.status).toBe(200);
+    expect((await unsupported.json()).replies).toEqual(replies[0]);
+    expect(cloudRequests).toHaveLength(cloudBefore);
+    expect(await count(sql`select count(*)::int as n from platform.expected_member_invitations`)).toBe(0);
+    expect(await count(sql`select count(*)::int as n from platform.outbound where id like 'expected-invite:%'`)).toBe(0);
+    const stored = JSON.stringify(await sql`select event,response,replies from platform.inbound where id like 'msg:blooio:cloud-first-contact-%'`);
+    expect(stored).not.toContain(newRecipient);
+    expect(stored).not.toContain(link);
+    expect(await (await send(confirmation)).json()).toEqual(response);
+    const token = new URL(link).hash.slice("#invite=".length);
+    expect(await s.accounts.join(APPS.ntwrk, { e164: newRecipient, personId: null }, profile("Maya"), undefined, token)).toMatchObject({ ok: true });
   }, T);
 
   // spec/boundedHelp.md, "Intake keeps only structured home-help details after considering a service"

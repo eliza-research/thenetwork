@@ -54,8 +54,8 @@ import {
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
-import { readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
-import { calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
+import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
+import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
@@ -387,7 +387,7 @@ interface MemberState {
   /** The one-time calendar and weekly check-in offer was made (in the first booked plan). */
   offerMade?: boolean;
   /** The member opted in to using authorized free/busy for scheduling in this app. */
-  calendar?: boolean;
+  calendar?: boolean; calendarChoiceAt?: number;
   /** Opted in to the weekly "what's your week like?" check-in (decision 4d), and when it was last sent. */
   weekly?: boolean; lastCheckinAt?: number;
   /** "Only when I ask" (F28): no proactive messages until the member writes again. */
@@ -1018,7 +1018,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // booked date, a check-in, a cancel, feedback, an invite, CALENDAR/WEEKLY). Only the member's own
     // text in the thread does those.
     const mcp = msg.source === "mcp";
-    if (this.memberReply && !msg.reaction && this.calendarOptIn(m, body)) return;
+    if (this.memberReply && !msg.reaction && this.calendarOptIn(m, body, msg.ts)) return;
     if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
     // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
     // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
@@ -1325,12 +1325,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return true;
   }
 
-  private calendarOptIn(m: MemberState, body: string): boolean {
-    const command = /^\W*(?:yes,?\s+)?calendar(\s+off)?\W*$/i.exec(body);
+  private calendarOptIn(m: MemberState, body: string, at: number): boolean {
+    const command = calendarPreferenceCommand(body);
     if (!command) return false;
-    const enabled = !command[1];
+    const enabled = command === "enabled";
     if (enabled && !this.calendarOwnerEligible(m)) return true;
+    if (!Number.isSafeInteger(at) || !calendarPreferenceMayApply(at, m.calendarChoiceAt ?? -1, enabled, m.calendar === true)) return true;
     m.calendar = enabled;
+    m.calendarChoiceAt = at;
     if (enabled) this.counters.calendarOptIns++;
     this.ctx.log("calendar_consent", { memberId: m.id, on: enabled });
     this.send(m, enabled ? copy.calendarOptIn : copy.calendarOff, { type: "info" }, "reply");
@@ -6696,6 +6698,15 @@ export function storedGroupLateArrivalCurrent(state: NetworkState, delivery: Lat
     const view = relayMemberOf(member, state.trust?.some(record => record.id === id && record.level !== "ok") || pendingReportHold(state.reports, id));
     return canBeMatched(view.age) && !view.optedOut && !view.held && member.state !== "paused";
   });
+}
+
+/** The stored member's calendar choice still applies to an adult who can schedule meetings. */
+export function storedCalendarOwnerOptedIn(state: NetworkState | undefined, id: MemberId): boolean {
+  const member = state?.members.find(m => m.id === id);
+  if (!state || !member?.calendar || state.declinedIds.includes(id)) return false;
+  const held = state.trust?.some(record => record.id === id && record.level !== "ok") || pendingReportHold(state.reports, id);
+  const view = relayMemberOf(member, held);
+  return canBeMatched(view.age) && !view.optedOut && !view.held && member.state !== "paused";
 }
 
 /** Read back the issuer's current Network safety state without reloading the live runtime. */

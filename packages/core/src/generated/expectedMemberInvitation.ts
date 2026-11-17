@@ -45,6 +45,12 @@ export function expectedInviteLive(now: number, expiresAt: number): boolean {
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
 //@ pure
+export function expectedInviteTransportAllows(carrierAcceptsFirstContact: boolean, liveApproved: boolean): boolean {
+  return carrierAcceptsFirstContact && liveApproved;
+}
+
+/** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
+//@ pure
 export function expectedInviteChallengeCurrent(issuedAt: number, now: number): boolean {
   return memberInvitation_memberInviteDraftCurrent(exact_expectedMemberInvitation(now - issuedAt));
 }
@@ -53,6 +59,12 @@ export function expectedInviteChallengeCurrent(issuedAt: number, now: number): b
 //@ pure
 export function expectedInviteMayStage(request: ExpectedInviteRequestFacts): boolean {
   return request.direct && request.confirmedExpected && request.exactTarget && request.distinctRecipient && request.issuerCurrent && request.reviewClear && request.recipientAllowed && request.firstContact && expectedInviteLive(request.now, request.expiresAt);
+}
+
+/** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
+//@ pure
+export function expectedInviteChallengeCanReplay(transportAvailable: boolean, awaitingConfirmation: boolean, exactDraft: boolean, issuedAt: number, now: number, expiresAt: number): boolean {
+  return transportAvailable && awaitingConfirmation && exactDraft && expectedInviteChallengeCurrent(issuedAt, now) && expectedInviteLive(now, expiresAt);
 }
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
@@ -80,6 +92,13 @@ export function lawExpectedInviteNeedsCurrentReview(request: ExpectedInviteReque
 export function lawExpectedInviteNeedsAnEligibleFirstContact(request: ExpectedInviteRequestFacts): boolean {
   //@ ensures \result === true
   return !expectedInviteMayStage(request) || (request.recipientAllowed && request.firstContact);
+}
+
+/** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
+//@ pure
+export function lawUnavailableTransportCannotReplay(approvalPending: boolean, exactDraft: boolean, issuedAt: number, now: number, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return !expectedInviteChallengeCanReplay(false, approvalPending, exactDraft, issuedAt, now, expiresAt);
 }
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
@@ -250,6 +269,12 @@ export function expectedInviteMayDecline(exactRecipient: boolean, contactStarted
 
 /** Story: Send an invitation that the recipient expects / Decline, suppression and expiry end the invitation (spec/expectedMemberInvitation.md) */
 //@ pure
+export function sometimesExpectedInviteClosed(invite: ExpectedInvite): boolean {
+  return invite.phase === "Closed";
+}
+
+/** Story: Send an invitation that the recipient expects / Decline, suppression and expiry end the invitation (spec/expectedMemberInvitation.md) */
+//@ pure
 export function expectedInviteContactStarted(phase: ExpectedInvitePhase): boolean {
   return phase === "Attempted" || phase === "Delivered";
 }
@@ -258,12 +283,6 @@ export function expectedInviteContactStarted(phase: ExpectedInvitePhase): boolea
 //@ pure
 export function stepExpectedInviteTerminalStatesStayClosed(before: ExpectedInvite, after: ExpectedInvite): boolean {
   return !(before.phase === "Redeemed" || before.phase === "Closed") || equal_expectedMemberInvitation(after, before);
-}
-
-/** Story: Send an invitation that the recipient expects / Decline, suppression and expiry end the invitation (spec/expectedMemberInvitation.md) */
-//@ pure
-export function sometimesExpectedInviteClosed(invite: ExpectedInvite): boolean {
-  return invite.phase === "Closed";
 }
 
 /** Story: Send an invitation that the recipient expects / Decline, suppression and expiry end the invitation (spec/expectedMemberInvitation.md) */
