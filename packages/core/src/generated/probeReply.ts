@@ -50,3 +50,23 @@ export function lawAnUntimedProbeNeedsASeparateAnswer(separateYes: boolean): boo
   //@ ensures \result === true
   return !mayRetryCounter(false, separateYes);
 }
+
+/** Story: Make a choice about a proposed opportunity / A short acknowledgement must immediately follow its own probe (spec/probeReply.md) */
+//@ pure
+export function weakProbeAcknowledgementAllowed(direct: boolean, latestProbe: boolean, uninterrupted: boolean, precedingMessages: number, receiptAccepted: boolean, acceptedAt: number, receivedAt: number, now: number): boolean {
+  return direct && latestProbe && uninterrupted && precedingMessages < 2 && receiptAccepted && acceptedAt <= receivedAt && receivedAt <= now;
+}
+
+/** Story: Make a choice about a proposed opportunity / A short acknowledgement must immediately follow its own probe (spec/probeReply.md) */
+//@ pure
+export function lawWeakAcknowledgementNeedsLatestProbe(precedingMessages: number, acceptedAt: number, receivedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !weakProbeAcknowledgementAllowed(true, false, true, precedingMessages, true, acceptedAt, receivedAt, now);
+}
+
+/** Story: Make a choice about a proposed opportunity / A short acknowledgement must immediately follow its own probe (spec/probeReply.md) */
+//@ pure
+export function lawWeakAcknowledgementNeedsUninterruptedTurn(precedingMessages: number, acceptedAt: number, receivedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !weakProbeAcknowledgementAllowed(true, true, false, precedingMessages, true, acceptedAt, receivedAt, now);
+}

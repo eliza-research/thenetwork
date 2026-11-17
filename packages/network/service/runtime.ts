@@ -845,12 +845,11 @@ export class NetworkRuntime {
     };
   }
 
-  /** Resolve each plan invitation and exact Slop or Hire reply from its provider record. */
+  /** Resolve each current probe or plan invitation from its exact provider record. */
   private async refreshProbeReplyReceipts(state: NetworkState | undefined): Promise<Set<string>> {
     const exactPlanIds = new Set<string>();
     if (!state) return exactPlanIds;
-    const open = new Map(state.opps.filter(opp => !opp.plan && opp.stage === "probing"
-      && ((this.app.id === "slop" && opp.category === "romance") || (this.app.id === "peon" && !!opp.seat))).map(opp => [opp.id, opp]));
+    const open = new Map(state.opps.filter(opp => !opp.plan && opp.stage === "probing").map(opp => [opp.id, opp]));
     const pending = state.members.flatMap(member => {
       const slot = member.awaiting;
       const opp = slot?.kind === "probe" && slot.oppId ? open.get(slot.oppId) : undefined;

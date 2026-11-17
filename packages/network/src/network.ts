@@ -79,6 +79,7 @@ import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
 import { engineQuestionDeliveryPrefix } from "../../core/src/generated/engineAsks.ts";
 import { weeklyCheckinEvidence, weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
@@ -435,7 +436,7 @@ interface MemberState {
   awaiting?: {
     kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting";
     oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean;
-    probeReceiptId?: string; crewOfferReceiptId?: string; engineQuestionDeliveryId?: string;
+    probeReceiptId?: string; probeInboundCount?: number; crewOfferReceiptId?: string; engineQuestionDeliveryId?: string;
     bookedCheckIn?: { meetingAt: number; revision: number };
   };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
@@ -746,6 +747,10 @@ export function probeReplyReceiptKey(oppId: string, memberId: MemberId, slot: { 
   return `probe-reply-receipt:${oppId}:${memberId}:${slot.probeReceiptId ?? slot.at}`;
 }
 
+function latestOutboundMatchesProbe(last: MemberState["lastSent"], oppId: string, sentAt: number | undefined): boolean {
+  return last?.consentProbe === oppId || (last?.consentProbe === undefined && sentAt !== undefined && sentAt === last?.at);
+}
+
 /** Resolve the same invitation even after another turn has replaced its open question. */
 export function planProbeReceiptSlot(oppId: string, sentAt: number, member?: Pick<MemberState, "awaiting" | "pendingAsks">) {
   const question = member?.awaiting;
@@ -927,6 +932,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.syncMember(m);
     // spec/outreachPolicy.md, "Count a sent invitation at terminal expiry or after 72 hours"
     const nowIn = this.now(), body = msg.body ?? "";
+    const priorInboundAt = m.lastInbound;
     this.outboundBefore = m.outbound ?? 0;
     const replyOpen = this.askOpen(m, nowIn);
     if (fromThread) {
@@ -948,7 +954,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.replyTo = m.id;
     this.memberReply = fromThread && !msg.keyword;
     this.understood = u;
-    try { return this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, queueCofounderIntent) === "open" ? "open" : "handled"; }
+    try { return this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, priorInboundAt, queueCofounderIntent) === "open" ? "open" : "handled"; }
     finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
@@ -1064,7 +1070,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     return c.answer;
   }
 
-  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, replyOpen: boolean, currentDanger: boolean, queueCofounderIntent?: (intent: Intent) => void) {
+  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, replyOpen: boolean, currentDanger: boolean,
+    priorInboundAt: number, queueCofounderIntent?: (intent: Intent) => void) {
     const now = this.now();
     if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; m.interruptionSurvey = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
@@ -1247,10 +1254,18 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!gatheringRepeatMayAnswer(true, this.memberReply && !msg.reaction, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)) return "open" as const;
       }
       const parsedAnswer = parseProbeReply(body, options);
-      const r0 = gathering ? parsedAnswer : mergeConsent(parsedAnswer, this.understood, options);
-      // A bare "👍" / "ok" after two or more messages in a row ("On it." and the probe) may answer
-      // either one: it is not a yes to meeting someone (asked once more).
-      const r = r0.answer === "yes" && this.outboundBefore >= 2 && ACK_ONLY.test(body.trim()) ? { ...r0, answer: "unclear" as const } : r0;
+      let r = gathering ? parsedAnswer : mergeConsent(parsedAnswer, this.understood, options);
+      // spec/probeReply.md, "A short acknowledgement must immediately follow its own probe"
+      if (o && r.answer !== "unclear" && ACK_ONLY.test(body.trim())) {
+        const key = gathering ? gatheringRepeatProbeKey(o.id, m.id, o.timeRetry?.includes(m.id)) : probeReplyReceiptKey(o.id, m.id, aw);
+        const receipt = this.ctx.initialInviteReceipt?.(key);
+        const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+        const uninterrupted = aw.probeInboundCount === undefined ? priorInboundAt <= aw.at : m.msgsIn === aw.probeInboundCount + 1;
+        if (!weakProbeAcknowledgementAllowed(this.memberReply, latestOutboundMatchesProbe(m.lastSent, o.id, aw.at), uninterrupted,
+          this.outboundBefore, acceptedAt !== undefined, acceptedAt ?? 0, msg.signedReceivedAt ?? msg.ts, now)) {
+          r = { ...r, answer: "unclear" };
+        }
+      }
       if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
       if (this.clarify(m, aw, c)) return;
     }
@@ -1376,8 +1391,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const at = opp.sentAt?.[member.id];
       const accepted = opp.status.get(member.id) === "available" && opp.primed.has(member.id)
         || opp.planRun?.answers[member.id] === "yes";
-      const last = member.lastSent;
-      const sameProbe = last?.consentProbe === opp.id || (last?.consentProbe === undefined && at !== undefined && at === last?.at);
+      const sameProbe = latestOutboundMatchesProbe(member.lastSent, opp.id, at);
       return acceptedProbeCanWithdraw(opportunityLifecycle(opp), accepted, opp.contacted.has(member.id), sameProbe);
     });
     if (!acceptedProbeWithdrawalAllowed(this.memberReply, directRefusal, otherReplyOpen, matches.length)) return false;
@@ -6507,7 +6521,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         valid: () => !!o && o.stage === "probing" && o.participants.includes(h.id) && o.status.get(h.id) === "probing",
         onSent: messageId => {
           if (!o) return;
-          m.awaiting = { kind: "probe", oppId: o.id, at: now(), ...(o.seat || (this.app.id === "slop" && o.category === "romance") ? { probeReceiptId: messageId } : {}) };
+          m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId, probeInboundCount: m.msgsIn };
           m.asked++; o.contacted.add(h.id);
           o.sentAt = { ...o.sentAt, [h.id]: now() };
           this.counters.probesSent++;
@@ -6524,7 +6538,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "times": return {
         valid: () => !!o && o.stage === "probing" && o.status.get(h.id) === "probing",
         onSent: messageId => {
-          if (o) m.awaiting = { kind: "probe", oppId: o.id, at: now(), ...(this.app.id === "slop" && o.category === "romance" ? { probeReceiptId: messageId } : {}) };
+          if (o) m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId, probeInboundCount: m.msgsIn };
         },
         onRefused: () => {
           if (!o || o.stage !== "probing" || o.status.get(h.id) !== "probing") return;
