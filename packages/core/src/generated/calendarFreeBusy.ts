@@ -102,6 +102,19 @@ export function lawCalendarBridgeProofNeedsExactOwner(signed: boolean, exactRequ
   return !calendarBridgeProofCurrent(signed, exactRequest, false, issuedAt, expiresAt, now);
 }
 
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
+export function calendarPreloadSeatAllowed(status: string, booked: boolean, pendingLateSeat: boolean): boolean {
+  return status !== "unavailable" && status !== "no" && status !== "dropped" && (!booked || status === "yes" || pendingLateSeat);
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
+export function lawCalendarDoesNotReadRetiredSeat(booked: boolean, pendingLateSeat: boolean): boolean {
+  //@ ensures \result === true
+  return !calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat);
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_calendarFreeBusy(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

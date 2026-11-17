@@ -81,6 +81,21 @@ pure def lawCalendarBridgeProofNeedsExactOwner(signed: bool, exactRequest: bool,
   not(calendarBridgeProofCurrent(signed, exactRequest, false, issuedAt, expiresAt, now))
 ```
 
+### A scheduling read uses only the seats still involved in that work
+
+Skip members who declined, withdrew or became unavailable for the opportunity. A booked reschedule uses only the accepted roster. Work on a late plan seat can use the accepted roster and the still-pending invitees. A direct member turn may read a booked plan with a pending seat only when that member has a pending seat or is rescheduling an accepted seat.
+
+```quint
+pure val statusValues = Set("", "queued", "probing", "available", "unavailable", "yes", "no", "dropped")
+
+pure def calendarPreloadSeatAllowed(status: str, booked: bool, pendingLateSeat: bool): bool =
+  status != "unavailable" and status != "no" and status != "dropped" and
+    (not(booked) or status == "yes" or pendingLateSeat)
+
+pure def lawCalendarDoesNotReadRetiredSeat(booked: bool, pendingLateSeat: bool): bool =
+  not(calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat))
+```
+
 ## Service contract
 
 The Network owns `POST /internal/calendar-scheduling-owner`. Eliza Cloud calls it after verifying the Cloud account, its phone, and the chosen owned Google connection. The signed JSON request contains `app`, `e164`, `organizationId`, `userId`, `connectionId`, `purpose`, and `nonce`. The HMAC ID is `calendar-owner:<nonce>`. A successful response contains `app`, `personId`, `memberId`, `purpose`, `requestSha256`, `issuedAt`, and `expiresAt`.

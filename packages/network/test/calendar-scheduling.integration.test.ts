@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
-import { DAY, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import type { plans } from "@thenetwork/engine";
 import { calendarOwnerPath, calendarPreloadPath, calendarSchedulingPurpose, calendarSource } from "../../core/src/generated/calendarFreeBusy.ts";
 import type { CalendarOwnerRequest, CalendarPreloadRequest } from "../../core/src/svc/calendar-scheduling.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
@@ -22,7 +23,7 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
   const url = await migratedDb("calendar_bridge");
   const clock = new SimClock(START);
   const app = APPS.friends;
-  const phones = ["+12125550181", "+12125550182"] as const;
+  const phones = ["+12125550181", "+12125550182", "+12125550183", "+12125550184"] as const;
   const reads: CalendarPreloadRequest[] = [];
   let busy: { start: number; end: number } | undefined;
   let cloudRevoked = false;
@@ -67,17 +68,17 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
     await service.start();
     const profiles = [];
     for (const [i, e164] of phones.entries()) {
-      const name = i ? "Blair" : "Ari";
+      const name = ["Ari", "Blair", "Casey", "Devon"][i]!;
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
       profiles.push({ id: joined.membership.memberId, personId: joined.membership.personId, name, age: 30, area: "Greenpoint",
         interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
     }
-    const [first, second] = profiles as [typeof profiles[number], typeof profiles[number]];
+    const [first, second, declined, pending] = profiles as [typeof profiles[number], typeof profiles[number], typeof profiles[number], typeof profiles[number]];
     const ids = [first.id, second.id];
     const rt = service.runtimes.get("friends:nyc")!;
     const world = new Mini(profiles, { app: app.id, growth: false, plans: false });
-    await world.onboard(...ids);
+    await world.onboard(...profiles.map(profile => profile.id));
     const oppId = world.propose(ids);
     expect(await world.runUntil(() => world.probed(first.id), 2 * DAY)).toBe(true);
     await world.say(first.id, "Yes, the first time works");
@@ -125,6 +126,34 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
     expect((await turn("calendar-delayed-enable", "CALENDAR", phones[0], earlier)).status).toBe(200);
     expect(reads).toHaveLength(2);
     expect((await post(calendarOwnerPath, ownerId, ownerBody, calendarSecret)).status).toBe(403);
+
+    // spec/calendarFreeBusy.md, "A scheduling read uses only the seats still involved in that work"
+    clock.advance(MINUTE);
+    for (const i of [0, 2, 3] as const) expect((await turn(`calendar-seat-optin-${i}`, "CALENDAR", phones[i])).status).toBe(200);
+    const persisted = (await rt.pg.load())!;
+    const probing = optedIn.opps.find(opp => opp.id === oppId)!;
+    await rt.unitOfWork(n => n.importState({ ...persisted, opps: [{ ...probing, participants: [...ids, declined.id], status: [...probing.status, [declined.id, "no"]] }] }));
+    const stageWork = async (memberId: string, reschedule = false) => {
+      reads.length = 0;
+      await rt.unitOfWork(() => undefined, { kind: "member", memberId, reschedule });
+      return reads.map(request => request.memberId).sort();
+    };
+    expect(await stageWork(second.id)).toEqual([first.id]);
+    expect(await stageWork(declined.id)).toEqual([]);
+
+    const booked = persisted.opps.find(opp => opp.id === oppId)!;
+    const participants = [...ids, declined.id, pending.id];
+    const start = booked.meetingAt!;
+    const plan: plans.Plan = { id: oppId, city: "nyc", activityId: "coffee_crawl", place: { name: "Public meeting place" },
+      window: { start, end: start + HOUR }, invited: participants, alternates: [], partner: false, size: { min: 3, target: 4, max: 4 },
+      quorum: 3, probeDeadline: start, score: 0, u: {}, familiar: {}, createdAt: booked.createdAt, category: "social" };
+    await rt.unitOfWork(n => n.importState({ ...persisted, opps: [{ ...booked, participants, plan,
+      status: [[first.id, "yes"], [second.id, "yes"], [declined.id, "no"], [pending.id, "probing"]],
+      planRun: { plan, stage: "booked", bench: [], answers: { [first.id]: "yes", [second.id]: "yes", [declined.id]: "no", [pending.id]: "pending" } },
+    }] }));
+    expect(await stageWork(second.id, true)).toEqual([first.id]);
+    expect(await stageWork(second.id)).toEqual([]);
+    expect(await stageWork(pending.id)).toEqual([first.id, pending.id].sort());
   } finally {
     await service.close();
     await dropDb(url);
