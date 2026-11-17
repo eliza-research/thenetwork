@@ -30,6 +30,7 @@ import { parseArgs } from "node:util";
 import { serveHttp, type HttpServer as Server, type ServerWebSocket } from "../../core/src/runtime/http.ts";
 import { buildWebRoutes } from "./web-assets.ts";
 import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } from "../../core/src/generated/staffPermissions.ts";
+import { staffRevealMayDisclose } from "../../core/src/generated/consoleMemberView.ts";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
@@ -188,6 +189,7 @@ function hostnameOf(hostOrUrl: string): string | undefined {
 export async function createServer(opts: ServerOptions = {}): Promise<ObservatoryServer> {
   const realOnly = opts.realOnly ?? process.env.OBSERVATORY_REAL_ONLY === "1";
   let mode: Mode = realOnly ? "real" : opts.mode ?? "game";
+  let modeRevision = 0;
   const sla = slaHours();
   /** One source per (mode, app), started when first asked for. */
   const sources = new Map<string, DataSource>();
@@ -245,6 +247,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (mode === m && sources.has(key(m, DEFAULT_APP))) return;
     if (m === "real") for (const app of APP_IDS) await sources.get(key("game", app))?.control({ type: "pause" });
     mode = m;
+    modeRevision++;
     await source(m, DEFAULT_APP);
     // A socket opened in one mode is authorized again for the new one (an engineer has no role in real mode).
     for (const ws of sockets) recheck(ws);
@@ -297,7 +300,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   /** Active PII reveals: "<staff id>|<mode>|<app>|<member id>" -> grant (a game member and a real member never share one). In memory: a restart ends every reveal. */
   const reveals = new Map<string, RevealGrant>();
   const photoPreviews = new Map<string,{token:string;until:number}>();
-  const revealKey = (u: StaffUser, app: AppId, memberId: string) => `${u.id}|${mode}|${app}|${memberId}`;
+  const revealKey = (u: StaffUser, app: AppId, memberId: string, readMode = mode) => `${u.id}|${readMode}|${app}|${memberId}`;
   /** One-use WebSocket tickets: ticket -> who asked, for which app, until when. */
   const tickets = new Map<string, { user: StaffUser; app: AppId; until: number }>();
   /** "<staff id>|<app>" with the truth lens on (game mode). Per person: hidden truth never goes to anyone else. */
@@ -355,6 +358,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     return isAppId(v) ? v : json({ error: `unknown app "${v}" (one of ${APP_IDS.join(", ")})`, code: "unknown_app" }, 400);
   }
   const forbidden = (text: string) => json({ error: `forbidden: ${text}`, code: "forbidden" }, 403);
+  const modeChanged = () => json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
   type Req = Request & { params: Record<string, string> };
   type Handler = (req: Req, user: StaffUser, app: AppId) => Response | Promise<Response>;
   const admitRoute = (req: Request, roles: StaffRole[], need: readonly StaffRole[] | undefined, appRoute: boolean) => {
@@ -379,7 +383,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       try { return await h(req, u, app); } catch (e) { return fail(e); }
     }
     if (route.decision === "NeedsRole") return forbidden(`needs ${["admin", ...(need ?? [])].join(" or ")} for ${app}`);
-    if (route.decision === "ModeChanged") return json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
+    if (route.decision === "ModeChanged") return modeChanged();
     return forbidden(`no role for ${app}${mode === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
   };
   /** A route that is not about one app: any staff member, or with `need`, the role for every app (role@*). */
@@ -415,18 +419,49 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
-  const revealFor = (u: StaffUser, app: AppId, memberId: string): RevealGrant | undefined => {
-    const k = revealKey(u, app, memberId), g = reveals.get(k);
-    if (g && g.until <= Date.now()) { reveals.delete(k); return undefined; }
-    return g;
+  const currentSafety = (u: StaffUser, app: AppId, readMode: Mode): boolean => {
+    const staff = u.via === "sso" ? staffUser(u.id, ssoGrants(u.id, auth), "sso") : u;
+    return allowed(staff, ["safety"], app, readMode);
   };
+  function revealCurrent(u: StaffUser, app: AppId, readMode: Mode, until: number): boolean {
+    const now = Date.now();
+    return staffRevealMayDisclose(readMode === mode, currentSafety(u, app, readMode), u.expiresAt === undefined || u.expiresAt > now, until - now);
+  }
+  function revealFor(u: StaffUser, app: AppId, memberId: string, readMode = mode): RevealGrant | undefined {
+    const key = revealKey(u, app, memberId, readMode), grant = reveals.get(key);
+    if (grant && readMode === mode && !revealCurrent(u, app, readMode, grant.until)) {
+      reveals.delete(key);
+      return;
+    }
+    return readMode === mode ? grant : undefined;
+  }
   /**
    * Member 360 and timeline (admin-console 4.1), for the app: admin and safety see any member; an
    * engineer sees simulated members only; a reviewer sees members in an open review item; an analyst sees none.
    */
-  async function canSeeMember(u: StaffUser, app: AppId, id: string): Promise<boolean> {
-    const access = staffMemberAccess([...rolesFor(u, app, mode)], mode === "real");
-    return access === "AnyMember" || (access === "OpenReviewMember" && (await source(mode, app)).inOpenReview(id));
+  async function canSeeMember(u: StaffUser, app: AppId, id: string, readMode = mode): Promise<boolean> {
+    const access = staffMemberAccess([...rolesFor(u, app, readMode)], readMode === "real");
+    return access === "AnyMember" || (access === "OpenReviewMember" && (await source(readMode, app)).inOpenReview(id));
+  }
+
+  interface MemberRead {
+    id: string;
+    readMode: Mode;
+    revision: number;
+    grant?: RevealGrant;
+  }
+  async function startMemberRead(u: StaffUser, app: AppId, id: string, action: "read_member" | "read_timeline" | "read_member_app"): Promise<MemberRead | Response> {
+    const readMode = mode, revision = modeRevision;
+    if (!(await canSeeMember(u, app, id, readMode))) return forbidden("this role cannot open this member");
+    if (revision !== modeRevision) return modeChanged();
+    const grant = revealFor(u, app, id, readMode);
+    const refused = await record(u, app, { action, targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
+    const read = { id, readMode, revision, grant };
+    return refused ?? memberReadRefusal(u, app, read) ?? read;
+  }
+  function memberReadRefusal(u: StaffUser, app: AppId, read: MemberRead): Response | undefined {
+    if (read.revision !== modeRevision) return modeChanged();
+    if (read.grant && revealFor(u, app, read.id, read.readMode) !== read.grant) return forbidden("the reveal is no longer active");
   }
   /** The cross-app view's data (real mode only: the platform schema holds people and memberships). */
   function peopleView(): PeopleView | Response {
@@ -487,43 +522,37 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/member/:id": guard(async (req, u, app) => {
-        const id = decodeURIComponent(req.params.id!);
-        if (!(await canSeeMember(u, app, id))) return forbidden("this role cannot open this member");
-        const grant = revealFor(u, app, id);
-        const no = await record(u, app, { action: "read_member", targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
-        if (no) return no;
-        const d = await (await source(mode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app) });
+        const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_member");
+        if (read instanceof Response) return read;
+        const { id, readMode, grant } = read;
+        const d = await (await source(readMode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app) });
         if (!d) return json({ error: "not found" }, 404);
         // Dating facts stay hidden until a reveal; scores and ratings never leave (admin-console 3.3.1).
         d.facets = memberFacets(app, d.facets, !!grant);
         if (grant) d.revealed = { until: grant.until };
-        if (allowed(u, ["safety"], app, mode)) {
+        if (currentSafety(u, app, readMode)) {
           const rows = await audit.list({ targetType: "member", targetId: id, limit: 50, actions: ["read_member", "read_timeline", "reveal"], apps: [app] }).catch(() => []);
-          d.staffAccess = rows.map(r => ({ actor: r.actor, at: r.at, action: r.action }));
+          if (currentSafety(u, app, readMode)) d.staffAccess = rows.map(r => ({ actor: r.actor, at: r.at, action: r.action }));
         }
-        return json(d);
+        return memberReadRefusal(u, app, read) ?? json(d);
       }),
       "/api/member/:id/timeline": guard(async (req, u, app) => {
-        const id = decodeURIComponent(req.params.id!);
-        if (!(await canSeeMember(u, app, id))) return forbidden("this role cannot open this member");
-        const grant = revealFor(u, app, id);
-        const no = await record(u, app, { action: "read_timeline", targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
-        if (no) return no;
-        const t = await (await source(mode, app)).timeline(id, { reveal: !!grant });
+        const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_timeline");
+        if (read instanceof Response) return read;
+        const { id, readMode, grant } = read;
+        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant });
         if (!t) return json({ error: "not found" }, 404);
-        return json(grant ? { ...t, revealed: { until: grant.until } } : t);
+        return memberReadRefusal(u, app, read) ?? json(grant ? { ...t, revealed: { until: grant.until } } : t);
       }),
       "/api/member/:id/app": guard(async (req, u, app) => {
         // The app's own Member 360 panel (slop: dating preferences behind a reveal, the photo rule; peon: roles and applications).
-        const id = decodeURIComponent(req.params.id!);
-        if (!(await canSeeMember(u, app, id))) return forbidden("this role cannot open this member");
-        const grant = revealFor(u, app, id);
-        const no = await record(u, app, { action: "read_member_app", targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
-        if (no) return no;
+        const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_member_app");
+        if (read instanceof Response) return read;
+        const { id, readMode, grant } = read;
         // Read whole on the server (the age-verification tag is agent-only); what leaves is the panel, and its dating facts only with a reveal.
-        const d = await (await source(mode, app)).member(id, { reveal: true });
+        const d = await (await source(readMode, app)).member(id, { reveal: true });
         if (!d) return json({ error: "not found" }, 404);
-        return json(appProfile(app, d, { revealed: !!grant }));
+        return memberReadRefusal(u, app, read) ?? json(appProfile(app, d, { revealed: !!grant }));
       }),
       "/api/member/:id/photos": {
         // slop photos: admin or safety, a typed reason, verified adults only (never a member under 18). Audited before the read.
@@ -567,12 +596,18 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       }),
       "/api/reveal": {
         // Admin-console 4.4: per member, with a reason, for at most 15 minutes; audited before it is granted.
-        GET: guard((_r, u, app) => json([...reveals.entries()].filter(([k, g]) => k.startsWith(`${u.id}|${mode}|${app}|`) && g.until > Date.now()).map(([, g]) => g))),
+        GET: guard((_r, u, app) => {
+          const prefix = `${u.id}|${mode}|${app}|`;
+          return json([...reveals.entries()].flatMap(([key, grant]) =>
+            key.startsWith(prefix) && revealFor(u, app, grant.memberId) === grant ? [grant] : []));
+        }),
         POST: guard(async (req, u, app) => {
+          const readMode = mode, revision = modeRevision;
           const b = await req.json().catch(() => ({})) as { memberId?: string; reason?: string; minutes?: number };
           const memberId = String(b.memberId ?? ""), reason = String(b.reason ?? "").trim();
           if (!memberId || reason.length < 5) return json({ ok: false, error: "a member and a reason (at least 5 characters) are required" }, 400);
-          const s = await source(mode, app);
+          const s = await source(readMode, app);
+          if (revision !== modeRevision) return modeChanged();
           if (!s.state().members.some(m => m.id === memberId)) {
             // A refused reveal is audited too: probing for who is a member leaves a row (audit observatory-M3).
             const no = await record(u, app, { action: "reveal", targetType: "member", targetId: memberId, reason, ok: false, detail: { refused: "unknown_member" } });
@@ -583,7 +618,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const at = Date.now(), grant: RevealGrant = { memberId, reason, at, until: at + minutes * 60_000 };
           const no = await record(u, app, { action: "reveal", targetType: "member", targetId: memberId, reason, ok: true, detail: { minutes } });
           if (no) return no;
-          reveals.set(revealKey(u, app, memberId), grant);
+          if (revision !== modeRevision) return modeChanged();
+          if (!revealCurrent(u, app, readMode, grant.until)) return forbidden("the reveal is no longer active");
+          reveals.set(revealKey(u, app, memberId, readMode), grant);
           return json({ ok: true, ...grant });
         }, ["safety"]),
         // End a reveal before its time (audited).

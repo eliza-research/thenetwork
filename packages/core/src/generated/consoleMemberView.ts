@@ -75,6 +75,19 @@ export function stepDetailBoundaryNeverFalls(before: DetailGate, after: DetailGa
   return after.closedThrough >= before.closedThrough;
 }
 
+/** Story: Read details for the current subject / Serving revealed details requires current staff authority (spec/consoleMemberView.md) */
+//@ pure
+export function staffRevealMayDisclose(sameView: boolean, safetyAllowed: boolean, signInCurrent: boolean, grantTimeLeftMs: number): boolean {
+  return sameView && safetyAllowed && signInCurrent && grantTimeLeftMs > 0;
+}
+
+/** Story: Read details for the current subject / Serving revealed details requires current staff authority (spec/consoleMemberView.md) */
+//@ pure
+export function lawStaffRevealNeedsCurrentSafety(sameView: boolean, signInCurrent: boolean, grantTimeLeftMs: number): boolean {
+  //@ ensures \result === true
+  return !staffRevealMayDisclose(sameView, false, signInCurrent, grantTimeLeftMs);
+}
+
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function staffPhotoAllowed(rulePermitsRead: boolean, canSafety: boolean, liveAdult: boolean): boolean {

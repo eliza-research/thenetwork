@@ -28,6 +28,18 @@ pure def sometimesADetailFinishes(gate: DetailGate): bool = gate.lastTicket > 0 
 pure def sometimesADetailWaits(gate: DetailGate): bool = gate.closedThrough < gate.lastTicket
 ```
 
+### Serving revealed details requires current staff authority
+
+A reveal grant applies only to the member, app, mode, and staff identity that it was issued for. Check the staff identity's current safety permission and the grant and sign-in expiry when a read starts and again before publishing the response. An expired grant or a changed mode, grant, role, or sign-in cannot expose revealed data. A role lookup failure cannot preserve cached grants from the unavailable database.
+
+```quint
+pure def staffRevealMayDisclose(sameView: bool, safetyAllowed: bool, signInCurrent: bool, grantTimeLeftMs: int): bool =
+  sameView and safetyAllowed and signInCurrent and grantTimeLeftMs > 0
+
+pure def lawStaffRevealNeedsCurrentSafety(sameView: bool, signInCurrent: bool, grantTimeLeftMs: int): bool =
+  not(staffRevealMayDisclose(sameView, false, signInCurrent, grantTimeLeftMs))
+```
+
 ## Story: Open Slop photos for a verified adult
 
 > As an authorized staff member, I want to see photos for a verified adult after giving the logged reason.

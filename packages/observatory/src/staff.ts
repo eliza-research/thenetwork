@@ -218,6 +218,7 @@ export class PgStaffRoles implements StaffRoleSource {
       }
       this.byEmail = next;
     } catch (e) {
+      this.byEmail.clear();
       if (!this.warned) { this.warned = true; console.warn(`Observatory: platform.staff_roles not read (${(e as Error).message}); OBSERVATORY_ROLES only`); }
     }
   }

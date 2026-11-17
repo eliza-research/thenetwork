@@ -14,6 +14,8 @@ import { createServer, WS_EXPIRED, WS_FORBIDDEN, type ObservatoryServer } from "
 import { AccessVerifier, parseTokenGrants } from "../src/staff.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 import { HIDDEN_MESSAGE } from "../src/sources/real.ts";
+import { GameSource } from "../src/sources/game.ts";
+import { rowsFromGame, writeRows } from "../db/writer.ts";
 import type { AuditEntry, ConfigInfo, LabRun, MemberDetail, MemberTimeline, ObsState, OpportunityDetail, SafetyInfo, StaffUser } from "../src/types.ts";
 import { webSocketUpgradeStatus } from "./websocket.ts";
 
@@ -274,6 +276,71 @@ describe("SSO and the production switch", () => {
     } finally { await sso.stop(); }
     // Not enabled: the headers mean nothing.
     expect((await fetch(base + "/api/me", { headers: { "cf-access-authenticated-user-email": "ana@example.org", "cf-access-jwt-assertion": await k.sign(claims("ana@example.org")) } })).status).toBe(401);
+  }, T);
+
+  test.skipIf(!pgAvailable)("an in-flight reveal cannot publish after the current safety grant is removed", async () => {
+    // spec/consoleMemberView.md, "Serving revealed details requires current staff authority"
+    const url = await testDb();
+    const sql = new SQL(url);
+    const game = new GameSource({ seed: 1, review: "human", tickMs: 3_600_000, pushMs: 3_600_000 });
+    let startAudit!: () => void, finishAudit!: () => void;
+    const auditStarted = new Promise<void>(resolve => { startAudit = resolve; });
+    const auditCanFinish = new Promise<void>(resolve => { finishAudit = resolve; });
+    let srv: ObservatoryServer | undefined;
+    try {
+      await game.init();
+      await game.control({ type: "step", ms: DAY });
+      const id = game.state().opportunities.find(item => item.state === "IN_REVIEW")?.participants[0];
+      expect(id).toBeDefined();
+      await writeRows(sql, rowsFromGame(game), { truncate: true });
+      await sql`insert into platform.staff_roles (email, role, app_id, granted_by) values ('rev@example.org','safety','ntwrk','test')`;
+      const keys = await accessKeys();
+      const now = Math.floor(Date.now() / 1000);
+      const jwt = await keys.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 });
+      srv = await createServer({
+        port: 0, development: false, trustCfAccess: true, roles: "rev@example.org:reviewer@ntwrk", mode: "real", platformEnv: "dev",
+        real: { url, pollMs: 3_600_000, service: false }, staffRolesUrl: url, staffRolesEveryMs: 25,
+        cfAccess: { team: "ntwrk", aud: AUD, fetch: keys.fetch },
+        audit: {
+          kind: "file", list: async () => [], close: async () => {},
+          write: async row => {
+            if (row.action === "read_timeline" && row.detail?.revealed) {
+              startAudit();
+              await auditCanFinish;
+            }
+          },
+        },
+      });
+      const request = (path: string, init?: RequestInit) => fetch(srv!.url + path, {
+        ...init, headers: { "cf-access-jwt-assertion": jwt, "content-type": "application/json" },
+      });
+      expect((await request("/api/reveal", { method: "POST", body: JSON.stringify({ memberId: id, reason: "review of the report", minutes: 5 }) })).status).toBe(200);
+      const member = await (await request(`/api/member/${id}`)).json() as MemberDetail;
+      expect(member.revealed).toBeDefined();
+      const timeline = `/api/member/${id}/timeline`;
+      const pending = request(timeline);
+      await within(auditStarted, 5_000);
+
+      await sql`delete from platform.staff_roles where email='rev@example.org'`;
+      await expect.poll(async () => ((await (await request("/api/me")).json()) as StaffUser).roles, { timeout: 5_000 }).toEqual(["reviewer"]);
+      finishAudit();
+
+      expect((await pending).status).toBe(403);
+      expect(await (await request("/api/reveal")).json()).toEqual([]);
+      const next = await request(timeline);
+      expect(next.status).toBe(200);
+      const redacted = await next.json() as MemberTimeline;
+      expect(redacted.revealed).toBeUndefined();
+      const messages = redacted.entries.filter(entry => entry.kind === "message" && entry.message.direction === "inbound");
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.every(entry => entry.kind === "message" && entry.message.body === HIDDEN_MESSAGE)).toBe(true);
+    } finally {
+      finishAudit();
+      await srv?.stop();
+      await game.dispose();
+      await sql.close();
+      await dropTestDb();
+    }
   }, T);
 
   test("OBSERVATORY_REAL_ONLY: no game mode, no game controls, no lab", async () => {
