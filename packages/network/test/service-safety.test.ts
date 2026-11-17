@@ -220,24 +220,35 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, phone, "slop")).toBe("join_asked");
     expect(await text(s, clock, phone, "Mara, 32")).toBe("joined");
     const primary = (await memberOf("slop", phone))!;
+    const reporter = newPhone();
+    expect(await text(s, clock, reporter, "slop")).toBe("join_asked");
+    expect(await text(s, clock, reporter, "Ana, 30")).toBe("joined");
+    expect(await text(s, clock, reporter, "report Mara, she was rude and kept texting me")).toBe("handled");
+    const [report] = await s.runtimeFor("slop")!.readState(n => n.safetyReports());
+    expect(report).toMatchObject({ subjectId: primary.id, status: "open" });
     const web = site(s, clock, otp);
     await web.login("friends", phone);
     expect((await web.join("friends", 32, "Mara")).status).toBe(200);
     const peer = (await memberOf("friends", phone))!;
     s.people.suppress = async () => { throw new Error("fixture: process ended after saving the ban"); };
     const path = "/apps/slop/safety/ban";
-    const body = { memberId: primary.id, by: "phone", note: "original confirmed case" };
+    const body = { memberId: primary.id, by: "phone", note: "original confirmed case", reportId: report!.id };
     expect((await staff(s, "saf-tok", "POST", path, body)).status).toBe(503);
-    expect(await sql`select reason,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, projection_completed_at: null }]);
+    expect(await sql`select reason,report_id,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, report_id: report!.id, projection_completed_at: null }]);
     expect(await memberOf("friends", phone)).toMatchObject({ account_status: "active" });
     await s.close();
 
     const { s: restarted } = service(clock);
-    const retry = await staff(restarted, "saf-tok", "POST", path, { ...body, note: "retry after restart" });
+    const retry = await staff(restarted, "saf-tok", "POST", "/apps/friends/safety/ban", { ...body, memberId: peer.id, note: "retry after restart", reportId: "friends.rp999" });
     expect(await retry.json()).toEqual({ ok: true });
     expect(await memberOf("slop", phone)).toMatchObject({ account_status: "restricted" });
     expect(await memberOf("friends", phone)).toMatchObject({ account_status: "restricted" });
     expect(await restarted.runtimeFor("friends")!.readState(n => n.trust.level(peer.id))).toBe("hold");
+    expect(await restarted.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([expect.objectContaining({ id: report!.id, status: "banned" })]);
+    expect(await sql`select app_id, payload->>'reportId' as report_id from network.events
+      where type='safety_action' and payload->>'action'='ban' order by app_id`).toEqual([
+      { app_id: "friends", report_id: null }, { app_id: "slop", report_id: report!.id },
+    ]);
     expect(await sql`select reason,projection_completed_at from platform.bans`).toEqual([{ reason: body.note, projection_completed_at: new Date(clock.now()) }]);
     const duplicate = await staff(restarted, "saf-tok", "POST", path, body);
     expect(await duplicate.json()).toEqual({ ok: false, reason: "already_banned" });
@@ -353,6 +364,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
 
     // Ban by phone.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "number", note: "confirmed by staff" })).status).toBe(400);
+    const foreignReport = await staff(s, "saf-tok", "POST", "/apps/friends/safety/ban", { memberId: bf, by: "phone", note: "confirmed by staff", reportId });
+    expect(foreignReport.status).toBe(409);
+    expect(await foreignReport.json()).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await sql`select id from platform.bans`).toEqual([]);
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed by staff", reportId })).json()).toEqual({ ok: true });
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed again" })).json()).toEqual({ ok: false, reason: "already_banned" });
     expect((await sql`select scope, report_id, phone_hash is not null as hashed from platform.bans`).map((r: any) => [r.scope, r.report_id, r.hashed])).toEqual([["phone", reportId, true]]);
@@ -402,7 +417,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const rows = (await sql`select action, detail->>'safety' as safety, detail->>'phase' as phase, ok from network.staff_audit where action in ('safety', 'read_safety_reports') order by id`) as any[];
     const hold = rows.filter(r => r.safety === "hold").map(r => r.phase), ban = rows.filter(r => r.safety === "ban").map(r => r.phase);
     expect(hold).toEqual(["requested", "result"]);
-    expect(ban).toEqual(["requested", "result", "refused"]);
+    expect(ban).toEqual(["refused", "requested", "result", "refused"]);
     expect(rows.filter(r => r.action === "read_safety_reports").length).toBe(2);
   }, T);
 

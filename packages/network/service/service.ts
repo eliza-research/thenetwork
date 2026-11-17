@@ -37,7 +37,7 @@ import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "..
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
   initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
-  staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetySelectsTarget,
+  staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetyReportFor, staffSafetySelectsTarget,
   step as stepStaffSafety,
 } from "../../core/src/generated/staffSafetyService.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
@@ -2864,7 +2864,8 @@ export class NetworkService implements RuntimeHost {
       const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
       if (hold.phase !== "HoldRemainingTargets") return r;
       // One network at a time (never one unit inside another: no lock order to get wrong).
-      for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
+      const relatedReport = staffSafetyReportFor(false, reportId ?? "") || undefined;
+      for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note, relatedReport));
       return r;
     });
   }
@@ -2938,6 +2939,10 @@ export class NetworkService implements RuntimeHost {
     if (admitted.phase !== "ApplyingPersonBan" && admitted.phase !== "ApplyingPhoneBan" && !resuming) {
       return this.refused(user, rt, "ban", target, "already_banned");
     }
+    if (!resuming && reportId !== undefined) {
+      const ownsReport = await rt.readState(n => n.safetyReports().some(report => report.id === reportId && report.subjectId === memberId));
+      if (!staffSafetyReportFor(ownsReport, reportId)) return this.refused(user, rt, "ban", target, "unknown_report");
+    }
     return this.audited(rt, user, target, { safety: "ban", by, reportId: (resuming ? previous.find(b => b.projectedAt === null)?.reportId : reportId) ?? null, resuming }, async () => {
       const at = this.clock.now();
       if (!resuming) {
@@ -2958,8 +2963,8 @@ export class NetworkService implements RuntimeHost {
       const { members } = await this.membersOfPerson(rt, memberId, personId);
       for (const x of members) {
         const r = await x.rt.unitOfWork(n => {
-          const ownReport = saved.reportId && n.safetyReports().some(report => report.id === saved.reportId && report.subjectId === x.memberId)
-            ? saved.reportId : undefined;
+          const ownsReport = saved.reportId !== null && n.safetyReports().some(report => report.id === saved.reportId && report.subjectId === x.memberId);
+          const ownReport = staffSafetyReportFor(ownsReport, saved.reportId ?? "") || undefined;
           const marked = n.markBanned(x.memberId, saved.bannedBy, saved.reason, ownReport);
           if (marked.ok) x.rt.unit.memberCommand = async tx => {
             await tx`update network.members set account_status='restricted'

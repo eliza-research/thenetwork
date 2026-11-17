@@ -25,7 +25,7 @@ pure def lawLocalStaffTargetStaysInScope(requestedRuntime: bool): bool =
 
 ### Apply a hold to the requested member first
 
-The runtime checks that the member and any supplied report match. Apply holds on the remaining selected targets only if the primary hold succeeds. The supplied report ID goes only to the requested member's runtime.
+The runtime checks that the member and any supplied report match. Apply holds on the remaining selected targets only if the primary hold succeeds. The supplied report ID goes only to the runtime that owns that member's report. A related target receives no report ID and applies the decision to its own reports.
 
 ```quint
 type ServiceSafetyPhase =
@@ -38,6 +38,10 @@ pure val initial: ServiceSafetyFlow = { phase: ServiceSafetyStarting, phoneOnly:
 pure def canReadPrimaryHold(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting
 pure def readPrimaryHold(flow: ServiceSafetyFlow, applied: bool): ServiceSafetyFlow =
   { ...flow, phase: if (applied) HoldRemainingTargets else HoldDidNotApply }
+
+pure def staffSafetyReportFor(ownsReport: bool, reportId: str): str = if (ownsReport) reportId else ""
+
+pure def lawOtherTargetsGetNoReport(reportId: str): bool = staffSafetyReportFor(false, reportId) == ""
 
 pure def sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): bool = flow.phase == HoldRemainingTargets
 ```
@@ -86,7 +90,7 @@ pure def staffAgeClearSummary(refused: bool, anyCleared: bool): StaffClearSummar
 
 ### Both ban scopes require authority on every app and a linked person
 
-A phone ban requires at least one keyed phone hash. Check whether every selected phone is already banned. A person ban can proceed without a phone and checks for an existing person ban. After admission the service records ban rows, suppresses the person's current phones and drops private appearance ratings.
+A phone ban requires at least one keyed phone hash. Check whether every selected phone is already banned. A person ban can proceed without a phone and checks for an existing person ban. A new decision that names a report checks that the requested runtime holds that report for the requested member before it records the ban. After admission the service records ban rows, suppresses the person's current phones and drops private appearance ratings.
 
 ```quint
 pure def canStartStaffBan(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting
@@ -120,7 +124,7 @@ pure def lawNoDuplicateLockedBanPhone(hash: str): bool = not(includeLockedBanPho
 
 ### An interrupted ban resumes from its saved authority
 
-Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, and all current app restrictions finish. An authorized retry uses the original decision and finishes pending work without writing another ban. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
+Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, and all current app restrictions finish. An authorized retry uses the original decision and finishes pending work without writing another ban. The saved report ID goes only to the runtime that holds it for that member. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
 
 ```quint
 pure def lawIncompleteRecordedBanCanResume(flow: ServiceSafetyFlow): bool =

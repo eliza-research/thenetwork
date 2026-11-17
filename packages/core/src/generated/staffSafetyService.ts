@@ -53,6 +53,12 @@ export function lawLocalStaffTargetStaysInScope(requestedRuntime: boolean): bool
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 //@ pure
+export function staffSafetyReportFor(ownsReport: boolean, reportId: string): string {
+  return ownsReport ? reportId : "";
+}
+
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
+//@ pure
 export function canReadPrimaryHold(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ServiceSafetyStarting";
 }
@@ -62,6 +68,13 @@ export function canReadPrimaryHold(flow: ServiceSafetyFlow): boolean {
 export function readPrimaryHold(flow: ServiceSafetyFlow, applied: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canReadPrimaryHold(flow)) ==> stepSafetyResultFollowsAction(flow, "readPrimaryHold", \result)
   return { ...flow, phase: applied ? "HoldRemainingTargets" : "HoldDidNotApply" };
+}
+
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
+//@ pure
+export function lawOtherTargetsGetNoReport(reportId: string): boolean {
+  //@ ensures \result === true
+  return staffSafetyReportFor(false, reportId) === "";
 }
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */

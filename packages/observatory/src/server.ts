@@ -666,7 +666,14 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/safety": {
-        GET: guard(async (_r, _u, app) => json(await (await source(mode, app)).safety()), ["safety"]),
+        GET: guard(async (_r, u, app) => {
+          const readMode = mode, revision = modeRevision;
+          const no = await record(u, app, { action: "read_safety", ok: true });
+          if (no) return no;
+          if (revision !== modeRevision) return modeChanged();
+          const safety = await (await source(readMode, app)).safety();
+          return revision === modeRevision ? json(safety) : modeChanged();
+        }, ["safety"]),
         POST: guard(async (req, u, app) => {
           const a = await req.json().catch(() => null) as SafetyAction | null;
           const v = checkSafety(a);
