@@ -89,6 +89,7 @@ import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/revi
 import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachEngagementSource, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import {
   interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
+  interruptionFeedbackUsesFollowupSlot,
 } from "../../core/src/generated/interruptionFeedback.ts";
 import { interruptionFeedbackAnswer, interruptionFeedbackCode, interruptionFeedbackKey, interruptionSampleBucket, type InterruptionSurvey } from "./interruption-feedback.ts";
 import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../../core/src/generated/emptyIntentFollowup.ts";
@@ -5903,7 +5904,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A pending yes/no (a probe or a booked plan) is the open question: an ask now would make the
     // member's next answer ambiguous ("Free Tuesday evening" read as a yes to the probe).
     if (ask && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked")) return this.refuse(m.id, kind, "one_question", fns);
-    const outreach = o.gatheringRsvpLogistics ? "solicited" : kind === "worthwhile" ? "unsolicited" : this.classifyOutreach(m, meta, now);
+    const byTiming = o.gatheringRsvpLogistics ? "solicited" : this.classifyOutreach(m, meta, now);
+    const survey = kind === "worthwhile" && !o.gatheringRsvpLogistics;
+    const outreach = survey ? "unsolicited" : byTiming;
     const unsol = outreach === "unsolicited";
     const timing = this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
@@ -6008,7 +6011,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       const lane = this.laneOf(meta);
       m.unsol = { ...m.unsol, [lane]: [...(m.unsol?.[lane] ?? []), now].slice(-20) };
       m.unsolStreak = (m.unsolStreak ?? 0) + 1;
-    } else if (outreach === "followup") m.askUsed = (m.askUsed ?? 0) + 1;
+    }
+    // spec/interruptionFeedback.md, "Sample a confirmed invitation after its own answer"
+    if (outreach === "followup" || interruptionFeedbackUsesFollowupSlot(survey, byTiming === "followup")) m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
     if (o.memberInviteLink && approvedLink(text) === o.memberInviteLink) meta = { ...meta, approvedInviteLink: o.memberInviteLink };

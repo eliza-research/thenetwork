@@ -6,7 +6,7 @@
 
 ### Sample a confirmed invitation after its own answer
 
-Sample one in ten initial invitations by a stable bucket for the app, member and opportunity. Include explicit acceptance and decline. An invitation qualifies when its provider accepted the send and the member answered the original probe. Keep one pending survey per member. The survey can go out from 24 to 72 hours after the answer, when the member has no open question and the ordinary interruption and transport rules allow it. A survey uses the state interruption budget and the shared person cap.
+Sample one in ten initial invitations by a stable bucket for the app, member and opportunity. Include explicit acceptance and decline. An invitation qualifies when its provider accepted the send and the member answered the original probe. Keep one pending survey per member. The survey can go out from 24 to 72 hours after the answer, when the member has no open question and the ordinary interruption and transport rules allow it. A survey uses the state interruption budget and the shared person cap. When the timing and conversation state place the sent survey in an available follow-up slot for the member's earlier ask, it also uses that slot. The next message has to pass the ordinary outreach rules after the slot is used.
 
 ```quint
 pure val interruptionSampleBuckets = 10
@@ -22,6 +22,12 @@ pure def interruptionFeedbackAskDue(ageMs: int, eligible: bool, openQuestion: bo
 
 pure def lawSurveyNeedsDelivery(sampleBucket: int, directReply: bool, pendingSurvey: bool): bool =
   not(interruptionFeedbackSample(sampleBucket, false, directReply, pendingSurvey))
+
+pure def interruptionFeedbackUsesFollowupSlot(survey: bool, timingFollowup: bool): bool =
+  survey and timingFollowup
+
+pure def lawSurveyUsesOnlyAnAvailableFollowupSlot(survey: bool, timingFollowup: bool): bool =
+  interruptionFeedbackUsesFollowupSlot(survey, timingFollowup) implies timingFollowup
 ```
 
 ### A direct answer measures the interruption once
