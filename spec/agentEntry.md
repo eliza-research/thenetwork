@@ -141,12 +141,14 @@ pure def lawChatGptLinkNeverSends(assistant: LinkedAssistant): bool =
 
 ### Every entry can reach its result
 
-The supported paths include signup through a skill from each kind of entry, an explanation, a shown update, an update that shows nothing, a request to connect, and a refused route.
+The supported paths include signup through a skill from a site, Claude plugin, OpenAI plugin, or skill catalog. A person can also reach an explanation, a shown update, an update that shows nothing, a request to connect, or a refused route.
 
 ```quint
 pure def sometimesFollowingSkill(s: Entry): bool = s.phase == FollowingSkill
 pure def sometimesFollowingSkillFromSite(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromSite
 pure def sometimesFollowingSkillFromCatalog(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromSkillCatalog
+pure def sometimesFollowingSkillFromClaudePlugin(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromClaudePlugin
+pure def sometimesFollowingSkillFromOpenAiPlugin(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromOpenAiPlugin
 pure def sometimesExplaining(s: Entry): bool = s.phase == Explaining
 pure def sometimesUpdateShown(s: Entry): bool = s.phase == UpdateShown
 pure def sometimesNothingNewShown(s: Entry): bool = s.phase == NothingNewShown

@@ -248,6 +248,18 @@ export function sometimesFollowingSkillFromCatalog(s: Entry): boolean {
 
 /** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
+export function sometimesFollowingSkillFromClaudePlugin(s: Entry): boolean {
+  return s.phase === "FollowingSkill" && s.entry === "FromClaudePlugin";
+}
+
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
+//@ pure
+export function sometimesFollowingSkillFromOpenAiPlugin(s: Entry): boolean {
+  return s.phase === "FollowingSkill" && s.entry === "FromOpenAiPlugin";
+}
+
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
+//@ pure
 export function sometimesExplaining(s: Entry): boolean {
   return s.phase === "Explaining";
 }

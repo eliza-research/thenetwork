@@ -1,6 +1,6 @@
 # Matching information questions
 
-The [matching engine flow model](models/matching_engine.md) follows questions for missing matching information. The engine collects suggestions from the current app pack before it selects proposals. The shell supplies stored question history, profile facts, market membership, and existing eligibility checks. It builds the question text and proposal ranking as before. The service applies its own admission rules when it sends questions.
+The [matching engine flow model](models/matching_engine.md) follows questions for missing matching information. The engine collects suggestions from the current app pack before it selects proposals. Slop owns dating preference questions under the [matching lane rules](matchLane.md). The shell supplies stored question history, profile facts, market membership, and existing eligibility checks. When Slop selects both compatibility questions, the shell adds the basics question before the type question. The service applies its own admission rules when it sends questions.
 
 ## Story: Ask for the information needed to find a match
 
@@ -46,15 +46,6 @@ pure def sometimesPublishesQuestions(s: AskRun): bool =
   s.phase == QuestionsPublished and countReservedQuestions(s, "a") > 0
 ```
 
-### The Network asks for dating preferences once
-
-If the member has a live dating intent with missing preferences, the Network considers the preference question if it has never recorded it before. Check the member's existing dating eligibility before adding the question.
-
-```quint
-pure def networkPreferenceQuestion(missingPreferences: bool, activeIntent: bool, previouslyAsked: bool): bool =
-  missingPreferences and activeIntent and not(previouslyAsked)
-```
-
 ### Slop finishes required questions before proposing optional ones
 
 Consider an adult profile with dating opt-in that is active and clear of holds. Ask about missing matching fields, seven days apart per question, while their individual ask count remains below the configured positive cap. Zero disables that cap. The optional questions become eligible after the required fields are complete.
@@ -75,7 +66,7 @@ pure def requiredQuestionDue(elapsedMs: int, asked: int, cap: int): bool =
 
 ### Slop can offer a wider radius or ask about compatibility
 
-Offer a wider dating radius once when widening is enabled, the member's pool is small enough, and the current radius is narrower than the offered radius. When compatibility questions are enabled and information is missing, the basics question precedes the type question. Each question waits 21 days before it can be repeated. The type question also needs its own switch.
+Offer a wider dating radius once when widening is enabled, the member's pool is small enough, and the current radius is narrower than the offered radius. With compatibility questions enabled, consider each question for its own missing information. Each question waits 21 days before it can be repeated. The type question also needs its own switch.
 
 ```quint
 pure val compatibilityWaitMs = 1814400000
@@ -87,4 +78,10 @@ pure def widerRadiusQuestion(radius: int, offeredRadius: int, alreadyAsked: bool
   radius < offeredRadius and not(alreadyAsked)
 
 pure def compatibilityQuestionDue(elapsedMs: int): bool = elapsedMs >= compatibilityWaitMs
+
+pure def compatibilityTypeQuestionDue(typeEnabled: bool, typeMissing: bool, elapsedMs: int): bool =
+  typeEnabled and typeMissing and compatibilityQuestionDue(elapsedMs)
+
+pure def lawTypeQuestionNeedsItsSwitch(typeMissing: bool, elapsedMs: int): bool =
+  not(compatibilityTypeQuestionDue(false, typeMissing, elapsedMs))
 ```
