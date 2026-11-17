@@ -66,18 +66,24 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
     expect(await as("network_observatory_slop", tx => tx`select origin_app from platform.person_blocks_slop`)).toMatchObject({ e: expect.stringContaining("origin_app") });
   }, T);
 
-  test("matching age views apply canonical floors and bans and preserve app permissions", async () => {
+  test("matching age views apply canonical floors, bans and app-scoped holds", async () => {
     await sql.begin(async tx => {
       await tx`update platform.people set lowest_age = 16, phone_hash = 'age-view-fixture' where id = ${P.a}`;
       await tx`insert into platform.age_floor values ('age-view-fixture', 15, now())`;
       await tx`insert into platform.bans (id, scope, person_id, reason, banned_by)
         values ('age-view-ban-fixture', 'person', ${P.c}, 'fixture', 'staff')`;
+      await tx`insert into platform.staff_safety_holds (person_id, app_id, decision_id, held_at)
+        values (${P.a}, 'slop', ${crypto.randomUUID()}, now())`;
+      await tx`insert into platform.report_safety_carryovers (app_id, origin_runtime_id, report_id, person_id)
+        values ('ntwrk', 'ntwrk:nyc', 'age-view-report-fixture', ${P.a})`;
     });
     expect(await as("network_observatory_slop", tx => tx`select * from platform.matching_ages_slop order by member_id`)).toEqual({ v: [
-      { app_id: "slop", member_id: "s1", age: 15, banned: false },
-      { app_id: "slop", member_id: "s3", age: 41, banned: true },
+      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false },
+      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false },
     ] });
-    expect(await as("network_observatory", tx => tx`select age from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [{ age: 15 }] });
+    expect(await as("network_observatory", tx => tx`select * from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [
+      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true },
+    ] });
     for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_cross_app"]) {
       expect(await as(role, tx => tx`select * from platform.matching_ages_slop`)).toEqual(denied);
     }
@@ -87,6 +93,8 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
         (tx: SQL) => tx`select * from platform.matching_ages`,
         (tx: SQL) => tx`select * from platform.matching_ages_ntwrk`,
         (tx: SQL) => tx`select * from platform.age_floor`,
+        (tx: SQL) => tx`select * from platform.staff_safety_holds`,
+        (tx: SQL) => tx`select * from platform.report_safety_carryovers`,
       ]) expect(await as(role, q)).toEqual(denied);
     }
   }, T);
