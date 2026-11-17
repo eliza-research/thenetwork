@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -56,6 +57,29 @@ export class PgOAuthStore implements OAuthStore {
   }
   async migrate() { await this.sql.unsafe(await fileAt(OAUTH_SQL).text()); }
   async close() { if (this.owned) await this.sql.close(); }
+
+  async claimProfileSubmission(g: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim> {
+    const started = performance.now();
+    return this.sql.begin(async tx => {
+      const [current] = await tx<{ expires_at: Date; revoked_at: Date | null }[]>`select expires_at,revoked_at from oauth.grants
+        where id=${g.id} and app_id=${g.app} and phone_key=${g.phoneKey} and person_id is not distinct from ${g.personId}
+          and 'profile:write'=any(scopes) for share`;
+      const live = !!current && current.revoked_at === null && current.expires_at.getTime() > at + Math.ceil(performance.now() - started);
+      if (decideProfileClaim(live, false, false) === "ProfileClaimRefused") return "ProfileClaimRefused";
+      const [won] = await tx`insert into oauth.profile_submissions (grant_id,fingerprint) values (${g.id},${fingerprint})
+        on conflict (grant_id,fingerprint) do nothing returning grant_id`;
+      if (won) return "ProfileClaimStart";
+      const [saved] = await tx<{ accepted: boolean }[]>`select accepted from oauth.profile_submissions where grant_id=${g.id} and fingerprint=${fingerprint}`;
+      return decideProfileClaim(true, true, saved?.accepted === true);
+    });
+  }
+
+  async finishProfileSubmission(grantId: string, fingerprint: string, accepted: boolean): Promise<boolean> {
+    const rows = accepted
+      ? await this.sql`update oauth.profile_submissions set accepted=true where grant_id=${grantId} and fingerprint=${fingerprint} and not accepted returning grant_id`
+      : await this.sql`delete from oauth.profile_submissions where grant_id=${grantId} and fingerprint=${fingerprint} and not accepted returning grant_id`;
+    return rows.length === 1;
+  }
 
   async putSignupDraft(d: import("./store.ts").SignupDraft, at: number) {
     const started = performance.now();
@@ -157,6 +181,7 @@ export class PgOAuthStore implements OAuthStore {
         const rows = await tx`update oauth.grants set revoked_at = ${ts(at)} where id = ${id} and revoked_at is null returning id`;
         await tx`update oauth.tokens set revoked_at = ${ts(at)} where grant_id = ${id} and revoked_at is null`;
         await tx`update oauth.signup_drafts set fields='{}'::jsonb where grant_id=${id}`;
+        await tx`delete from oauth.profile_submissions where grant_id=${id}`;
         return rows.length > 0;
       });
     } catch (error) {
@@ -228,6 +253,7 @@ export class PgOAuthStore implements OAuthStore {
   async sweep(at: number) {
     await this.sql`update oauth.signup_drafts set fields='{}'::jsonb where expires_at<=${new Date(at)}`;
     const t = ts(at);
+    await this.sql`delete from oauth.profile_submissions s using oauth.grants g where s.grant_id=g.id and (g.revoked_at is not null or g.expires_at<=${t})`;
     await this.sql`delete from oauth.auth_requests where expires_at <= ${t}`;
     await this.sql`delete from oauth.codes where expires_at <= ${t}`;
     await this.sql`delete from oauth.tokens where expires_at <= ${t}`;

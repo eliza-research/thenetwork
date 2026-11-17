@@ -67,7 +67,11 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
     await env.people.putMembership(membership);
     expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(true);
     acceptProfile = false;
-    expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(false);
+    expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(true);
+    const correctedProfile = { about: "I enjoy climbing and photography." };
+    expect((await invoke("submit_profile", correctedProfile, token)).submitted).toBe(false);
+    acceptProfile = true;
+    expect((await invoke("submit_profile", correctedProfile, token)).submitted).toBe(true);
     const updates = await invoke("get_updates", {}, token);
     expect(updates.updates).toEqual([{ summary: "Board games on Saturday.", at: "2026-10-08T12:00:00.000Z", kind: "plan_probe" }]);
     expect(validators.get("get_updates")!({ ...updates, updates: [{ summary: "Missing fields" }] })).toBe(false);

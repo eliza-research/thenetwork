@@ -178,6 +178,11 @@ export class Accounts {
   private get hooks() { return this.opts.hooks ?? {}; }
   phoneHash(e164: string) { return keyedHash(this.opts.hashKey, `phone:${e164}`); }
 
+  /** Private connector receipt key. Keep the approved profile text out of OAuth storage. */
+  profileSubmissionFingerprint(app: AppId, grantId: string, profile: string): string {
+    return keyedHash(this.opts.hashKey, JSON.stringify(["mcp-profile-submission/v1", app, grantId, profile]));
+  }
+
   /** The person for a verified phone, if any (never created here). A number on hold has no person until staff decide. */
   async personFor(e164: string): Promise<Person | undefined> {
     const ph = await this.store.findPhone(e164);

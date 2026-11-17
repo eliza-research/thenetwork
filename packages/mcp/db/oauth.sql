@@ -133,6 +133,14 @@ create table if not exists oauth.signup_drafts (
   consumed_at timestamptz
 );
 
+-- A private at-most-once connector intake claim. The digest is keyed outside this database.
+create table if not exists oauth.profile_submissions (
+  grant_id text not null references oauth.grants(id) on delete cascade,
+  fingerprint text not null check (fingerprint ~ '^[0-9a-f]{64}$'),
+  accepted boolean not null default false,
+  primary key (grant_id, fingerprint)
+);
+
 -- Least privilege (audit: oauth grants hold phone numbers next to app ids). No role but the service
 -- login may read this schema: never the console, analyst or per-app read roles.
 revoke all on schema oauth from public;

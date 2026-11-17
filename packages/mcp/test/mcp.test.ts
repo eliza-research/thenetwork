@@ -260,7 +260,10 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     expect(n).toBe(0);
     await addMember(env, PHONE_B, [{ app: "peon", state: "active" }]);
     const d = await connect(env, "peon.biz", PHONE_B);
-    for (let i = 0; i < 5; i++) expect((await call(env, PEON_MCP, "submit_profile", { about }, { token: d.token.access_token })).res.status).toBe(200);
+    for (const schedule of ["weekday mornings", "weekday evenings", "Saturday mornings", "Sunday afternoons", "weekday afternoons"]) {
+      const profile = `Looking for a backend role in Brooklyn. I am free on ${schedule}.`;
+      expect((await call(env, PEON_MCP, "submit_profile", { about: profile }, { token: d.token.access_token })).res.status).toBe(200);
+    }
     expect((await call(env, PEON_MCP, "submit_profile", { about }, { token: d.token.access_token })).res.status).toBe(429);
     expect(n).toBe(5);
   });

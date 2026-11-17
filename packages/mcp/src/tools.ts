@@ -12,6 +12,7 @@ import {
   initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
+import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
@@ -369,12 +370,28 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const now = await c.hooks.personForKey(g.phoneKey);
       if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
       const a = c.apps[g.app];
-      if (!c.hooks.submitProfile) return { kind: "error", message: "Profiles cannot be sent here yet." };
+      const { submitProfile, profileSubmissionFingerprint } = c.hooks;
+      const store = c.store;
+      if (!submitProfile || !profileSubmissionFingerprint || !store || c.now === undefined) return { kind: "error", message: "Profiles cannot be sent here yet." };
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (now === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
-      const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
-      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
+      const fingerprint = profileSubmissionFingerprint(g.app, g.id, chk.about!);
+      const unresolved: ToolOutcome = { kind: "error", message: "The profile delivery is unconfirmed. Check your app status before making changes." };
+      try {
+        const claim = await store.claimProfileSubmission(g, fingerprint, c.now);
+        if (claim === "ProfileClaimRefused") return { kind: "invalid_grant" };
+        if (claim === "ProfileClaimPending") return unresolved;
+        if (claim === "ProfileClaimStart") {
+          const accepted = await submitProfile(now, g.app, g.phoneKey, chk.about!) === "accepted";
+          const stored = await store.finishProfileSubmission(g.id, fingerprint, accepted);
+          if (!accepted) return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
+          if (!profileSubmissionAccepted(claim, true, stored)) return unresolved;
+        }
+      } catch {
+        // If intake happened before a crash or storage error, leave the pending claim fenced.
+        return unresolved;
+      }
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
     }
     case "get_updates": {

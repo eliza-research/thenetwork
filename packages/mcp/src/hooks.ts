@@ -63,6 +63,8 @@ export interface PlatformHooks {
    * had texted it (the Network reads it with the same rules). Undefined: the platform does not take profiles.
    */
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member">;
+  /** Scope the private retry receipt to this exact authorized grant and approved profile. */
+  profileSubmissionFingerprint?(app: McpAppId, grantId: string, text: string): string;
   /**
    * The person's own unseen updates in this app from the single inbox, marked seen on every surface.
    * Undefined: the platform has no inbox (get_updates answers "not available").
@@ -191,6 +193,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
         && canMatchInApp(await p.accounts.lowestAge(who.e164, who.person), app);
     },
     ...(p.submitProfile ? {
+      profileSubmissionFingerprint: (app: McpAppId, grantId: string, text: string) => p.accounts.profileSubmissionFingerprint(app, grantId, text),
       submitProfile: async (personId: string, id: McpAppId, key: string, text: string) => {
         // The grant holds only the keyed hash: the number is found here, and only for that same person.
         const who = await p.accounts.byPhoneHash(key);

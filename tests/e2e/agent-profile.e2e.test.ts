@@ -9,7 +9,7 @@ import { HARD_FIELDS } from "../../packages/engine/src/packs/slop/extract.ts";
 import { SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/onboard.ts";
 import { NTWRK_BRAND, copyFor } from "../../packages/network/src/copy.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
-import { newPhone, pgAvailable, startStack, webJoin, type Stack } from "./harness.ts";
+import { connectMcp, newPhone, pgAvailable, rpc, startStack, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
@@ -103,5 +103,63 @@ describe.skipIf(!pgAvailable)("the agent's approved profile reaches the Network 
     expect(consent.at(-1)).toMatchObject({ state: "opted_in", source: "web_form" });
     expect(consent.some(c => c.source === "join_failed")).toBe(false);
     expect((await outbound("slop", members[0]!.id as string)).filter(t => t.startsWith("Hi Lu,")).length).toBe(1);
+  }, T);
+
+  // spec/mcpProfileSubmission.md, "A retry returns confirmed acceptance or holds an unresolved intake"
+  test("the enrolled agent's profile applies once across a concurrent retry and a lost intake result", async () => {
+    const phone = newPhone();
+    const joined = await webJoin(st, "peon", phone, { age: 31, firstName: "Lu" });
+    expect(joined.res.status).toBe(200);
+    const member = (await memberRow("peon", phone))!;
+    const connected = await connectMcp(st, "peon", phone, { browser: joined.b });
+    const token = connected.token!.access_token;
+    const submit = (about: string) => rpc(st, "peon", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, token);
+    const exactProfile = "I am a backend engineer in Brooklyn and I prefer a small team.";
+    const nextProfile = "I would also like to learn more about database infrastructure roles.";
+    const storedMessages = (about: string) => sql`select id from network.messages where app_id='peon' and member_id=${member.id}
+      and direction='inbound' and body=${about}`;
+    const original = st.svc.submitProfile.bind(st.svc);
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let first: ReturnType<typeof submit> | undefined;
+    try {
+      st.svc.submitProfile = async (...args) => {
+        if (args[3] === exactProfile) { entered(); await held; }
+        const result = await original(...args);
+        if (args[3] === nextProfile) throw new Error("Synthetic loss after the canonical intake accepted the profile");
+        return result;
+      };
+      first = submit(exactProfile);
+      // If intake unexpectedly returns without entering, surface the error instead of waiting for the test timeout.
+      await Promise.race([started, first.then(() => { throw new Error("No intake claim reached the enrolled member"); })]);
+      const overlapping = await submit(`  ${exactProfile}  `);
+      expect(overlapping.body!.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("unconfirmed") }] });
+      expect(await storedMessages(exactProfile)).toEqual([]);
+      release();
+      expect((await first).body!.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
+      expect(await storedMessages(exactProfile)).toHaveLength(1);
+
+      await st.setPrivateOpenAiApps([]);
+      expect((await submit(exactProfile)).body!.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
+      expect(await storedMessages(exactProfile)).toHaveLength(1);
+      for (let i = 0; i < 2; i++) {
+        expect((await submit(nextProfile)).body!.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("unconfirmed") }] });
+        expect(await storedMessages(nextProfile)).toHaveLength(1);
+      }
+      expect((await submit("I am available for another application starting next month.")).res.status).toBe(429);
+      const receipts = await sql`select s.fingerprint,s.accepted from oauth.profile_submissions s
+        join oauth.grants g on g.id=s.grant_id join network.members m on m.person_id::text=g.person_id and m.app_id=g.app_id
+        where m.id=${member.id} order by s.accepted`;
+      expect(receipts).toEqual([{ fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), accepted: false },
+        { fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), accepted: true }]);
+      await st.mcp.revokeAllFor(phone, "peon", { forget: true });
+      expect((await submit(exactProfile)).res.status).toBe(401);
+      expect(await sql`select fingerprint from oauth.profile_submissions where fingerprint in ${sql(receipts.map(row => row.fingerprint))}`).toEqual([]);
+    } finally {
+      release();
+      if (first) await first.catch(() => {});
+      st.svc.submitProfile = original;
+    }
   }, T);
 });

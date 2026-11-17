@@ -5,6 +5,7 @@
 // as platform.sessions keeps it; no tool and no response carries it.
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -116,12 +117,18 @@ export interface ConsentGrantWrites {
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
 
+export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
+
 export interface OAuthStore {
   /** One draft per grant; no overwrite/replay. Grant liveness and scope checked atomically. */
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
   claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
   discardSignupDrafts(phoneKey: string, app: McpAppId, at: number): Promise<void>;
+  /** Atomically admit the first intake for the fingerprint under this live grant. */
+  claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
+  /** Store observed acceptance, or release a claim only after intake explicitly refused it. */
+  finishProfileSubmission(grantId: string, fingerprint: string, accepted: boolean): Promise<boolean>;
 
   putClient(c: OAuthClient): Promise<void>;
   getClient(id: string): Promise<OAuthClient | undefined>;
@@ -180,6 +187,7 @@ const copy = <T extends object>(v: T | undefined): T | undefined => (v ? structu
 
 export class MemoryOAuthStore implements OAuthStore {
   readonly signupDrafts = new Map<string, SignupDraft>();
+  private readonly profileSubmissions = new Map<string, Map<string, boolean>>();
   readonly clients = new Map<string, OAuthClient>();
   readonly requests = new Map<string, AuthRequest>();
   readonly grants = new Map<string, Grant>();
@@ -206,6 +214,29 @@ export class MemoryOAuthStore implements OAuthStore {
   }
   async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
     for (const d of this.signupDrafts.values()) if (d.phoneKey === phoneKey && d.app === app) { d.fields = { firstName: "" }; d.consumedAt = at; }
+  }
+
+  async claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim> {
+    const current = this.grants.get(grant.id);
+    const live = !!current && current.revokedAt === null && current.expiresAt > at && current.scopes.includes("profile:write") &&
+      current.app === grant.app && current.phoneKey === grant.phoneKey && current.personId === grant.personId;
+    const claims = this.profileSubmissions.get(grant.id);
+    const prior = claims?.get(fingerprint);
+    const decision = decideProfileClaim(live, prior !== undefined, prior === true);
+    if (decision === "ProfileClaimStart") {
+      const entries = claims ?? new Map<string, boolean>();
+      entries.set(fingerprint, false);
+      this.profileSubmissions.set(grant.id, entries);
+    }
+    return decision;
+  }
+
+  async finishProfileSubmission(grantId: string, fingerprint: string, accepted: boolean): Promise<boolean> {
+    const claims = this.profileSubmissions.get(grantId);
+    if (!claims || claims.get(fingerprint) !== false) return false;
+    if (accepted) claims.set(fingerprint, true);
+    else claims.delete(fingerprint);
+    return true;
   }
 
 
@@ -257,6 +288,7 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const t of this.tokens.values()) if (t.grantId === id && t.revokedAt === null) t.revokedAt = at;
     if (!g || g.revokedAt !== null) return false;
     g.revokedAt = at;
+    this.profileSubmissions.delete(id);
     const draft = this.signupDrafts.get(id); if (draft) draft.fields = { firstName: "" };
     return true;
   }
@@ -300,6 +332,7 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [k, c] of this.codes) if (c.expiresAt <= at) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.expiresAt <= at) this.tokens.delete(k);
     for (const [k, w] of this.windows) if (w.start + w.windowMs <= at) this.windows.delete(k);
+    for (const [id, g] of this.grants) if (g.revokedAt !== null || g.expiresAt <= at) this.profileSubmissions.delete(id);
     for (const [k, g] of this.grants) if (Math.min(g.revokedAt ?? Infinity, g.expiresAt) <= at - GRANT_KEEP_MS) this.dropGrant(k);
     const used = new Set([...this.grants.values()].map(g => g.clientId));
     for (const [k, c] of this.clients) if (!used.has(k) && c.createdAt <= at - CLIENT_UNUSED_MS) this.clients.delete(k);
@@ -315,6 +348,7 @@ export class MemoryOAuthStore implements OAuthStore {
   private dropGrant(id: string) {
     this.grants.delete(id);
     this.signupDrafts.delete(id);
+    this.profileSubmissions.delete(id);
     for (const [k, c] of this.codes) if (c.grantId === id) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.grantId === id) this.tokens.delete(k);
   }
