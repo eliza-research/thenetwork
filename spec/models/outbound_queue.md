@@ -504,15 +504,16 @@ module outbound_queue {
 
   // The write of the decision. A wait or an end (no status guard), or the admission transaction.
   // dbErr: the admission transaction throws (deadlock, reset): drain()'s catch lets the row wait (SD-117 fix).
-  action applyDecision(w: str, dbErr: bool): bool = applyCurrentDecision(w, dbErr, false)
+  action applyDecision(w: str, dbErr: bool): bool = applyCurrentDecision(w, dbErr, false, false)
 
-  action applyCurrentDecision(w: str, dbErr: bool, rosterBlocked: bool): bool = {
+  action applyCurrentDecision(w: str, dbErr: bool, rosterBlocked: bool, rosterRestricted: bool): bool = {
     val wk = work.get(w)
     val r = wk.row
     val row = rows.get(r)
     val compliance = row.kind == "compliance"
     val agent = isAgent(row.kind)
     val blockedContact = row.member and not(compliance) and rosterBlocked
+    val restrictedContact = row.member and not(compliance) and rosterRestricted
     // Admission: the state fence (lockAdmission: the stored Network state is the one this worker read, SD-020 fix),
     // the member and its binding, the consent ledger for every non-compliance row (Q-outbound_queue-1 fix 1f86525),
     // then the CAS claim.
@@ -521,7 +522,7 @@ module outbound_queue {
       else if (views.get(w).ver != env.ver) "stale_view"
       else if (row.member and env.erased) "dropped_forgotten"
       else if (not(compliance) and codeOptedOut(env.ledger)) "refused_opted_out"
-      else if (blockedContact) "suppressed_ineligible"
+      else if (blockedContact or restrictedContact) "suppressed_ineligible"
       else if (row.status == wk.readStatus and not(row.lease) and row.hasBody) "admitted"
       else if (row.status != wk.readStatus or row.lease) "busy"
       else "dropped_forgotten"
@@ -532,6 +533,7 @@ module outbound_queue {
       if (row.member and agent and env.held) "whileHeld" else "",
       if (row.member and agent and env.closed) "whenClosed" else "",
       if (blockedContact) "blockedRoster" else "",
+      if (restrictedContact) "restrictedRoster" else "",
       if (row.doubt) "inDoubt" else "",
       if (row.leakBad and not(row.leakReleased)) "leak" else "").exclude(Set(""))
     all {
@@ -920,8 +922,8 @@ module outbound_queue {
         and rows.get(x).net == work.get(wk).net))
       decide(wk, rd, b1 and b3, b2) },
     { nondet wd = oneOf(WORKERS.filter(x => work.get(x).phase == "decided"))
-      // Most rows have no blocked peer roster. The directed trace covers a block at the claim boundary.
-      applyCurrentDecision(wd, b3 and b2, b1 and b2 and not(b3)) },
+      // Most rows have no restricted peer roster. The directed traces cover current authority at claim.
+      applyCurrentDecision(wd, b3 and b2, b1 and b2 and not(b3), b1 and b3 and not(b2)) },
     { nondet wc = oneOf(WORKERS.filter(x => work.get(x).phase == "calling")) providerCall(wc, out) },
     { nondet wp = oneOf(WORKERS.filter(x => work.get(x).phase == "responded")) respond(wp, b2 and b3) },
     { nondet wu = oneOf(WORKERS.filter(x => work.get(x).phase == "locked")) unlockLine(wu) },
@@ -1003,6 +1005,7 @@ module outbound_queue {
   val noClaimAfterStop = ROWS.forall(r => not(ghost.get(r).bad.contains("afterStop")))
   // F23: the claim rechecks the block after a row has waited on the queue.
   val noClaimWithBlockedRoster = ROWS.forall(r => not(ghost.get(r).bad.contains("blockedRoster")))
+  val noClaimWithRestrictedRoster = ROWS.forall(r => not(ghost.get(r).bad.contains("restrictedRoster")))
   // I1 / oq:113 "The recipient at send time: paused, blocked, held"; oq:14 "each reads the database".
   // Failed before fix 6cc9d1b: SD-020 (the recipient gate reads the replica's in-memory Network; the claim now
   // needs the stored state version to be the one the replica read).
@@ -1143,7 +1146,7 @@ module outbound_queue {
   val sentAtOnlyIfOut = ROWS.forall(r => rows.get(r).sentAt implies admitted.contains(r))
 
   val safety = and {
-    noClaimAfterStop, noClaimWithBlockedRoster, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
+    noClaimAfterStop, noClaimWithBlockedRoster, noClaimWithRestrictedRoster, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
     notSentMeansNotOut, capAtMost, slotOnlyForLiveRow, noStatusRegressLive,
     complianceAlwaysGoes, nonMemberBodyClearedAtEnd, guardFailedReachesStaff, collectedResolvable, noHistoryReceiptRecorded,
     heldOnlyWhileUnanswered, ownNetworkDecides, mirrorNotStuckWaiting, sentAtOnlyIfOut,
@@ -1174,7 +1177,16 @@ module outbound_queue {
       .then(enqueue("r1", "proactive", true, "nyc", false))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
       .then(lockLine("w1")).then(decide("w1", "r1", false, false))
-      .then(applyCurrentDecision("w1", false, true))
+      .then(applyCurrentDecision("w1", false, true, false))
+      .expect(rows.get("r1").status == "suppressed_ineligible" and rows.get("r1").attempts == 0 and not(admitted.contains("r1")) and safety)
+
+  // A participant's canonical ban or hold is already active while app projection waits.
+  run restrictedRosterTest =
+    initWith("cloud", true, false)
+      .then(enqueue("r1", "transactional", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
+      .then(lockLine("w1")).then(decide("w1", "r1", false, false))
+      .then(applyCurrentDecision("w1", false, false, true))
       .expect(rows.get("r1").status == "suppressed_ineligible" and rows.get("r1").attempts == 0 and not(admitted.contains("r1")) and safety)
 
   // A transactional text in quiet hours waits, then goes after the window.

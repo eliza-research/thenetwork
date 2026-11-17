@@ -55,17 +55,20 @@ pure def lawPausedProbeCannotProceed(categoryAllowed: bool): bool =
 
 ### Recheck blocks between the participants before contact
 
-A queued probe, plan probe, schedule, booking notice, or reminder needs a current roster with no block between its members. A block in any app applies in either direction. Use the exact roster recorded on a booking notice when present. Otherwise use the recipient and the current participating seats. Declined, dropped, unavailable, and alternate seats do not join that roster. Read the block again before returning a stored signed reply that carries this contact. Neutral cancellation and safety replies keep their own admission rules.
+A queued probe, plan probe, schedule, booking notice, or reminder needs a current roster with no block between its members. A block in any app applies in either direction. A canonical ban or applicable staff hold on any member of that roster stops the contact even while the app's runtime still has the earlier state. Use the exact roster recorded on a booking notice when present. Otherwise use the recipient and the current participating seats. Declined, dropped, unavailable, and alternate seats do not join that roster. Read the current restrictions again before returning a stored signed reply that carries this contact. Neutral cancellation and safety replies keep their own admission rules.
 
 ```quint
 pure val peerContactTypes: List[str] = List("probe", "plan_probe", "scheduling", "proposal", "reminder")
 pure val peerContactSeatStatuses: List[str] = List("pending", "checking", "available", "accepted", "confirmed", "attended")
 
-pure def queuedPeerContactPolicy(rosterBlocked: bool): Admission =
-  if (rosterBlocked) RecipientIneligible else Proceed
+pure def queuedPeerContactPolicy(rosterBlocked: bool, rosterRestricted: bool): Admission =
+  if (rosterBlocked or rosterRestricted) RecipientIneligible else Proceed
 
-pure def lawBlockedRosterCannotProceed(rosterBlocked: bool): bool =
-  rosterBlocked implies queuedPeerContactPolicy(rosterBlocked) != Proceed
+pure def lawBlockedRosterCannotProceed(rosterRestricted: bool): bool =
+  queuedPeerContactPolicy(true, rosterRestricted) != Proceed
+
+pure def lawRestrictedRosterCannotProceed(rosterBlocked: bool): bool =
+  queuedPeerContactPolicy(rosterBlocked, true) != Proceed
 ```
 
 ### Replies, quiet hours and unanswered messages limit when a send can go out

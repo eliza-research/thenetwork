@@ -31,7 +31,7 @@ export async function lockPeerOpportunityContact(tx: SQL, app: string, runtime: 
 /** Recheck participant authority in the provider claim or signed handoff transaction. */
 export async function peerOpportunityContactRestricted(tx: SQL, app: string, recipient: string, ids: string[]): Promise<boolean> {
   if (!ids.length) return false;
-  const [row] = await tx<{ blocked: boolean; staff_held: boolean }[]>`with roster as (${peerRosters(tx, app, recipient, ids)})
+  const [row] = await tx<{ blocked: boolean; restricted: boolean }[]>`with roster as (${peerRosters(tx, app, recipient, ids)})
     select exists (
       select 1 from roster a join roster b on b.message_id=a.message_id and a.member_id<b.member_id
       where exists (select 1 from network.edges edge where edge.app_id=${app} and edge.type='blocked'
@@ -39,6 +39,6 @@ export async function peerOpportunityContactRestricted(tx: SQL, app: string, rec
       or exists (select 1 from platform.person_blocks block
         where (block.from_person=a.person_id and block.to_person=b.person_id) or (block.from_person=b.person_id and block.to_person=a.person_id))
     ) as blocked, exists (select 1 from roster join platform.matching_ages authority
-      on authority.app_id=${app} and authority.member_id=roster.member_id where authority.staff_held) as staff_held`;
-  return row?.staff_held === true || queuedPeerContactPolicy(row?.blocked === true) !== "Proceed";
+      on authority.app_id=${app} and authority.member_id=roster.member_id where authority.banned or authority.staff_held) as restricted`;
+  return queuedPeerContactPolicy(row?.blocked === true, row?.restricted === true) !== "Proceed";
 }

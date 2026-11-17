@@ -854,8 +854,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await sql`select staff_held from platform.matching_ages where app_id='peon' and member_id=${current}`).toEqual([{ staff_held: false }]);
   }, T);
 
-  test("a committed global hold stops queued peer delivery while a related runtime is still waiting", async () => {
-    // spec/staffSafetyService.md, "A staff hold survives ordinary app membership changes"
+  test.each(["hold", "ban"] as const)("a committed global %s stops queued peer delivery while a related runtime is still waiting", async decision => {
+    // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
     await fresh();
     const clock = new SimClock(START);
     const delivered: SendRequest[] = [];
@@ -892,7 +892,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
     await adapter.engaged(recipientPhone);
     await adapter.lineSafety("review");
-    const notice = "staff-hold-queued-booking-fixture";
+    const notice = "staff-restriction-queued-booking-fixture";
     await rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), members: ready.members, opps: ready.opps });
       rt.unit.sends.push({ id: notice, memberId: recipient, to: recipientPhone, kind: "transactional", type: "proposal",
@@ -909,9 +909,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       await allowProjection;
       return unit(fn, scheduling);
     };
-    const holding = staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: slopId, note: "reviewed global hold" });
+    const applying = staff(s, "saf-tok", "POST", `/apps/slop/safety/${decision}`, {
+      memberId: slopId, note: "reviewed global restriction", ...(decision === "ban" ? { by: "person" } : {}),
+    });
     try {
-      await Promise.race([pendingProjection, holding.then(() => { throw new Error("The hold did not reach the related runtime"); })]);
+      await Promise.race([pendingProjection, applying.then(() => { throw new Error("The restriction did not reach the related runtime"); })]);
       expect((await rt.pg.load())!.trust?.find(entry => entry.id === peerId)?.level).not.toBe("hold");
       await adapter.lineSafety(undefined);
       clock.advance(HOUR);
@@ -920,7 +922,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(delivered.some(call => call.idempotencyKey === `tn:${notice}`)).toBe(false);
     } finally {
       resume();
-      expect(await (await holding).json()).toEqual({ ok: true });
+      expect(await (await applying).json()).toEqual({ ok: true });
       rt.unitOfWork = unit;
     }
   }, T);

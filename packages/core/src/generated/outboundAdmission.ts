@@ -78,15 +78,22 @@ export function lawPausedProbeCannotProceed(categoryAllowed: boolean): boolean {
 
 /** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
 //@ pure
-export function queuedPeerContactPolicy(rosterBlocked: boolean): Admission {
-  return rosterBlocked ? "RecipientIneligible" : "Proceed";
+export function queuedPeerContactPolicy(rosterBlocked: boolean, rosterRestricted: boolean): Admission {
+  return rosterBlocked || rosterRestricted ? "RecipientIneligible" : "Proceed";
 }
 
 /** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
 //@ pure
-export function lawBlockedRosterCannotProceed(rosterBlocked: boolean): boolean {
+export function lawBlockedRosterCannotProceed(rosterRestricted: boolean): boolean {
   //@ ensures \result === true
-  return !rosterBlocked || queuedPeerContactPolicy(rosterBlocked) !== "Proceed";
+  return queuedPeerContactPolicy(true, rosterRestricted) !== "Proceed";
+}
+
+/** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
+//@ pure
+export function lawRestrictedRosterCannotProceed(rosterBlocked: boolean): boolean {
+  //@ ensures \result === true
+  return queuedPeerContactPolicy(rosterBlocked, true) !== "Proceed";
 }
 
 /** Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out (spec/outboundAdmission.md) */
