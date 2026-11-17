@@ -1,0 +1,26 @@
+{"text":"he flaked on me","self":false,"other":true}
+{"text":"she flaked on me","self":false,"other":true}
+{"text":"he flaked","self":false,"other":true}
+{"text":"they flaked","self":false,"other":true}
+{"text":"he flaked out on me","self":false,"other":true}
+{"text":"he's flaking on me","self":false,"other":true}
+{"text":"he bailed on me","self":false,"other":true}
+{"text":"she bailed on me","self":false,"other":true}
+{"text":"he bailed on us","self":false,"other":true}
+{"text":"nobody showed up","self":false,"other":true}
+{"text":"no one showed up","self":false,"other":true}
+{"text":"nobody came","self":false,"other":true}
+{"text":"no one turned up","self":false,"other":true}
+{"text":"he never showed up","self":false,"other":true}
+{"text":"he didn't show","self":false,"other":true}
+{"text":"he stood me up","self":false,"other":true}
+{"text":"he didn't come","self":false,"other":true}
+{"text":"she was a no-show","self":false,"other":true}
+{"text":"i couldn't make it","self":true,"other":false}
+{"text":"i didn't make it","self":true,"other":false}
+{"text":"i had to bail","self":true,"other":false}
+{"text":"we didn't make it","self":true,"other":false}
+{"text":"it was great, we clicked","self":false,"other":false}
+{"text":"it was fine","self":false,"other":false}
+{"text":"i flaked","self":false,"other":false}
+{"text":"he didn't flake on me","self":false,"other":false}
