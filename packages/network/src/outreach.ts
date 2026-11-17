@@ -8,7 +8,7 @@ import {
   withinQuietHours, type OutreachBudget, type ParticipationState,
 } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
-import { unansweredInviteLimit, unansweredInviteWaitMs } from "../../core/src/generated/outreachPolicy.ts";
+import { reengagementSilenceMs, unansweredInviteLimit, unansweredInviteWaitMs } from "../../core/src/generated/outreachPolicy.ts";
 
 export const NY = "America/New_York";
 
@@ -35,7 +35,7 @@ export const OUTREACH = {
   unansweredAfterMs: unansweredInviteWaitMs,
   unansweredLimit: unansweredInviteLimit,
   /** One re-engagement message is allowed after this much silence (founder default D6)... */
-  reengageAfterMs: 30 * DAY,
+  reengageAfterMs: reengagementSilenceMs,
   /** ...and only when something we're holding for them scored in the top quartile of its engine run (D6). */
   reengageMinQuantile: 0.75,
   /** A standalone acknowledgement ("Thanks, noted") is folded into the next message sent within this window, never sent alone. */
