@@ -10,7 +10,7 @@ The site build checks each served skill's step markers against this model. This 
 
 ### The selected app determines the available transport
 
-The three native connector skills require that exact app's supported connector. A client without that capability stops before requesting a profile, and the attempt stays stopped. Reading a skill gives no tools or grants. Slop has no public OpenAI connector. Peon retains its existing connector and Messages paths, pending separate production qualification.
+The three native connector skills require that exact app's supported connector. A client without that capability stops before requesting a profile. Reading a skill gives no tools or grants. Slop has no public OpenAI connector. Peon retains its existing connector and Messages paths, pending separate production qualification.
 
 ```quint
 import brandIdentity.* from "./brandIdentity"
@@ -62,9 +62,6 @@ pure def chooseTransport(s: AgentSignup, skillKind: SkillKind, connectorTools: b
 pure def alwaysTransportFixedAfterChoice(s: AgentSignup): bool =
   s.phase == CheckingCapability iff s.transport == TransportUndecided
 
-pure def alwaysNoTransportStops(s: AgentSignup): bool =
-  s.transport == NoTransport implies s.phase == Unsupported
-
 pure def canReadAppFacts(s: AgentSignup): bool = s.phase == ReadingApp and s.transport == NativeConnectorHandoff
 
 pure def readAppFacts(s: AgentSignup, appMatches: bool, inviteMode: bool): AgentSignup =
@@ -82,7 +79,7 @@ pure def alwaysNoTransportStops(s: AgentSignup): bool =
 
 ### The person approves the exact draft and current text consent
 
-For the native connector path, read the selected app's public policy and exact text consent before drafting. Use the lowest stated age. Below 13 stops the flow. Anyone 13 through 17 receives the adult-only matching notice. Draft the person's first name, age, confirmed supported city/region and neighborhood, and the app-specific profile. Obtain explicit approval for the exact draft and the current app consent. Nothing is approved while the agent checks capability, reads the app, drafts or waits for the decision. Changes return to drafting. Refusal ends the attempt. In Peon's Messages path, the person's own Messages app opens the approved text with the [Peon signup line](textEnrollment.md#a-prepared-peon-signup-names-its-app-on-a-separate-first-line). The person sends it.
+For the native connector path, read the selected app's public policy and exact text consent before drafting. Use the lowest stated age. Below 13 stops the flow. Anyone 13 through 17 receives the adult-only matching notice. Draft the person's first name, age, confirmed supported city/region and neighborhood, and the app-specific profile. Obtain explicit approval for the exact draft and the current app consent. Changes return to drafting. Refusal ends the attempt. In Peon's Messages path, the person's own Messages app opens the approved text with the [Peon signup line](textEnrollment.md#a-prepared-peon-signup-names-its-app-on-a-separate-first-line). The person sends it.
 
 ```quint
 pure def lowerBand(a: AgeBand, b: AgeBand): AgeBand =
@@ -129,10 +126,6 @@ pure def alwaysNothingSentBeforeApproval(s: AgentSignup): bool =
 
 pure def alwaysTextHandoffIsApproved(s: AgentSignup): bool =
   s.phase == HandedToMessages implies (s.approved and s.transport == MessagesHandoff)
-
-pure def alwaysNothingApprovedBeforeDecision(s: AgentSignup): bool =
-  (s.phase == CheckingCapability or s.phase == ReadingApp or s.phase == Drafting or s.phase == AwaitingApproval)
-    implies not(s.approved)
 ```
 
 ### Nothing is approved before the person decides
@@ -147,7 +140,7 @@ pure def alwaysNoApprovalBeforeDecision(s: AgentSignup): bool =
 
 ### The app's browser confirms the owner, enrolls if eligible and asks separately for connector access
 
-The person gets one authorization link from the client's native connector. A native handoff is open only after that link was offered, and only an offered link can lead to a browser enrollment. The agent uses its configured app endpoint and uses the link exactly as issued. The browser verifies the phone or uses a current valid session. In the eligible new member flow, the person confirms their enrollment details and separately accepts the app's current text consent and connector permission. Enter any required invitation only in the app's browser. The site determines whether the invitation and signup are eligible. A completed same-app enrollment and current write grant allow the agent to check connector status. The agent reads existing membership status without signing up again or resending a new profile. Refusal, a hold, wrong app, missing/invalid invitation, changed enrollment details and unconfirmed handoff all leave the draft unsent.
+The person gets one authorization link from the client's native connector. The agent uses its configured app endpoint and uses the link exactly as issued. The browser verifies the phone or uses a current valid session. In the eligible new member flow, the person confirms their enrollment details and separately accepts the app's current text consent and connector permission. Enter any required invitation only in the app's browser. The site determines whether the invitation and signup are eligible. A completed same-app enrollment and current write grant allow the agent to check connector status. The agent reads existing membership status without signing up again or resending a new profile. Refusal, a hold, wrong app, missing/invalid invitation, changed enrollment details and unconfirmed handoff all leave the draft unsent.
 
 ```quint
 pure def canOfferHandoff(s: AgentSignup): bool =
@@ -184,12 +177,6 @@ pure def alwaysNativeEnrollmentKeepsInvitationGate(s: AgentSignup): bool =
 pure def alwaysOneApprovedNativeHandoff(s: AgentSignup): bool =
   s.handoffs >= 0 and s.handoffs <= 1 and
   (s.handoffs > 0 implies (s.approved and s.transport == NativeConnectorHandoff))
-
-pure def alwaysNativeHandoffWasOffered(s: AgentSignup): bool =
-  (s.phase == HandedOff and s.transport == NativeConnectorHandoff) implies s.handoffs == 1
-
-pure def alwaysBrowserEnrollmentFollowsHandoff(s: AgentSignup): bool =
-  s.browserEnrolled implies s.handoffs == 1
 ```
 
 ### A native browser result follows the one handoff
@@ -204,7 +191,7 @@ pure def alwaysBrowserStepFollowsHandoff(s: AgentSignup): bool =
 
 ### The connector submits once and reports saved only after the exact durable result
 
-Call `check_status` on this app's connector. For newly enrolled members with current approval, only `onboarding` or `active` lets the agent send the approved profile once. `submit_profile` confirms the exact submitted text through its durable result. Use the same connector to confirm the app and live membership. Nothing is submitted while the handoff, the browser or the status check is still open. A timeout, changed status or refusal remains unconfirmed and does not trigger a second write. The result says nothing about matching, introductions or profile fields the connector never read. Peon's existing connector handoff confirms its browser status and one profile submission on the same connector.
+Call `check_status` on this app's connector. For newly enrolled members with current approval, only `onboarding` or `active` lets the agent send the approved profile once. `submit_profile` confirms the exact submitted text through its durable result. Use the same connector to confirm the app and live membership. A timeout, changed status or refusal remains unconfirmed and does not trigger a second write. The result says nothing about matching, introductions or profile fields the connector never read. Peon's existing connector handoff confirms its browser status and one profile submission on the same connector.
 
 ```quint
 type SiteStatus = SiteNotJoined | SiteInvited | SiteOnboarding | SiteActive | SiteStopped | SiteOnHold
@@ -246,10 +233,6 @@ pure def alwaysSavedNeedsConfirmedSave(s: AgentSignup): bool =
 
 pure def alwaysExistingMemberKeepsProfile(s: AgentSignup): bool =
   s.phase == ExistingMember implies (not(s.browserEnrolled) and s.submits == 0)
-
-pure def alwaysNothingSubmittedBeforeReady(s: AgentSignup): bool =
-  (s.phase == ReadyForHandoff or s.phase == HandedOff or s.phase == CheckingStatus or s.phase == ReadyToSubmit)
-    implies s.submits == 0
 
 pure def stepSavedFollowsConfirmation(before: AgentSignup, via: str, after: AgentSignup): bool =
   (after.phase == Saved and before.phase != Saved) implies via == "confirmProfile"

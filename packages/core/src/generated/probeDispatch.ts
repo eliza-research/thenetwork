@@ -1,6 +1,6 @@
 // GENERATED from spec/probeDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, initial as opportunityLifecycle_initial, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, closesForMinor as opportunityLifecycle_closesForMinor, canComplete as opportunityLifecycle_canComplete, canStartProbing as opportunityLifecycle_canStartProbing, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, startProbing as opportunityLifecycle_startProbing, canReroll as opportunityLifecycle_canReroll, reroll as opportunityLifecycle_reroll, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected } from "./opportunityLifecycle.ts";
+import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, initial as opportunityLifecycle_initial, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, closesForMinor as opportunityLifecycle_closesForMinor, canStartProbing as opportunityLifecycle_canStartProbing, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, startProbing as opportunityLifecycle_startProbing, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, canReroll as opportunityLifecycle_canReroll, reroll as opportunityLifecycle_reroll, lawPairLeftFromGroupNeedsFreshConsent as opportunityLifecycle_lawPairLeftFromGroupNeedsFreshConsent, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected } from "./opportunityLifecycle.ts";
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 export type ProbePhase = "Queued" | "AwaitingReply" | "Available" | "Unavailable" | "OutsideProbe";
@@ -12,6 +12,8 @@ export type ProbeTiming = "WaitForQuestion" | "WaitForWindow" | "CheckAvailabili
 export type ProbeAvailability = "ReadyToSend" | "ParticipantAway" | "NoCommonTime";
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 export type ReplacementRoute = "IgnoreReplacement" | "CloseRequester" | "CloseManager" | "FindAlternate";
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+export type NoAlternateRoute = "ContinueGroup" | "CloseWithoutAlternate";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -256,6 +258,12 @@ export function groupMayRemainWithoutAlternate(group: boolean, remaining: number
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
+export function noAlternateRoute(group: boolean, remaining: number): NoAlternateRoute {
+  return group && remaining >= 3 ? "ContinueGroup" : "CloseWithoutAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
 export function lawOneToOneClosesWithoutAlternate(remaining: number): boolean {
   //@ ensures \result === true
   return !groupMayRemainWithoutAlternate(false, remaining);
@@ -266,6 +274,20 @@ export function lawOneToOneClosesWithoutAlternate(remaining: number): boolean {
 export function lawRequiredParticipantCannotBeReplaced(probing: boolean, requesterOut: boolean, managerOut: boolean): boolean {
   //@ ensures \result === true
   return !(requesterOut || managerOut) || replacementRoute(probing, requesterOut, managerOut) !== "FindAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
+export function lawPairClosesWithoutAlternate(remaining: number): boolean {
+  //@ ensures \result === true
+  return noAlternateRoute(false, remaining) === "CloseWithoutAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
+export function lawGroupBelowThreeCloses(remaining: number): boolean {
+  //@ ensures \result === true
+  return !(remaining < 3) || noAlternateRoute(true, remaining) === "CloseWithoutAlternate";
 }
 
 /** Do the rules allow this event in this state? */
