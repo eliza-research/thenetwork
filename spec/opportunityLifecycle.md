@@ -117,11 +117,16 @@ pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRos
 
 ### A new minor signal closes an unbooked opportunity involving that person
 
-Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster.
+Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster. A booked opportunity also closes when the minor received a probe for it and was replaced before the booking: a minor who was asked stays on its roster, so a reminder or feedback request about it describes them. Decision 2026-11-17 (NYC world, seed 3): a member who stated 20 declined a probe, was replaced, and was found to be 16 the next day; the two adults then got 4 messages about the booked plan.
 
 ```quint
 pure def closesForMinor(proposal: OpportunityLifecycle, minorSignal: bool, participant: bool, alternate: bool, contacted: bool): bool =
-  (proposal.phase == InReview or proposal.phase == Probing) and minorSignal and (participant or alternate or contacted)
+  minorSignal and (
+    ((proposal.phase == InReview or proposal.phase == Probing) and (participant or alternate or contacted))
+    or (proposal.phase == Scheduled and contacted and not(participant)))
+
+pure def lawAskedMinorClosesABookedOpportunity(proposal: OpportunityLifecycle): bool =
+  proposal.phase == Scheduled implies closesForMinor(proposal, true, false, false, true)
 
 pure def lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): bool =
   (proposal.phase == InReview or proposal.phase == Probing) implies closesForMinor(proposal, true, false, false, true)

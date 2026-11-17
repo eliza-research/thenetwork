@@ -88,3 +88,12 @@ test("a private or cross-app skill cannot make the reciprocal Cofounder exchange
     : f.memberId === "asker" ? { ...f, app: "peon" } : { ...f, scope: "agent_private" });
   expect(match(input).proposals).toEqual([]);
 });
+
+// packages/engine/src/genkit.ts, pairCandidate: a pair's evidence is the facets that ground its pair
+// value (tags that make the complement and affinity hits), shareable first, at most two per member.
+// Scoring reads their provenance as confidence; explanations show only the shareable ones.
+test("a lane candidate cites the facets that ground its pair value", () => {
+  const { proposals } = match(workPair("Meet people in my field while my cofounder travels", "Meet people doing similar work"));
+  expect(proposals).toEqual([expect.objectContaining({ lane: "Intro" })]);
+  expect(proposals[0]?.evidence).toEqual({ asker: ["asker-f0", "asker-f2"], partner: ["partner-f0", "partner-f2"] });
+});

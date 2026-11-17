@@ -1,6 +1,6 @@
 // GENERATED from spec/agentSignup.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 export type SkillKind = "NativeConnectorSkill" | "PeonSkill";
@@ -39,7 +39,7 @@ export const initial: AgentSignup = { phase: "CheckingCapability", transport: "T
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: AgentSignup): boolean {
-  return alwaysTransportFixedAfterChoice(current) && alwaysNoTransportStops(current) && alwaysUnderThirteenStops(current) && alwaysMinorToldMatchingIsAdult(current) && alwaysApprovedProfileHasJoinAge(current) && alwaysNothingSentBeforeApproval(current) && alwaysTextHandoffIsApproved(current) && alwaysNothingApprovedBeforeDecision(current) && alwaysNativeEnrollmentKeepsInvitationGate(current) && alwaysOneApprovedNativeHandoff(current) && alwaysNativeHandoffWasOffered(current) && alwaysBrowserEnrollmentFollowsHandoff(current) && alwaysOneAuthorizedSubmission(current) && alwaysSavedNeedsConfirmedSave(current) && alwaysExistingMemberKeepsProfile(current) && alwaysNothingSubmittedBeforeReady(current);
+  return alwaysTransportFixedAfterChoice(current) && alwaysNoTransportStops(current) && alwaysUnderThirteenStops(current) && alwaysMinorToldMatchingIsAdult(current) && alwaysApprovedProfileHasJoinAge(current) && alwaysNothingSentBeforeApproval(current) && alwaysTextHandoffIsApproved(current) && alwaysNoApprovalBeforeDecision(current) && alwaysNativeEnrollmentKeepsInvitationGate(current) && alwaysOneApprovedNativeHandoff(current) && alwaysBrowserStepFollowsHandoff(current) && alwaysOneAuthorizedSubmission(current) && alwaysSavedNeedsConfirmedSave(current) && alwaysExistingMemberKeepsProfile(current) && alwaysNothingSubmittedBeforeSubmit(current);
 }
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
@@ -68,12 +68,6 @@ export function alwaysTransportFixedAfterChoice(s: AgentSignup): boolean {
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 //@ pure
-export function alwaysNoTransportStops(s: AgentSignup): boolean {
-  return !(s.transport === "NoTransport") || s.phase === "Unsupported";
-}
-
-/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
-//@ pure
 export function canReadAppFacts(s: AgentSignup): boolean {
   return s.phase === "ReadingApp" && s.transport === "NativeConnectorHandoff";
 }
@@ -88,15 +82,14 @@ export function readAppFacts(s: AgentSignup, appMatches: boolean, inviteMode: bo
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> stepSavedFollowsConfirmation(s, "readAppFacts", \result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> stepFinishedStaysFinished(s, "readAppFacts", \result)
   return { ...s, inviteOnly: inviteMode, phase: appMatches ? "Drafting" : "WrongApp" };
@@ -119,19 +112,24 @@ export function chooseTransport(s: AgentSignup, skillKind: SkillKind, connectorT
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> stepSavedFollowsConfirmation(s, "chooseTransport", \result)
   //@ ensures (inv(s) && canChooseTransport(s)) ==> stepFinishedStaysFinished(s, "chooseTransport", \result)
   const local_0: Transport = transportFor(skillKind, connectorTools);
   return { ...s, transport: local_0, phase: local_0 === "NoTransport" ? "Unsupported" : (local_0 === "NativeConnectorHandoff" ? "ReadingApp" : "Drafting") };
+}
+
+/** Story: Join through my agent and confirm my own phone / A client without a transport stops (spec/agentSignup.md) */
+//@ pure
+export function alwaysNoTransportStops(s: AgentSignup): boolean {
+  return !(s.transport === "NoTransport") || s.phase === "Unsupported";
 }
 
 /** Story: Join through my agent and confirm my own phone / The person approves the exact draft and current text consent (spec/agentSignup.md) */
@@ -162,15 +160,14 @@ export function decideApproval(s: AgentSignup, decision: Approval): AgentSignup 
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> stepSavedFollowsConfirmation(s, "decideApproval", \result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> stepFinishedStaysFinished(s, "decideApproval", \result)
   return decision === "ApproveExact" ? ({ ...s, approved: true, phase: s.transport === "NativeConnectorHandoff" ? "ReadyForHandoff" : (s.transport === "ConnectorHandoff" ? "HandedOff" : "HandedToMessages") } as AgentSignup) : (decision === "AskChanges" ? ({ ...s, phase: "Drafting" } as AgentSignup) : ({ ...s, phase: "Declined" } as AgentSignup));
@@ -208,12 +205,6 @@ export function alwaysTextHandoffIsApproved(s: AgentSignup): boolean {
 
 /** Story: Join through my agent and confirm my own phone / The person approves the exact draft and current text consent (spec/agentSignup.md) */
 //@ pure
-export function alwaysNothingApprovedBeforeDecision(s: AgentSignup): boolean {
-  return !(s.phase === "CheckingCapability" || s.phase === "ReadingApp" || s.phase === "Drafting" || s.phase === "AwaitingApproval") || !s.approved;
-}
-
-/** Story: Join through my agent and confirm my own phone / The person approves the exact draft and current text consent (spec/agentSignup.md) */
-//@ pure
 export function draftProfile(s: AgentSignup, statedAge: AgeBand): AgentSignup {
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysTransportFixedAfterChoice(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNoTransportStops(\result)
@@ -222,19 +213,24 @@ export function draftProfile(s: AgentSignup, statedAge: AgeBand): AgentSignup {
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> stepSavedFollowsConfirmation(s, "draftProfile", \result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> stepFinishedStaysFinished(s, "draftProfile", \result)
   const local_1: AgeBand = lowerBand(s.age, statedAge);
   return { ...s, age: local_1, minorNotified: local_1 === "Teen", phase: local_1 === "Under13" ? "BelowJoinAge" : "AwaitingApproval" };
+}
+
+/** Story: Join through my agent and confirm my own phone / Nothing is approved before the person decides (spec/agentSignup.md) */
+//@ pure
+export function alwaysNoApprovalBeforeDecision(s: AgentSignup): boolean {
+  return !(s.phase === "CheckingCapability" || s.phase === "ReadingApp" || s.phase === "Drafting" || s.phase === "AwaitingApproval") || !s.approved;
 }
 
 /** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
@@ -253,15 +249,14 @@ export function offerHandoff(s: AgentSignup, linkAvailable: boolean): AgentSignu
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> stepSavedFollowsConfirmation(s, "offerHandoff", \result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> stepFinishedStaysFinished(s, "offerHandoff", \result)
   return linkAvailable ? ({ ...s, phase: "HandedOff", handoffs: 1 } as AgentSignup) : ({ ...s, phase: "Unsupported" } as AgentSignup);
@@ -287,18 +282,6 @@ export function alwaysOneApprovedNativeHandoff(s: AgentSignup): boolean {
 
 /** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
 //@ pure
-export function alwaysNativeHandoffWasOffered(s: AgentSignup): boolean {
-  return !(s.phase === "HandedOff" && s.transport === "NativeConnectorHandoff") || s.handoffs === 1;
-}
-
-/** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
-//@ pure
-export function alwaysBrowserEnrollmentFollowsHandoff(s: AgentSignup): boolean {
-  return !s.browserEnrolled || s.handoffs === 1;
-}
-
-/** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
-//@ pure
 export function observeBrowser(s: AgentSignup, result: BrowserResult, appWriteGrant: boolean): AgentSignup {
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysTransportFixedAfterChoice(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNoTransportStops(\result)
@@ -307,19 +290,24 @@ export function observeBrowser(s: AgentSignup, result: BrowserResult, appWriteGr
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> stepSavedFollowsConfirmation(s, "observeBrowser", \result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> stepFinishedStaysFinished(s, "observeBrowser", \result)
   const local_2 = result === "BrowserNewOpen" || result === "BrowserNewInvited";
   return { ...s, browserEnrolled: local_2, inviteAccepted: result === "BrowserNewInvited", phase: result === "BrowserWaiting" ? "HandedOff" : (result === "BrowserWrongApp" ? "WrongApp" : (result === "BrowserBelowAge" ? "BelowJoinAge" : (result === "BrowserNeedsInvite" ? "NeedsInvite" : (result === "BrowserInvalidInvite" ? "InvitationUnavailable" : (result === "BrowserHeld" ? "OnReview" : (result === "BrowserRefused" ? "Declined" : (result === "BrowserChanged" || !appWriteGrant ? "SaveUnconfirmed" : "CheckingStatus"))))))) };
+}
+
+/** Story: Join through my agent and confirm my own phone / A native browser result follows the one handoff (spec/agentSignup.md) */
+//@ pure
+export function alwaysBrowserStepFollowsHandoff(s: AgentSignup): boolean {
+  return !(s.browserEnrolled || (s.transport === "NativeConnectorHandoff" && s.phase === "HandedOff")) || (s.transport === "NativeConnectorHandoff" && s.handoffs === 1);
 }
 
 /** Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result (spec/agentSignup.md) */
@@ -332,15 +320,14 @@ export function checkSiteStatus(s: AgentSignup, siteApp: boolean, siteStatus: Si
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> stepSavedFollowsConfirmation(s, "checkSiteStatus", \result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> stepFinishedStaysFinished(s, "checkSiteStatus", \result)
   return { ...s, phase: !siteApp ? "WrongApp" : (siteStatus === "SiteStopped" ? "MessagesStopped" : (siteStatus === "SiteOnHold" ? "OnReview" : (siteStatus === "SiteOnboarding" || siteStatus === "SiteActive" ? (s.transport === "NativeConnectorHandoff" && !s.browserEnrolled ? "ExistingMember" : "ReadyToSubmit") : (s.transport === "ConnectorHandoff" ? "HandedOff" : "SaveUnconfirmed")))) };
@@ -362,15 +349,14 @@ export function submitProfile(s: AgentSignup, accepted: boolean): AgentSignup {
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> stepSavedFollowsConfirmation(s, "submitProfile", \result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> stepFinishedStaysFinished(s, "submitProfile", \result)
   return { ...s, submits: exact_agentSignup(s.submits + 1), phase: accepted ? "ConfirmingProfile" : "ProfileNotSent" };
@@ -392,15 +378,14 @@ export function confirmProfile(s: AgentSignup, stillLive: boolean): AgentSignup 
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNothingSentBeforeApproval(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNothingApprovedBeforeDecision(\result)
+  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNoApprovalBeforeDecision(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNativeHandoffWasOffered(\result)
-  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysBrowserEnrollmentFollowsHandoff(\result)
+  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysOneAuthorizedSubmission(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNothingSubmittedBeforeReady(\result)
+  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> stepSavedFollowsConfirmation(s, "confirmProfile", \result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> stepFinishedStaysFinished(s, "confirmProfile", \result)
   return { ...s, phase: stillLive ? "Saved" : "SaveUnconfirmed" };
@@ -426,12 +411,6 @@ export function alwaysExistingMemberKeepsProfile(s: AgentSignup): boolean {
 
 /** Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result (spec/agentSignup.md) */
 //@ pure
-export function alwaysNothingSubmittedBeforeReady(s: AgentSignup): boolean {
-  return !(s.phase === "ReadyForHandoff" || s.phase === "HandedOff" || s.phase === "CheckingStatus" || s.phase === "ReadyToSubmit") || s.submits === 0;
-}
-
-/** Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result (spec/agentSignup.md) */
-//@ pure
 export function stepSavedFollowsConfirmation(before: AgentSignup, via: string, after: AgentSignup): boolean {
   return !(after.phase === "Saved" && before.phase !== "Saved") || via === "confirmProfile";
 }
@@ -440,6 +419,12 @@ export function stepSavedFollowsConfirmation(before: AgentSignup, via: string, a
 //@ pure
 export function canCheckSiteStatus(s: AgentSignup): boolean {
   return (s.phase === "CheckingStatus" && s.transport === "NativeConnectorHandoff") || (s.phase === "HandedOff" && s.transport === "ConnectorHandoff");
+}
+
+/** Story: Join through my agent and confirm my own phone / No profile is sent before the status check allows it (spec/agentSignup.md) */
+//@ pure
+export function alwaysNothingSubmittedBeforeSubmit(s: AgentSignup): boolean {
+  return !(s.phase === "ReadyForHandoff" || s.phase === "HandedOff" || s.phase === "CheckingStatus" || s.phase === "ReadyToSubmit") || s.submits === 0;
 }
 
 /** Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report (spec/agentSignup.md) */

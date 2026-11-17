@@ -15,15 +15,15 @@ export function gatheringGroupingSizeAllowed(seatCount: number): boolean {
 
 /** Story: Review suggested conversation groupings for the monthly gathering / Each suggested group has three to five current willing adults (spec/monthlyGatheringGrouping.md) */
 //@ pure
-export function gatheringGroupingCanSeat(eligible: boolean, compatible: boolean, alreadySeated: boolean, seatCount: number): boolean {
-  return eligible && compatible && !alreadySeated && 0 <= seatCount && seatCount < gatheringGroupingMaximum;
+export function gatheringGroupingCanSeat(eligible: boolean, compatible: boolean, alreadyAssigned: boolean, seatCount: number): boolean {
+  return eligible && compatible && !alreadyAssigned && 0 <= seatCount && seatCount < gatheringGroupingMaximum;
 }
 
 /** Story: Review suggested conversation groupings for the monthly gathering / Each suggested group has three to five current willing adults (spec/monthlyGatheringGrouping.md) */
 //@ pure
-export function lawGatheringGroupingCannotSeatBlocked(eligible: boolean, alreadySeated: boolean, seatCount: number): boolean {
+export function lawGatheringGroupingCannotSeatBlocked(eligible: boolean, alreadyAssigned: boolean, seatCount: number): boolean {
   //@ ensures \result === true
-  return !gatheringGroupingCanSeat(eligible, false, alreadySeated, seatCount);
+  return !gatheringGroupingCanSeat(eligible, false, alreadyAssigned, seatCount);
 }
 
 /** Story: Review suggested conversation groupings for the monthly gathering / Each suggested group has three to five current willing adults (spec/monthlyGatheringGrouping.md) */

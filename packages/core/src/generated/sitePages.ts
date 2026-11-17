@@ -1,6 +1,6 @@
 // GENERATED from spec/sitePages.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
 
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
 export type SitePage = "LandingPage" | "PrivacyPage" | "TermsPage" | "NotFoundPage" | "JoinPage" | "UpdateHandoffPage";
@@ -69,7 +69,7 @@ export function footerOf(page: SitePage): SitePage[] {
 //@ pure
 export function lawEveryFooterIsPrivacyThenTerms(app: brandIdentity_AppKey, page: SitePage): boolean {
   //@ ensures \result === true
-  return !siteHasPage(app, page) || (footerOf(page).length === 2 && nth_sitePages(footerOf(page), 0) === "PrivacyPage" && nth_sitePages(footerOf(page), 1) === "TermsPage");
+  return !siteHasPage(app, page) || (footerOf(page).length === 2 && (0 <= 0 && 0 < footerOf(page).length ? footerOf(page)[0] : "NotFoundPage") === "PrivacyPage" && (0 <= 1 && 1 < footerOf(page).length ? footerOf(page)[1] : "NotFoundPage") === "TermsPage");
 }
 
 /** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
@@ -279,10 +279,4 @@ export function lawBackendPathsAreForwarded(app: brandIdentity_AppKey, method: R
 export function lawRetiredPathsNeverReachTheBackend(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "SettingsPath", method) !== "ForwardToBackend" && routeFor(app, "JoinPath", method) !== "ForwardToBackend";
-}
-
-/** An element of a list, which must hold it. */
-export function nth_sitePages<T>(xs: T[], i: number): T {
-  if (!(0 <= i && i < xs.length)) throw new RangeError(`a list of ${xs.length} has no element ${i}`);
-  return xs[i];
 }

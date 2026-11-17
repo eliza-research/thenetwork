@@ -170,7 +170,14 @@ export function lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {
-  return (proposal.phase === "InReview" || proposal.phase === "Probing") && minorSignal && (participant || alternate || contacted);
+  return minorSignal && (((proposal.phase === "InReview" || proposal.phase === "Probing") && (participant || alternate || contacted)) || (proposal.phase === "Scheduled" && contacted && !participant));
+}
+
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawAskedMinorClosesABookedOpportunity(proposal: OpportunityLifecycle): boolean {
+  //@ ensures \result === true
+  return !(proposal.phase === "Scheduled") || closesForMinor(proposal, true, false, false, true);
 }
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */

@@ -4,7 +4,7 @@
 
 ## Story: Join a reviewed public hike only after the group agrees
 
-> As a participant, I want to see a confirmed hike only when the three invited members have each agreed, and I want a private update if the booked hike falls through.
+> As a participant, I want to see a confirmed hike only when the three invited members have each agreed, and I want a private update if it falls through.
 
 ### Review comes before anonymous contact
 
@@ -38,7 +38,7 @@ pure def sometimesRejectedWithoutContact(s: ReviewedGroupJourney): bool = s.phas
 
 ### Booking requires an independent yes from all three invitees
 
-Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes. The deadline does not record a decline: an invitee who did not reply stays without an answer.
+Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes. Silence is not a decline: an invitee who has not answered by the deadline stays unanswered ([planDecision](planDecision.md) records no reply at or after the deadline). This rule changed: the deadline used to record every silent invitee as a decline.
 
 ```quint
 pure def groupReplyPending(s: ReviewedGroupJourney, hiker: Hiker): bool =
@@ -69,6 +69,8 @@ pure def alwaysBookingRequiresQuorum(s: ReviewedGroupJourney): bool =
   s.phase == HikeBooked implies s.accepted.length() == 3
 pure def sometimesThreeHikersBook(s: ReviewedGroupJourney): bool = s.phase == HikeBooked
 pure def sometimesUnderfilledCloses(s: ReviewedGroupJourney): bool = s.phase == GroupUnderfilled
+pure def sometimesExpiresWithNobodyDeclined(s: ReviewedGroupJourney): bool =
+  s.phase == GroupUnderfilled and s.declined.length() == 0
 ```
 
 ### A withdrawal below minimum closes a booked group privately
