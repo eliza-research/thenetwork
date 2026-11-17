@@ -216,13 +216,13 @@ Models: [calendar free/busy](../calendarFreeBusy.md), [activity formation and ch
 
 ## Story F18 — Keep a meeting on track
 
-> As a participant, I want reminders and a way to tell the group when plans change.
+> As a participant, I want reminders and a way to tell the other people I'm meeting when plans change.
 
 ### Logistics follow the accepted opportunity and sending rules
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [meeting settlement](../meetingSettlement.md), [booked group replacement](../bookedGroupReplacement.md), [late arrival in a booked group](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [meeting settlement](../meetingSettlement.md), [booked group replacement](../bookedGroupReplacement.md), [late arrival in a booked meeting](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 

@@ -33,9 +33,9 @@ import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEli
 import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
-import { lateArrivalMinimumRoster, lateArrivalNotice, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
+import { lateArrivalRosterReady, lateArrivalText, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
 import { bookingNoticeReceived, canResolveAttendance, feedbackDelayMs, meetingFeedbackCandidate, restoreAttendance, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
-import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
+import { isLateArrivalPairBooking, parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
@@ -44,7 +44,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -351,29 +351,31 @@ export class NetworkRuntime {
     return out;
   }
 
-  /** Recheck a booked group logistics notice after asynchronous queue gates. */
+  /** Recheck a booked meeting logistics notice after asynchronous queue gates. */
   async groupLateArrivalAdmission(tx: SQL, row: { id: string; app: string; kind: string; text: string; memberId?: MemberId | null; oppId?: string }): Promise<RecipientCheck> {
     const refused: RecipientCheck = { ok: false, reason: "group_late_arrival_changed" };
     const delivery = parseLateArrivalDeliveryId(row.id);
     const app = this.app.id;
-    if (!delivery || row.app !== app || delivery.app !== app || row.kind !== "transactional" || row.text !== lateArrivalNotice
+    if (!delivery || row.app !== app || delivery.app !== app || row.kind !== "transactional"
       || row.memberId !== delivery.to || row.oppId !== delivery.oppId) return refused;
     const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${app} for share`;
     const opp = saved?.state.opps.find(o => o.id === delivery.oppId);
     if (!saved || !opp || opp.stage !== "scheduled" || opp.meetingAt !== delivery.meetingAt
-      || (opp.scheduleRevision ?? 0) !== delivery.revision || opp.participants.length < lateArrivalMinimumRoster) return refused;
+      || (opp.scheduleRevision ?? 0) !== delivery.revision) return refused;
+    const notice = lateArrivalText(isLateArrivalPairBooking(opp));
+    if (row.text !== notice) return refused;
     const receipts = await this.bookingNoticeReceipts(tx, opp, this.clock.now());
     const received = (id: MemberId) => receipts.has(id);
-    if (!storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now(), received)) return refused;
+    if (!storedLateArrivalCurrent(saved.state, delivery, this.clock.now(), received)) return refused;
     const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
-      and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${lateArrivalNotice}`;
+      and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${notice}`;
     if (!message || await this.canonicalPairBlocked(tx, delivery.from, delivery.to)) return refused;
     const parties = await this.relayParties([delivery.from, delivery.to], tx);
     if (![delivery.from, delivery.to].every(id => {
       const party = parties.get(id);
       return party?.adult && !party.optedOut && !party.held;
     })) return refused;
-    return storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now(), received) ? { ok: true } : refused;
+    return storedLateArrivalCurrent(saved.state, delivery, this.clock.now(), received) ? { ok: true } : refused;
   }
 
   private async bookingNoticeReceipts(tx: SQL, opp: NetworkState["opps"][number], now: number): Promise<Map<MemberId, number>> {
@@ -916,7 +918,7 @@ export class NetworkRuntime {
       if (opp.seat || opp.meetingAt === undefined) return false;
       const elapsed = now - opp.meetingAt;
       if (opp.stage === "scheduled" && opp.review?.decision === "approve" && !opp.review.invalidated
-        && opp.participants.length >= lateArrivalMinimumRoster && lateArrivalWindow(-elapsed)) return true;
+        && lateArrivalRosterReady(isLateArrivalPairBooking(opp), new Set(opp.participants).size) && lateArrivalWindow(-elapsed)) return true;
       if (opp.stage !== "done" && !(opp.stage === "scheduled" && elapsed >= feedbackDelayMs)) return false;
       const everyoneResponded = opp.participants.every(id => !opp.status.some(([member, status]) => member === id && status === "yes") || !!opp.post?.[id]);
       return canResolveAttendance(restoreAttendance(!!opp.finalized), elapsed >= settlementDelayMs, everyoneResponded);

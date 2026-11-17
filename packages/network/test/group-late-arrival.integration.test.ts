@@ -10,11 +10,12 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { lateArrivalDeliveryId, parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
-import { storedGroupLateArrivalCurrent } from "../src/network.ts";
+import { storedLateArrivalCurrent } from "../src/network.ts";
 import { Mini, START } from "./mini.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
+const pairNotice = "The person you are meeting is running late.";
 
 async function booked(participants = ["a", "b", "c"]) {
   const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park")],
@@ -62,16 +63,16 @@ test("one exact signed report reaches only booked group recipients and survives 
   const binding = { app: "ntwrk", oppId, meetingAt, revision: 0, from: "a", to: "b" };
   expect(parseLateArrivalDeliveryId(lateArrivalDeliveryId(binding))).toEqual(binding);
   const deliveredBooking = (id: string) => ["a", "b", "c"].includes(id);
-  expect(storedGroupLateArrivalCurrent(world.net.exportState(), binding, world.clock.now(), deliveredBooking)).toBe(true);
-  expect(storedGroupLateArrivalCurrent(world.net.exportState(), binding, meetingAt + 30 * MINUTE, deliveredBooking)).toBe(false);
+  expect(storedLateArrivalCurrent(world.net.exportState(), binding, world.clock.now(), deliveredBooking)).toBe(true);
+  expect(storedLateArrivalCurrent(world.net.exportState(), binding, meetingAt + 30 * MINUTE, deliveredBooking)).toBe(false);
 
   const changed = world.net.exportState();
   const opp = changed.opps.find(o => o.id === oppId)!;
   opp.scheduleRevision = 2;
-  expect(storedGroupLateArrivalCurrent(changed, binding, world.clock.now(), deliveredBooking)).toBe(false);
+  expect(storedLateArrivalCurrent(changed, binding, world.clock.now(), deliveredBooking)).toBe(false);
   opp.scheduleRevision = 0;
   changed.members.find(m => m.id === "a")!.optedOut = true;
-  expect(storedGroupLateArrivalCurrent(changed, binding, world.clock.now(), deliveredBooking)).toBe(false);
+  expect(storedLateArrivalCurrent(changed, binding, world.clock.now(), deliveredBooking)).toBe(false);
 });
 
 test("a direct report with overlapping bookings leaves both groups untouched", async () => {
@@ -87,16 +88,32 @@ test("a direct report with overlapping bookings leaves both groups untouched", a
   expect(world.net.exportState().opps.every(o => !o.lateArrivalReported)).toBe(true);
 });
 
-test("a two-person booking keeps its existing relay path", async () => {
-  const { world, meetingAt } = await booked(["a", "b"]);
+test("an exact signed report reaches only the other booked person", async () => {
+  const { world, oppId, meetingAt } = await booked(["a", "b"]);
   world.clock.set(meetingAt);
   const mark = world.mark();
-  await report(world, "signed:a:pair");
+  const state = world.net.exportState();
+  state.opps.find(o => o.id === oppId)!.kind = "group";
+  world.net.importState(state);
+  await report(world, "signed:a:incomplete-group");
+  expect(world.sent.slice(mark).filter(message => message.body === pairNotice)).toHaveLength(0);
   expect(lateNotices(world, mark)).toHaveLength(0);
   expect(world.net.exportState().opps.every(o => !o.lateArrivalReported)).toBe(true);
+
+  state.opps.find(o => o.id === oppId)!.kind = "intro";
+  world.net.importState(state);
+  await expect(report(world, "signed:a:pair")).resolves.toBe("handled");
+  world.restart();
+  await expect(report(world, "signed:a:pair-repeat")).resolves.toBe("handled");
+  expect(world.sent.slice(mark).filter(message => message.body === pairNotice).map(message => message.to)).toEqual(["b"]);
 });
 
-test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three current booking receipts at submission and dispatch (provider failure: %s)", async receiptFailed => {
+test.skipIf(!pgAvailable).each([
+  { size: 3, finish: "deadline" },
+  { size: 3, finish: "receipt" },
+  { size: 2, finish: "sent" },
+  { size: 2, finish: "receipt" },
+])("the signed turn needs $size current booking receipts at submission and dispatch ($finish)", async ({ size, finish }) => {
   const url = await migratedDb("group_late");
   const sql = new SQL(url);
   const app = APPS.friends;
@@ -114,8 +131,8 @@ test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three curre
     env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: key }, networks: [{ id: "friends:nyc", matchingEnabled: false }] });
   try {
     await service.start();
-    const phones = ["+12125550281", "+12125550282", "+12125550283"] as const;
-    const names = ["Ana Diaz", "Ben Ito", "Cy Moss"] as const;
+    const phones = ["+12125550281", "+12125550282", "+12125550283"].slice(0, size);
+    const names = ["Ana Diaz", "Ben Ito", "Cy Moss"].slice(0, size);
     const members = [];
     for (const [index, e164] of phones.entries()) {
       const name = names[index]!;
@@ -124,7 +141,7 @@ test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three curre
       members.push(climber(joined.membership.memberId, name));
     }
     const ids = members.map(member => member.id);
-    const [from, second, third] = ids as [string, string, string];
+    const [from, ...recipients] = ids as [string, ...string[]];
     const world = new Mini(members, { app: app.id, plans: false, growth: false });
     await world.onboard(...ids);
     const oppId = world.propose(ids);
@@ -146,8 +163,7 @@ test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three curre
     };
     await rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), members: state.members, opps: state.opps });
-      bookingNotice(0);
-      bookingNotice(1);
+      for (let index = 0; index < size - 1; index++) bookingNotice(index);
     });
     const reportAt = async (messageId: string, receivedAt = clock.now()) => {
       const body = JSON.stringify({ messageId, channel: "blooio", from: phones[0], to: null, text: "I'm running late.",
@@ -155,13 +171,15 @@ test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three curre
       const headers = await svcSign(key, { method: "POST", path: TURN_PATH, body, id: messageId, nowS: Math.floor(clock.now() / 1000) });
       return service.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers, body }));
     };
-    // spec/groupLateArrival.md, "Relay one direct report for one current booked group"
-    expect(calls.filter(call => call.idempotencyKey.startsWith("tn:fixture-group-booking:"))).toHaveLength(2);
-    expect((await reportAt("synthetic-group-late-missing-third")).status).toBe(200);
+    // spec/groupLateArrival.md, "Relay one direct report for one current booked meeting"
+    const notice = size === 2 ? pairNotice : lateArrivalNotice;
+    const sentNotices = () => calls.filter(call => call.text === notice).map(call => call.to);
+    expect(calls.filter(call => call.idempotencyKey.startsWith("tn:fixture-group-booking:"))).toHaveLength(size - 1);
+    expect((await reportAt("synthetic-late-missing-receipt")).status).toBe(200);
     expect((await rt.pg.load())!.opps[0]?.lateArrivalReported).toBeUndefined();
-    expect(calls.filter(call => call.text === lateArrivalNotice)).toHaveLength(0);
-    const thirdBooking = await rt.unitOfWork(() => bookingNotice(2));
-    expect(await adapter.queue.statusOf(thirdBooking)).toBe("sent");
+    expect(sentNotices()).toEqual([]);
+    const lastBooking = await rt.unitOfWork(() => bookingNotice(size - 1));
+    expect(await adapter.queue.statusOf(lastBooking)).toBe("sent");
     await adapter.queue.setLineSafety("review");
     expect((await reportAt("synthetic-group-late-old-receive-time", clock.now() - 1)).status).toBe(200);
     expect((await rt.pg.load())!.opps[0]?.lateArrivalReported).toBeUndefined();
@@ -170,27 +188,35 @@ test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three curre
     expect(await response.json()).toMatchObject({ outcome: "handled", replies: ["I’ll pass along a short update where I can."] });
 
     const current = (to: string) => lateArrivalDeliveryId({ app: app.id, oppId, meetingAt, revision: 0, from, to });
-    const queued = await sql`select id,member_id,body from platform.outbound where id in ${sql([current(second), current(third)])} order by member_id`;
-    expect(queued).toEqual([second, third].sort().map(to => ({ id: current(to), member_id: to, body: lateArrivalNotice })));
-    expect(calls.filter(call => call.text === lateArrivalNotice)).toHaveLength(0);
+    const queued = await sql`select id,member_id,body from platform.outbound where id in ${sql(recipients.map(current))} order by member_id`;
+    expect(queued).toEqual([...recipients].sort().map(to => ({ id: current(to), member_id: to, body: notice })));
+    expect(sentNotices()).toEqual([]);
     const cutoff = meetingAt + 30 * MINUTE;
-    await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${current(second)}`;
-    await sql`update platform.outbound set next_attempt_at=${new Date(cutoff)} where id=${current(third)}`;
+    const lastRecipient = current(recipients.at(-1)!);
+    for (const recipient of recipients.slice(0, -1)) {
+      await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${current(recipient)}`;
+    }
+    await sql`update platform.outbound set next_attempt_at=${new Date(finish === "sent" ? clock.now() : cutoff)} where id=${lastRecipient}`;
     await adapter.queue.setLineSafety(undefined);
     await rt.deliver();
-    expect(await adapter.queue.statusOf(current(second))).toBe("sent");
-    expect(calls.filter(call => call.text === lateArrivalNotice).map(call => call.to)).toEqual([phones[1]]);
+    if (finish === "sent") {
+      expect(await adapter.queue.statusOf(lastRecipient)).toBe("sent");
+      expect(sentNotices()).toEqual(phones.slice(1));
+      return;
+    }
+    const firstRecipients = phones.slice(1, -1);
+    expect(sentNotices()).toEqual(firstRecipients);
 
-    if (receiptFailed) {
-      expect(await adapter.status({ kind: "status", channel: "blooio", providerMessageId: `sim:tn:${thirdBooking}`,
-        status: "failed", at: clock.now() })).toMatchObject({ id: thirdBooking, status: "failed" });
-      await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${current(third)}`;
+    if (finish === "receipt") {
+      expect(await adapter.status({ kind: "status", channel: "blooio", providerMessageId: `sim:tn:${lastBooking}`,
+        status: "failed", at: clock.now() })).toMatchObject({ id: lastBooking, status: "failed" });
+      await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${lastRecipient}`;
     } else {
       clock.set(cutoff);
     }
     await rt.deliver();
-    expect(await adapter.queue.statusOf(current(third))).toBe("suppressed_ineligible");
-    expect(calls.filter(call => call.text === lateArrivalNotice).map(call => call.to)).toEqual([phones[1]]);
+    expect(await adapter.queue.statusOf(lastRecipient)).toBe("suppressed_ineligible");
+    expect(sentNotices()).toEqual(firstRecipients);
   } finally {
     await service.close();
     await sql.close();
