@@ -39,6 +39,60 @@ async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
 }
 
 describe("plan probe replies", () => {
+  test.each([false, true])("a weekly Friends pair books only a reviewed time both selected (changed availability: %s)", async unavailable => {
+    const ids = ["a", "b"];
+    const w = new Mini([...ids.map(id => ({ ...climber(id), area: "Astoria", interests: ["tennis"],
+      wants: [{ objective: "find a regular tennis partner", category: "hobby" as const }] })),
+      ...["c", "d", "e", "f"].map(id => ({ id, name: id, age: 30, area: "Astoria" }))],
+    { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, review: "human", plans: true, matchingEnabled: true });
+    for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+      tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    await w.onboard(...ids);
+    const now = w.clock.now();
+    const windows = [Date.UTC(2026, 9, 8, 23), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 10, 14)]
+      .map(start => ({ start, end: start + 2 * HOUR }));
+    const state = w.net.exportState();
+    state.interactions.push(...[["a", "c", "d"], ["b", "e", "f"]].map(participants => ({ id: `attended-${participants[0]}`, kind: "group" as const, category: "social" as const,
+      at: now - DAY, outcome: "completed" as const, participants })));
+    for (const member of state.members) member.stated = { windows, at: now, until: now + 7 * DAY };
+    w.net.importState(state);
+
+    await w.run(HOUR);
+    const item = w.net.reviewQueue().find(item => item.origin === "planner")!;
+    const reviewed = w.net.exportState().opps.find(opp => opp.id === item?.oppId)?.plan?.reviewedOptions;
+    expect(reviewed).toHaveLength(3);
+    expect(w.sent.filter(message => message.meta.type === "plan_probe")).toEqual([]);
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    const probe = (id: string) => w.sent.find(message => message.to === id && message.meta.plan?.planId === item.oppId);
+    expect(await w.runUntil(() => !!probe("a"), 20 * HOUR)).toBe(true);
+    expect(probe("a")?.meta.plan?.options?.map(option => option.key)).toEqual(["a", "b", "c"]);
+    expect(probe("a")?.body).toMatch(/A: .+\nB: .+\nC: /);
+    await w.say("a", "yes");
+    expect(probe("b")).toBeUndefined();
+    await w.say("a", "A and C");
+    w.restart();
+    expect(await w.runUntil(() => !!probe("b"), 25 * HOUR)).toBe(true);
+    expect(probe("b")?.meta.plan?.options?.map(option => option.key)).toEqual(["a", "c"]);
+    await w.say("b", "B");
+    expect(w.meetings).toEqual([]);
+    const selected = reviewed![2]!;
+    if (unavailable) {
+      const changed = w.net.exportState();
+      changed.members.find(member => member.id === "a")!.stated = { windows: [reviewed![0]!], at: w.clock.now(), until: now + 7 * DAY };
+      w.net.importState(changed);
+    }
+    await w.say("b", "C");
+    if (unavailable) {
+      expect(w.meetings).toEqual([]);
+      expect(w.net.exportState().opps.find(opp => opp.id === item.oppId)?.stage).toBe("closed");
+    } else {
+      expect(w.meetings).toMatchObject([{ at: selected.start, participants: ids }]);
+      const booked = w.net.exportState().opps.find(opp => opp.id === item.oppId);
+      expect(booked?.plan?.window).toEqual(selected);
+      expect(booked?.planRun?.plan.window).toEqual(selected);
+    }
+  });
+
   test.each(["I'm free Sunday afternoon.", "Busy week, nothing free."])("a reviewed generic plan backfills a seat after %s", async reply => {
     const primary = ["a", "b", "c"];
     const ids = [...primary, "d"];

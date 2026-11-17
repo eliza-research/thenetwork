@@ -1,4 +1,5 @@
 import { serveHttp } from "../../core/src/runtime/http.ts";
+import { DAY, HOUR } from "@thenetwork/core";
 import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
@@ -169,10 +170,11 @@ test("real plan approval waits for the visible revision on click and keyboard", 
     state: "IN_REVIEW", status: {}, enjoyment: {}, createdAt: now, updatedAt: now,
     review: { queuedAt: now, deadline: now + 10_000 + revision, rerolls: revision },
   });
+  const times = [{ start: now + DAY, end: now + DAY + HOUR }, { start: now + 3 * DAY, end: now + 3 * DAY + HOUR }];
   const reply = (revision: number, name: string): StaffPlanPreview => ({
     app: "friends", opportunityId: id, revision, deadline: opportunity(revision).review!.deadline,
-    activity: "Day hike", place: { name }, start: now + 80_000, end: now + 90_000, probeDeadline: now + 50_000, quorum: 3, maxSeats: 4,
-    alternates: ["e", "d"],
+    activity: "Day hike", place: { name }, ...times[1]!, probeDeadline: now + 50_000, quorum: 3, maxSeats: 4,
+    ...(revision === 1 ? { options: times } : {}), alternates: ["e", "d"],
   });
   const first = Promise.withResolvers<StaffPlanPreview>(), second = Promise.withResolvers<StaffPlanPreview>();
   const decisions: number[] = [];
@@ -200,8 +202,11 @@ test("real plan approval waits for the visible revision on click and keyboard", 
     expect(button().disabled).toBe(true);
     expect(box.textContent).not.toContain("Old park");
     await act(async () => { second.resolve(reply(1, "Inwood Hill Park")); });
-    const facts = box.querySelector("section[aria-label='Plan under review']")!.textContent;
-    expect(facts).toMatch(/Inwood Hill Park.*Quorum 3.*1\. e, 2\. d/s);
+    const facts = box.querySelector("section[aria-label='Plan under review']")!;
+    expect(facts.textContent).toMatch(/Inwood Hill Park.*Quorum 3.*1\. e, 2\. d/s);
+    expect([...facts.querySelectorAll("ol[aria-label='Time options'] li")].map(li => li.textContent)).toEqual([
+      "A. Nov 20, 12:00 PM – Nov 20, 1:00 PM ET", "B. Nov 22, 12:00 PM – Nov 22, 1:00 PM ET",
+    ]);
     expect(button().disabled).toBe(false);
     await act(async () => { key(); });
     expect(decisions).toEqual([1]);

@@ -25,12 +25,13 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
   });
   const audit: AuditEntry[] = [];
   const reads: Array<{ actor: string | null; logged: number }> = [];
+  let reverseOptions = false;
   let server: Awaited<ReturnType<typeof serveHttp>> | undefined;
   let consoleServer: Awaited<ReturnType<typeof createServer>> | undefined;
   try {
     await network.start();
     const app = APPS.friends;
-    const names = ["Ari", "Blair", "Charlie", "Drew", "Elliot"];
+    const names = ["Ari", "Blair", "Charlie", "Drew", "Elliot", "Frank", "Gina"];
     const members = [];
     for (const [index, firstName] of names.entries()) {
       const joined = await network.accounts.join(app, { e164: `+1212555048${index}`, personId: null }, {
@@ -40,7 +41,7 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
       members.push({ id: joined.membership.memberId, name: firstName, age: 32 });
     }
     const ids = members.map(member => member.id);
-    const invited = ids.slice(0, 3), alternates = ids.slice(3).reverse();
+    const invited = ids.slice(0, 3), alternates = ids.slice(3, 5).reverse();
     const fixture = new Mini(members, { app: app.id, plans: false, growth: false });
     const now = clock.now();
     fixture.clock.set(now);
@@ -52,17 +53,25 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
       probeDeadline: now + 3 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
     const rt = network.runtimes.get(networkId)!;
-    await rt.unitOfWork(net => {
+    const offered = [plan.window, { start: plan.window.start + DAY, end: plan.window.end + DAY }];
+    const [groupId, partnerId] = await rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members });
-      net["submitPlan"](plan, now);
+      const group = net["submitPlan"](plan, now);
+      const partner = net["submitPlan"]({ ...plan, id: "preview_partner", window: offered[1]!, reviewedOptions: offered,
+        invited: ids.slice(5), alternates: [], partner: true, size: { min: 2, target: 2, max: 2 }, quorum: 2, category: "hobby" }, now);
+      return [group.id, partner.id];
     });
-    const [item] = await rt.reviewQueue();
+    const item = (await rt.reviewQueue()).find(row => row.oppId === groupId);
     expect(item).toMatchObject({ origin: "planner", revision: 0 });
     const id = item!.oppId;
 
-    server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: req => {
+    server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: async req => {
       if (new URL(req.url).pathname.endsWith("/plan")) reads.push({ actor: req.headers.get("x-network-staff-id"), logged: audit.filter(row => row.action === "read_review_plan").length });
-      return network.fetch(req);
+      const response = await network.fetch(req);
+      if (!reverseOptions) return response;
+      const data = await response.json();
+      data.preview.options.reverse();
+      return Response.json(data, { status: response.status });
     } });
     consoleServer = await createServer({ hostname: "127.0.0.1", port: 0, mode: "real", realOnly: true, platformEnv: "dev",
       tokens: `reviewer@friends:${reviewer},analyst@friends:${analyst},reviewer@ntwrk:${otherApp}`, minTokenLength: 10,
@@ -91,6 +100,14 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
     expect(await sql`select actor, app_id, target_id, detail from network.staff_audit where action='read_review_plan'`).toEqual([
       { actor, app_id: "friends", target_id: id, detail: { revision: 0 } },
     ]);
+    const partnerPreview = () => request(`/api/review/${encodeURIComponent(partnerId)}/plan?app=friends&revision=0`, reviewer);
+    const multiple = await partnerPreview();
+    expect(multiple.status).toBe(200);
+    expect(await multiple.json()).toMatchObject({ preview: { opportunityId: partnerId, place: plan.place, options: offered,
+      start: offered[1]!.start, end: offered[1]!.end, probeDeadline: plan.probeDeadline, quorum: 2, alternates: [] } });
+    reverseOptions = true;
+    expect((await partnerPreview()).status).toBe(503);
+    reverseOptions = false;
     expect((await preview(0, otherApp, "ntwrk")).status).toBe(404);
     expect((await preview(1)).status).toBe(404);
 
