@@ -22,6 +22,7 @@ import { engineInputOf, evidenceOf, friendsPackMatcher, planToProposal as toFrie
 import { buildFriendsSnapshot, NYC_TZ, slotTime, visibleRedFlag, weekTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
 import { isReal, SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
+import { PLAN_VENUES } from "../../packages/network/src/plans.ts";
 import { runFriendsWorld, slotOfCrew, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -43,6 +44,7 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsScheduleGates(b: Block): Promise<void> {
+  await friendsReachableVenueGate(b);
   await b.run("friends repeat plans keep the local weekday and time across DST, with the minimum lead", () => {
     const s = friendsSnapshotAfter(1);
     const past = s.outcomes.find(o => o.positive.length >= 2)!;
@@ -268,6 +270,38 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       rows.push({ seed, kind, tuesdayOffered, correct });
     }
     expect(rows.filter(x => x.correct).length).toBe(rows.length);
+  });
+}
+
+export async function friendsReachableVenueGate(b: Block): Promise<void> {
+  await b.run("Friends planning prefers the open public venue that fits both partners' travel limits", () => {
+    const venues = PLAN_VENUES.filter(venue => venue.id === "pier-45" || venue.id === "central-reservoir");
+    const ids = ["a", "b"];
+    const slot = Date.UTC(2026, 9, 10, 14);
+    const propose = (tolerance: number, candidateVenues = venues) => {
+      const mini = new Mini([
+        { id: "a", name: "Ada", age: 30, area: "Financial District", interests: ["running"] },
+        { id: "b", name: "Bev", age: 30, area: "Roosevelt Island", interests: ["running"] },
+        { id: "c", name: "Cam", age: 30, area: "Roosevelt Island", interests: ["running"] },
+      ]);
+      for (const id of ids) mini.facets.push({
+        id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+        tags: ["verify:liveness:pass", "verify:age:pass", `friends:max_travel:${id === "a" ? 30 : tolerance}`],
+        scope: "agent_private", provenance: "said", confidence: 1,
+      });
+      const input: EngineInput = { ...mini.ctx().snapshot(), interactions: [{
+        id: "prior-group", kind: "group", category: "social", participants: ["a", "b", "c"], at: START - DAY, outcome: "completed",
+      }] };
+      const world = new World(input, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+      const evidence = new Map<MemberId, PlanEvidence>(ids.map(id => [id, {
+        memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows: [{ start: slot, end: slot + 3 * HOUR }], at: START, until: START + 7 * DAY },
+      }]));
+      return planFriendsWeek(world, { now: START, tz: NYC_TZ, evidence, venues: candidateVenues, crews: [], outcomes: [], offered: [] }, DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS).partners;
+    };
+    const expected = [{ venueId: "central-reservoir", invited: ids, minutes: { a: 34, b: 21 }, window: { start: slot } }];
+    expect(propose(20, venues.filter(venue => venue.id === "central-reservoir")).map(plan => plan.venueId)).toEqual(["central-reservoir"]);
+    expect(propose(20)).toMatchObject(expected);
+    expect(propose(17)).toEqual([]);
   });
 }
 

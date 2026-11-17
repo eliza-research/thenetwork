@@ -16,6 +16,7 @@
 // outer boroughs; domain research C4). Copied in spirit from packages/network/src/geo.ts
 // (travelMinutes, meetingSpot), which the engine cannot import.
 import type { City, MemberId } from "@thenetwork/core";
+import { preferPlanVenue } from "../../../../core/src/generated/planFormation.ts";
 import { km, type Borough } from "@thenetwork/core/src/geo.ts";
 export { km, type Borough };
 import type { Venue } from "../network/activities.ts";
@@ -167,21 +168,34 @@ export function nycVenues(activities: readonly { id: string; family: string; lab
 }
 
 /**
- * The venue for a group: among venues offering the activity, minimize the LONGEST estimated trip
- * from members' home neighborhoods (ties: the lower mean, then id). Returns the per-member minutes.
+ * Prefer venues within every member's travel limit. In each class, minimize the longest estimated
+ * trip from members' home neighborhoods (ties: the lower mean, then id).
  */
-export function chooseVenue(venues: readonly Venue[], homes: ReadonlyMap<MemberId, Neighborhood>, ok: (v: Venue) => boolean = () => true):
+export function chooseVenue(venues: readonly Venue[], homes: ReadonlyMap<MemberId, Neighborhood>, ok: (v: Venue) => boolean = () => true,
+  withinLimit: (id: MemberId, minutes: number) => boolean = () => true):
   { venue: Venue; minutes: Record<MemberId, number>; worst: number; mean: number } | undefined {
   let best: { venue: Venue; minutes: Record<MemberId, number>; worst: number; mean: number } | undefined;
+  let bestFitsEveryone = false;
   for (const v of venues) {
     if (!ok(v)) continue;
     const at = hood(v.area);
     if (!at) continue;
     const minutes: Record<MemberId, number> = {};
     let worst = 0, sum = 0;
-    for (const [id, h] of homes) { const m = transitMinutes(h, at); minutes[id] = m; worst = Math.max(worst, m); sum += m; }
+    let fitsEveryone = true;
+    for (const [id, home] of homes) {
+      const travel = transitMinutes(home, at);
+      minutes[id] = travel;
+      worst = Math.max(worst, travel);
+      sum += travel;
+      fitsEveryone &&= withinLimit(id, travel);
+    }
     const mean = homes.size ? sum / homes.size : 0;
-    if (!best || worst < best.worst || (worst === best.worst && (mean < best.mean || (mean === best.mean && v.id < best.venue.id)))) best = { venue: v, minutes, worst, mean };
+    const winsTieBreak = !best || worst < best.worst || (worst === best.worst && (mean < best.mean || (mean === best.mean && v.id < best.venue.id)));
+    if (!best || preferPlanVenue(fitsEveryone, bestFitsEveryone, winsTieBreak)) {
+      best = { venue: v, minutes, worst, mean };
+      bestFitsEveryone = fitsEveryone;
+    }
   }
   return best;
 }

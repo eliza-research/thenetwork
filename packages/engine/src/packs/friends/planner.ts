@@ -24,8 +24,8 @@
 //      smaller table for the members no larger table reached. Only times at which a venue is open;
 //   5. activity partners: each plannable member's searched partners, best pair value first,
 //      one-to-one rules (groups first).
-//   Venue: the public venue offering the activity that minimizes the group's LONGEST estimated trip;
-//   invitees whose trip would exceed their stated tolerance (x slack) are dropped.
+//   Venue: prefer an eligible public place within every invitee's travel limit, then minimize the
+//   longest estimated trip. Invitees outside their stated tolerance (x slack) are dropped.
 //   Time options: the plan's time plus up to two more (distinct days) where the most invitees are
 //   likely free; the probe carries them and the group books the option most yes-sayers picked.
 //
@@ -244,7 +244,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     return home ? (at ? transitMinutes(home, at) : 45) : 99;
   };
   /** The travel rule: an invitee's trip fits the stated tolerance (x slack). */
-  const tripFits = (id: MemberId, at: Neighborhood | undefined) => tripMinutes(id, at) <= tolOf(id) * pol.toleranceSlack;
+  const withinTravelLimit = (id: MemberId, minutes: number) => minutes <= tolOf(id) * pol.toleranceSlack;
+  const tripFits = (id: MemberId, at: Neighborhood | undefined) => withinTravelLimit(id, tripMinutes(id, at));
   /** Some venue in the city offers the activity and is open for it at this time. */
   const venueOpenFor = (a: ActivityType, slot: TimeSlot) =>
     inp.venues.some(v => v.city === FRIENDS_CITY && v.activities.includes(a.id) && venueOpen(v, slot, a.durationMin, tz, att));
@@ -257,7 +258,9 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const homes = new Map(everyone.map(id => [id, homeOf(id)] as const).filter((x): x is [MemberId, Neighborhood] => !!x[1]));
     if (source === "new" || source === "partner") {
       const inv = new Map(p.invited.filter(id => homes.has(id)).map(id => [id, homes.get(id)!]));
-      const best = chooseVenue(inp.venues, inv, v => v.city === p.city && v.activities.includes(a.id) && v.ageMin <= Math.min(...p.invited.map(id => w.get(id)!.m.age)) && venueOpen(v, p.window, a.durationMin, tz, att));
+      const minimumAge = Math.min(...p.invited.map(id => w.get(id)!.m.age));
+      const best = chooseVenue(inp.venues, inv, v => v.city === p.city && v.activities.includes(a.id)
+        && v.ageMin <= minimumAge && venueOpen(v, p.window, a.durationMin, tz, att), withinTravelLimit);
       // A new plan without an open venue is not offered, so it holds no seats.
       if (!best) return null;
       venue = best.venue;

@@ -20,6 +20,18 @@ pure def venueCanHoldGroup(capacity: int, eligiblePeople: int, minimumGroup: int
 pure def planCanFitPlace(maximumGroup: int, minimumPlace: int): bool = not(maximumGroup < minimumPlace)
 ```
 
+### Friends prefers a venue every primary invitee can reach
+
+Compare eligible open venues for the exact activity and slot. If any venue fits each primary invitee's current travel limit, choose among those venues. Within the same travel eligibility, minimize the longest trip and keep the established mean and stable ID tie breaks. When no venue fits everyone, the existing seat and alternate checks still apply. A partner plan needs both people to fit.
+
+```quint
+pure def preferPlanVenue(candidateFitsEveryone: bool, selectedFitsEveryone: bool, candidateWinsTravelTieBreak: bool): bool =
+  if (candidateFitsEveryone == selectedFitsEveryone) candidateWinsTravelTieBreak else candidateFitsEveryone
+
+pure def lawReachablePlanVenueWins(travelTieBreak: bool): bool =
+  preferPlanVenue(true, false, travelTieBreak) and not(preferPlanVenue(false, true, travelTieBreak))
+```
+
 ### Search for a qualifying group before an activity partner
 
 Search for a group when the capacity and the current pool meet the group minimums. Both the minimum score for any participant and the whole proposal score must meet their thresholds. If no group qualifies, look for a pair when partner plans are enabled, the activity allows pairs, and the place can hold two people.

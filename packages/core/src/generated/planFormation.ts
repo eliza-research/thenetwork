@@ -38,6 +38,25 @@ export function planCanFitPlace(maximumGroup: number, minimumPlace: number): boo
   return !(maximumGroup < minimumPlace);
 }
 
+/** Story: Find a public activity that fits the group / Friends prefers a venue every primary invitee can reach (spec/planFormation.md) */
+//@ pure
+export function preferPlanVenue(candidateFitsEveryone: boolean, selectedFitsEveryone: boolean, candidateWinsTravelTieBreak: boolean): boolean {
+  return candidateFitsEveryone === selectedFitsEveryone ? candidateWinsTravelTieBreak : candidateFitsEveryone;
+}
+
+/** Story: Find a public activity that fits the group / Friends prefers a venue every primary invitee can reach (spec/planFormation.md) */
+//@ pure
+export function lawReachablePlanVenueWins(travelTieBreak: boolean): boolean {
+  //@ ensures \result === true
+  return preferPlanVenue(true, false, travelTieBreak) && !preferPlanVenue(false, true, travelTieBreak);
+}
+
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
+//@ pure
+export function planScoreQualifies(minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
+  return minimumScore >= memberFloor && overallScore >= planFloor;
+}
+
 /** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
 export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean, activityMinimum: number, capacity: number): boolean {
@@ -48,12 +67,6 @@ export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean,
 //@ pure
 export function searchForPlanGroup(available: number, minimumInvite: number, maximumGroup: number, minimumGroup: number): boolean {
   return available >= minimumInvite && maximumGroup >= minimumGroup;
-}
-
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
-//@ pure
-export function planScoreQualifies(minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
-  return minimumScore >= memberFloor && overallScore >= planFloor;
 }
 
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */
