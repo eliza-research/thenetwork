@@ -89,11 +89,21 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
  * "a 5 year old startup", "dog sitter", "diet coke", "mushroom foraging") pass. Checked against
  * a risky and a benign corpus (the 2026-10-08 audit; in git history at 16cde70).
  */
-const CHILD = "(kids?|child|children|minors?|teens?|teenagers?|toddlers?|bab(?:y|ies)|sons?|daughters?|little ones?|(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s?-?\\s?(?:yo|y\\/?o|yrs?(?:\\s|-)?olds?|years?(?:\\s|-)?olds?))";
+// A child's age may be written as digits or words, and the abbreviation has several
+// spellings: "6yo", "6 y/o", "6 y.o.", "6 y.o", "6 y o", "6 yr old", "6 y-old",
+// "6 year old", "6 years old", "six year old". The dotted and spaced forms were
+// unmatched, so the corpus let them through.
+const CHILD = "(kids?|child|children|minors?|teens?|teenagers?|toddlers?|bab(?:y|ies)|sons?|daughters?|little ones?|(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s?-?\\s?(?:y[./]?\\s*o\\.?|y(?:rs?)?[\\s.-]?olds?|years?[\\s.-]?olds?))";
 export const SAFETY_RISK_PATTERNS: readonly string[] = [
   // Care, transport or time alone with someone's child; a child's age may be written as digits or
   // words ("my 6 year old", "my 8yo", "15 y/o", "twelve-year-old").
   `\\b(watch(ing)?|sit(ting)?|mind(ing)?|look(ing)? after|care for|caring for|stay with|hang out with|pick(ing)? up|drop(ping)? off|tutor\\w*|mentor\\w*|teach\\w*|coach\\w*|alone with)\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`,
+  // The same two phrasal verbs with the child between the verb and its particle: "pick my kid up",
+  // "dropping the kids off" is how people write it, and only the contiguous "pick up my kid" was
+  // matched. `the` and a count ("my 2 kids", "my two kids") are allowed before the child noun
+  // because the particle must still follow it, so "pick the package up" and "pick up the check"
+  // stay out; the count is optional so the age branch of CHILD still reads "my 5 y.o.".
+  `\\b(pick(ing)?|drop(ping)?)\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her|the)\\s+(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?${CHILD}\\b(\\W+\\w+){0,3}?\\W*(up|off)\\b`,
   `\\b(my|our|your|their)\\s+${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
   `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD}`,
   "\\bbaby[\\s-]?sit", "(?<!(dog|pet|cat|plant|house|bird)[\\s-]?)\\bsitters?\\b",
