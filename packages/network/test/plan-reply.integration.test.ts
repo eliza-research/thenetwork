@@ -42,9 +42,10 @@ describe("plan probe replies", () => {
   test("reviewed plan replies respect the deadline after a restart and allow booked late joins", async () => {
     // spec/planDecision.md, "Only a pending member can change an open plan"; spec/planDecision.md, "Booking requires a pending acceptance that meets quorum"
     const ids = ["a", "b", "c", "d", "e", "f"];
+    const members = ids.map(id => ({ ...climber(id), area: "Prospect Heights", interests: ["coffee", "climbing"], wants: [] }));
     const failures: Record<string, unknown>[] = [];
     for (const seed of [1, 2, 3]) for (const mode of ["before", "at", "after", "booked-join"] as const) {
-      const w = new Mini(ids.map(climber), { seed, review: "human", plans: true, matchingEnabled: true });
+      const w = new Mini(members, { seed, review: "human", plans: true, matchingEnabled: true });
       w.clock.set(START + 3 * DAY);
       await w.onboard(...ids);
       await w.run(HOUR);
