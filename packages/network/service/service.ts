@@ -2049,6 +2049,7 @@ export class NetworkService implements RuntimeHost {
       } : undefined;
       try {
         disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: signedDirect ? Math.min(t, ev.receivedAt) : t, channel,
+          ...(signedDirect ? { signedReceivedAt: ev.receivedAt } : {}),
           ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent);
       } finally { rt.replyingTo = undefined; }
       if (rt.unit.memberCommand) return "cofounder_intent" as const;

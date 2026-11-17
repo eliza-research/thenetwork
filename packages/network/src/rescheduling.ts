@@ -11,6 +11,8 @@ export type RescheduleDraft = {
   expiresAt: number;
   roster: MemberId[];
   offered: MemberId[];
+  /** Only in-process callers without a separate delivery queue use these delivery times. */
+  deliveredAt?: Record<MemberId, number>;
   accepted: MemberId[];
 };
 

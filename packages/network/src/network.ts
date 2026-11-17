@@ -58,7 +58,7 @@ import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyA
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
-import { rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
+import { rescheduleAnswerAfterReceipt, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
   describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
@@ -1127,8 +1127,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Answers to what we asked (never from the assistant's profile: it can only teach, below).
     const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
-    const reschedule = this.memberReply ? parseRescheduleCommand(body) : undefined;
-    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, now);
+    const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body) : undefined;
+    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
@@ -1325,7 +1325,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       now, draft.expiresAt);
   }
 
-  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, now: number) {
+  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, receivedAt: number, now: number) {
     const reply = (body: string) => this.send(m, body, { type: "info" }, "reply");
     if (command.kind === "format") return reply(this.copy.rescheduleFormat);
     if (command.kind === "request") {
@@ -1357,7 +1357,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o || !draft) return reply(this.copy.rescheduleUnavailable);
     const current = this.currentReschedule(o, draft, now);
     const repeated = command.accepted && draft.accepted.includes(m.id);
-    const action = rescheduleVote(this.memberReply, current, draft.offered.includes(m.id), repeated,
+    const receipt = this.ctx.initialInviteReceipt?.(rescheduleOfferKey(draft, m.id));
+    const deliveredAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : draft.deliveredAt?.[m.id];
+    const delivered = rescheduleAnswerAfterReceipt(deliveredAt !== undefined, deliveredAt ?? 0, receivedAt, now);
+    const action = rescheduleVote(this.memberReply, current, delivered, repeated,
       command.accepted, draft.accepted.length + 1, draft.roster.length);
     if (action === "RejectVote") {
       if (!current) o.reschedule = undefined;
@@ -6053,7 +6056,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         },
         onSent: () => {
           const draft = o?.reschedule;
-          if (draft && h.key === rescheduleOfferKey(draft, m.id) && !draft.offered.includes(m.id)) draft.offered.push(m.id);
+          if (!draft || h.key !== rescheduleOfferKey(draft, m.id) || draft.offered.includes(m.id)) return;
+          draft.offered.push(m.id);
+          if (!this.ctx.initialInviteReceipt) (draft.deliveredAt ??= {})[m.id] = now();
         },
       };
       case "reschedule_updated": return {
