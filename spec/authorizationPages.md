@@ -2,7 +2,7 @@
 
 This spec owns the view layer of connector authorization: the page that the browser shows for each server reply, the controls on each page, the field errors and the security check. The [connector browser authorization spec](oauthBrowserAuthorization.md) owns the server flow, the stored request and its phases. The [connector grant issuance spec](oauthGrantIssuance.md) owns what happens after an explicit approval. The handler decides each reply. The page shell gives that reply to this machine and renders the view that it selects. The app resolved by the router also owns the [brand](brandIdentity.md) shown on every configured host. Copy, brand colors and logos stay in the component library.
 
-The handler (`packages/mcp/src/handler.ts`) also uses the guards of this machine as gates on its form routes. It makes the page that sent a form from the route and from the stored request. The phone, code and consent forms are only on their own pages. Cancel is on the page of the stored step. A code was sent when the request holds a number. A posted phone form carries the answer to the security check, so the handler solves the check (`solveCheck`) and then verifies the answer. A failed answer is the reply that the check did not pass. Before the route acts, the guard of the form must allow the reply that the form asks for: a code for the phone form, the consent page for the code form, the approval for "Allow", and the refusal for "Cancel" and "Don't allow". Then each reply must pass the same guard before the handler sends it. The return from Cloud sign-in and the "Try again" link use the same address, so a reply there passes when `canReturnFromCloud` or `canRetryConnection` allows it. A refused form or reply gets "This page has expired". The checks that the handler makes before it reads the stored request (the origin, the live request and the client) keep their own replies.
+The handler (`packages/mcp/src/handler.ts`) also uses the guards of this machine as gates on its form routes. It makes the page that sent a form from the route and from the stored request. The phone, code and consent forms are only on their own pages. Cancel is on the page of the stored step. A code was sent when the request holds a number. A posted phone form carries the answer to the security check, so the handler solves the check (`solveCheck`) and then verifies the answer. A failed answer is the reply that the check did not pass. Before the route acts, the guard of the form must allow the reply that the form asks for: a code for the phone form, the consent page for the code form, the approval for "Allow", and the refusal for "Cancel" and "Don't allow". Then each reply must pass the same guard before the handler sends it. The Cloud return uses `canReturnFromCloud`. A retry of the initial session check uses `canRetryConnection`. A refused form or reply gets "This page has expired". The checks that the handler makes before it reads the stored request (the origin, the live request and the client) keep their own replies.
 
 ## Story: See one clear page at each step of connecting my assistant
 
@@ -133,7 +133,7 @@ pure def openPage(page: AuthPage, reply: Reply, turnstileOn: bool): AuthPage =
 
 ### The return from Cloud sign-in and the retry link resume the same request
 
-After Cloud sign-in, the browser comes back to the same request. The "Try again" link on "Please try again" goes to the same return address. Both show the consent page, "Please try again", "This page has expired", "This link does not work" or "Connect again".
+After Cloud sign-in, the browser comes back to the same request. Its retry uses the same return address. A retry of the initial session check uses a separate address for the same request. A current session opens consent. A signed-out person goes to the phone page or the app's required Cloud sign-in. A failed check leaves the same retry link available. An expired or unbound request gets "This page has expired".
 
 ```quint
 pure def isCloudReturnReply(reply: Reply): bool =
@@ -143,7 +143,8 @@ pure def isCloudReturnReply(reply: Reply): bool =
 pure def canReturnFromCloud(page: AuthPage, reply: Reply): bool = page.view == CloudView and isCloudReturnReply(reply)
 pure def returnFromCloud(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
 
-pure def canRetryConnection(page: AuthPage, reply: Reply): bool = page.view == PleaseRetryView and isCloudReturnReply(reply)
+pure def canRetryConnection(page: AuthPage, reply: Reply): bool =
+  page.view == PleaseRetryView and (isOpenReply(reply) or isCloudReturnReply(reply))
 pure def retryConnection(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
 ```
 

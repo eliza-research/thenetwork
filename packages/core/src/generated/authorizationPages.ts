@@ -157,7 +157,7 @@ export function canReturnFromCloud(page: AuthPage, reply: Reply): boolean {
 /** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function canRetryConnection(page: AuthPage, reply: Reply): boolean {
-  return page.view === "PleaseRetryView" && isCloudReturnReply(reply);
+  return page.view === "PleaseRetryView" && (isOpenReply(reply) || isCloudReturnReply(reply));
 }
 
 /** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */

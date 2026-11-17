@@ -6,6 +6,7 @@
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
+import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -44,6 +45,15 @@ export interface AuthRequest {
   step: "phone" | "code" | "consent";
   createdAt: number;
   expiresAt: number;
+}
+
+export type AuthRequestPage = Pick<AuthRequest, "e164" | "personId" | "step">;
+
+/** A later page or a different phone proof supersedes a response still waiting on a provider. */
+export function samePendingAuthPage(observed: AuthRequest, expected: AuthRequest, at: number): boolean {
+  return observed.id === expected.id && observed.browserHash === expected.browserHash
+    && observed.expiresAt === expected.expiresAt && requestIsLive(at, observed.expiresAt)
+    && observed.step === expected.step && observed.e164 === expected.e164 && observed.personId === expected.personId;
 }
 
 /** A consent record: the person approved this client for these scopes in this app. Revocable. */
@@ -138,6 +148,8 @@ export interface OAuthStore {
   putAuthRequest(r: AuthRequest): Promise<void>;
   getAuthRequest(id: string): Promise<AuthRequest | undefined>;
   updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>): Promise<void>;
+  /** Move exactly the still-live page that started this operation. */
+  advanceAuthRequest(previous: AuthRequest, next: AuthRequestPage, now: () => number): Promise<boolean>;
   /** Check the current approval, then consume it and persist the grant, code and audit together.
    * False leaves no issuance. The callback must inspect the approval only. */
   commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites): Promise<boolean>;
@@ -257,6 +269,12 @@ export class MemoryOAuthStore implements OAuthStore {
   async updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>) {
     const r = this.requests.get(id);
     if (r) this.requests.set(id, { ...r, ...patch });
+  }
+  async advanceAuthRequest(previous: AuthRequest, next: AuthRequestPage, now: () => number) {
+    const saved = this.requests.get(previous.id);
+    if (!saved || !samePendingAuthPage(saved, previous, now())) return false;
+    this.requests.set(previous.id, { ...saved, ...next });
+    return true;
   }
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
     const pending = this.requests.get(id);

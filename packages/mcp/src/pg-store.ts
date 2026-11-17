@@ -7,7 +7,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -142,6 +142,14 @@ export class PgOAuthStore implements OAuthStore {
     if (!cur) return;
     const n = { ...cur, ...patch };
     await this.sql`update oauth.auth_requests set e164 = ${n.e164}, person_id = ${n.personId}, step = ${n.step} where id = ${id}`;
+  }
+  async advanceAuthRequest(previous: AuthRequest, next: AuthRequestPage, now: () => number) {
+    return this.sql.begin(async tx => {
+      const [pending] = await tx`select * from oauth.auth_requests where id=${previous.id} for update`;
+      if (!pending || !samePendingAuthPage(request(pending), previous, now())) return false;
+      await tx`update oauth.auth_requests set e164=${next.e164}, person_id=${next.personId}, step=${next.step} where id=${previous.id}`;
+      return true;
+    });
   }
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
     return this.sql.begin(async tx => {

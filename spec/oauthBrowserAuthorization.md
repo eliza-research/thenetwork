@@ -34,7 +34,7 @@ pure def readBrowserClient(flow: BrowserFlow, clientExists: bool): BrowserFlow =
 
 ### An existing session leads to consent or a new sign-in starts
 
-After validating a new authorization request, use its existing site identity if one is available. An unavailable session gives a retry. Without a session, a Cloud-only app sends the person to Cloud and another app asks for a phone. A Cloud return must resume a bound request that is still waiting for a phone.
+After validating a new authorization request, use its existing site identity if one is available. An unavailable session gives a retry. A retry of the initial session check reopens the same browser-bound request while it still waits for a phone. Without a session, a Cloud-only app sends the person to Cloud and another app asks for a phone. A Cloud return also requires a bound request that is still waiting for a phone.
 
 ```quint
 type EntrySession = SignedIn | SignedOut | SessionUnavailable
@@ -48,21 +48,26 @@ pure def chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequired: bo
 
 ### The stored page determines what a form can do
 
-Phone submission starts or restarts verification until the request reaches consent. Only a code page with a stored phone can verify a code. Only a consent page with a phone accepts a consent decision. A dedicated cancel form can end any bound request.
+Phone submission starts or restarts verification until the request reaches consent. Only a code page with a stored phone can verify a code. Only a consent page with a phone accepts a consent decision. A dedicated cancel form can end any bound request. A delayed phone proof, browser retry or Cloud response can advance only the same live stored page and phone binding it began with.
 
 ```quint
 type StoredPage = PhonePage | CodePage | ConsentPage
 type BrowserForm = PhoneForm | CodeForm | ConsentForm | CancelForm | CloudReturn
 pure def canReadBrowserForm(flow: BrowserFlow): bool = flow.phase == BrowserBound
+pure def browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: bool): bool =
+  flow.phase == BrowserBound and page == PhonePage and not(hasPhone)
 pure def readBrowserForm(flow: BrowserFlow, page: StoredPage, hasPhone: bool,
   form: BrowserForm, approve: bool): BrowserFlow =
   if (form == PhoneForm) { ...flow, phase: if (page == ConsentPage) AlreadyVerified else StartingOtp }
   else if (form == CodeForm) { ...flow, phase: if (page == CodePage and hasPhone) VerifyingOtp else BrowserExpired }
-  else if (form == CloudReturn) { ...flow, phase: if (page == PhonePage) CheckingIdentity else BrowserExpired }
+  else if (form == CloudReturn) { ...flow, phase: if (browserEntryMayResume(flow, page, hasPhone)) CheckingIdentity else BrowserExpired }
   else if (form == CancelForm) { ...flow, phase: ConsentDeclined }
   else if (page != ConsentPage or not(hasPhone)) { ...flow, phase: BrowserExpired }
   else if (approve) { phase: CheckingConsentOwner, explicitlyApproved: true }
   else { ...flow, phase: ConsentDeclined }
+
+pure def lawBrowserEntryCannotResumeAProvedPage(flow: BrowserFlow, page: StoredPage, hasPhone: bool): bool =
+  (page != PhonePage or hasPhone) implies not(browserEntryMayResume(flow, page, hasPhone))
 ```
 
 ### Only a successful challenge advances phone verification

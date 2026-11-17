@@ -93,10 +93,23 @@ export function canReadBrowserForm(flow: BrowserFlow): boolean {
 
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 //@ pure
+export function browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: boolean): boolean {
+  return flow.phase === "BrowserBound" && page === "PhonePage" && !hasPhone;
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
 export function readBrowserForm(flow: BrowserFlow, page: StoredPage, hasPhone: boolean, form: BrowserForm, approve: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canReadBrowserForm(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
   //@ ensures (inv(flow) && canReadBrowserForm(flow)) ==> stepReadyFollowsAuthority(flow, "readBrowserForm", \result)
-  return form === "PhoneForm" ? ({ ...flow, phase: page === "ConsentPage" ? "AlreadyVerified" : "StartingOtp" } as BrowserFlow) : (form === "CodeForm" ? ({ ...flow, phase: page === "CodePage" && hasPhone ? "VerifyingOtp" : "BrowserExpired" } as BrowserFlow) : (form === "CloudReturn" ? ({ ...flow, phase: page === "PhonePage" ? "CheckingIdentity" : "BrowserExpired" } as BrowserFlow) : (form === "CancelForm" ? ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow) : (page !== "ConsentPage" || !hasPhone ? ({ ...flow, phase: "BrowserExpired" } as BrowserFlow) : (approve ? ({ phase: "CheckingConsentOwner", explicitlyApproved: true } as BrowserFlow) : ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow))))));
+  return form === "PhoneForm" ? ({ ...flow, phase: page === "ConsentPage" ? "AlreadyVerified" : "StartingOtp" } as BrowserFlow) : (form === "CodeForm" ? ({ ...flow, phase: page === "CodePage" && hasPhone ? "VerifyingOtp" : "BrowserExpired" } as BrowserFlow) : (form === "CloudReturn" ? ({ ...flow, phase: browserEntryMayResume(flow, page, hasPhone) ? "CheckingIdentity" : "BrowserExpired" } as BrowserFlow) : (form === "CancelForm" ? ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow) : (page !== "ConsentPage" || !hasPhone ? ({ ...flow, phase: "BrowserExpired" } as BrowserFlow) : (approve ? ({ phase: "CheckingConsentOwner", explicitlyApproved: true } as BrowserFlow) : ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow))))));
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawBrowserEntryCannotResumeAProvedPage(flow: BrowserFlow, page: StoredPage, hasPhone: boolean): boolean {
+  //@ ensures \result === true
+  return !(page !== "PhonePage" || hasPhone) || !browserEntryMayResume(flow, page, hasPhone);
 }
 
 /** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
