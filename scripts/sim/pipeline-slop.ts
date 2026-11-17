@@ -6,7 +6,7 @@
 //
 // Daters join by texting "slop" and "Name, age", answer the onboarding questions in their own words,
 // are matched behind a human review queue (the reviewer approves every item at the next tick), probe
-// each other and book Saturday dates. Around the world: the person cap (across apps), quiet hours, a
+// each other and book dates from the offered slots. Around the world: the person cap (across apps), quiet hours, a
 // STOP in the middle of a probe, "leave slop" in the middle of a scheduled match, a ban in the middle
 // of a relay thread (the signed /internal/turn + /internal/relay wire), a restart with a row waiting
 // for the morning, and a minor who joins but is never matched.
@@ -18,7 +18,7 @@
 // reaches them; no probe, proposal or participation for a minor; the restart's waiting row goes out
 // once in the morning.
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
+import { ADULT_AGE, DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { RELAY_PATH, TURN_PATH } from "../../packages/core/src/svc/contract.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { NOT_SENT, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
@@ -114,6 +114,13 @@ async function say(w: World, from: string, text: string) {
   return r.result;
 }
 
+async function join(w: World, people: readonly Person[]) {
+  for (const x of people) {
+    await say(w, x.p, "slop");
+    await say(w, x.p, `${x.name}, ${x.age}`);
+  }
+}
+
 /** 09:00-21:00 in New York, whatever the date (EDT or EST). */
 function nyHour(at: number): number {
   return Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date(at)));
@@ -141,9 +148,10 @@ async function pump(w: World, ms: number, step = 30 * MINUTE) {
     await approve(w);
     // A stable order across runs: the service's message ids carry random UUIDs, so ordering by id
     // would let a different reply order (and so a different simulated clock) change the world.
+    // Members only answer messages that reached their phone.
     const rows = await w.sql`select m.id, m.body, m.type, m.proactive, pi.e164 from network.messages m
       join network.members mem on mem.id = m.member_id join platform.phone_identities pi on pi.person_id = mem.person_id
-      where m.direction = 'outbound' order by pi.e164, m.ts, m.type, m.id` as any[];
+      where m.direction = 'outbound' and m.status in ('delivered', 'read') order by pi.e164, m.ts, m.type, m.id` as any[];
     for (const r of rows) {
       if (w.seen.has(r.id)) continue;
       w.seen.add(r.id);
@@ -169,12 +177,12 @@ async function respond(w: World, row: { id: string; body: string; type: string; 
   }
   const reason = slopQuestion(row.body);
   if (reason && ANSWER[reason]) { await say(w, who.p, ANSWER[reason]!(who)); return; }
-  if (row.type === "probe") { await say(w, who.p, "Yes, Saturday 2pm works."); return; }
+  if (row.type === "probe") { await say(w, who.p, "Yes, the first time works."); return; }
   if (row.type === "feedback_request") { await say(w, who.p, "It went really well, I'd meet them again."); return; }
   if (row.type === "question" && /people up to \d+ miles|not many people match/i.test(row.body)) { await say(w, who.p, "Sure, that's fine."); return; }
   if (row.type === "question" && /what's your week like/i.test(row.body)) { await say(w, who.p, "Thursday evenings and Saturday afternoons."); return; }
   if (row.type === "question") { await say(w, who.p, "Yes, Saturday 2pm works."); return; }
-  if (row.type === "scheduling" || row.type === "plan_probe") { await say(w, who.p, "Saturday 2pm"); return; }
+  if (row.type === "scheduling" || row.type === "plan_probe") { await say(w, who.p, "Yes, the first time works."); return; }
 }
 
 /** The stored slop state (the engine's own document). */
@@ -182,11 +190,12 @@ async function slopState(w: World): Promise<any> {
   const [r] = await w.sql`select state from network.network_state where id = 'slop:nyc'` as any[];
   return typeof r?.state === "string" ? JSON.parse(r.state) : r?.state;
 }
-async function booked(w: World): Promise<{ id: string; stage: string; participants: string[]; at?: number }[]> {
+async function scheduled(w: World, lead = 0): Promise<{ id: string; participants: string[] }[]> {
   const st = await slopState(w);
+  const earliest = w.clock.now() + lead;
   return (st?.opps ?? [])
-    .filter((o: any) => (o.stage === "scheduled" || o.stage === "done") && o.participants?.length === 2)
-    .map((o: any) => ({ id: o.id, stage: o.stage, participants: o.participants, at: o.meetingAt ?? o.createdAt }));
+    .filter((o: any) => o.stage === "scheduled" && o.participants?.length === 2 && o.meetingAt > earliest)
+    .map((o: any) => ({ id: o.id, participants: o.participants }));
 }
 async function memberIdOf(w: World, p: string): Promise<string | undefined> {
   const rt = w.svc.runtimeFor("slop")!;
@@ -233,36 +242,32 @@ async function script(w: World) {
   // in the console; the person cap, quiet hours and review still apply).
   w.notes.matching = (await H.staff(w.svc, H.ADMIN, "POST", "/apps/slop/matching", { on: true })).status;
 
-  // ---- 1. Joins by keyword on the shared line; the onboarding loop answers through the webhook.
-  for (const x of PEOPLE) { await say(w, x.p, "slop"); await say(w, x.p, `${x.name}, ${x.age}`); }
+  // Admit cohorts separately so all available matches cannot be consumed before the later races.
+  const leaveCohort = PEOPLE.slice(0, 6);
+  const stopCohort = PEOPLE.slice(6, 8);
+  const relayCohort = PEOPLE.slice(8);
+
+  // ---- 1. The first cohort joins by keyword and reaches an actual staff-reviewed booking.
+  await join(w, leaveCohort);
   await say(w, MINOR_PHONE, "slop");
   await say(w, MINOR_PHONE, `${MINOR}, ${MINOR_AGE}`);
-  await pump(w, 3 * DAY, 30 * MINUTE);
-  w.notes.onboarded = (await w.sql`select count(*)::int as n from network.members where app_id = 'slop' and account_status = 'active'`)[0].n;
-  await pumpUntil(w, async () => (await booked(w)).length >= 1, 5 * DAY);
-  w.notes.firstBooking = (await booked(w)).length;
+  await pumpUntil(w, async () => (await scheduled(w)).length > 0, 8 * DAY);
+  const bookings = await scheduled(w);
+  w.notes.firstBooking = bookings.length;
 
-  // ---- 2. STOP in the middle of a probe: the probe is on the phone; STOP is the answer.
-  w.plan.armStop = true;
-  await pumpUntil(w, () => !!w.plan.stop, 4 * DAY);
-  await pump(w, DAY);
-
-  // ---- 3. "leave slop" in the middle of a scheduled match (before the date). The next booking can be
-  // a week away (matches are made in weekly rounds), so wait up to a week for a date that is still ahead.
-  const stopId = w.plan.stop ? await memberIdOf(w, w.plan.stop.phone) : undefined;
-  let leaving: { phone: string; memberId: string; opp: { id: string } } | undefined;
-  await pumpUntil(w, async () => {
-    for (const o of await booked(w)) {
-      if (o.stage !== "scheduled" || (o.at ?? 0) <= clock.now() || o.participants.includes(stopId ?? "")) continue;
-      const phone = await phoneOfMember(w, o.participants[0]!);
-      if (phone && w.people.has(phone)) { leaving = { phone, memberId: o.participants[0]!, opp: o }; return true; }
-    }
-    return false;
-  }, 7 * DAY);
-  if (leaving) {
-    w.plan.leave = { phone: leaving.phone, memberId: leaving.memberId, oppId: leaving.opp.id, at: clock.now() };
-    await say(w, leaving.phone, "leave slop");
+  // ---- 2. Leave in the middle of the first scheduled match, while its date is still ahead.
+  const firstBooking = bookings[0];
+  const leavingId = firstBooking?.participants[0];
+  const leavingPhone = leavingId ? await phoneOfMember(w, leavingId) : undefined;
+  if (firstBooking && leavingId && leavingPhone && w.people.has(leavingPhone)) {
+    w.plan.leave = { phone: leavingPhone, memberId: leavingId, oppId: firstBooking.id, at: clock.now() };
+    await say(w, leavingPhone, "leave slop");
   }
+
+  // ---- 3. STOP in the middle of a probe: the probe is on the phone; STOP is the answer.
+  w.plan.armStop = true;
+  await join(w, stopCohort);
+  await pumpUntil(w, () => !!w.plan.stop, 8 * DAY);
   await pump(w, DAY);
 
   // ---- 4. Quiet hours: a transactional text queued at 22:00 waits for the morning (real clock, NY zone).
@@ -285,7 +290,10 @@ async function script(w: World) {
   await pumpToHour(w, 22);
   const restartPhone = await quietTarget(w);
   const restartId = "slop:restart:night";
-  if (restartPhone) await enqueueSystem(w, restartPhone, restartId, "slop: a restart check.", "transactional");
+  if (restartPhone) {
+    await say(w, restartPhone, "Thanks for checking in.");
+    await enqueueSystem(w, restartPhone, restartId, "slop: a restart check.", "transactional");
+  }
   await pump(w, 10 * MINUTE, 5 * MINUTE);
   const before = (await w.sql`select status from platform.outbound where id = ${restartId}`)[0] as any;
   await w.svc.close();
@@ -297,7 +305,11 @@ async function script(w: World) {
   w.notes.restart = { phone: restartPhone, before: before?.status, after: after?.status, sentAt: after?.sent_at };
 
   // ---- 7. A ban in the middle of a relay thread: the queued text never reaches the banned match.
-  await pumpUntil(w, async () => (await booked(w)).some(o => o.stage === "scheduled" || o.stage === "done"), 7 * DAY);
+  await join(w, relayCohort);
+  await pumpUntil(w, async () => (await scheduled(w, 30 * MINUTE)).length > 0, 8 * DAY);
+  const [active] = await w.sql`select count(*)::int as n from network.members
+    where app_id = 'slop' and account_status = 'active' and age >= ${ADULT_AGE}`;
+  w.notes.onboarded = active.n + (w.plan.leave ? 1 : 0);
   await banRace(w);
 
   // ---- 8. Run out the rest of the 30 days (dates, feedback, reminders, quiet hours).
@@ -355,33 +367,40 @@ async function capProbe(w: World) {
 
 /** The relay + ban race: pass one relayed text, queue the next during a provider outage, ban the match, let the queue retry. */
 async function banRace(w: World) {
-  const candidates = (await booked(w)).filter(o => o.stage === "scheduled" || o.stage === "done");
+  const candidates = await scheduled(w, 30 * MINUTE);
+  const rt = w.svc.runtimeFor("slop")!;
+  let sequence = 0;
   for (const o of candidates) {
     for (const senderId of o.participants) {
       const partnerId = o.participants.find(x => x !== senderId)!;
       const sender = await phoneOfMember(w, senderId);
       const partner = await phoneOfMember(w, partnerId);
       if (!sender || !partner || !w.people.has(sender) || !w.people.has(partner)) continue;
-      if (sender === w.plan.stop?.phone || partner === w.plan.stop?.phone || partner === w.plan.leave?.phone) continue;
-      const first = await relay(w, sender, "Tell them I'm running ten minutes late.", 1);
+      if ([sender, partner].some(p => p === w.plan.stop?.phone || p === w.plan.leave?.phone)) continue;
+      if (!await rt.readState(net => net.relayMatch(senderId)?.id === o.id)) continue;
+      const providerCalls = w.fake.calls.length;
+      const first = await relay(w, sender, "Tell them I'm running ten minutes late.", ++sequence);
       if (first.decision !== "pass") continue;
       await pump(w, 10 * MINUTE, 5 * MINUTE);
+      const firstDelivered = w.fake.calls.slice(providerCalls).some(c =>
+        c.req.to === partner && c.req.idempotencyKey.startsWith("tn:relay:") && c.outcome === "delivered");
       // The partner answers the first text, so the recipient's unanswered streak is not what refuses
       // the second one: the outage, then the ban, must be what decides it.
       await say(w, partner, "Got it, see you soon.");
       await pump(w, 5 * MINUTE, 5 * MINUTE);
-      const before = new Set(((await w.sql`select id from platform.outbound where id like 'relay:%'`) as any[]).map(r => r.id));
+      const before = new Set((await w.sql`select id from platform.outbound where id like 'relay:%' and to_address = ${partner}`).map(r => r.id));
       w.fake.downUntil = w.clock.now() + HOUR;
-      const second = await relay(w, sender, "Tell them I'm outside.", 2);
+      const second = await relay(w, sender, "Tell them I'm outside.", ++sequence);
       const at = w.clock.now();
-      const relay2Id = ((await w.sql`select id from platform.outbound where id like 'relay:%'`) as any[]).map(r => r.id).find(id => !before.has(id));
+      const retry = (await w.sql`select id, status from platform.outbound where id like 'relay:%' and to_address = ${partner}`)
+        .find(r => !before.has(r.id));
       const ban = await (await H.staff(w.svc, H.SAFETY, "POST", "/apps/slop/safety/ban", { memberId: partnerId, by: "phone", note: "sim: harm after a date" })).json() as any;
       w.fake.downUntil = 0;
       await pump(w, 2 * HOUR, 5 * MINUTE);
       const rows = await w.sql`select id, status, note, created_at from platform.outbound where id like 'relay:%' order by created_at` as any[];
-      const relay2 = rows.find(r => r.id === relay2Id);
-      w.plan.ban = { phone: partner, memberId: partnerId, oppId: o.id, at, relayId: relay2Id ?? "" };
-      w.notes.ban = { first, second, ban: ban.ok, rows: rows.map(r => ({ id: r.id, status: r.status, note: r.note, at: r.created_at })), relay2: relay2?.status };
+      const relay2 = rows.find(r => r.id === retry?.id);
+      w.plan.ban = { phone: partner, memberId: partnerId, oppId: o.id, at, relayId: retry?.id ?? "" };
+      w.notes.ban = { first, firstDelivered, second, retryStatus: retry?.status, ban: ban.ok, relay2: relay2?.status };
       return;
     }
   }
@@ -523,13 +542,15 @@ async function gates(b: Block, w: World) {
   await b.run("pipeline-slop: a ban in the middle of a relay thread: the queued text ends without reaching the banned match", () => {
     expect(notes.ban).toBeTruthy();
     expect(notes.ban.first).toMatchObject({ turn: "open", status: 200, decision: "pass" });
+    expect(notes.ban.firstDelivered).toBe(true);
     expect(notes.ban.second).toMatchObject({ turn: "open", status: 200, decision: "pass" });
+    expect(notes.ban.retryStatus).toBe("retry_scheduled");
     expect(notes.ban.ban).toBe(true);
     expect(notes.ban.relay2).not.toBe("delivered");
     const ban = plan.ban!;
+    expect(ban.relayId).toBeTruthy();
+    expect(fake.calls.filter(c => c.req.idempotencyKey === `tn:${ban.relayId}`).map(c => c.outcome)).toEqual(["outage"]);
     const after = sentTo(ban.phone).filter(d => d.at >= ban.at);
     expect(after.map(d => d.key)).toEqual([]);
-    const passedRelay = fake.calls.filter(c => c.req.idempotencyKey.startsWith("tn:relay:") && c.outcome === "delivered");
-    expect(passedRelay.length).toBeGreaterThanOrEqual(1);
   });
 }
