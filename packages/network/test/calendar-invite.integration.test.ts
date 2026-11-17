@@ -1,11 +1,12 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { localBookingStart } from "../src/rescheduling.ts";
@@ -20,8 +21,15 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
   const secret = "a-synthetic-calendar-invite-fixture-secret";
   const phones = ["+12125550288", "+12125550289"];
   const app = APPS.friends;
+  const delivered: SendRequest[] = [];
   const service = new NetworkService({
-    url, clock, log: () => {}, photoStorage: null, adapter: () => new DryRunAdapter(() => {}),
+    url, clock, log: () => {}, photoStorage: null,
+    adapter: (_net, runtime) => new BlooioAdapter({ app: runtime.app.id, city: runtime.city, clock, from: "+12125550160",
+      env: {}, log: () => {}, liveGate: () => true, provider: { kind: "sim", send: async request => {
+        delivered.push(request);
+        return { providerMessageId: `calendar-fixture-${delivered.length}`, status: "queued" };
+      } },
+    }),
     env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
   });
@@ -31,6 +39,13 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     const body = JSON.stringify(input);
     const auth = await svcSign(secret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) });
     return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...auth }, body }));
+  };
+  const acceptCollected = async (input: TurnRequest, replyIds: string[]) => {
+    const receipt: TurnReceiptRequest = { channel: input.channel, messageId: input.messageId, replyIds,
+      providerMessageIds: ["calendar-fixture-collected"], historyRecorded: true, outcome: "accepted" };
+    const body = JSON.stringify(receipt);
+    const auth = await svcSign(secret, { method: "POST", path: TURN_RECEIPT_PATH, id: `${input.messageId}:receipt`, body, nowS: Math.floor(clock.now() / 1000) });
+    return service.fetch(new Request(`http://localhost${TURN_RECEIPT_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...auth }, body }));
   };
   const download = (href: string | URL) => service.publicFetch(new Request(href));
   const iCalTime = (at: number) => new Date(at).toISOString().replace(/[-:]|\.\d{3}/g, "");
@@ -100,7 +115,7 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     clock.advance(15 * MINUTE);
     expect((await download(timedLink)).status).toBe(404);
 
-    // The member's exact reschedule offer replays until their decline closes the draft.
+    // spec/meetingReschedule.md, "Only independent answers to the current offer can change the booking"
     const originalAt = Date.UTC(2026, 10, 21, 17);
     const proposedAt = Date.UTC(2026, 10, 22, 18);
     const venue = PLAN_VENUES.find(candidate => candidate.id === "mccarren-park")!;
@@ -111,6 +126,23 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     const code = /RESCHEDULE NO [a-p]{16}/.exec(offered.replies.join(" "))?.[0];
     expect(code).toBeDefined();
     expect(await (await send(propose)).json()).toEqual(offered);
+    const pendingDraft = async () => (await rt.pg.load())!.opps.find(opp => opp.id === id)?.reschedule;
+    const earlyTime = clock.now();
+    expect((await send(turn("calendar-reschedule-without-receipt", code!))).status).toBe(200);
+    expect(await pendingDraft()).toMatchObject({ accepted: [] });
+    clock.advance(MINUTE);
+    expect((await acceptCollected(propose, offered.replyIds)).status).toBe(200);
+    const delayed = { ...turn("calendar-reschedule-before-receipt", code!), receivedAt: earlyTime };
+    expect((await send(delayed)).status).toBe(200);
+    expect(await pendingDraft()).toMatchObject({ accepted: [] });
+    const future = { ...turn("calendar-reschedule-future-time", code!), receivedAt: clock.now() + MINUTE };
+    expect((await send(future)).status).toBe(200);
+    expect(await pendingDraft()).toMatchObject({ accepted: [] });
+    const peerOffer = delivered.find(message => message.to === phones[1] && message.text.includes("Reply RESCHEDULE YES"));
+    const peerYes = /RESCHEDULE YES [a-p]{16}/.exec(peerOffer?.text ?? "")?.[0];
+    expect(peerYes).toBeDefined();
+    expect((await send(turn("calendar-reschedule-peer-yes", peerYes!, phones[1]))).status).toBe(200);
+    expect(await pendingDraft()).toMatchObject({ accepted: [ids[1]] });
     expect((await send(turn("calendar-reschedule-decline", code!))).status).toBe(200);
     expect((await send(propose)).status).toBe(409);
 

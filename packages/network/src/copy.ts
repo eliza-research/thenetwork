@@ -52,7 +52,7 @@ export function copyFor(b: CopyBrand) {
   /** Plans buddy: asking for plans is not consent to meet a stranger, so both people are asked first. */
   plansBuddyProbe: (venue: string, when: string, area: string | undefined, times?: string) =>
     `Quick check, no names yet: someone ${area ? `near ${area}` : "nearby"} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
-  /** The one re-engagement after 14 days of silence (F28). */
+  /** The one re-engagement after 30 days of silence (F28). */
   reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these?",
   requestConfirm: (why: string, when: string, times?: string) => times
     ? `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it? I could do ${times}; tell me which works, or no.`

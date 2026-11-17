@@ -19,6 +19,8 @@ export type ConnectionPhase = "Unbound" | "Unavailable" | "Anonymous" | "Connect
 export type ToolResult = "NoResult" | "PublicFacts" | "AppNotAvailable" | "SignInNeeded" | "StatusShown" | "ProfileAccepted" | "ProfileNotForStatus" | "DraftSaved" | "DraftRefused" | "UpdatesShown" | "TooManyToday";
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 export interface Connection { phase: ConnectionPhase; host: AppId; surface: Surface; hasWrite: boolean; status: MemberStatus; profileApproved: boolean; profileSent: boolean; sentToday: number; draftPrepared: boolean; tokenUnseen: boolean; otherUnseen: boolean; lastShown: number; lastResult: ToolResult }
+/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
+export type GrantOwnerDecision = "GrantOwnerMatches" | "GrantOwnerChanged" | "GrantOwnerHeld" | "GrantOwnerUnavailable";
 /** Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen (spec/connectorTools.md) */
 export interface UpdateRead { shown: number; tokenLeft: boolean; otherLeft: boolean }
 
@@ -284,6 +286,12 @@ export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
+export function decideGrantOwner(available: boolean, held: boolean, samePerson: boolean): GrantOwnerDecision {
+  return !available ? "GrantOwnerUnavailable" : (held ? "GrantOwnerHeld" : (samePerson ? "GrantOwnerMatches" : "GrantOwnerChanged"));
+}
+
+/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
+//@ pure
 export function canCallAfterOwnerChange(c: Connection): boolean {
   return c.phase === "Connected";
 }
@@ -309,6 +317,13 @@ export function callAfterOwnerChange(c: Connection): Connection {
 //@ pure
 export function memberResult(r: ToolResult): boolean {
   return r === "StatusShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "DraftSaved" || r === "DraftRefused" || r === "UpdatesShown" || r === "TooManyToday";
+}
+
+/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
+//@ pure
+export function lawOnlyObservedOwnerChangeEndsGrant(available: boolean, held: boolean, samePerson: boolean): boolean {
+  //@ ensures \result === true
+  return (decideGrantOwner(available, held, samePerson) === "GrantOwnerChanged") === (available && !held && !samePerson);
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */

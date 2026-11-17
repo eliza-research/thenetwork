@@ -33,7 +33,7 @@ import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEli
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
-import { RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
@@ -80,6 +80,11 @@ import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
 interface GatheringRepeatMessage { id: string; opportunity_id: string; type: string; body: string }
+interface StoredSendReceipt {
+  id: string; member_id: string | null; opportunity_id: string | null; type: string | null;
+  outbound_member_id: string | null; status: string; sent_at: Date | null; accepted_at: Date | null;
+}
+const cofounderRevealDeliveryId = (id: string) => `${cofounderDeliveryIdPrefix}reveal:${id}`;
 
 export type StagedMemberInvitation =
   | { status: "review"; review: HeldMemberInvitation }
@@ -668,6 +673,15 @@ export class NetworkRuntime {
     this.initialInviteReceipts.clear();
     const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
+    const reschedule = new Map<string, { key: string; memberId: MemberId; oppId: string }>();
+    for (const opp of state?.opps ?? []) {
+      const draft = opp.reschedule;
+      if (!draft || opp.stage !== "scheduled") continue;
+      for (const memberId of draft.offered) {
+        const key = rescheduleOfferKey(draft, memberId);
+        reschedule.set(opp.lane === "Cofounder" ? cofounderRevealDeliveryId(key) : key, { key, memberId, oppId: opp.id });
+      }
+    }
     const gatheringIds: string[] = [];
     const ids = (state?.members ?? []).flatMap(member => {
       const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []);
@@ -680,19 +694,25 @@ export class NetworkRuntime {
       if (survey?.sentAt !== undefined) pending.push(interruptionFeedbackKey(this.app.id, member.id, survey.opportunityId));
       return pending;
     });
-    if (!ids.length && !gatheringIds.length) return;
-    const rows = await this.scoped(tx => tx`select m.id, coalesce(o.status, m.status) as status,
+    if (!ids.length && !gatheringIds.length && !reschedule.size) return;
+    const rows = await this.scoped(tx => tx<StoredSendReceipt[]>`select m.id,m.member_id,m.opportunity_id,m.type,o.member_id as outbound_member_id,o.sent_at,
+      coalesce(o.status, m.status) as status,
       case when o.id is null then m.ts else o.sent_at end as accepted_at
       from network.messages m left join platform.outbound o on o.app_id = m.app_id and o.id = m.id
       where m.app_id=${this.app.id} and m.direction='outbound' and (
         (m.id=any(${tx.array(ids, "TEXT")}) and m.proactive) or
-        (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')))`);
+        (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')) or
+        (m.id=any(${tx.array([...reschedule.keys()], "TEXT")}) and m.type='scheduling'))`);
     for (const row of rows) {
-      const status = row.status as string;
-      if (row.accepted_at != null && /^(accepted|sent|delivered|read)$/.test(status)) {
-        this.initialInviteReceipts.set(row.id as string, { kind: "accepted", at: new Date(row.accepted_at as string).getTime() });
-      } else if (status !== "parked_leak_review" && (status === "dry_run" || NOT_SENT.test(status))) {
-        this.initialInviteReceipts.set(row.id as string, { kind: "not_sent" });
+      const offer = reschedule.get(row.id);
+      if (offer && (row.type !== "scheduling" || row.member_id !== offer.memberId || row.outbound_member_id !== offer.memberId
+        || row.opportunity_id !== offer.oppId)) continue;
+      // Reschedule consent requires provider acceptance for either a queued or collected offer.
+      const acceptedAt = offer ? row.sent_at : row.accepted_at;
+      if (acceptedAt && /^(accepted|sent|delivered|read)$/.test(row.status)) {
+        this.initialInviteReceipts.set(offer?.key ?? row.id, { kind: "accepted", at: acceptedAt.getTime() });
+      } else if (!offer && row.status !== "parked_leak_review" && (row.status === "dry_run" || NOT_SENT.test(row.status))) {
+        this.initialInviteReceipts.set(row.id, { kind: "not_sent" });
       }
     }
   }
@@ -767,7 +787,8 @@ export class NetworkRuntime {
         const oppId = meta.proposalId ?? meta.probe?.key;
         const cofounderContact = !!oppId && this.net.opps.get(oppId)?.lane === "Cofounder"
           && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal");
-        const id = cofounderContact ? `${cofounderDeliveryIdPrefix}${meta.type === "proposal" || baseId.startsWith(RESCHEDULE_QUEUE_PREFIX) ? "reveal" : "probe"}:${baseId}`
+        const id = cofounderContact ? (meta.type === "proposal" || baseId.startsWith(RESCHEDULE_QUEUE_PREFIX)
+          ? cofounderRevealDeliveryId(baseId) : `${cofounderDeliveryIdPrefix}probe:${baseId}`)
           : meta.privateInviteVouch && !meta.approvedInviteLink ? `invite-vouch:${baseId}` : baseId;
         const turn = this.host.inboundTurn?.();
         const causal = !cofounderContact && turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true

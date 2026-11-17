@@ -7,9 +7,9 @@ import {
   signupDraftRequestAllowed, step as stepDraftPreparation,
 } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
-  type Connection, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
+  type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
   canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallSubmitProfile, grantCovers,
-  initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
+  decideGrantOwner, initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
@@ -173,7 +173,9 @@ export type ToolOutcome =
   | { kind: "ok"; data: Record<string, unknown> | Record<string, unknown>[] | { apps: unknown[] } }
   | { kind: "error"; message: string }
   /** The grant no longer matches the person who owns the phone: answer 401 like an invalid token. */
-  | { kind: "invalid_grant" };
+  | GrantRefusal;
+
+type GrantRefusal = { kind: "invalid_grant" } | { kind: "grant_held" } | { kind: "grant_unavailable" };
 
 const NOT_AVAILABLE = "That app is not available here.";
 
@@ -295,13 +297,20 @@ export interface CallContext {
   assistant?: AssistantKind;
 }
 
-/**
- * Whether a grant still belongs to the number's person. A different person now means a new owner
- * after staff review. A grant made while the number had no person never follows a person created
- * later (who may be someone else): it is dead, and the person connects again (audit: null-person grant).
- */
-export function grantStillTheirs(atConsent: string | null, now: string | null): boolean {
-  return atConsent === null ? now === null : now === atConsent;
+/** Resolve the current credential owner before admission, then again at member-tool use. */
+export async function checkGrantOwner(hooks: PlatformHooks, grant: Grant): Promise<GrantOwnerDecision> {
+  try {
+    const current = await hooks.grantOwner(grant.phoneKey);
+    return decideGrantOwner(true, current.held, current.personId === grant.personId);
+  } catch {
+    return decideGrantOwner(false, false, false);
+  }
+}
+
+function grantOwnerRefusal(decision: GrantOwnerDecision): GrantRefusal | undefined {
+  if (decision === "GrantOwnerChanged") return { kind: "invalid_grant" };
+  if (decision === "GrantOwnerHeld") return { kind: "grant_held" };
+  if (decision === "GrantOwnerUnavailable") return { kind: "grant_unavailable" };
 }
 
 export async function callTool(name: ToolName, args: unknown, c: CallContext): Promise<ToolOutcome> {
@@ -340,8 +349,11 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       return c.hooks.withSignupAgePolicy(g.phoneKey, g.app, async allowed => {
         const preparedAge = stepDraftPreparation(preparedConnection, { type: "observeAge", allowed });
         if (preparedAge.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
-        const person = await c.hooks.personForKey(g.phoneKey);
-        const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: grantStillTheirs(g.personId, person) });
+        const owner = await checkGrantOwner(c.hooks, g);
+        const refusal = grantOwnerRefusal(owner);
+        if (refusal) return refusal;
+        const person = g.personId;
+        const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: owner === "GrantOwnerMatches" });
         if (preparedOwner.phase !== "CheckMembership") return { kind: "invalid_grant" };
         const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
         const preparedMembership = stepDraftPreparation(preparedOwner, { type: "observeMembership", status });
@@ -358,24 +370,25 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     case "check_status": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
-      const now = await c.hooks.personForKey(g.phoneKey);
-      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
-      const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app);
       const a = c.apps[g.app];
       return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a), manage_url: a.links.support } };
     }
     case "submit_profile": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
-      const now = await c.hooks.personForKey(g.phoneKey);
-      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const person = g.personId;
       const a = c.apps[g.app];
       const { submitProfile, profileSubmissionFingerprint } = c.hooks;
       const store = c.store;
       if (!submitProfile || !profileSubmissionFingerprint || !store || c.now === undefined) return { kind: "error", message: "Profiles cannot be sent here yet." };
-      const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
+      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
-      if (now === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
+      if (person === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
       const fingerprint = profileSubmissionFingerprint(g.app, g.id, chk.about!);
       const unresolved: ToolOutcome = { kind: "error", message: "The profile delivery is unconfirmed. Check your app status before making changes." };
       try {
@@ -383,7 +396,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         if (claim === "ProfileClaimRefused") return { kind: "invalid_grant" };
         if (claim === "ProfileClaimPending") return unresolved;
         if (claim === "ProfileClaimStart") {
-          const accepted = await submitProfile(now, g.app, g.phoneKey, chk.about!) === "accepted";
+          const accepted = await submitProfile(person, g.app, g.phoneKey, chk.about!) === "accepted";
           const stored = await store.finishProfileSubmission(g.id, fingerprint, accepted);
           if (!accepted) return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
           if (!profileSubmissionAccepted(claim, true, stored)) return unresolved;
@@ -397,13 +410,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     case "get_updates": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
-      const now = await c.hooks.personForKey(g.phoneKey);
-      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
       // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
-      const updates = now === null ? [] : (await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
+      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

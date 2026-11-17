@@ -58,7 +58,7 @@ import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyA
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
-import { rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
+import { rescheduleAnswerAfterReceipt, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
   describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
@@ -83,7 +83,7 @@ import {
   probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
-import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import {
   interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
 } from "../../core/src/generated/interruptionFeedback.ts";
@@ -92,6 +92,7 @@ import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../.
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
+import { publicEventRevision } from "./public-event-revision.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
   standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue,
@@ -400,7 +401,7 @@ interface MemberState {
   weekly?: boolean; lastCheckinAt?: number;
   /** "Only when I ask" (F28): no proactive messages until the member writes again. */
   onlyWhenAsked: boolean;
-  /** The one re-engagement after 14 days of silence was used (reset by an inbound message). */
+  /** The one re-engagement after 30 days of silence was staged (reset by an inbound message). */
   reengaged: boolean;
   /** An acknowledgement waiting to be folded into the next message. */
   pendingAck?: { text: string; at: number };
@@ -1126,8 +1127,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Answers to what we asked (never from the assistant's profile: it can only teach, below).
     const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
-    const reschedule = this.memberReply ? parseRescheduleCommand(body) : undefined;
-    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, now);
+    const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body) : undefined;
+    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
@@ -1324,7 +1325,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       now, draft.expiresAt);
   }
 
-  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, now: number) {
+  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, receivedAt: number, now: number) {
     const reply = (body: string) => this.send(m, body, { type: "info" }, "reply");
     if (command.kind === "format") return reply(this.copy.rescheduleFormat);
     if (command.kind === "request") {
@@ -1356,7 +1357,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o || !draft) return reply(this.copy.rescheduleUnavailable);
     const current = this.currentReschedule(o, draft, now);
     const repeated = command.accepted && draft.accepted.includes(m.id);
-    const action = rescheduleVote(this.memberReply, current, draft.offered.includes(m.id), repeated,
+    const receipt = this.ctx.initialInviteReceipt?.(rescheduleOfferKey(draft, m.id));
+    const deliveredAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : draft.deliveredAt?.[m.id];
+    const delivered = rescheduleAnswerAfterReceipt(deliveredAt !== undefined, deliveredAt ?? 0, receivedAt, now);
+    const action = rescheduleVote(this.memberReply, current, delivered, repeated,
       command.accepted, draft.accepted.length + 1, draft.roster.length);
     if (action === "RejectVote") {
       if (!current) o.reschedule = undefined;
@@ -4834,15 +4838,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
-  /** Exactly one re-engagement after 14 days of silence for members on "only when I ask". */
+  /** spec/outreachPolicy.md, "Re-engagement requires current evidence of silence" */
+  private reengagementCurrent(m: MemberState, now: number): boolean {
+    return !m.optedOut && !m.minor && reengagementMayStage(m.onlyWhenAsked, m.lastInbound, m.lastAskAt, m.heldHighAt ?? 0, now);
+  }
+
+  /** Exactly one re-engagement after 30 days of silence for members on "only when I ask". */
   private reengage(now: number) {
+    const waiting = new Set(this.deferred.filter(item => item.kind === "reengage").map(item => item.memberId));
     for (const m of this.members.values()) {
-      // Members aged 13-17 get no re-engagement: its text offers people suggestions, which they never get.
-      if (!m.onlyWhenAsked || m.reengaged || m.optedOut || m.minor || now - Math.max(m.lastInbound, m.lastAskAt) < OUTREACH.reengageAfterMs) continue;
-      // D6: only when something worth it is waiting (a top-quartile item held in the last week).
-      if (!m.heldHighAt || now - m.heldHighAt > 7 * DAY) continue;
-      const r = this.send(m, copy.reengage, { type: "question", proactive: true, reengagement: true }, "reengage", { hook: { t: "reengage" } });
-      if (r !== "refused") m.reengaged = true;
+      if (m.reengaged || waiting.has(m.id) || !this.reengagementCurrent(m, now)) continue;
+      this.send(m, copy.reengage, { type: "question", proactive: true, reengagement: true }, "reengage", { hook: { t: "reengage" } });
     }
   }
 
@@ -5360,7 +5366,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!eventId) return;
     const event = this.snapshotCached().events?.find(value => value.id === eventId);
     if (event?.listing) {
-      o.publicEventRevision = sha256(stableStringify(event));
+      o.publicEventRevision = publicEventRevision(event);
       o.anchorWindow = { start: event.start, end: event.end };
       o.venueArea = event.area;
     }
@@ -5370,7 +5376,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o.publicEventRevision) return undefined;
     const id = o.plan?.eventId ?? o.anchor?.id;
     const event = this.snapshotCached().events?.find(value => value.id === id);
-    return event?.listing && publicEventRevisionMatches(o.publicEventRevision, sha256(stableStringify(event))) ? event : undefined;
+    return event?.listing && publicEventRevisionMatches(o.publicEventRevision, publicEventRevision(event)) ? event : undefined;
   }
 
   /** Revalidate the reviewed pair's exact standing intents, including after a restart. */
@@ -5921,7 +5927,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.memberInviteLink && approvedLink(text) === o.memberInviteLink) meta = { ...meta, approvedInviteLink: o.memberInviteLink };
     const invitationJoins = sentStandaloneNotice ? [sentStandaloneNotice.inviteeId] : deliveredInviteJoins.map(notice => notice.inviteeId);
     if (invitationJoins.length) meta = { ...meta, invitationJoins };
-    const idPrefix = invitationJoins.length ? "invite-notice:" : "";
+    const idPrefix = invitationJoins.length ? "invite-notice:" : kind === "reengage" ? reengagementDeliveryPrefix : "";
     const delivery = this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
     if (proactive && (this.ctx.initialInviteReceipt || delivery.status === "delivered")) {
       const opportunityId = o.hook?.t === "probe" || o.hook?.t === "plan_probe" ? o.hook.oppId : undefined;
@@ -6050,7 +6056,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         },
         onSent: () => {
           const draft = o?.reschedule;
-          if (draft && h.key === rescheduleOfferKey(draft, m.id) && !draft.offered.includes(m.id)) draft.offered.push(m.id);
+          if (!draft || h.key !== rescheduleOfferKey(draft, m.id) || draft.offered.includes(m.id)) return;
+          draft.offered.push(m.id);
+          if (!this.ctx.initialInviteReceipt) (draft.deliveredAt ??= {})[m.id] = now();
         },
       };
       case "reschedule_updated": return {
@@ -6136,7 +6144,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) };
       case "feedback": return { onSent: () => { if (o) this.expect(m, { kind: "feedback", oppId: o.id, at: now() }); } };
       case "growth": return { onSent: () => { this.expect(m, { kind: "growth", at: now() }); this.counters.growthAsks++; this.ctx.log("growth_ask", { memberId: m.id, kind: h.kind }); } };
-      case "reengage": return { onSent: () => { this.counters.reengagements++; this.ctx.log("reengagement", { memberId: m.id }); } };
+      case "reengage": return {
+        valid: () => this.reengagementCurrent(m, now()),
+        onSent: () => {
+          m.reengaged = true;
+          this.counters.reengagements++;
+          this.ctx.log("reengagement", { memberId: m.id });
+        },
+      };
       case "checkin": return {
         valid: () => !!m.weekly && !m.minor,
         onSent: () => { m.lastCheckinAt = now(); this.counters.checkinsSent++; this.expect(m, { kind: "checkin", at: now() }); this.ctx.log("checkin_sent", { memberId: m.id }); },

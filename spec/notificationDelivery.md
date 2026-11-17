@@ -33,6 +33,29 @@ pure def removeProactiveItems(recentSends: int, weeklyCap: int, containsProactiv
 
 > As a member, I want updates to point to a connected assistant only when I choose it or its recent use makes it a clear choice.
 
+### One app's removal keeps an assistant active while another grant remains
+
+An assistant's activity signal belongs to the person across apps. After connector approval, revocation or erasure, read the person's current grants and update the affected assistant under one serial check. Any unexpired, unrevoked grant for the same assistant with current verified ownership and permission to read updates keeps the signal active. A grant for another person, another assistant or a tool without updates does not count. If ownership cannot be checked for a potentially qualifying grant, keep the existing signal unless another grant proves activity. Each connector still reads only the updates of its own app.
+
+```quint
+type AssistantActivity = AssistantActive | AssistantInactive | AssistantUnchanged
+
+pure def assistantGrantCounts(samePerson: bool, sameAssistant: bool, allowsUpdates: bool, live: bool): bool =
+  samePerson and sameAssistant and allowsUpdates and live
+
+pure def projectAssistantActivity(hasEligibleGrant: bool, checksComplete: bool): AssistantActivity =
+  if (hasEligibleGrant) AssistantActive else if (checksComplete) AssistantInactive else AssistantUnchanged
+
+pure def lawAnotherEligibleGrantKeepsAssistantActive(checksComplete: bool): bool =
+  projectAssistantActivity(true, checksComplete) == AssistantActive
+
+pure def lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: bool): bool =
+  projectAssistantActivity(hasEligibleGrant, false) != AssistantInactive
+
+pure def lawDifferentPersonOrAssistantCannotCount(samePerson: bool, sameAssistant: bool, allowsUpdates: bool, live: bool): bool =
+  (not(samePerson) or not(sameAssistant)) implies not(assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live))
+```
+
 ### Ignore inactive assistants and assistants whose links went unused twice
 
 The automatic picker excludes an inactive assistant or one whose links went unused twice in a row. The explicit picker also falls back to the thread for those cases.

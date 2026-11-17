@@ -30,6 +30,26 @@ export function rescheduleDeadline(now: number, originalAt: number, proposedAt: 
 
 /** Story: Change the time only when everyone agrees / Only independent answers to the current offer can change the booking (spec/meetingReschedule.md) */
 //@ pure
+export function rescheduleAnswerAfterReceipt(exactReceipt: boolean, acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  return exactReceipt && 0 <= acceptedAt && acceptedAt <= receivedAt && receivedAt <= handledAt;
+}
+
+/** Story: Change the time only when everyone agrees / Only independent answers to the current offer can change the booking (spec/meetingReschedule.md) */
+//@ pure
+export function lawStagedRescheduleOfferCannotAuthorizeAnswer(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !rescheduleAnswerAfterReceipt(false, acceptedAt, receivedAt, handledAt);
+}
+
+/** Story: Change the time only when everyone agrees / Only independent answers to the current offer can change the booking (spec/meetingReschedule.md) */
+//@ pure
+export function lawEarlyRescheduleAnswerCannotCommit(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !(receivedAt < acceptedAt) || !rescheduleAnswerAfterReceipt(true, acceptedAt, receivedAt, handledAt);
+}
+
+/** Story: Change the time only when everyone agrees / Only independent answers to the current offer can change the booking (spec/meetingReschedule.md) */
+//@ pure
 export function rescheduleVote(ownAnswer: boolean, currentOffer: boolean, exactRecipientOffer: boolean, repeated: boolean, accepted: boolean, yesAfter: number, rosterSize: number): RescheduleDecision {
   return !ownAnswer || !currentOffer || !exactRecipientOffer || repeated ? "RejectVote" : (!accepted ? "KeepOriginal" : (rosterSize >= 2 && yesAfter === rosterSize ? "CommitNewTime" : "AwaitParticipants"));
 }

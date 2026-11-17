@@ -7,7 +7,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -166,6 +166,16 @@ export class PgOAuthStore implements OAuthStore {
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return (await this.sql`select * from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} and revoked_at is null and expires_at > ${ts(at)} order by created_at`).map(grant);
   }
+  async projectAssistantGrants(personId: string, now: () => number, publish: (candidates: AssistantGrantCandidate[]) => Promise<void>) {
+    await this.sql.begin(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${`oauth:assistant-projection:${personId}`}, 0))`;
+      const rows = await tx<{ approval: Row; client: Row }[]>`select to_jsonb(g) as approval, to_jsonb(c) as client
+        from oauth.grants g join oauth.clients c on c.id=g.client_id
+        where g.person_id=${personId} and g.revoked_at is null and g.expires_at>${ts(now())}`;
+      // The signal write may use the notify connection. Keep later projections behind this lock until it finishes.
+      await publish(rows.map(row => ({ grant: grant(row.approval), client: client(row.client) })));
+    });
+  }
   async revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {
     try {
       return await this.sql.begin(async tx => {
@@ -272,6 +282,18 @@ export class PgOAuthStore implements OAuthStore {
         ? await tx`delete from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} returning id`
         : await tx`delete from oauth.grants where phone_key = ${phoneKey} returning id`;
       return rows.length;
+    });
+  }
+
+  async forgetPerson(personId: string, app?: McpAppId) {
+    return this.sql.begin(async tx => {
+      // Wait for any locked approval of this person before deleting the grants it might issue.
+      if (app) await tx`delete from oauth.auth_requests where person_id = ${personId} and app_id = ${app}`;
+      else await tx`delete from oauth.auth_requests where person_id = ${personId}`;
+      const rows = app
+        ? await tx`delete from oauth.grants where person_id = ${personId} and app_id = ${app} returning *`
+        : await tx`delete from oauth.grants where person_id = ${personId} returning *`;
+      return rows.map(grant);
     });
   }
 }

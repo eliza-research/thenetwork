@@ -26,10 +26,12 @@ import { originalBookingNoticeCurrent } from "../../core/src/generated/meetingRe
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { reengagementDeliveryPrefix, reengagementMayDispatch } from "../../core/src/generated/outreachPolicy.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 import { lockGatheringAdmission, monthlyGatheringInvitePrefix } from "./monthly-gathering-delivery.ts";
 import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./monthly-gathering-notices.ts";
+import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -57,6 +59,31 @@ async function interruptionSurveyAdmission(tx: SQL, row: QueueRow, runtimeId: st
     from network.members m join platform.matching_ages ages on ages.app_id=m.app_id and ages.member_id=m.id
     where m.app_id=${row.app} and m.id=${row.memberId} and m.account_status='active' and not m.opted_out`;
   return member && canBeMatched(member.age ?? undefined) && effectiveParticipation(member, now).state !== "paused" ? { ok: true } : refused;
+}
+
+/** spec/outreachPolicy.md, "Re-engagement requires current evidence of silence" */
+async function reengagementAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<RecipientCheck> {
+  const refused: RecipientCheck = { ok: false, reason: "reengagement_changed" };
+  if (row.kind !== "proactive" || !row.memberId) return refused;
+  const [entry] = await tx<(Parameters<typeof effectiveParticipation>[0] & {
+    ts: Date; age: number | null; onlyWhenAsked: boolean | null; reengaged: boolean | null;
+    lastInbound: number | null; lastAskAt: number | null; heldHighAt: number | null;
+  })[]>`select msg.ts, ages.age, current.participation_state, current.participation_window, current.opted_out,
+      member."onlyWhenAsked", member.reengaged, member."lastInbound", member."lastAskAt", member."heldHighAt"
+    from network.messages msg
+    join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
+    join lateral jsonb_to_recordset(saved.state->'members') as member(
+      id text, "onlyWhenAsked" boolean, reengaged boolean, "lastInbound" float8, "lastAskAt" float8, "heldHighAt" float8
+    ) on member.id=msg.member_id
+    join network.members current on current.app_id=msg.app_id and current.id=msg.member_id
+    join platform.matching_ages ages on ages.app_id=msg.app_id and ages.member_id=msg.member_id
+    where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId}
+      and current.account_status='active' and not current.opted_out
+      and msg.direction='outbound' and msg.type='question' and msg.body=${row.text}`;
+  return entry && canBeMatched(entry.age ?? undefined) && effectiveParticipation(entry, now).state !== "paused"
+    && entry.lastInbound !== null && entry.lastAskAt !== null
+    && reengagementMayDispatch(entry.onlyWhenAsked === true, entry.reengaged === true, entry.lastInbound, entry.lastAskAt,
+      entry.heldHighAt ?? 0, entry.ts.getTime(), now) ? { ok: true } : refused;
 }
 
 export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[]): Promise<boolean> {
@@ -328,6 +355,11 @@ export class BlooioAdapter implements ChannelAdapter {
             ? rt.net.recipientPolicy(notice.to, "relay", { about: [notice.from] })
             : { ok: false, reason: "group_late_arrival_changed" };
         }
+        if (row.id.startsWith(reengagementDeliveryPrefix)) {
+          return row.memberId && rt.memberOf(row.to) === row.memberId
+            ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
+            : { ok: false, reason: "reengagement_changed" };
+        }
         return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
           : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated });
       },
@@ -348,10 +380,12 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
+        if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
-        if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix) || row.id.startsWith(replacementProbePrefix)) {
+        if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix)
+          || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         else if (row.oppId) await tx`select saved.id from network.network_state saved
@@ -370,9 +404,14 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) return rt.gatheringNoticeAdmission(tx, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix) && !await rt.gatheringRepeatClaim(tx, row)) return { ok: false, reason: "gathering_repeat_changed" };
+        if (row.oppId) {
+          const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, this.o.clock.now());
+          if (!event.ok) return event;
+        }
         if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());
+        if (row.id.startsWith(reengagementDeliveryPrefix)) return reengagementAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(replacementProbePrefix)) return replacementProbeAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
         if (row.id.startsWith(lateArrivalDeliveryPrefix)) return rt.groupLateArrivalAdmission(tx, row);

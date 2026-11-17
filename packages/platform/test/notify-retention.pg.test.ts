@@ -131,4 +131,51 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     expect(await people.sql`select id from platform.photos where id=${photo}`).toEqual([{ id: photo }]);
   });
 
+  // spec/accountPrivacy.md, "Erasure follows the authorized person across a number change"
+  test("in-flight erasure follows the verified person and preserves a new owner of the original number", async () => {
+    const oldPhone = "+12125550176", movedPhone = "+12125550177", app = APPS.friends;
+    const holder = await accounts.join(app, { e164: oldPhone, personId: null }, {
+      firstName: "Original", age: 27, consent: { sms: true, wording: app.consent.text },
+    });
+    if (!holder.ok) throw new Error(`Fixture join refused: ${holder.error}`);
+    const original = { e164: oldPhone, personId: holder.membership.personId };
+    expect(await accounts.startNumberChange(app, original, movedPhone, async () => true)).toEqual({ ok: true });
+
+    let entered!: () => void, resume!: () => void;
+    const forgetting = new Promise<void>(resolve => { entered = resolve; });
+    const release = new Promise<void>(resolve => { resume = resolve; });
+    const erasing = new Accounts(people, { hashKey: "synthetic-retention-fixture", now: () => now, apps: id => APPS[id],
+      hooks: { onForget: async () => { entered(); await release; } },
+    });
+    const pending = erasing.deleteAll(original);
+    try {
+      await forgetting;
+      expect(await accounts.confirmNumberChange(original, async () => true)).toEqual({ ok: true, e164: movedPhone, personId: original.personId });
+      const joined = await accounts.join(app, { e164: oldPhone, personId: null }, {
+        firstName: "Current", age: 32, consent: { sms: true, wording: app.consent.text },
+      });
+      if (!joined.ok) throw new Error(`Replacement fixture join refused: ${joined.error}`);
+      if (joined.membership.personId === original.personId) throw new Error("The fixture did not reassign the original number");
+      resume();
+      await pending;
+
+      expect(await people.findPhone(oldPhone)).toMatchObject({ personId: joined.membership.personId });
+      expect(await accounts.optedIn(app.id, oldPhone)).toBe(true);
+      expect(await people.isSuppressed(accounts.phoneHash(oldPhone))).toBe(false);
+      expect(await people.ageFloor(accounts.phoneHash(oldPhone))).toBe(32);
+      expect(await people.getPerson(original.personId)).toMatchObject({ deletedAt: now });
+      expect(await people.memberships(original.personId)).toEqual([]);
+      expect(await people.findPhone(movedPhone)).toBeUndefined();
+      expect(await people.consentEvents(movedPhone, app.id)).toEqual([]);
+      expect(await people.isSuppressed(accounts.phoneHash(movedPhone))).toBe(true);
+      expect(await people.ageFloor(accounts.phoneHash(movedPhone))).toBe(27);
+      // The old identity cannot authorize a second erasure after the move and reassignment.
+      expect(await accounts.deleteAll(original)).toBe(false);
+      expect(await accounts.optedIn(app.id, oldPhone)).toBe(true);
+    } finally {
+      resume();
+      await pending;
+    }
+  });
+
 });

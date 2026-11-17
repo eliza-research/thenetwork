@@ -338,6 +338,106 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     } finally { await people.close(); }
   }, 120_000);
 
+  test("the first member tool request after phone reassignment ends a limited grant and its refresh token", async () => {
+    // spec/connectorTools.md, "A grant that no longer belongs to the phone's person ends the connection"
+    await migrate(testUrl.toString(), { lockTimeout: "5s" });
+    const people = new PgPeopleStore(testUrl.toString());
+    const harness = setup({ store });
+    const web = createPublicApi({ store: people, otp: harness.provider, hashKey: "test-hash-key", sessionSecret: "test-session-secret",
+      now: () => harness.clock.t, env: { PLATFORM_ENV: "dev" }, minStartMs: 0, minVerifyMs: 0 });
+    const platform = platformHooks({ store: people, accounts: web.accounts, otp: web.otp, sessions: web.sessions, app: id => APPS[id], cookieName: id => `sid_${id}` });
+    const handler = createMcpHandler({ store, platform, now: () => harness.clock.t, minOtpStartMs: 0 });
+    const server = await serveHttp({ hostname: "127.0.0.1", port: 0,
+      async fetch(req) { return (await handler.fetch(req)) ?? new Response("not found", { status: 404 }); } });
+    const env = { ...harness, fetch: async (req: Request) => {
+      const url = new URL(req.url);
+      const headers = new Headers(req.headers);
+      headers.set("host", url.host);
+      return fetchWithHost(new URL(url.pathname + url.search, server.url), { method: req.method, headers, redirect: "manual",
+        ...(req.method === "GET" ? {} : { body: await req.arrayBuffer() }) });
+    } };
+    const host = "friends.help", phone = "+12125550187";
+    try {
+      const original = await web.accounts.createPerson(phone, "otp_sms", 36);
+      const issued = await connect(env, host, phone, { scope: "apps:read membership:read" });
+      expect(issued.tokenRes.status).toBe(200);
+      const oldAccess = await store.getToken(sha256hex(issued.token.access_token));
+      if (!oldAccess) throw new Error("missing issued access token");
+      const callOld = (tool: "prepare_signup" | "check_status", args: Record<string, unknown>) =>
+        call(env, `https://${host}/mcp`, tool, args, { token: issued.token.access_token });
+      expect((await callOld("prepare_signup", { firstName: "Ari" })).res.status).toBe(403);
+
+      await people.setPhoneHold(phone, "recycled_number", env.clock.t);
+      expect(await web.accounts.clearHold(phone, "new_owner")).toBe(true);
+      const current = await web.accounts.createPerson(phone, "otp_sms", 29);
+      expect(current.id).not.toBe(original.id);
+      const refused = await callOld("prepare_signup", { firstName: "Ari" });
+      expect(refused.res.status).toBe(401);
+      expect(refused.res.headers.get("www-authenticate")).toContain('error="invalid_token"');
+      expect(await store.getGrant(oldAccess.grantId)).toMatchObject({ revokedAt: env.clock.t });
+      const refresh = await tokenRequest(env, host, { grant_type: "refresh_token", refresh_token: issued.token.refresh_token, client_id: issued.client.client_id });
+      expect(refresh.body).toMatchObject({ error: "invalid_grant" });
+      expect(await store.getToken(sha256hex(issued.token.refresh_token))).toMatchObject({ revokedAt: env.clock.t });
+
+      env.clock.t += 60_000;
+      const reconnected = await connect(env, host, phone, { scope: "apps:read membership:read" });
+      expect(reconnected.tokenRes.status).toBe(200);
+      const currentAccess = await store.getToken(sha256hex(reconnected.token.access_token));
+      if (!currentAccess) throw new Error("missing replacement access token");
+      const currentStatus = () => call(env, `https://${host}/mcp`, "check_status", {}, { token: reconnected.token.access_token });
+      expect((await currentStatus()).res.status).toBe(200);
+      await people.setPhoneHold(phone, "recycled_number", env.clock.t);
+      expect((await currentStatus()).res.status).toBe(401);
+      expect(await store.getGrant(currentAccess.grantId)).toMatchObject({ revokedAt: null });
+      expect(await web.accounts.clearHold(phone, "same_owner")).toBe(true);
+      expect((await currentStatus()).res.status).toBe(200);
+      expect((await call(env, `https://${host}/mcp`, "app_info", { app: "friends" })).res.status).toBe(200);
+    } finally {
+      await server.stop(true);
+      await people.close();
+    }
+  }, 120_000);
+
+  test("erasure removes OAuth grants and pending approvals for the verified person across phone bindings", async () => {
+    // spec/accountPrivacy.md, "The service completes each operation in its own scope"
+    const env = setup({ store });
+    const previousNumber = "+12125550188", currentNumber = "+12125550189";
+    const oldOwner = await addMember(env, currentNumber, [{ app: "friends", state: "active" }, { app: "peon", state: "active" }]);
+    const newOwner = await addMember(env, previousNumber, [{ app: "friends", state: "active" }]);
+    const oldFriends = await connect(env, "friends.help", currentNumber);
+    env.clock.t += 60_000;
+    const oldPeon = await connect(env, "peon.biz", currentNumber);
+    const newFriends = await connect(env, "friends.help", previousNumber);
+    for (const connection of [oldFriends, oldPeon, newFriends]) expect(connection.tokenRes.status).toBe(200);
+    const getAccess = (connection: typeof oldFriends) => store.getToken(sha256hex(connection.token.access_token));
+    const oldGrant = await store.getGrant((await getAccess(oldFriends))!.grantId);
+    const previousGrantId = `older_${randomUUID()}`;
+    if (!oldGrant) throw new Error("missing old owner's grant");
+    await store.putGrant({ ...oldGrant, id: previousGrantId, phoneKey: env.accounts.phoneHash(previousNumber) });
+
+    const pending: AuthRequest = { id: `pending_${randomUUID()}`, browserHash: sha256hex("browser-cookie"), clientId: oldFriends.client.client_id,
+      app: "friends", redirectUri: "https://client.example/callback", state: null, codeChallenge: CHALLENGE,
+      scopes: ["membership:read"], resource: "https://friends.help/mcp", step: "consent", e164: currentNumber,
+      personId: oldOwner, createdAt: env.clock.t, expiresAt: env.clock.t + 60_000 };
+    const newPending = { ...pending, id: `pending_${randomUUID()}`, clientId: newFriends.client.client_id, e164: previousNumber, personId: newOwner };
+    await store.putAuthRequest(pending);
+    await store.putAuthRequest(newPending);
+
+    expect(await env.handler.forgetPerson(oldOwner, "friends")).toBe(2);
+    expect(await store.getGrant(previousGrantId)).toBeUndefined();
+    expect(await getAccess(oldFriends)).toBeUndefined();
+    expect(await store.getToken(sha256hex(oldFriends.token.refresh_token))).toBeUndefined();
+    expect(await store.getAuthRequest(pending.id)).toBeUndefined();
+    expect(await store.getAuthRequest(newPending.id)).toEqual(newPending);
+    const canCheck = (host: string, connection: typeof oldFriends) => call(env, `https://${host}/mcp`, "check_status", {}, { token: connection.token.access_token });
+    expect((await canCheck("friends.help", newFriends)).res.status).toBe(200);
+    expect((await canCheck("peon.biz", oldPeon)).res.status).toBe(200);
+
+    expect(await env.handler.forgetPerson(oldOwner)).toBe(1);
+    expect(await getAccess(oldPeon)).toBeUndefined();
+    expect((await canCheck("friends.help", newFriends)).res.status).toBe(200);
+  });
+
   test("a code is taken once under a race; rate windows count and reset", async () => {
     const env = setup({ store });
     const c = await connect(env, "slop.date", PHONE_A);

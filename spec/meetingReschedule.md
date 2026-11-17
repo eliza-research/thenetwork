@@ -29,10 +29,19 @@ pure def rescheduleDraftCurrent(bookingCurrent: bool, exactOriginal: bool, exact
 
 ### Only independent answers to the current offer can change the booking
 
-Save the original revision, both times, the current roster, the deadline and each member's own decision. An answer identifies the member's own exact offer in a direct turn. Each participant, including the requester, must explicitly accept the proposed time. A decline, an expired offer, or a changed booking, roster or safety check leaves the old time in place. A successful unanimous decision commits one time revision and retains the venue. Queued offers and change notices require their exact current booking state at admission.
+Save the original revision, both times, the current roster, the deadline and each member's own decision. An answer identifies the member's own exact offer in a direct turn. Require a positive delivery receipt for that offer and recipient. The signed receive time must be at or after the receipt and no later than handling. A staged or failed send cannot authorize a vote. Each participant, including the requester, must explicitly accept the proposed time. A decline, an expired offer, or a changed booking, roster or safety check leaves the old time in place. A successful unanimous decision commits one time revision and retains the venue. Queued offers and change notices require their exact current booking state at admission.
 
 ```quint
 type RescheduleDecision = RejectVote | KeepOriginal | AwaitParticipants | CommitNewTime
+
+pure def rescheduleAnswerAfterReceipt(exactReceipt: bool, acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  exactReceipt and 0 <= acceptedAt and acceptedAt <= receivedAt and receivedAt <= handledAt
+
+pure def lawStagedRescheduleOfferCannotAuthorizeAnswer(acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  not(rescheduleAnswerAfterReceipt(false, acceptedAt, receivedAt, handledAt))
+
+pure def lawEarlyRescheduleAnswerCannotCommit(acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  receivedAt < acceptedAt implies not(rescheduleAnswerAfterReceipt(true, acceptedAt, receivedAt, handledAt))
 
 pure def rescheduleVote(ownAnswer: bool, currentOffer: bool, exactRecipientOffer: bool,
     repeated: bool, accepted: bool, yesAfter: int, rosterSize: int): RescheduleDecision =

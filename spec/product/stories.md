@@ -332,7 +332,7 @@ Models: [review desk](../models/review_desk.md), [staff console](../models/staff
 
 Count an invitation when it expires or reaches 72 hours unanswered. After two in succession, accept only requested opportunities and permitted notices or logistics. An eligible later inbound turn may offer to resume. A tightly limited high-value re-engagement follows carrier rules and the [delivery policy](policies.md#interruption-and-delivery).
 
-Models: [outbound queue](../models/outbound_queue.md), [turn consent](../models/turn_consent.md).
+Models: [unanswered outreach and re-engagement](../outreachPolicy.md#pause-new-offers-after-two-unanswered-invitations), [outbound queue](../models/outbound_queue.md), [turn consent](../models/turn_consent.md).
 
 ## Story F29 — Close an expired or underfilled opportunity
 

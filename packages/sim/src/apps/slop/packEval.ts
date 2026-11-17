@@ -5,6 +5,7 @@
 // Arms: random, greedy, oracle (the world's baselines) and slop (the pack with its defaults); every
 // --variant adds a slop arm with those pack options (ablations / tuning).
 import { writePath } from "../../../../core/src/runtime/files.ts";
+import { slopScammerContactCounts, slopScammerMedianReachTwice } from "../../../../core/src/generated/slopAssignment.ts";
 import type { MemberId } from "@thenetwork/core";
 import { BASELINES } from "./baselines.ts";
 import { slopEngineMatcher } from "./enginePack.ts";
@@ -51,20 +52,21 @@ export interface Extra {
 const WEEKS_PER_MONTH = 4.345;
 
 export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
-
+  const O = res.world.oracle, real = res.world.personas.filter(isSafe);
+  const realIds = new Set(real.map(p => p.id));
   const reach = new Map<MemberId, Set<MemberId>>();
   for (const p of res.world.personas) if (p.hidden.adversary === "romance_scammer") reach.set(p.id, new Set());
   for (const f of res.flows) {
-    if (!f.revealed) continue;
-    for (const [x, y] of [[f.first, f.partner], [f.partner, f.first]] as const) reach.get(x)?.add(y);
+    for (const [scammer, recipient] of [[f.first, f.partner], [f.partner, f.first]] as const) {
+      if (slopScammerContactCounts(f.revealed, realIds.has(recipient))) reach.get(scammer)?.add(recipient);
+    }
   }
-  const rs = [...reach.values()].map(s => s.size).sort((a, b) => a - b);
+  const reachCounts = [...reach.values()].map(s => s.size).sort((a, b) => a - b);
   const months = res.world.weeks / WEEKS_PER_MONTH;
   const groups: Extra["groups"] = {};
   for (const [k, g] of Object.entries(m.fairness.byGroup)) groups[k] = { dates: g.datesPerMemberMonth * g.n * months, memberMonths: g.n * months };
 
   // Feasible members: at least one other real member inside the stated filters both ways (week 0).
-  const O = res.world.oracle, real = res.world.personas.filter(isSafe);
   const datesOf = new Map<MemberId, number>();
   for (const f of res.flows) if (f.stage === "date") for (const id of [f.first, f.partner]) datesOf.set(id, (datesOf.get(id) ?? 0) + 1);
   const feasibleGroups: Extra["feasibleGroups"] = {};
@@ -110,7 +112,7 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
     softSecondRate: nd ? soft / nd : 0, softSecondDates: soft,
-    scammerMedianReach: rs.length ? rs[Math.floor((rs.length - 1) / 2)]! : 0,
+    scammerMedianReach: slopScammerMedianReachTwice(reachCounts) / 2,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
     contactsByKind, harmsByKind, demo, outcomes, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,

@@ -343,7 +343,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   }, T);
 
   // spec/publicEventCatalog.md, "A successful complete scan replaces the previous source and expires if refresh stops"
-  test("publishes current public Parks events and rechecks standing intents through the production tick", async () => {
+  test.each(["current", "moved after queuing"] as const)("publishes public Parks events and checks matching through dispatch (%s)", async listingState => {
     await reset();
     await sql`update network.members set account_status = 'invited' where id <> 'a'`;
     const clock = new SimClock(START);
@@ -470,12 +470,31 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const messages = () => sql<{ member_id: string; body: string; type: string; status: string }[]>`select member_id, body, type, status
       from network.messages where direction = 'outbound' and opportunity_id = ${replacement.oppId} order by ts, id`;
     expect(await messages()).toHaveLength(0);
+    const runtime = s.runtimeFor("ntwrk")!;
+    const adapter = runtime.adapter as BlooioAdapter;
+    if (listingState === "moved after queuing") await adapter.lineSafety("review", "fixture");
     expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve", revision: replacement.revision })).status).toBe(200);
     expect(await s.tick()).toBe(true);
     const first = (await messages()).filter(m => m.type === "probe");
     expect(first).toHaveLength(1);
     expect(first[0]!.body).toContain("Outdoor climbing");
     expect(first[0]!.body).not.toMatch(/\b(Ana|Ben)\b/);
+    if (listingState === "moved after queuing") {
+      const queued = async () => (await sql<{ id: string; status: string; attempts: number; next_attempt_at: Date }[]>`
+        select id,status,attempts,next_attempt_at from platform.outbound where opportunity_id=${replacement.oppId}`)[0];
+      const held = await queued();
+      expect(held).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+      clock.advance(MINUTE);
+      expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, starttime: "2026-10-07T19:00:00", endtime: "2026-10-07T20:00:00" }]))).toEqual({ published: true, events: 1 });
+      await adapter.lineSafety(undefined);
+      clock.set(held!.next_attempt_at.getTime() + MINUTE);
+      await runtime.deliver();
+      expect(await queued()).toMatchObject({ status: "suppressed_ineligible", attempts: 0 });
+      expect(delivered.some(request => request.idempotencyKey === `tn:${held!.id}`)).toBe(false);
+      expect(await sql`select 1 from platform.person_sends where msg_id=${held!.id}`).toEqual([]);
+      await s.close();
+      return;
+    }
     await say(s, clock, first[0]!.member_id, "A");
     expect(await s.tick()).toBe(true);
     const probes = (await messages()).filter(m => m.type === "probe");

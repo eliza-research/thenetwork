@@ -73,6 +73,56 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect((await updates(c.token!.access_token, { update_token: "T-ZZZZZZ" })).updates).toEqual([]);
   }, T);
 
+  test("an assistant remains active until the person's last app grant for it ends", async () => {
+    // spec/notificationDelivery.md, "One app's removal keeps an assistant active while another grant remains"
+    const phone = newPhone();
+    const peon = await webJoin(st, "peon", phone, { age: 30 });
+    const friends = await webJoin(st, "friends", phone, { age: 30, browser: peon.b });
+    expect(peon.res.status).toBe(200);
+    expect(friends.res.status).toBe(200);
+    const m = await member("friends", phone);
+    const connect = (app: "peon" | "friends") => connectMcp(st, app, phone, { browser: peon.b, redirect: CLAUDE });
+    const peonLink = await connect("peon");
+    const friendsLink = await connect("friends");
+    const active = async () => (await sql`select active from notify.surface_signals where person_id=${m.person_id} and surface='claude'`)[0]?.active;
+    const revoke = (app: "peon" | "friends", connection: typeof peonLink) => st.site(app, "/oauth/revoke", {
+      form: { token: connection.token?.refresh_token, client_id: connection.client.client_id },
+    });
+    const read = (app: "peon" | "friends", connection: typeof peonLink) =>
+      rpc(st, app, "/mcp", "tools/call", { name: "get_updates", arguments: {} }, connection.token?.access_token);
+    expect(peonLink.token?.access_token).toBeTypeOf("string");
+    expect(friendsLink.token?.access_token).toBeTypeOf("string");
+    expect(await active()).toBe(true);
+
+    expect((await revoke("peon", peonLink)).status).toBe(200);
+    expect((await read("peon", peonLink)).res.status).toBe(401);
+    expect(await active()).toBe(true);
+    expect((await read("friends", friendsLink)).res.status).toBe(200);
+
+    await st.svc.notify!.add({ personId: m.person_id, app: "friends", eventType: "reminder", subjectId: "friend-app-signal", urgency: "requested", summary: "Your meetup is tomorrow." }, st.clock.now());
+    const { sends } = await st.svc.notify!.plan(st.clock.now());
+    expect(sends.find(send => send.personId === m.person_id)?.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+
+    const newPeonLink = await connect("peon");
+    expect(newPeonLink.token?.access_token).toBeTypeOf("string");
+    expect((await st.site("friends", "/api/me/delete", { browser: friends.b, json: { scope: "app" } })).status).toBe(200);
+    expect((await read("friends", friendsLink)).res.status).toBe(401);
+    expect(await active()).toBe(true);
+    expect((await read("peon", newPeonLink)).res.status).toBe(200);
+
+    await st.svc.notify!.add({ personId: m.person_id, app: "peon", eventType: "reminder", subjectId: "peon-app-signal", urgency: "requested", summary: "Your call is tomorrow." }, st.clock.now());
+    expect((await revoke("peon", newPeonLink)).status).toBe(200);
+    expect(await active()).toBe(false);
+    expect((await st.svc.notify!.plan(st.clock.now())).sends.find(send => send.personId === m.person_id)?.delivery.mode).toBe("thread");
+
+    const expiring = await connect("peon");
+    expect(expiring.token?.access_token).toBeTypeOf("string");
+    expect(await active()).toBe(true);
+    await sql`update oauth.grants set expires_at=${new Date(st.clock.now())} where client_id=${expiring.client.client_id}`;
+    expect(await st.mcp.forgetPerson(m.person_id, "peon")).toBe(0);
+    expect(await active()).toBe(false);
+  }, T);
+
   test("a text from the member counts as using the thread; the inbox's own send goes through consent-checked delivery", async () => {
     const phone = newPhone();
     await webJoin(st, "peon", phone, { age: 30 });

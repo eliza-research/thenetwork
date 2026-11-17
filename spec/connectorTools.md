@@ -7,7 +7,7 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 - The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
 - The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval. The shell keeps a grant-bound keyed receipt for each exact profile ([profile submission](mcpProfileSubmission.md)) so retries do not repeat intake.
 - The day. The store counts the profile and draft calls of one grant in a fixed window of 24 hours. The count of the earlier calls in the window is `sentToday`. A new window starts the count at zero, which is `startNewDay`. The store also counts a call that the limit refuses, but that call is in a window that is already at the limit, so the limit does not change.
-- The member status, the owner change and the updates. The platform reads the status on each call (`changeMemberStatus`). The tools end a grant whose phone has a new owner (`callAfterOwnerChange`). The platform inbox keeps the unseen updates, reads them and marks them seen (`receiveUpdate`, `readUpdates`, `callGetUpdates`).
+- The member status, the owner change and the updates. The platform reads the status on each call (`changeMemberStatus`). Credential admission checks ownership before applying scopes, argument checks or limits, so the first authenticated call after a change ends the grant (`callAfterOwnerChange`). The platform inbox keeps the unseen updates, reads them and marks them seen (`receiveUpdate`, `readUpdates`, `callGetUpdates`).
 
 ## Story: Use my app's connector from my agent
 
@@ -172,9 +172,20 @@ pure def alwaysUnboundHasNoDraft(c: Connection): bool =
 
 ### A grant that no longer belongs to the phone's person ends the connection
 
-When the phone's owner changed after the person connected, the next member tool call ends the grant and answers that the person must sign in again. The person can connect again in the browser.
+When the phone's owner changed after the person connected, the next authenticated call ends the grant and answers that the person must sign in again. This happens before checking the requested tool's scope, arguments or quota. Changes include a person becoming attached to a phone which had no person at approval. While ownership is under staff review, the credential cannot act and the grant stays available for the ownership decision. An unavailable ownership lookup gives a temporary refusal without ending the grant. The person can connect again in the browser.
 
 ```quint
+type GrantOwnerDecision = GrantOwnerMatches | GrantOwnerChanged | GrantOwnerHeld | GrantOwnerUnavailable
+
+pure def decideGrantOwner(available: bool, held: bool, samePerson: bool): GrantOwnerDecision =
+  if (not(available)) GrantOwnerUnavailable
+  else if (held) GrantOwnerHeld
+  else if (samePerson) GrantOwnerMatches
+  else GrantOwnerChanged
+
+pure def lawOnlyObservedOwnerChangeEndsGrant(available: bool, held: bool, samePerson: bool): bool =
+  (decideGrantOwner(available, held, samePerson) == GrantOwnerChanged) iff (available and not(held) and not(samePerson))
+
 pure def canCallAfterOwnerChange(c: Connection): bool = c.phase == Connected
 
 pure def callAfterOwnerChange(c: Connection): Connection =

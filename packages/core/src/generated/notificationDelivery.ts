@@ -1,6 +1,8 @@
 // GENERATED from spec/notificationDelivery.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+export type AssistantActivity = "AssistantActive" | "AssistantInactive" | "AssistantUnchanged";
 
 /** Story: Receive updates on a surface I use / Ignore inactive assistants and assistants whose links went unused twice (spec/notificationDelivery.md) */
 export const maxIgnoredStreak: number = 2;
@@ -24,6 +26,39 @@ export function lawRequestedIsDueAtCreation(createdAt: number, urgentDelay: numb
 //@ pure
 export function removeProactiveItems(recentSends: number, weeklyCap: number, containsProactive: boolean): boolean {
   return recentSends >= weeklyCap && containsProactive;
+}
+
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+//@ pure
+export function assistantGrantCounts(samePerson: boolean, sameAssistant: boolean, allowsUpdates: boolean, live: boolean): boolean {
+  return samePerson && sameAssistant && allowsUpdates && live;
+}
+
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+//@ pure
+export function projectAssistantActivity(hasEligibleGrant: boolean, checksComplete: boolean): AssistantActivity {
+  return hasEligibleGrant ? "AssistantActive" : (checksComplete ? "AssistantInactive" : "AssistantUnchanged");
+}
+
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+//@ pure
+export function lawDifferentPersonOrAssistantCannotCount(samePerson: boolean, sameAssistant: boolean, allowsUpdates: boolean, live: boolean): boolean {
+  //@ ensures \result === true
+  return !(!samePerson || !sameAssistant) || !assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live);
+}
+
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+//@ pure
+export function lawAnotherEligibleGrantKeepsAssistantActive(checksComplete: boolean): boolean {
+  //@ ensures \result === true
+  return projectAssistantActivity(true, checksComplete) === "AssistantActive";
+}
+
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+//@ pure
+export function lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: boolean): boolean {
+  //@ ensures \result === true
+  return projectAssistantActivity(hasEligibleGrant, false) !== "AssistantInactive";
 }
 
 /** Story: Receive updates on a surface I use / Ignore inactive assistants and assistants whose links went unused twice (spec/notificationDelivery.md) */
