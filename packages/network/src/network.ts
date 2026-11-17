@@ -100,6 +100,7 @@ import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../.
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
+import { approvedVenueBookingLink, venueBookingLink, venueBookingNoticeBase, venueBookingNoticeKey } from "./venue-booking-link.ts";
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { publicEventRevision } from "./public-event-revision.ts";
 import {
@@ -556,7 +557,7 @@ interface Opp {
   scheduleRevision?: number;
   reschedule?: RescheduleDraft;
   fixedVenue?: Venue;
-  venue?: string; venueArea?: string; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
+  venueId?: string; venue?: string; venueArea?: string; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
   tags: string[]; replacements: number; runId?: string;
   /** Built by the daily retry of a standing request: the requester hears about it only after approval. */
   retry?: boolean;
@@ -3583,7 +3584,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const spot: { venue: Pick<Venue, "id" | "name" | "neighborhood" | "lat" | "lng">; worst: number } = packVenue ? { venue: packVenue, worst: -1 }
       : fixedVenue ? { venue: fixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutes(neighborhood(a), neighborhood(fixedVenue.neighborhood)))) }
       : meetingSpot(areas, o.category, o.tags);
-    o.venue = spot.venue.name; o.venueArea = spot.venue.neighborhood;
+    o.venueId = spot.venue.id; o.venue = spot.venue.name; o.venueArea = spot.venue.neighborhood;
     o.meetingAt = t.at;
     this.ctx.log("venue", { oppId: o.id, venueId: spot.venue.id, venue: spot.venue.name, lat: spot.venue.lat, lng: spot.venue.lng, meetingAt: o.meetingAt, worstMinutes: spot.worst, time: t.how });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++;
@@ -3595,7 +3596,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (r) { r.outcome = "booked"; this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "booked", hours: Math.round((now - r.at) / HOUR) }); }
     }
     this.ctx.recordMeeting({ proposalId: o.id, participants: [...o.participants], at: o.meetingAt, city: "nyc", kind: o.kind });
-    const source = published?.listing ? `\n${published.listing.url}` : "";
     for (const id of [...o.participants]) {
       if (o.stage !== "scheduled" || o.status.get(id) !== "yes") continue;
       const m = this.member(id);
@@ -3605,10 +3605,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       // The calendar and weekly check-in offer rides once, in the member's first booked plan (decision 4c, 4d).
       const offer = !m.offerMade && !m.minor;
       const text = this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) ?? copy.booked(others, why, where, when, offer);
+      const proactive = !this.opts.probes && !o.primed.has(id);
+      const curatedLink = proactive ? undefined : venueBookingLink(o, id, true, now);
+      const link = published?.listing?.url ?? curatedLink;
+      const source = link ? `\n${link}` : "";
       this.send(m, text + source, {
         type: "proposal", proposalId: o.id, participants: [...o.participants], meetingAt: o.meetingAt,
-        booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive: !this.opts.probes && !o.primed.has(id),
-      }, "reveal", { about: o.participants, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer) + source, hook: { t: "reveal", oppId: o.id, id } });
+        booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive,
+      }, "reveal", { about: o.participants, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer) + source,
+        hook: { t: "reveal", oppId: o.id, id }, ...(curatedLink ? { key: venueBookingNoticeKey(o.id, id, spot.venue.id) } : {}) });
     }
   }
 
@@ -4699,7 +4704,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
       return this.planFallback(o);
     }
-    o.meetingAt = plan.window.start; o.venue = plan.place.name; o.venueArea = plan.place.area ?? "";
+    o.meetingAt = plan.window.start; o.venueId = plan.venueId; o.venue = plan.place.name; o.venueArea = plan.place.area ?? "";
     const gv = VENUES.find(v => v.id === plan.venueId);
     this.ctx.log("venue", { oppId: o.id, venueId: plan.venueId ?? plan.eventId ?? null, venue: plan.place.name, lat: gv?.lat ?? publicEvent?.listing?.lat ?? null, lng: gv?.lng ?? publicEvent?.listing?.lng ?? null, meetingAt: o.meetingAt, time: "plan" });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++; this.plansCounters.plansBooked++;
@@ -4721,10 +4726,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     const where = `${plan.place.name}${plan.place.area ? ` (${plan.place.area})` : ""}`, when = whenPhrase(plan.window.start);
     const offer = !m.offerMade && !m.minor;
     const listing = this.currentPublishedEvent(o)?.listing;
-    this.send(m, copy.planBooked(a.label, others, where, when, offer) + (listing ? `\n${listing.url}` : ""), {
+    const curatedLink = venueBookingLink(o, id, o.status.get(id) === "yes", this.now());
+    const link = listing?.url ?? curatedLink;
+    this.send(m, copy.planBooked(a.label, others, where, when, offer) + (link ? `\n${link}` : ""), {
       type: "proposal", proposalId: o.id, participants: [...going], meetingAt: plan.window.start,
       booked: { proposalId: o.id, at: plan.window.start, optOutHours: OPT_OUT_HOURS }, proactive: false,
-    }, "reveal", { about: going, hook: { t: "reveal", oppId: o.id, id } });
+    }, "reveal", { about: going, hook: { t: "reveal", oppId: o.id, id },
+      ...(curatedLink && plan.venueId ? { key: venueBookingNoticeKey(o.id, id, plan.venueId) } : {}) });
   }
 
   /** A late yes after booking (until 6 hours before): the member joins and gets the booked plan; the sim's meeting is updated in place. */
@@ -5745,6 +5753,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     const consenting = opportunity.participants.includes(recipient) && opportunity.status.get(recipient) === "yes";
     return publicBookedEventLinkAllowed(opportunity.stage === "scheduled", consenting,
       text.endsWith(`\n${link}`) && text.indexOf(link) === text.lastIndexOf(link)) ? link : undefined;
+  }
+
+  approvedBookingLink(oppId: string | undefined, recipient: MemberId | undefined, text: string, messageId?: string): string | undefined {
+    const eventLink = this.approvedPublicEventLink(oppId, recipient, text);
+    if (eventLink) return eventLink;
+    const opportunity = oppId ? this.opps.get(oppId) : undefined;
+    if (!opportunity?.venueId || !recipient || !messageId) return;
+    const exactMessage = venueBookingNoticeBase(messageId) === venueBookingNoticeKey(opportunity.id, recipient, opportunity.venueId);
+    return approvedVenueBookingLink(opportunity, recipient, opportunity.status.get(recipient) === "yes", this.now(), text, exactMessage);
   }
 
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */

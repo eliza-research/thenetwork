@@ -16,6 +16,9 @@ import { Mini } from "./mini.ts";
 
 const calendarJourney = "a signed calendar request downloads the current booking with no participant details";
 const expiredBookingNotice = "an original booking notice cannot send or replay once the meeting starts";
+const curatedVenueBooking = "an official venue booking link follows the accepted meeting on both delivery paths";
+const staleCuratedVenueBooking = "a booking link for a changed venue is suppressed at claim and signed replay";
+const museumLink = "https://secure.brooklynmuseum.org/";
 const cancelAfterNotice = "a cancellation reaches a booked participant who received the details";
 const cancelBeforeNotice = "a cancellation stays private from a booked participant whose details never sent";
 const cancelWaitingForNotice = "a cancellation waits for a pending signed receipt of booking details";
@@ -26,7 +29,7 @@ const independentMeetingValue = "verified meeting value requires a distinct atte
 const sentimentIsNotMeetingProof = "two positive ratings without attendance confirmation do not establish verified value";
 
 test.skipIf(!pgAvailable).each([
-  calendarJourney, expiredBookingNotice, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
+  calendarJourney, expiredBookingNotice, curatedVenueBooking, staleCuratedVenueBooking, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
   attendanceRequiresBooking, independentMeetingValue, sentimentIsNotMeetingProof,
 ] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
@@ -88,9 +91,11 @@ test.skipIf(!pgAvailable).each([
     expect(await world.runUntil(() => world.probed(ids[1]!), DAY)).toBe(true);
     clock.set(world.clock.now());
     const awaiting = world.net.exportState();
+    const usesCuratedVenue = scenario === curatedVenueBooking || scenario === staleCuratedVenueBooking;
+    if (usesCuratedVenue) awaiting.opps.find(opp => opp.id === id)!.fixedVenue = "brooklyn-museum";
     await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: awaiting.members, opps: awaiting.opps }));
     const adapter = rt.adapter as BlooioAdapter;
-    if (scenario === expiredBookingNotice || scenario === cancelBeforeNotice || scenario === feedbackReception || scenario === attendanceRequiresBooking) {
+    if (scenario === expiredBookingNotice || scenario === staleCuratedVenueBooking || scenario === cancelBeforeNotice || scenario === feedbackReception || scenario === attendanceRequiresBooking) {
       await adapter.lineSafety("review", "hold the booking notice");
     }
     const confirm = turn("calendar-booking", "yes", phones[1]);
@@ -100,6 +105,34 @@ test.skipIf(!pgAvailable).each([
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
+    if (usesCuratedVenue) {
+      expect(booked).toMatchObject({ venueId: "brooklyn-museum", venue: "Brooklyn Museum", venueArea: "Prospect Heights" });
+      expect(bookingReply.replies.filter((reply: string) => reply.includes(museumLink))).toEqual([
+        expect.stringMatching(/\nhttps:\/\/secure\.brooklynmuseum\.org\/$/),
+      ]);
+      const [notice] = await sql<{ id: string; status: string; attempts: number; body: string }[]>`
+        select outbound.id,outbound.status,outbound.attempts,outbound.body from platform.outbound outbound
+        join network.messages message on message.app_id=outbound.app_id and message.id=outbound.id
+        where message.opportunity_id=${id} and message.member_id=${ids[0]} and message.type='proposal'`;
+      expect(notice?.body.endsWith(`\n${museumLink}`)).toBe(true);
+      expect(notice?.id.startsWith("venue-booking:")).toBe(true);
+      if (scenario === curatedVenueBooking) {
+        expect(notice).toMatchObject({ status: "accepted", attempts: 1 });
+        expect(delivered.filter(call => call.text.endsWith(`\n${museumLink}`)).map(call => call.to)).toEqual([phones[0]]);
+      } else {
+        expect(notice).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+        // Change the committed venue while the provider holds the original confirmation.
+        booked.venueArea = "Park Slope";
+        await rt.scoped(tx => tx`update network.network_state set state=${bookedState}::jsonb where id=${rt.pg.id}`);
+        await expect(send(confirm)).resolves.toMatchObject({ status: 409 });
+        await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${notice!.id}`;
+        await adapter.lineSafety(undefined);
+        await rt.deliver();
+        expect(await adapter.queue.statusOf(notice!.id)).toBe("suppressed_ineligible");
+        expect(delivered.filter(call => call.text.includes(museumLink))).toEqual([]);
+      }
+      return;
+    }
     const testsValueEvidence = scenario === independentMeetingValue || scenario === sentimentIsNotMeetingProof;
     if (scenario === feedbackReception || scenario === feedbackWaitingForNotice || scenario === attendanceRequiresBooking || testsValueEvidence) {
       // spec/meetingSettlement.md, "Send feedback requests during the open attendance period"

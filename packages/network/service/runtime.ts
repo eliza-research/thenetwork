@@ -1228,7 +1228,7 @@ export class NetworkRuntime {
     // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
-      const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedPublicEventLink(s.oppId, s.memberId, s.body) : undefined;
+      const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedBookingLink(s.oppId, s.memberId, s.body, s.id) : undefined;
       const staged = u.memberInvitation;
       const reviewToken = s.type === "member_invitation_review" && staged?.status === "review" && staged.review.inviterMemberId === s.memberId
         ? inviteReviewContactToken(s.body, staged.review.id) : undefined;

@@ -36,6 +36,7 @@ import { lockGatheringAdmission, monthlyGatheringInvitePrefix } from "./monthly-
 import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./monthly-gathering-notices.ts";
 import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
 import { lockPeerOpportunityContact, peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
+import { approvedVenueBookingLink, venueBookingNoticeBase, venueBookingNoticeKey } from "../src/venue-booking-link.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -90,7 +91,25 @@ async function reengagementAdmission(tx: SQL, row: QueueRow, runtimeId: string, 
       entry.heldHighAt ?? 0, entry.ts.getTime(), now) ? { ok: true } : refused;
 }
 
-export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[], clock: Clock): Promise<boolean> {
+async function venueBookingNoticesCurrent(tx: SQL, app: string, runtimeId: string, ids: string[], now: number,
+  queued?: Pick<QueueRow, "id" | "memberId" | "oppId" | "text">): Promise<boolean> {
+  const linked = ids.filter(venueBookingNoticeBase);
+  if (!linked.length) return true;
+  const rows = await tx<{ id: string; member_id: string; body: string; booking: NetworkState["opps"][number] }[]>`select msg.id, msg.member_id, msg.body, item.value as booking
+    from network.messages msg
+    join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
+    join lateral jsonb_array_elements(saved.state->'opps') item(value) on item.value->>'id'=msg.opportunity_id
+    where msg.app_id=${app} and msg.id in ${tx(linked)} and msg.direction='outbound' and msg.type='proposal' and msg.body is not null`;
+  return rows.length === linked.length && rows.every(({ id, member_id, body, booking }) => {
+    const exactMessage = !!booking.venueId && venueBookingNoticeBase(id) === venueBookingNoticeKey(booking.id, member_id, booking.venueId)
+      && (!queued || (queued.id === id && queued.memberId === member_id && queued.oppId === booking.id && queued.text === body));
+    const accepted = booking.status.some(([member, status]) => member === member_id && status === "yes");
+    return !!approvedVenueBookingLink(booking, member_id, accepted, now, body, exactMessage);
+  });
+}
+
+export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[], clock: Clock,
+  queued?: Pick<QueueRow, "id" | "memberId" | "oppId" | "text">): Promise<boolean> {
   if (!ids.length) return false;
   const rows = await tx<{
     scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null;
@@ -114,7 +133,8 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
   const now = clock.now();
   return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
     (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now)
-    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_confirmed));
+    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_confirmed))
+    || !await venueBookingNoticesCurrent(tx, app, runtimeId, ids, now, queued);
 }
 
 function terminalNotice(row: QueueRow): TerminalNotice | undefined {
@@ -508,10 +528,10 @@ export class BlooioAdapter implements ChannelAdapter {
         const inviteLink = row.id.startsWith(EXPECTED_INVITATION_PREFIX) && row.text.split("\n")[1];
         if (inviteLink && isMemberInvitationLink(rt.app, inviteLink)) return { ...base, contactAllow: [inviteLink] };
         const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
-        const publicEventLink = row.kind === "reply" || row.kind === "transactional"
-          ? rt.net.approvedPublicEventLink(row.oppId, recipient, row.text) : undefined;
+        const bookingLink = row.kind === "reply" || row.kind === "transactional"
+          ? rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id) : undefined;
         return number ? { ...base, allow: [number] }
-          : publicEventLink ? { ...base, contactAllow: [publicEventLink] } : base;
+          : bookingLink ? { ...base, contactAllow: [bookingLink] } : base;
       },
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
@@ -557,7 +577,7 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.oppId && row.memberId && await peerOpportunityContactRestricted(tx, row.app, row.memberId, [row.id])) {
           return { ok: false, reason: "opportunity_roster_blocked" };
         }
-        if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], this.o.clock)) return { ok: false, reason: "booking_changed" };
+        if ((row.oppId || venueBookingNoticeBase(row.id)) && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], this.o.clock, row)) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(reengagementDeliveryPrefix)) return reengagementAdmission(tx, row, rt.pg.id, this.o.clock.now());
