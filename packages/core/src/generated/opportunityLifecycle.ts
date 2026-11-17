@@ -71,6 +71,25 @@ export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   return !groupCanContinue(remaining) || remaining >= 3;
 }
 
+/** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
+//@ pure
+export function acceptedProbeWithdrawalAllowed(ownText: boolean, directRefusal: boolean, otherReplyOpen: boolean, matches: number): boolean {
+  return ownText && directRefusal && !otherReplyOpen && matches === 1;
+}
+
+/** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
+//@ pure
+export function acceptedProbeCanWithdraw(proposal: OpportunityLifecycle, accepted: boolean, contacted: boolean, lastProbe: boolean): boolean {
+  return proposal.phase === "Probing" && proposal.approved && accepted && contacted && lastProbe;
+}
+
+/** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawAcceptedProbeWithdrawalNeedsExactMatch(ownText: boolean, directRefusal: boolean, otherReplyOpen: boolean, matches: number): boolean {
+  //@ ensures \result === true
+  return !acceptedProbeWithdrawalAllowed(ownText, directRefusal, otherReplyOpen, matches) || (matches === 1 && !otherReplyOpen);
+}
+
 /** Story: Book and conclude a proposal that comes together / A closed booking releases its pending replies (spec/opportunityLifecycle.md) */
 //@ pure
 export function bookedReplyCurrent(proposal: OpportunityLifecycle, accepted: boolean): boolean {

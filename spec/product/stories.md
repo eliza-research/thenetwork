@@ -118,7 +118,7 @@ Models: [solo event recommendations](../soloConcierge.md), [signed solo concierg
 
 Approve a proposal before any contact. Check budget and eligibility again at dispatch. The first person gets an anonymous text-only probe with a shareable reason, time or effort and an easy decline. Ask the second person only after the first says yes. Both must opt in independently before first names or a relay are revealed. A decline stays private. Expire generic probes after the configured window, normally 48 hours. Slop probes and scheduling each use a 24-hour window.
 
-Models: [opportunity](../models/opportunity.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [outbound queue](../models/outbound_queue.md).
+Models: [opportunity lifecycle](../opportunityLifecycle.md), [opportunity](../models/opportunity.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [outbound queue](../models/outbound_queue.md).
 
 ### A proposed pair is a good exchange in both directions
 

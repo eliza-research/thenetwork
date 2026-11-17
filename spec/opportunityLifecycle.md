@@ -47,6 +47,21 @@ pure def lawAGroupNeedsAtLeastThree(remaining: int): bool =
   groupCanContinue(remaining) implies remaining >= 3
 ```
 
+### A member can withdraw probe consent before the reveal
+
+A direct refusal after acceptance can withdraw consent while the proposal still probes. The last message to the member must be that proposal's probe. Any other open question keeps its reply path. Match exactly one current accepted seat. Close the proposal, release the waiting seats with neutral copy and keep the withdrawing member's identity private. A new proposal needs its own review and consent.
+
+```quint
+pure def acceptedProbeCanWithdraw(proposal: OpportunityLifecycle, accepted: bool, contacted: bool, lastProbe: bool): bool =
+  proposal.phase == Probing and proposal.approved and accepted and contacted and lastProbe
+
+pure def acceptedProbeWithdrawalAllowed(ownText: bool, directRefusal: bool, otherReplyOpen: bool, matches: int): bool =
+  ownText and directRefusal and not(otherReplyOpen) and matches == 1
+
+pure def lawAcceptedProbeWithdrawalNeedsExactMatch(ownText: bool, directRefusal: bool, otherReplyOpen: bool, matches: int): bool =
+  acceptedProbeWithdrawalAllowed(ownText, directRefusal, otherReplyOpen, matches) implies (matches == 1 and not(otherReplyOpen))
+```
+
 ### A closed booking releases its pending replies
 
 When a booked opportunity closes after a participant drops, clear each pending reply for that opportunity. Keep each reply slot for another opportunity. A booked reply can change or confirm a plan only while its opportunity is scheduled and the member still accepts it. Discard a stale booked reply slot before routing the member's message.

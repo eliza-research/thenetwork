@@ -65,7 +65,7 @@ import {
 } from "./rescheduling.ts";
 import {
   bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
-  unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
+  acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
@@ -423,7 +423,7 @@ interface MemberState {
   /** Venues suggested to this member (venue id -> when), so a repeat ask gets new ideas or nothing. */
   suggested: Map<string, number>;
   /** The last text sent to this member (the duplicate check in send()). */
-  lastSent?: { body: string; at: number; photoItemId?: string };
+  lastSent?: { body: string; at: number; consentProbe?: string | null; photoItemId?: string };
   /** Standing availability said at onboarding ("weekends, mostly"): availability tags that do not expire (plans ask 1). */
   standing?: { tags: string[]; at: number };
   /** This week's stated windows from the weekly check-in answer, and the activities named in it. */
@@ -855,13 +855,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
     // A profile from the member's AI assistant (source "mcp") is not the member answering: it teaches no send time.
     if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
+    const replyOpen = this.askOpen(m, nowIn);
     this.heardFrom(m);
     // "Don't send my number": a pending number swap of theirs is withdrawn at once (relay.ts), whatever else the message says.
     if (!msg.keyword && msg.source !== "mcp" && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
     this.replyTo = m.id;
     this.memberReply = !msg.keyword && msg.source !== "mcp";
     this.understood = u;
-    try { return this.handleInbound(m, msg, privateInviteTurn, queueCofounderIntent) === "open" ? "open" : "handled"; }
+    try { return this.handleInbound(m, msg, privateInviteTurn, replyOpen, queueCofounderIntent) === "open" ? "open" : "handled"; }
     finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
@@ -950,7 +951,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return c.answer;
   }
 
-  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, queueCofounderIntent?: (intent: Intent) => void) {
+  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, replyOpen: boolean, queueCofounderIntent?: (intent: Intent) => void) {
     const now = this.now();
     if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; m.interruptionSurvey = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
@@ -1125,6 +1126,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
+    if (!msg.reaction && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (this.handleUnlinkedCancellation(m, body, now)) return;
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
@@ -1175,6 +1177,30 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);
     if (ACK_ONLY.test(body)) return;
     return "open" as const;
+  }
+
+  private withdrawAcceptedProbe(member: MemberState, body: string, otherReplyOpen: boolean): boolean {
+    const directRefusal = consentOf(body).answer === "no";
+    if (!this.memberReply || !directRefusal || otherReplyOpen) return false;
+    const matches = [...this.opps.values()].filter(opp => {
+      const at = opp.sentAt?.[member.id];
+      const accepted = opp.status.get(member.id) === "available" && opp.primed.has(member.id)
+        || opp.planRun?.answers[member.id] === "yes";
+      const last = member.lastSent;
+      const sameProbe = last?.consentProbe === opp.id || (last?.consentProbe === undefined && at !== undefined && at === last?.at);
+      return acceptedProbeCanWithdraw(opportunityLifecycle(opp), accepted, opp.contacted.has(member.id), sameProbe);
+    });
+    if (!acceptedProbeWithdrawalAllowed(this.memberReply, directRefusal, otherReplyOpen, matches.length)) return false;
+    const opp = matches[0]!;
+    opp.status.set(member.id, "no");
+    if (opp.planRun) {
+      for (const id of opp.participants) if (id !== member.id && opp.planRun.answers[id] === "yes") this.noteFor(id, copy.planNotTogether);
+      opp.planRun = { ...opp.planRun, stage: "closed", answers: { ...opp.planRun.answers, [member.id]: "no" } };
+    } else this.markDeclined(opp.participants, this.now(), member.id);
+    this.ctx.log("probe_consent_withdrawn", { oppId: opp.id, memberId: member.id });
+    this.close(opp, "consent withdrawn", { releasePartial: true });
+    this.send(member, "No problem. I won't go ahead with that.", { type: "info" }, "reply");
+    return true;
   }
 
   private handleUnlinkedCancellation(m: MemberState, body: string, now: number): boolean {
@@ -5670,7 +5696,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       : meta.privateInviteVouch ? "Private invitation reply"
       : sentStandaloneNotice ? "Invitation join notice"
       : deliveredInviteJoins.length ? baseBody : text;
-    m.lastSent = { body: storedText, at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
+    const hook = o.hook;
+    const consentProbe = hook?.t === "probe" || hook?.t === "plan_probe" || hook?.t === "times" ? hook.oppId : null;
+    m.lastSent = { body: storedText, at: now, consentProbe, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
     if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.();
     return "sent";
   }
