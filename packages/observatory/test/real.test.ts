@@ -90,7 +90,8 @@ describe.skipIf(!pgAvailable)("RealSource (Postgres)", () => {
   });
 
   test("game → Postgres → real parity: the same graph, opportunities, meetings and messages", async () => {
-    const g = new GameSource({ seed: 4, personas: 80, days: 12, pushMs: 3_600_000, tickMs: 3_600_000, network: "stub", city: "all" });
+    // Seed 6 exercises held meetings within this ten-day replay.
+    const g = new GameSource({ seed: 6, personas: 80, days: 12, pushMs: 3_600_000, tickMs: 3_600_000, network: "stub", city: "all" });
     await g.init();
     await g.control({ type: "step", ms: 10 * DAY });
     const game = g.state();
