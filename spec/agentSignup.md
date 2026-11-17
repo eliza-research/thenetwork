@@ -1,5 +1,7 @@
 # Sign up through the person's own agent
 
+This model describes the current published skills. [The product signup handoff](agentPhoneHandoff.md) requires browser-only phone confirmation before the authorized connector submits the profile.
+
 A person pastes a site prompt into their own agent (Claude, Codex, ChatGPT or another agent). The agent reads the app's SKILL.md and runs the signup conversation that this spec describes. The agent owns the conversation, the draft profile and the private cookie jar. The site API owns the app facts, the code delivery and check, the account state, the join and the read-back. For the connector transport, the app's page owns the phone check and the text consent, and the MCP server owns the status and the profile intake ([connector tools](connectorTools.md)). For the Messages transport, the person's own Messages app sends the profile to the shared text line. This spec models the decisions that the agent takes. It does not model what the agent says word for word.
 
 The person's agent follows the text of the app's SKILL.md. No code of this repository runs inside that agent. The site build checks the step markers of each SKILL.md against this model, and the build fails when the steps do not agree with the model. Apart from the tests, that check is the only code that calls this model. No runtime code enforces `canSubmitProfile`, `canRequestNewCode` or the other guards of this model on the agent side. The site API and the connector server enforce their own rules on each request ([connector tools](connectorTools.md)).

@@ -576,20 +576,17 @@ The agent follows the app's SKILL.md. The site API, the app's page and the MCP s
 
 Acceptance:
 
-- The ntwrk.party, slop.date and friends.help skills use the in-agent transport: HTTPS to the app's own site, a private cookie session, and the code that the person types into the conversation. The peon.biz skill uses the app's page and connector on a computer, or a prepared text in Messages. The active peon.biz transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
-- A direct skill never falls back to the connector or to a text. An agent that cannot do HTTPS with a private session says "Signup isn't supported in this agent yet." and asks for no number, code or profile.
-- In the in-agent transport, the agent reads the app facts from the skill's own origin before it drafts. Facts for another app stop the flow.
+- The agent drafts for the selected app and hands one link to the person after approval. The person's browser confirms their phone and authorizes the app's connector. The peon.biz skill also supports a prepared text the person sends from Messages. The Peon transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
+- An agent without a supported signup transport explains its capability limit before collecting a profile. The verification code stays in the person's browser. A prepared text is available only where the app supports that signup path.
+- Read the app facts from the skill's own origin before drafting. Facts for another app stop the flow.
 - The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person that matching and introductions are for adults 18 and older.
 - The agent shows a short draft and the current text consent: recurring texts, variable frequency, message and data rates, STOP and HELP, and links to the text terms, the terms and the privacy policy. Only an explicit approval of this profile and this wording continues. A code, a draft or silence is not approval.
-- The agent reuses a live session. It asks for the number only in the code sign-in mode. Another mode ends the flow with no website fallback.
-- The agent requests a code at most once per attempt and never resends one by itself. It sends the person's code once and keeps it out of files and output. It never fakes a security check. Only the person starts a new attempt.
+- The site's authorized signup flow may reuse its live verified browser session. The person enters the number and code on the app's site and controls retries. The agent collects neither credential.
 - An account of another app stops the flow. An existing member is read back, and the agent does not send Join again. An invite-only app without an invitation and an account on hold stop the flow.
-- The agent sends Join once, with the approved fields, the home region, the account marker and the current consent wording and version.
-- The agent reports "saved" only after the read-back matches the approved profile, or after the second status call on the connector shows a live member. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
+- The site's signup flow checks the approved fields, home region and current consent. After the app-bound grant becomes active, the agent submits the approved profile once through MCP.
+- The agent reports "saved" only after the service confirms the approved profile. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
 
-Open founder decision: [agent signup](../agentSignup.md) lets the agent receive the texted code on the in-agent HTTPS transport for ntwrk.party, slop.date and friends.help, but founder decision 10 says that the agent never sees the code, so the owner must choose one rule.
-
-Spec: [agent signup](../agentSignup.md).
+Spec: [browser phone confirmation and connector handoff](../agentPhoneHandoff.md). The [current published skill model](../agentSignup.md) still records the earlier in-agent code path for ntwrk.party, slop.date and friends.help. Replacing that serving path is part of this migration.
 
 ## Story F46 — Use my app's connector from my agent
 
