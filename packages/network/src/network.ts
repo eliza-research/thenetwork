@@ -35,7 +35,7 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
-import { crewHandoffDue, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
+import { crewHandoffDue, crewMemberWindowAvailable, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestRetryReady, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -4466,6 +4466,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
+  private crewWindowAvailable(member: MemberState, slot: attention.TimeSlot, now: number): boolean {
+    const stated = member.stated;
+    const statedAllows = !stated || stated.at > now || stated.until <= slot.start
+      || stated.windows.some(window => window.start <= slot.start && window.end >= slot.end);
+    // spec/crewOffer.md, "A new recurring session needs a currently usable time"
+    return crewMemberWindowAvailable(this.inNyc(member.id, now, slot.end), !this.bookedNear(member.id, slot.start), statedAllows);
+  }
+
   /**
    * Crew sessions (plans ask 8): weekly, same time and place, each session opt-in and reviewed like
    * any plan; the host rotates; the Network hands the crew off after 3 sessions reach feedback. The host's organizing
@@ -4496,7 +4504,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (members.length < this.pcfg.crews.minMembers) continue;
       world ??= this.planWorld(now, true);
       const next = plans.crewSessionPlan(world, { ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
-      if (!next || crew.sessions.includes(next.id)) continue;
+      if (!next || crew.sessions.includes(next.id) || !members.every(id => this.crewWindowAvailable(this.member(id), next.window, now))) continue;
       const plan = this.withReach(next, now);
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;
@@ -4518,7 +4526,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const last = this.lastParticipation(now);
     const friends = w.pack.id === "friends";
     const ranked = [...this.members.values()]
-      .filter(m => !invited.includes(m.id) && this.planSeatOk(m) && (m.age ?? m.statedAge ?? 0) >= a.ageMin && !this.bookedNear(m.id, plan.window.start)
+      .filter(m => !invited.includes(m.id) && this.planSeatOk(m) && (m.age ?? m.statedAge ?? 0) >= a.ageMin && this.crewWindowAvailable(m, plan.window, now)
         && (friends || invited.every(x => !this.blocked(x, m.id) && !this.avoid.has(pairKey(x, m.id))))
         && (plans.activityFit(w, m.id, this.pcfg).get(plan.activityId) ?? 0) >= this.pcfg.minFit)
       .sort((x, y) => ((last.get(x.id) ?? -Infinity) - (last.get(y.id) ?? -Infinity)) || (x.id < y.id ? -1 : 1));

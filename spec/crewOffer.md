@@ -1,6 +1,6 @@
 # Recurring crew offers
 
-This flow covers the offer after an existing plan and the handoff after recurring sessions. The Network owns the member records, finds the qualifying plan, and sends messages. The offer keeps its existing stored fields. The [standalone crew model](models/plan_crew.md) also covers eligibility changes and session booking.
+This flow covers the offer after an existing plan, the time check for a recurring session, and the handoff. The Network owns the member records, finds the qualifying plan, and sends messages. The offer keeps its existing stored fields. The [standalone crew model](models/plan_crew.md) also covers eligibility changes and session booking.
 
 ## Story: Opt in to a recurring crew
 
@@ -84,6 +84,19 @@ pure def forgetCrewInvitee(offer: CrewOfferState, memberId: str): CrewOfferState
     offered: offer.offered.select(id => id != memberId),
     yes: offer.yes.select(id => id != memberId),
     no: offer.no.select(id => id != memberId) }
+```
+
+## Story: Meet in a new recurring session
+
+> As a crew member, I want the next session to respect my current availability.
+
+### A new recurring session needs a currently usable time
+
+Before putting a new occurrence into review, check the retained crew against the proposed time. An announced absence, a nearby booking, or an active stated window that excludes the time prevents that proposal. Leave the occurrence uncounted and try again on the next planning pass. Check additional seats against the same rule. Unknown availability still allows a proposal. Each session requires its own review and replies.
+
+```quint
+pure def crewMemberWindowAvailable(present: bool, noNearbyBooking: bool, statedAllows: bool): bool =
+  present and noNearbyBooking and statedAllows
 ```
 
 ## Story: Take over the recurring crew

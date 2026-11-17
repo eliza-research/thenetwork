@@ -28,6 +28,29 @@ async function crewFixture(handOffAfterSessions = 3) {
   return { w, ids, crew, session };
 }
 
+test("a conflicting crew occurrence waits for a viable slot and still needs fresh review and replies", async () => {
+  // spec/crewOffer.md, "A new recurring session needs a currently usable time"
+  const { w, ids, crew, session } = await crewFixture();
+  const blockedStart = crew.slot.start;
+  w.presence.push({ memberId: "b", city: "sf", type: "temporary", areas: [], from: blockedStart - HOUR, to: blockedStart + 6 * HOUR });
+  await w.run(HOUR);
+  expect(session()).toBeUndefined();
+  expect(crew.sessions).toEqual([]);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+  w.restart();
+
+  expect(await w.runUntil(() => !!session(), 5 * DAY)).toBe(true);
+  const queued = session()!;
+  expect(queued.proposal).toMatchObject({ participants: ids, window: { start: blockedStart + 7 * DAY } });
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+  expect(w.net.review(queued.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
+  for (const id of ids.slice(0, 2)) await w.say(id, "yes");
+  expect(w.meetings).toEqual([]);
+  await w.say(ids[2]!, "yes");
+  expect(w.meetings).toMatchObject([{ proposalId: queued.oppId, participants: ids }]);
+});
+
 test("rejected, underfilled, and cancelled crew sessions do not count toward handoff", async () => {
   // spec/crewOffer.md, "Handoff counts booked sessions that reached feedback"
   const { w, ids, crew, session } = await crewFixture();

@@ -134,6 +134,12 @@ export function forgetCrewInvitee(offer: CrewOfferState, memberId: string): Crew
   return { ...offer, offered: offer.offered.filter((id: string) => id !== memberId), yes: offer.yes.filter((id: string) => id !== memberId), no: offer.no.filter((id: string) => id !== memberId) };
 }
 
+/** Story: Meet in a new recurring session / A new recurring session needs a currently usable time (spec/crewOffer.md) */
+//@ pure
+export function crewMemberWindowAvailable(present: boolean, noNearbyBooking: boolean, statedAllows: boolean): boolean {
+  return present && noNearbyBooking && statedAllows;
+}
+
 /** Story: Take over the recurring crew / Handoff counts booked sessions that reached feedback (spec/crewOffer.md) */
 //@ pure
 export function crewHandoffDue(openSession: boolean, completedCount: number, requiredCount: number): boolean {
