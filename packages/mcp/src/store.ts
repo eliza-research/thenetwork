@@ -171,6 +171,8 @@ export interface OAuthStore {
    * tokens, and its sign-in requests): the person left the app or deleted everything. Returns the grants deleted.
    */
   forgetPhone(phoneKey: string, e164: string, app?: McpAppId): Promise<number>;
+  /** Delete one person's bound approvals and grants, with no effect on other phone owners. */
+  forgetPerson(personId: string, app?: McpAppId): Promise<Grant[]>;
   /**
    * Delete expired requests, codes, tokens and rate-limit windows; grants revoked or expired more than
    * GRANT_KEEP_MS ago; and registered clients older than CLIENT_UNUSED_MS that never got a grant.
@@ -343,6 +345,14 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [k, g] of this.grants) if (g.phoneKey === phoneKey && (!app || g.app === app)) { this.dropGrant(k); n++; }
     for (const [k, r] of this.requests) if (r.e164 === e164 && (!app || r.app === app)) this.requests.delete(k);
     return n;
+  }
+
+  async forgetPerson(personId: string, app?: McpAppId) {
+    for (const [id, request] of this.requests)
+      if (request.personId === personId && (!app || request.app === app)) this.requests.delete(id);
+    const grants = [...this.grants.values()].filter(grant => grant.personId === personId && (!app || grant.app === app));
+    for (const grant of grants) this.dropGrant(grant.id);
+    return grants.map(grant => structuredClone(grant));
   }
 
   private dropGrant(id: string) {

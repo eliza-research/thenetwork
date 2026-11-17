@@ -390,6 +390,7 @@ export class NetworkService implements RuntimeHost {
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
+  private readonly accountEraseListeners: Array<(personId: string) => Promise<unknown> | unknown> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   readonly photoRelay: PhotoRelayService;
@@ -1130,6 +1131,9 @@ export class NetworkService implements RuntimeHost {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
         }
       },
+      onEraseAccount: async personId => {
+        for (const erase of this.accountEraseListeners) await erase(personId);
+      },
       onExport: ctx => this.exportMember(ctx),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
       // The ages the Network itself would record from the text (statedAge uses the same rule).
@@ -1343,6 +1347,8 @@ export class NetworkService implements RuntimeHost {
    * The backend uses it to revoke the MCP server's OAuth grants of that app (packages/mcp revokeAllFor).
    */
   onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
+
+  onEraseAccount(fn: (personId: string) => Promise<unknown> | unknown) { this.accountEraseListeners.push(fn); }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId) {

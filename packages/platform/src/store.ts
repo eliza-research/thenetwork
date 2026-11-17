@@ -4,6 +4,7 @@
 import type { City } from "../../core/src/types.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
+import { hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -97,11 +98,11 @@ export interface PeopleStore {
   /** The lowest age ever stated for a keyed phone hash (no app, no person; kept after a delete of everything). */
   ageFloor(phoneHash: string): Promise<number | undefined>;
   noteAgeFloor(phoneHash: string, age: number, at: number): Promise<number>;
+  clearAgeFloor(phoneHash: string): Promise<void>;
   /** Independent keyed-phone guard for age recording and temporary facts. Its callback must not acquire withLock. */
   withPhoneAgeGuard<T>(phoneHash: string, fn: () => Promise<T>): Promise<T>;
   /** One canonical temporary-data cleanup consumer; awaited before an age recording returns. */
   setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>): void;
-  clearAgeFloor(phoneHash: string): Promise<void>;
   /** Record a stated or recorded age: the person keeps the lowest one. Returns the new lowest age. */
   noteAge(personId: string, age: number): Promise<number>;
 
@@ -168,10 +169,8 @@ export interface PeopleStore {
 
   /** Leave one app: the membership is set to removed and its name and profile are cleared; grants that involve the app are revoked. */
   forgetMembership(personId: string, app: AppId, at: number): Promise<void>;
-  /** Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash. */
-  deleteAll(personId: string | null, e164: string, phoneHash: string, at: number): Promise<void>;
-  /** Unlink a tombstone from its phone hash, so a new owner of the number is never revived as this person. */
-  detachPhoneHash(personId: string): Promise<void>;
+  /** Erase the verified person and their current phone, or an unbound phone. Release an exact held binding for reuse. */
+  deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, releaseHeldPhone?: boolean): Promise<boolean>;
 
   /** Store a number change the person started (a newer one replaces any change still waiting). */
   putPhoneChange(c: PhoneChange): Promise<void>;
@@ -384,6 +383,7 @@ export class MemoryPeopleStore implements PeopleStore {
     this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
     for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
     this.personHash.set(m.personId, m.newHash);
+    this.suppression.delete(m.newHash);
     const floor = this.ageFloors.get(m.oldHash);
     if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
     for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
@@ -399,22 +399,41 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const g of this.grants.values()) if (g.personId === personId && (g.fromApp === app || g.toApp === app) && g.revokedAt === null) g.revokedAt = at;
   }
 
-  async detachPhoneHash(personId: string) { this.personHash.delete(personId); }
-  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number) {
-    await this.suppress(phoneHash, "deleted", at);
+  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, releaseHeldPhone = false) {
+    const person = personId ? this.people.get(personId) : undefined;
+    if (personId && (!person || person.deletedAt !== null)) return false;
+    const binding = personId ? [...this.phones.values()].find(phone => phone.personId === personId) : this.phones.get(e164);
+    const exactHeld = binding?.e164 === e164 && binding.hold !== null;
+    if ((!personId || releaseHeldPhone) && !phoneErasureAllowed(!!personId, !!binding, releaseHeldPhone, exactHeld)) return false;
+    const target = binding?.e164 ?? (personId ? undefined : e164);
+    const hash = (personId ? this.personHash.get(personId) : undefined) ?? (target === e164 ? phoneHash : undefined);
+    if (target && hash) {
+      if (releaseHeldPhone && personId) {
+        this.personHash.delete(personId);
+        this.ageFloors.delete(hash);
+        this.suppression.delete(hash);
+      } else {
+        if (!this.suppression.has(hash)) this.suppression.set(hash, { reason: "deleted", at });
+        const age = person?.lowestAge;
+        if (hasAgeToPreserve(!!person, age != null) && age != null && age < (this.ageFloors.get(hash)?.age ?? Infinity)) {
+          this.ageFloors.set(hash, { age, at });
+        }
+      }
+      for (const [k, p] of this.pending) if (p.phoneHash === hash) this.pending.delete(k);
+    }
+    if (target) {
+      for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === target) this.consent.splice(i, 1);
+      for (const [k, c] of this.challenges) if (c.e164 === target) this.challenges.delete(k);
+    }
+    for (const [k, s] of this.sessions) if (s.e164 === target || (personId && s.personId === personId)) this.sessions.delete(k);
     if (personId) {
       for (const [k, m] of this.members) if (m.personId === personId) this.members.delete(k);
       for (const [k, g] of this.grants) if (g.personId === personId) this.grants.delete(k);
       // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
       for (const [k, ph] of this.phones) if (ph.personId === personId) this.phones.delete(k);
-      const p = this.people.get(personId);
-      if (p) Object.assign(p, { lowestAge: null, deletedAt: at });
+      if (person) Object.assign(person, { lowestAge: null, deletedAt: at });
+      for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
     }
-    this.phones.delete(e164);
-    for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === e164) this.consent.splice(i, 1);
-    for (const [k, c] of this.challenges) if (c.e164 === e164) this.challenges.delete(k);
-    for (const [k, s] of this.sessions) if (s.e164 === e164 || (personId && s.personId === personId)) this.sessions.delete(k);
-    for (const [k, p] of this.pending) if (p.phoneHash === phoneHash) this.pending.delete(k);
-    if (personId) for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
+    return true;
   }
 }

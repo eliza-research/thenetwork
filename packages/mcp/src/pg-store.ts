@@ -274,4 +274,16 @@ export class PgOAuthStore implements OAuthStore {
       return rows.length;
     });
   }
+
+  async forgetPerson(personId: string, app?: McpAppId) {
+    return this.sql.begin(async tx => {
+      // Wait for any locked approval of this person before deleting the grants it might issue.
+      if (app) await tx`delete from oauth.auth_requests where person_id = ${personId} and app_id = ${app}`;
+      else await tx`delete from oauth.auth_requests where person_id = ${personId}`;
+      const rows = app
+        ? await tx`delete from oauth.grants where person_id = ${personId} and app_id = ${app} returning *`
+        : await tx`delete from oauth.grants where person_id = ${personId} returning *`;
+      return rows.map(grant);
+    });
+  }
 }

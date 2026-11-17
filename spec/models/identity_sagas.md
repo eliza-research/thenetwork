@@ -133,7 +133,6 @@ module identity_sagas {
     moveFailedAfterCode: bool,            // a number change with a used code and passed checks did not move
     exportGap: bool,                      // an export left out the member's own photos or stated facts
     u13Stopped: Set[(int, str)],          // an under-13 decline stopped half way (SD-011, module join_age)
-    delHitOther: Set[int],                // a live person whose phone row the delete everything of another person removed (Q-identity_sagas-4)
     banJoinRace: Set[(int, str)],         // a join of app a while a ban of the person had read its members and not yet written its rows (Q-identity_sagas-3)
     noticed: Set[int],                    // persons who got the one-time Eliza notice
     banDone: int, banRefused: int, leaveDone: int, delDone: int, newOwnerDone: int, sameOwnerDone: int,
@@ -238,20 +237,20 @@ module identity_sagas {
   // The apps where the person has a membership row (a delete fires the trigger for these rows).
   pure def rowApps(w0: World, p: int): Set[str] = APPS.filter(a => w0.mem.get((p, a)) != "none")
 
-  // pg-store.ts store.deleteAll in one transaction. Since 5b6566a (Q-identity_sagas-2) it reads the
-  // person's number now under the person lock and clears that number too; since a0c33d8 (SD-092) it
-  // deletes the line counters of the numbers. matching_runs and eliza_notices are not touched here.
+  // spec/accountPrivacy.md: store.deleteAll uses the authorized person and their current number under the person lock.
+  // An unbound request can only touch an unowned number. The modeled phone cleanup also clears line counters.
   pure def storeDeleteAll(w0: World, p: int, ph: str): World = {
-    val cur = if (p != 0 and w0.people.get(p).hash != "") phoneOf(w0, p) else ""
-    val numbers = Set(ph, cur).exclude(Set(""))
+    val cur = if (p != 0) phoneOf(w0, p) else if (not(w0.phones.get(ph).exists)) ph else ""
+    val numbers = Set(cur).exclude(Set(""))
     val w1 = if (p != 0) dropReceipts(w0, p, rowApps(w0, p)) else w0
     {
       ...w1,
       suppression: w1.suppression.union(numbers),
+      floors: if (p != 0) w1.floors.union(numbers) else w1.floors,
       ledger: w1.ledger.filter(e => not(numbers.contains(e.ph))),
       lineRows: w1.lineRows.exclude(numbers),
       mem: if (p != 0) w1.mem.keys().mapBy(k => if (k._1 == p) "none" else w1.mem.get(k)) else w1.mem,
-      phones: PHONES.mapBy(x => if (x == ph or (p != 0 and w1.phones.get(x).exists and w1.phones.get(x).owner == p)) NO_PHONE else w1.phones.get(x)),
+      phones: PHONES.mapBy(x => if (numbers.contains(x)) NO_PHONE else w1.phones.get(x)),
       people: if (p != 0) w1.people.set(p, { ...w1.people.get(p), live: false }) else w1.people,
     }
   }
@@ -355,18 +354,15 @@ module identity_sagas {
   // finished by the retry the code offers. Reproduced SD-005 (ban; fixed in e361184), SD-016 (clearHold
   // new_owner; fixed in 2f0dbed) and SD-029 (leave: the text retry no longer routed to a member; fixed in
   // a3d1797). A ban that stopped after its last write is done (nothing is left to retry).
-  // `retryCompletes` leaves out the persons whose phone row a delete everything of another person removed
-  // (new finding Q-identity_sagas-4, not fixed: g.delHitOther); `retryCompletesFull` is out of `safety`.
-  def retryCompletesExcept(skip: Set[int]): bool =
+  // Q-identity_sagas-4: an accepted erasure follows its person and preserves a later owner of the old number.
+  val retryCompletes =
     g.banPending.forall(p => busy(p) or banRetryOk(p) or not(banUnfinishedIn(w, p)) or g.delPending.contains(p))
     and g.leavePending.forall(k => (s.leave.pc > 0 and s.leave.p == k._1 and s.leave.app == k._2) or leaveRetryOk(k._1, k._2)
       // Another saga (an under-13 decline, delete everything, a ban) already ended the membership and the
       // Network member is not active (a ban that ran with the leave writes `restricted` on it): nothing is left.
-      or not(LIVE_MEM.contains(w.mem.get(k)) or w.net.get(k) == "active") or skip.contains(k._1))
+      or not(LIVE_MEM.contains(w.mem.get(k)) or w.net.get(k) == "active"))
     and g.chPending.forall(ph => (s.ch.pc > 0 and s.ch.ph == ph) or chRetryOk(ph))
-    and g.delPending.forall(p => (s.del.pc > 0 and s.del.p == p) or delRetryOk(p) or skip.contains(p))
-  val retryCompletes = retryCompletesExcept(g.delHitOther)
-  val retryCompletesFull = retryCompletesExcept(Set())
+    and g.delPending.forall(p => (s.del.pc > 0 and s.del.p == p) or delRetryOk(p))
 
   // platform-identity.md 2.4 `no-pair-divergence` and the leave comment at accounts.ts:420: an active
   // membership has its Network member, except while a saga runs or waits for a retry that the code
@@ -523,9 +519,8 @@ module identity_sagas {
 
   // Rules this code still breaks for defects outside this branch's fixes (not in `safety`; see above):
   // banCoversOldNumbers (SD-492, founder decision), forgetRevokesGrants (SD-089, module oauth_mcp),
-  // pairAgrees (SD-011, module join_age), and the new findings Q-identity_sagas-3 (bannedNotMatchableFull)
-  // and Q-identity_sagas-4 (retryCompletesFull).
-  val knownOpen = and { banCoversOldNumbers, forgetRevokesGrants, pairAgrees, bannedNotMatchableFull, retryCompletesFull }
+  // pairAgrees (SD-011, module join_age), and Q-identity_sagas-3 (bannedNotMatchableFull).
+  val knownOpen = and { banCoversOldNumbers, forgetRevokesGrants, pairAgrees, bannedNotMatchableFull }
 
   // ------------------------------------------------------------------ witnesses (must be reachable)
   val witness_banDone = g.banDone == 0
@@ -588,7 +583,7 @@ module identity_sagas {
       newOwnerDecided: Set(), revivedForOther: false, erasedPhones: Set(), erasedPersons: Set(), selfDeleted: Set(),
       forgotten: Set(), personStop: Set(), holderStop: Set(),
       everVerified: PIDS.mapBy(q => if (q == 1) Set("A") else Set()),
-      photosAtBan: Set(), wrongHuman: false, misrouted: false, moveFailedAfterCode: false, exportGap: false, u13Stopped: Set(), banJoinRace: Set(), delHitOther: Set(),
+      photosAtBan: Set(), wrongHuman: false, misrouted: false, moveFailedAfterCode: false, exportGap: false, u13Stopped: Set(), banJoinRace: Set(),
       noticed: Set(1),
       banDone: 0, banRefused: 0, leaveDone: 0, delDone: 0, newOwnerDone: 0, sameOwnerDone: 0,
       moveDone: 0, u13Done: 0, stopsCommitted: 0, rejoins: 0,
@@ -951,21 +946,20 @@ module identity_sagas {
     all {
       d.pc > 0,
       if (d.pc == 1)
-        set3({ ...w, floors: w.floors.union(Set(d.ph)) }, { ...s, del: { ...d, pc: 2 } }, { ...g, last: "delete: age floor kept", args: [] })
+        set3(w, { ...s, del: { ...d, pc: 2 } }, { ...g, last: "delete: verified owner", args: [] })
       else if (d.pc == 2 and d.left.contains(a))
         // onForget per membership: photos (kept for a banned person: 8e96df9, SD-178), the forget unit, the listeners.
         set3({ ...forgetUnit(w, p, a), photos: if (personBanned(w, p)) w.photos else w.photos.exclude(Set((p, a))), grants: w.grants.exclude(Set((p, a))) },
           { ...s, del: { ...d, left: d.left.exclude(Set(a)) } },
           { ...g, forgotten: g.forgotten.union(Set((p, a, w.gen.get((p, a))))), last: "delete: forget path for", args: [a] })
       else if (d.pc == 2 and d.left == Set())
-        // store.deleteAll with the session's number; it also clears the person's number now (5b6566a).
+        val numbers = Set(phoneOf(w, p)).exclude(Set(""))
         set3(storeDeleteAll(w, p, d.ph), { ...s, del: { ...d, pc: 0 } },
-          { ...g, delHitOther: if (w.phones.get(d.ph).exists and w.phones.get(d.ph).owner != p and w.people.get(w.phones.get(d.ph).owner).live)
-                                 g.delHitOther.union(Set(w.phones.get(d.ph).owner)) else g.delHitOther,
+          { ...g,
             // The person is gone; a later revival of the tombstone is a new start for the notice ghost.
             noticed: g.noticed.exclude(Set(p)),
-            delPending: g.delPending.exclude(Set(p)), leavePending: g.leavePending.filter(k => k._1 != p), erasedPhones: g.erasedPhones.union(Set(d.ph, phoneOf(w, p)).exclude(Set(""))),
-            erasedPersons: g.erasedPersons.union(Set(p)), selfDeleted: g.selfDeleted.union(Set(d.ph, phoneOf(w, p)).exclude(Set(""))),
+            delPending: g.delPending.exclude(Set(p)), leavePending: g.leavePending.filter(k => k._1 != p), erasedPhones: g.erasedPhones.union(numbers),
+            erasedPersons: g.erasedPersons.union(Set(p)), selfDeleted: g.selfDeleted.union(numbers),
             delDone: g.delDone + 1, last: "delete: store.deleteAll committed, done", args: [] })
       else blocked,
     }
@@ -1230,11 +1224,9 @@ module identity_sagas {
       .expect(g.banDone == 1 and w.mem.get((1, "peon")) == "restricted" and w.net.get((1, "peon")) == "active"
               and not(bannedNotMatchableFull) and bannedNotMatchable)
 
-  // Q-identity_sagas-4 (new, not fixed): delete everything starts with a session on A; the person moves to
-  // B; the same human joins peon on A as a new person (A is nobody's number now). The store delete removes
-  // the phone row of A by its e164 and suppresses A: the new person has no number, and a leave they had
-  // started cannot be retried.
-  run deleteHitsOtherPersonTest =
+  // Q-identity_sagas-4: deletion starts on A, the person moves to B, and another account joins on A.
+  // Erasure applies to B and the second account can retry its own leave.
+  run deletePreservesReassignedNumberTest =
     init0
       .then(delStart("A"))
       .then(mvStart(1, "B")).then(mvStep).then(mvStep)
@@ -1242,8 +1234,8 @@ module identity_sagas {
       .then(leaveApi("A", "peon", false)).then(leaveStep).then(leaveStep)
       .then(crash("leave"))
       .then(delStep("slop")).then(delStep("slop")).then(delStep("peon")).then(delStep("slop"))
-      .expect(g.delDone == 1 and w.people.get(2).live and phoneOf(w, 2) == "" and w.suppression.contains("A")
-              and g.delHitOther == Set(2) and not(retryCompletesFull) and retryCompletes)
+      .expect(g.delDone == 1 and not(w.people.get(1).live) and w.people.get(2).live and phoneOf(w, 2) == "A"
+              and not(w.suppression.contains("A")) and w.suppression.contains("B") and retryCompletes)
 
   // A ban with no crash: every membership restricted, the Network holds both members.
   run banCompletesTest =
@@ -1385,7 +1377,7 @@ module identity_sagas {
       .then(delStart("A"))
       .then(mvStep)
       .then(delStep("slop")).then(delStep("slop")).then(delStep("peon")).then(delStep("slop"))
-      .expect(g.delDone == 1 and w.suppression.contains("B") and w.suppression.contains("A") and not(w.ledger.exists(e => e.ph == "B"))
+      .expect(g.delDone == 1 and w.suppression.contains("B") and not(w.suppression.contains("A")) and not(w.ledger.exists(e => e.ph == "B"))
               and deleteKeepsSafety and noPlainPhoneAfterDelete)
 
   // SD-026 (fixed in a75f361): a legacy row for A; the member moves to B; A goes to h2; h2's text reaches nobody.

@@ -766,7 +766,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
             // Step-up: a cookie from an older login cannot delete everything. A Cloud session starts at the Cloud
             // phone proof's issuedAt, so a new Cloud sign-in (the site's reauth path) is the fresh step-up there.
             if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
-            await accounts.deleteAll(who);
+            if (!await accounts.deleteAll(who)) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
             return json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
           }
           return json(400, { ok: false, error: "invalid" });

@@ -32,6 +32,7 @@ create table if not exists oauth.auth_requests (
   expires_at timestamptz not null
 );
 create index if not exists auth_requests_expires on oauth.auth_requests (expires_at);
+create index if not exists auth_requests_by_person on oauth.auth_requests (person_id, app_id) where person_id is not null;
 
 create table if not exists oauth.grants (
   id text primary key,
@@ -75,6 +76,7 @@ drop trigger if exists keep_cloud_grant_authority on oauth.grants;
 create trigger keep_cloud_grant_authority before update on oauth.grants for each row execute function oauth.keep_cloud_grant_authority();
 drop index if exists oauth.grants_by_phone;
 create index if not exists grants_by_phone_key on oauth.grants (phone_key, app_id) where revoked_at is null;
+create index if not exists grants_by_person on oauth.grants (person_id, app_id) where person_id is not null;
 
 create table if not exists oauth.codes (
   hash text primary key,

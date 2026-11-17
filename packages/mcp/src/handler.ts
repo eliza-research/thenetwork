@@ -103,12 +103,13 @@ export interface McpHandler {
   /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the HTTP server for the socket address. */
   fetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response | undefined>;
   store: OAuthStore;
-  /** Revoke every consent of a phone (one app, or all). Call it when the person leaves an app or deletes everything. */
   /**
-   * Revoke every grant of a phone (of one app, or of all). With `forget`, the grants and sign-in requests
-   * are then deleted, so nothing keeps the phone next to the app (the person left or deleted everything).
+   * Revoke a phone's grants in one app or every app. With `forget`, the matching grants and sign-in
+   * requests are deleted. A verified account erasure uses `forgetPerson` instead.
    */
   revokeAllFor(e164: string, app?: McpAppId, o?: { forget?: boolean }): Promise<number>;
+  /** Erase the verified person's grants and approvals across phone bindings, in one app or every app. */
+  forgetPerson(personId: string, app?: McpAppId): Promise<number>;
 }
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
@@ -1235,6 +1236,16 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
       if (ro.forget) await store.forgetPhone(key, e164, app);
       return n;
+    },
+    async forgetPerson(personId, app) {
+      const removed = await store.forgetPerson(personId, app);
+      const at = now();
+      const active = removed.filter(g => g.revokedAt === null && g.expiresAt > at);
+      for (const grant of active) {
+        await linked(grant, false);
+        await store.audit({ at, kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail: "account change" });
+      }
+      return active.length;
     },
     async fetch(req, server) {
       const url = new URL(req.url);

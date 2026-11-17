@@ -398,6 +398,46 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     }
   }, 120_000);
 
+  test("erasure removes OAuth grants and pending approvals for the verified person across phone bindings", async () => {
+    // spec/accountPrivacy.md, "The service completes each operation in its own scope"
+    const env = setup({ store });
+    const previousNumber = "+12125550188", currentNumber = "+12125550189";
+    const oldOwner = await addMember(env, currentNumber, [{ app: "friends", state: "active" }, { app: "peon", state: "active" }]);
+    const newOwner = await addMember(env, previousNumber, [{ app: "friends", state: "active" }]);
+    const oldFriends = await connect(env, "friends.help", currentNumber);
+    env.clock.t += 60_000;
+    const oldPeon = await connect(env, "peon.biz", currentNumber);
+    const newFriends = await connect(env, "friends.help", previousNumber);
+    for (const connection of [oldFriends, oldPeon, newFriends]) expect(connection.tokenRes.status).toBe(200);
+    const getAccess = (connection: typeof oldFriends) => store.getToken(sha256hex(connection.token.access_token));
+    const oldGrant = await store.getGrant((await getAccess(oldFriends))!.grantId);
+    const previousGrantId = `older_${randomUUID()}`;
+    if (!oldGrant) throw new Error("missing old owner's grant");
+    await store.putGrant({ ...oldGrant, id: previousGrantId, phoneKey: env.accounts.phoneHash(previousNumber) });
+
+    const pending: AuthRequest = { id: `pending_${randomUUID()}`, browserHash: sha256hex("browser-cookie"), clientId: oldFriends.client.client_id,
+      app: "friends", redirectUri: "https://client.example/callback", state: null, codeChallenge: CHALLENGE,
+      scopes: ["membership:read"], resource: "https://friends.help/mcp", step: "consent", e164: currentNumber,
+      personId: oldOwner, createdAt: env.clock.t, expiresAt: env.clock.t + 60_000 };
+    const newPending = { ...pending, id: `pending_${randomUUID()}`, clientId: newFriends.client.client_id, e164: previousNumber, personId: newOwner };
+    await store.putAuthRequest(pending);
+    await store.putAuthRequest(newPending);
+
+    expect(await env.handler.forgetPerson(oldOwner, "friends")).toBe(2);
+    expect(await store.getGrant(previousGrantId)).toBeUndefined();
+    expect(await getAccess(oldFriends)).toBeUndefined();
+    expect(await store.getToken(sha256hex(oldFriends.token.refresh_token))).toBeUndefined();
+    expect(await store.getAuthRequest(pending.id)).toBeUndefined();
+    expect(await store.getAuthRequest(newPending.id)).toEqual(newPending);
+    const canCheck = (host: string, connection: typeof oldFriends) => call(env, `https://${host}/mcp`, "check_status", {}, { token: connection.token.access_token });
+    expect((await canCheck("friends.help", newFriends)).res.status).toBe(200);
+    expect((await canCheck("peon.biz", oldPeon)).res.status).toBe(200);
+
+    expect(await env.handler.forgetPerson(oldOwner)).toBe(1);
+    expect(await getAccess(oldPeon)).toBeUndefined();
+    expect((await canCheck("friends.help", newFriends)).res.status).toBe(200);
+  });
+
   test("a code is taken once under a race; rate windows count and reset", async () => {
     const env = setup({ store });
     const c = await connect(env, "slop.date", PHONE_A);
