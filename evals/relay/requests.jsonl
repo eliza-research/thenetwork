@@ -60,3 +60,12 @@
 {"text": "give her my number when she is ready", "want": "none"}
 {"text": "send them my number, she already asked", "want": "contact_share"}
 {"text": "give him my number, he asked for it", "want": "contact_share"}
+{"text": "send them my number if she is interested", "want": "none"}
+{"text": "send them my number if they are interested", "want": "none"}
+{"text": "send them my number if my match is interested", "want": "none"}
+{"text": "send them my number if he is interested", "want": "none"}
+{"text": "send them my number if they're interested", "want": "none"}
+{"text": "send them my number if they are ready", "want": "none"}
+{"text": "send them my number if they say so", "want": "none"}
+{"text": "send them my number if they say yes", "want": "none"}
+{"text": "send them my number if they say ok", "want": "none"}
