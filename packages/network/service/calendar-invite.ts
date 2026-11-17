@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { CITY_TZ, localParts } from "@thenetwork/core";
-import { calendarChoice, calendarDownloadAllowed, calendarInviteLifetimeMs, calendarInvitePath, calendarMeetingEligible } from "../../core/src/generated/calendarInvite.ts";
+import { calendarChoice, calendarDownloadAllowed, calendarInviteExpiresAt, calendarInvitePath, calendarMeetingEligible } from "../../core/src/generated/calendarInvite.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
@@ -76,7 +76,7 @@ export async function issueCalendarInvite(tx: SQL, accounts: Accounts, owner: Me
   if (choice !== "PickBooking") return { body: choice === "AskForBooking" ? WHICH_BOOKING : NO_BOOKING };
   const row = wanted[0]!;
   const token = randomBytes(32).toString("base64url");
-  const until = Math.min(row.meeting_at.getTime(), now + calendarInviteLifetimeMs);
+  const until = calendarInviteExpiresAt(now, row.meeting_at.getTime());
   await tx`insert into platform.calendar_invites(app_id,token_hash,member_id,phone_hash,network_id,opportunity_id,
     meeting_at,schedule_revision,issued_at,expires_at) values (${owner.app.id},${digest(token)},${owner.memberId},${accounts.phoneHash(owner.e164)},
     ${networkId},${row.id},${row.meeting_at},${row.revision},${new Date(now)},${new Date(until)})`;
@@ -93,12 +93,11 @@ async function currentCalendarInvite(tx: SQL, accounts: Accounts, app: AppInfo, 
   const locked = await tx`select id from network.network_state where app_id=${app.id} and id=${grant.network_id} for share`;
   if (!locked.length) return;
   const phone = owner ? { e164: owner.e164 } : await accounts.byPhoneHash(grant.phone_hash);
-  if (!phone) return;
-  const binding = await memberCommandOwner(tx, accounts, { app, memberId: grant.member_id, e164: phone.e164 });
-  if (!binding?.member || !canMatchInApp(await accounts.lowestAge(phone.e164, binding.person), app)) return;
-  const [current] = await bookings(tx, app, grant.network_id, grant.member_id, clock(), grant.opportunity_id);
+  const binding = phone ? await memberCommandOwner(tx, accounts, { app, memberId: grant.member_id, e164: phone.e164 }) : undefined;
+  const currentOwner = phone && binding?.member ? canMatchInApp(await accounts.lowestAge(phone.e164, binding.person), app) : false;
+  const [current] = currentOwner ? await bookings(tx, app, grant.network_id, grant.member_id, clock(), grant.opportunity_id) : [];
   const now = clock();
-  if (!current || !calendarDownloadAllowed(eligible(current, now), current.meeting_at.getTime() === grant.meeting_at.getTime(),
+  if (!current || !calendarDownloadAllowed(currentOwner, eligible(current, now), current.meeting_at.getTime() === grant.meeting_at.getTime(),
     current.revision === grant.schedule_revision, now, grant.expires_at.getTime())) return;
   return { current, issued: grant.issued_at.getTime(), memberId: grant.member_id };
 }

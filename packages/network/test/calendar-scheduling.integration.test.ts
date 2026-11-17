@@ -153,8 +153,14 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
       planRun: { plan, stage: "booked", bench: [], answers: { [first.id]: "yes", [second.id]: "yes", [declined.id]: "no", [pending.id]: "pending" } },
     }] }));
     expect(await stageWork(second.id, { kind: "request", originalAt: start, proposedAt: start + 2 * DAY })).toEqual([first.id]);
+    expect(await stageWork(pending.id, { kind: "request", originalAt: start, proposedAt: start + 2 * DAY })).toEqual([]);
     expect(await stageWork(second.id)).toEqual([]);
     expect(await stageWork(pending.id)).toEqual([first.id, pending.id].sort());
+    const withPendingSeat = (await rt.pg.load())!;
+    await rt.unitOfWork(n => n.importState({ ...withPendingSeat, opps: withPendingSeat.opps.map(opp => ({
+      ...opp, status: opp.status.map(([id, status]) => [id, id === pending.id ? "dropped" : status]),
+    })) }));
+    expect(await stageWork(pending.id)).toEqual([]);
 
     // A direct reschedule must not read opted-in calendars for any other booking this member holds.
     const unrelated: typeof booked = { ...booked, id: "unrelated-booked-calendar", meetingAt: start + DAY,

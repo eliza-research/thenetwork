@@ -116,6 +116,12 @@ export function calendarReschedulePreloadAllowed(matching: number): boolean {
 
 /** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
 //@ pure
+export function calendarDirectTurnReadsBooked(status: string, askerPending: boolean, rescheduling: boolean): boolean {
+  return rescheduling ? status === "yes" : askerPending && status !== "yes" && calendarPreloadSeatAllowed(status, true, true);
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
 export function lawAmbiguousCalendarRescheduleCannotRead(matching: number): boolean {
   //@ ensures \result === true
   return !(matching > 1) || !calendarReschedulePreloadAllowed(matching);
@@ -126,6 +132,13 @@ export function lawAmbiguousCalendarRescheduleCannotRead(matching: number): bool
 export function lawCalendarDoesNotReadRetiredSeat(booked: boolean, pendingLateSeat: boolean): boolean {
   //@ ensures \result === true
   return !calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat);
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
+export function lawCalendarDirectTurnNeedsOwnSeat(status: string, askerPending: boolean, rescheduling: boolean): boolean {
+  //@ ensures \result === true
+  return !calendarDirectTurnReadsBooked(status, askerPending, rescheduling) || ((rescheduling && status === "yes") || (!rescheduling && askerPending && status !== "yes"));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

@@ -218,10 +218,14 @@ test.skipIf(!pgAvailable).each([calendarJourney, expiredBookingNotice] as const)
     expect(await reminderState(ids[1]!, 1)).toMatchObject({ status: "accepted", attempts: 1 });
     expect(reminderSends(ids[1]!, 1)).toHaveLength(1);
 
+    // A late request expires at the meeting start, even with time left on the normal lifetime.
+    clock.set(proposedAt - 2 * MINUTE);
     const stopped = turn("calendar-stop-target");
     const latest = await (await send(stopped)).json();
     const latestLink = latest.replies[0].split("\n")[1];
     expect((await download(latestLink)).status).toBe(200);
+    const [nearStartGrant] = await sql`select expires_at from platform.calendar_invites where app_id=${app.id} and issued_at=${new Date(clock.now())}`;
+    expect(nearStartGrant).toEqual({ expires_at: new Date(proposedAt) });
     await send(turn("calendar-stop", "STOP"));
     expect((await download(latestLink)).status).toBe(404);
     expect((await send(stopped)).status).toBe(409);
