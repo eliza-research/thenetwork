@@ -14,6 +14,8 @@ __pycache__/
 /gen/
 .spec-cache/
 .studio/
+.cache/
+.turbo/
 .lemmascript/
 _apalache-out/
 .claude/worktrees/
