@@ -31,8 +31,8 @@ export function publicEventScanResponseAllowed(responseStatus: number, rangeMark
 
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 //@ pure
-export function publicEventScanComplete(bytesRead: number, rowsRead: number, recognizable: boolean): boolean {
-  return 0 < bytesRead && bytesRead <= publicEventScanMaxBytes && 0 <= rowsRead && rowsRead < publicEventScanRowLimit && recognizable;
+export function publicEventScanComplete(bytesRead: number, rowsRead: number, allRowsRecognizable: boolean): boolean {
+  return 0 < bytesRead && bytesRead <= publicEventScanMaxBytes && 0 <= rowsRead && rowsRead < publicEventScanRowLimit && allRowsRecognizable;
 }
 
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
@@ -59,6 +59,19 @@ export function lawPartialEventScanCannotPublish(redirected: boolean): boolean {
 export function lawCatalogExpiresAtLimit(checkedAt: number): boolean {
   //@ ensures \result === true
   return !publicEventCatalogFresh(checkedAt, exact_publicEventCatalog(checkedAt + exact_publicEventCatalog(publicEventFreshDays * 86400000)));
+}
+
+/** Story: Find a current public event / A source id identifies a single normalized listing in each scan (spec/publicEventCatalog.md) */
+//@ pure
+export function publicEventDuplicateAllowed(previousPresent: boolean, sameListing: boolean): boolean {
+  return !previousPresent || sameListing;
+}
+
+/** Story: Find a current public event / A source id identifies a single normalized listing in each scan (spec/publicEventCatalog.md) */
+//@ pure
+export function lawConflictingPublicEventRowsCannotPublish(sameListing: boolean): boolean {
+  //@ ensures \result === true
+  return !(!sameListing) || !publicEventDuplicateAllowed(true, sameListing);
 }
 
 /** Story: Find a current public event / A contact or booking uses the same current listing that entered review (spec/publicEventCatalog.md) */

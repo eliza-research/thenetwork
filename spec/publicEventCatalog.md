@@ -22,7 +22,7 @@ pure def publicEventAllowed(officialLink: bool, publicPlace: bool, online: bool,
 
 ### A successful complete scan replaces the previous source and expires if refresh stops
 
-Publish a complete scan atomically, with one row per source id. Accept only a full HTTP 200 response with no redirect or range marker, containing valid UTF-8 JSON in at most 8 MiB and fewer than 5,000 rows. A complete empty array can replace a previous publication. A partial, oversized, truncated or failed scan leaves the last publication and its timestamp in place. A scan started earlier cannot replace a newer scan. The daily source is usable for two days after a successful scan. The shell reads only the requested city's current published listings. Republishing identical events does not change matching evidence.
+Publish a complete scan atomically, with one row per source id. Accept only a full HTTP 200 response with no redirect or range marker, containing valid UTF-8 JSON in at most 8 MiB and fewer than 5,000 rows. Every row must carry the source id field and at least one known listing field. A recognizable row can still be ineligible, such as a listing with no start time. A complete empty array can replace a previous publication. A partial, oversized, truncated or failed scan leaves the last publication and its timestamp in place. A scan started earlier cannot replace a newer scan. The daily source is usable for two days after a successful scan. The shell reads only the requested city's current published listings. Republishing identical events does not change matching evidence.
 
 ```quint
 pure val publicEventFreshDays = 2
@@ -35,8 +35,8 @@ pure val rowsReadValues = Set(0, 1, publicEventScanRowLimit - 1, publicEventScan
 pure def publicEventScanResponseAllowed(responseStatus: int, rangeMarked: bool, redirected: bool): bool =
   responseStatus == 200 and not(rangeMarked) and not(redirected)
 
-pure def publicEventScanComplete(bytesRead: int, rowsRead: int, recognizable: bool): bool =
-  0 < bytesRead and bytesRead <= publicEventScanMaxBytes and 0 <= rowsRead and rowsRead < publicEventScanRowLimit and recognizable
+pure def publicEventScanComplete(bytesRead: int, rowsRead: int, allRowsRecognizable: bool): bool =
+  0 < bytesRead and bytesRead <= publicEventScanMaxBytes and 0 <= rowsRead and rowsRead < publicEventScanRowLimit and allRowsRecognizable
 
 pure def lawPartialEventScanCannotPublish(redirected: bool): bool =
   not(publicEventScanResponseAllowed(206, false, redirected)) and not(publicEventScanResponseAllowed(200, true, redirected))
@@ -49,6 +49,18 @@ pure def publicEventCatalogFresh(checkedAt: int, asOf: int): bool =
 
 pure def lawCatalogExpiresAtLimit(checkedAt: int): bool =
   not(publicEventCatalogFresh(checkedAt, checkedAt + publicEventFreshDays * 86400000))
+```
+
+### A source id identifies a single normalized listing in each scan
+
+Keep one copy of identical normalized listings with the same source id. If two eligible rows for the same id disagree on the published listing fields, reject the scan and retain the prior publication and timestamp.
+
+```quint
+pure def publicEventDuplicateAllowed(previousPresent: bool, sameListing: bool): bool =
+  not(previousPresent) or sameListing
+
+pure def lawConflictingPublicEventRowsCannotPublish(sameListing: bool): bool =
+  not(sameListing) implies not(publicEventDuplicateAllowed(true, sameListing))
 ```
 
 ### A contact or booking uses the same current listing that entered review

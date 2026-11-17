@@ -444,6 +444,15 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const invalidUtf8 = new TextEncoder().encode(JSON.stringify([{ ...fixture, title: "%" }]));
     invalidUtf8[invalidUtf8.indexOf("%".charCodeAt(0))] = 255;
     await expect(importPublicEvents(sql, clock, async () => new Response(invalidUtf8))).rejects.toThrow("UTF-8 JSON");
+    // spec/publicEventCatalog.md, "A source id identifies a single normalized listing in each scan"
+    const badScans = await Promise.allSettled([
+      importPublicEvents(sql, clock, async () => Response.json([{ guid: fixture.guid, starttime: fixture.starttime }, null])),
+      importPublicEvents(sql, clock, async () => Response.json([fixture, { ...fixture, location: "Transmitter Park" }])),
+    ]);
+    expect(badScans).toEqual([
+      { status: "rejected", reason: expect.objectContaining({ message: expect.stringContaining("complete event listing") }) },
+      { status: "rejected", reason: expect.objectContaining({ message: expect.stringContaining("conflicting listings") }) },
+    ]);
 
     const megabyteOfSpaces = new Uint8Array(1024 * 1024).fill(32);
     const oversized = new ReadableStream<Uint8Array>({ start(controller) {
