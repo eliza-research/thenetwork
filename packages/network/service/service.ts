@@ -80,6 +80,7 @@ import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invit
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
 import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
+import { memberInviteHeldLinkMayRelease } from "../../core/src/generated/memberInvitation.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
 import { queueReviewedGatheringInvitations } from "./monthly-gathering-delivery.ts";
@@ -2347,7 +2348,9 @@ export class NetworkService implements RuntimeHost {
       reply = draft ? memberInviteDeliveryPrompt(draft.code) : memberInviteDeliveryReply("unavailable");
     } else if (command.kind === "confirm" && adapter) {
       let body: string | undefined;
-      await this.expectedInvitations.confirm(tx, {app, inviterMemberId: memberId, code: command.reference}, async (draftTx, pending) => {
+      await this.expectedInvitations.confirm(tx, {
+        app, inviterMemberId: memberId, code: command.reference, transportAvailable: adapter.live,
+      }, async (draftTx, pending) => {
         if (pending.to === sender || !await this.eligibleExpectedInviteRecipient(draftTx, app, pending.to)) return false;
         body = await this.expectedInvitationText(draftTx, rt.app, memberId, pending.link);
         return body !== undefined;
@@ -2379,7 +2382,7 @@ export class NetworkService implements RuntimeHost {
     if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
     const approved = await findApprovedMemberInvitationReview(tx, rt.app.id, id, memberId, now);
     const replyId = `sys:${messageId}`;
-    if (approved) {
+    if (memberInviteHeldLinkMayRelease(rt.signedMemberTurn(memberId, messageId), !!approved) && approved) {
       const staged = this.invitationLink(rt.app, memberId, approved.relationship, approved, now, id);
       rt.unit.memberInvitation = staged;
       rt.collectedMemberReply(memberId, replyId, this.copyOf(rt.app).forwardInvite(staged.url), "member_invitation", [staged.url]);

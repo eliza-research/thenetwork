@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createSecretKey, hkdfSync, randomBytes } from "node:crypto";
 import {
-  expectedInviteChallengeCanReplay, expectedInviteChallengeCurrent, expectedInviteMayAccept, expectedInviteMayDecline,
+  expectedInviteChallengeCanReplay, expectedInviteChallengeLive, expectedInviteLive, expectedInviteMayAccept, expectedInviteMayDecline,
   expectedInviteMayDispatch, expectedInviteMayStage,
 } from "../../core/src/generated/expectedMemberInvitation.ts";
 import { memberInviteDraftMs, memberInviteWindowMs } from "../../core/src/generated/memberInvitation.ts";
@@ -151,25 +151,26 @@ export class ExpectedMemberInvitations {
   }
 
   async confirm(
-    tx: SQL, input: InviteOwner & { code: string },
+    tx: SQL, input: InviteOwner & { code: string; transportAvailable: boolean },
     authorize: (tx: SQL, context: ExpectedInvitationDelivery) => Promise<boolean>,
     enqueue: (tx: SQL, context: ExpectedInvitationDelivery) => Promise<string>,
   ): Promise<"queued" | "replayed" | undefined> {
-    if (!CHALLENGE.test(input.code)) return;
-    const now = this.now();
-    const at = new Date(now);
+    if (!input.transportAvailable || !CHALLENGE.test(input.code)) return;
+    const startedAt = this.now();
     const hash = this.challengeHash(input, input.code);
     const [found] = await tx<{ token_hash: string }[]>`select token_hash from platform.expected_member_invitations
       where app_id=${input.app} and challenge_hash=${hash}`;
     if (!found) return;
     const key = { ...input, tokenHash: found.token_hash };
-    const [invite] = await this.lockInvitation(tx, key, at);
+    const [invite] = await this.lockInvitation(tx, key, new Date(startedAt));
     if (!invite || invite.inviter_member_id !== input.inviterMemberId) return;
     const [pending] = await tx<PendingRow[]>`select staged_at,expires_at,queued_at,nonce,ciphertext,auth_tag
       from platform.expected_member_invitations where app_id=${key.app} and token_hash=${key.tokenHash} and challenge_hash=${hash} for update`;
     if (!pending) return;
     if (pending.queued_at !== null) return "replayed";
-    if (invite.expected_recipient_hash !== null || !expectedInviteChallengeCurrent(pending.staged_at.getTime(), now) || pending.expires_at.getTime() <= now) return;
+    const challengeIssuedAt = pending.staged_at.getTime();
+    const challengeExpiresAt = pending.expires_at.getTime();
+    if (invite.expected_recipient_hash !== null || !expectedInviteChallengeLive(challengeIssuedAt, startedAt, challengeExpiresAt)) return;
     const recipient = this.open(key, hash, pending);
     if (!recipient) return;
     const delivery: ExpectedInvitationDelivery = {
@@ -178,6 +179,10 @@ export class ExpectedMemberInvitations {
     };
     // The authority callback rechecks the distinct recipient, current issuer and ordinary app restrictions.
     if (!await authorize(tx, delivery)) return;
+    const now = this.now();
+    const challengeCurrent = expectedInviteChallengeLive(challengeIssuedAt, now, challengeExpiresAt);
+    if (!challengeCurrent || !expectedInviteLive(now, delivery.expiresAt)) return;
+    const at = new Date(now);
     const recipientHash = expectedInvitationRecipientHash(this.secret, recipient.to);
     const windowStart = new Date(now - memberInviteWindowMs);
     const reserved = await tx`insert into platform.expected_invitation_contacts (recipient_hash,reserved_at)
@@ -187,7 +192,8 @@ export class ExpectedMemberInvitations {
       returning recipient_hash`;
     if (!expectedInviteMayStage({
       direct: true, confirmedExpected: true, exactTarget: true, distinctRecipient: true, issuerCurrent: true,
-      reviewClear: true, recipientAllowed: true, firstContact: reserved.length === 1, now, expiresAt: delivery.expiresAt,
+      reviewClear: true, recipientAllowed: true, firstContact: reserved.length === 1,
+      transportAvailable: input.transportAvailable, challengeCurrent, now, expiresAt: delivery.expiresAt,
     })) return;
     const body = await enqueue(tx, delivery);
     const [queued] = await tx`select id from platform.outbound where app_id=${key.app} and id=${delivery.id}
