@@ -114,6 +114,13 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect((await revoke("peon", newPeonLink)).status).toBe(200);
     expect(await active()).toBe(false);
     expect((await st.svc.notify!.plan(st.clock.now())).sends.find(send => send.personId === m.person_id)?.delivery.mode).toBe("thread");
+
+    const expiring = await connect("peon");
+    expect(expiring.token?.access_token).toBeTypeOf("string");
+    expect(await active()).toBe(true);
+    await sql`update oauth.grants set expires_at=${new Date(st.clock.now())} where client_id=${expiring.client.client_id}`;
+    expect(await st.mcp.forgetPerson(m.person_id, "peon")).toBe(0);
+    expect(await active()).toBe(false);
   }, T);
 
   test("a text from the member counts as using the thread; the inbox's own send goes through consent-checked delivery", async () => {

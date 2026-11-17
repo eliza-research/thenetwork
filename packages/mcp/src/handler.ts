@@ -1276,12 +1276,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     async forgetPerson(personId, app) {
       const removed = await store.forgetPerson(personId, app);
       const at = now();
-      const active = removed.filter(g => g.revokedAt === null && g.expiresAt > at);
-      for (const grant of active) {
+      let revoked = 0;
+      for (const grant of removed) {
         await reconcileAssistantSignal(grant);
-        await store.audit({ at, kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail: "account change" });
+        if (grant.revokedAt === null && grant.expiresAt > at) {
+          revoked++;
+          await store.audit({ at, kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail: "account change" });
+        }
       }
-      return active.length;
+      return revoked;
     },
     async fetch(req, server) {
       const url = new URL(req.url);
