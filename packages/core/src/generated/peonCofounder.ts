@@ -19,5 +19,5 @@ export function peonCofounderMayPair(firstEligible: boolean, secondEligible: boo
 //@ pure
 export function lawCofounderRequiresTwoEligiblePeers(appMember: boolean, jobSeat: boolean, currentIntent: boolean, professionalOptIn: boolean, acceptsOneToOne: boolean, contactOpen: boolean, noOpenOpportunity: boolean, secondEligible: boolean, sameMarket: boolean): boolean {
   //@ ensures \result === true
-  return !peonCofounderMayPair(peonCofounderMayProfile(appMember, jobSeat, currentIntent, professionalOptIn, acceptsOneToOne, contactOpen, noOpenOpportunity), secondEligible, sameMarket) || (appMember && !jobSeat && currentIntent && contactOpen && noOpenOpportunity && secondEligible && sameMarket);
+  return !peonCofounderMayPair(peonCofounderMayProfile(appMember, jobSeat, currentIntent, professionalOptIn, acceptsOneToOne, contactOpen, noOpenOpportunity), secondEligible, sameMarket) || (appMember && !jobSeat && currentIntent && professionalOptIn && acceptsOneToOne && contactOpen && noOpenOpportunity && secondEligible && sameMarket);
 }

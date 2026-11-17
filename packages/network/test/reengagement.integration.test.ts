@@ -37,7 +37,7 @@ test("a deferred re-engagement is discarded after a member answers, including ac
   expect(world.sent.filter(item => item.meta.reengagement).map(item => item.to)).toEqual(["silent"]);
 });
 
-test.skipIf(!pgAvailable)("the persisted queue sends one current re-engagement and discards one superseded by a signed reply", async () => {
+test.skipIf(!pgAvailable)("the persisted queue keeps re-engagement current after a profile submission and discards it after a signed reply", async () => {
   const url = await migratedDb("reengagement");
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 7, 21)); // 16:00 New York, inside the send window.
@@ -60,13 +60,14 @@ test.skipIf(!pgAvailable)("the persisted queue sends one current re-engagement a
     for (const [name, e164] of [["Ari", "+12125550581"], ["Bea", "+12125550582"]] as const) {
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}: ${joined.error}`);
-      members.push({ id: joined.membership.memberId, name, e164, age: 30 });
+      members.push({ id: joined.membership.memberId, personId: joined.membership.personId, name, e164, age: 30 });
     }
     const [responded, silent] = [members[0]!, members[1]!];
     const mini = new Mini(members, { app: app.id });
     await mini.onboard(responded.id, silent.id);
     const rt = service.runtimeFor(app.id)!;
     const saved = mini.net.exportState().members.map(member => ({ ...member, onlyWhenAsked: true, outbound: 2, unsolStreak: 2,
+      unanswered: 2, pendingAsks: [{ kind: "probe" as const, at: START - HOUR }, { kind: "probe" as const, at: START }],
       lastInbound: START, lastAskAt: START, openAskAt: undefined, awaiting: undefined, replies: [], heldHighAt: clock.now() - DAY }));
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: saved }));
     await adapter.lineSafety("review", "fixture");
@@ -79,11 +80,25 @@ test.skipIf(!pgAvailable)("the persisted queue sends one current re-engagement a
     for (const row of queued) expect(await adapter.queue.statusOf(row.id)).toBe("retry_scheduled");
 
     clock.advance(HOUR);
+    const reload = (id: string) => rt.readState(net => net.exportState().members.find(member => member.id === id)!);
+    const beforeProfile = await reload(silent.id);
+    expect(await service.submitProfile(silent.personId, app.id, silent.e164, "Can you remember that I enjoy climbing and live music?")).toBe("accepted");
+    const afterProfile = await reload(silent.id);
+    expect(afterProfile).toMatchObject({
+      onlyWhenAsked: true, unanswered: 2, pendingAsks: beforeProfile.pendingAsks, outbound: beforeProfile.outbound,
+      unsolStreak: beforeProfile.unsolStreak, lastInbound: START, msgsIn: beforeProfile.msgsIn, replies: beforeProfile.replies,
+    });
+    expect(afterProfile.askAt).toBe(beforeProfile.askAt);
+    expect(afterProfile.askUsed).toBe(beforeProfile.askUsed);
+    expect(afterProfile.openAskAt).toBe(beforeProfile.openAskAt);
+    expect(afterProfile.reengaged).toBe(beforeProfile.reengaged);
+    expect(afterProfile.learned.interests).toEqual(expect.arrayContaining(["climbing", "live_music"]));
     const turn: TurnRequest = { app: app.id, messageId: "reengagement-reply", channel: "blooio", from: responded.e164, to: null,
       transport: "imessage", text: "Thanks, all good.", receivedAt: clock.now() };
     const body = JSON.stringify(turn);
     const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: turn.messageId, body, nowS: Math.floor(clock.now() / 1000) });
     expect((await service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }))).status).toBe(200);
+    expect(await reload(responded.id)).toMatchObject({ onlyWhenAsked: false, unanswered: 0, pendingAsks: [], lastInbound: clock.now() });
     await adapter.queue.setLineSafety(undefined);
     clock.advance(HOUR);
     await rt.deliver();

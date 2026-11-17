@@ -140,9 +140,9 @@ export function enabled(current: ReviewRequest, event: Event): boolean {
 export function step(current: ReviewRequest, event: Event): ReviewRequest {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkBatch" && canCheckBatch(current)) return checkBatch(current, event.pending, event.ownerMatches, event.batchIdValid, event.revision, event.asOf, event.expiresAt);
-  if (event.type === "checkItems" && canCheckItems(current)) return checkItems(current, event.itemCount, event.distinctIds, event.allItemsValid);
-  if (event.type === "readCommand" && canReadCommand(current)) return readCommand(current, event.verb, event.tokenMatches, event.itemExists, event.scopeGiven, event.wordingGiven, event.wordingValid);
+  if (event.type === "checkBatch") return canCheckBatch(current) ? checkBatch(current, event.pending, event.ownerMatches, event.batchIdValid, event.revision, event.asOf, event.expiresAt) : current;
+  if (event.type === "checkItems") return canCheckItems(current) ? checkItems(current, event.itemCount, event.distinctIds, event.allItemsValid) : current;
+  if (event.type === "readCommand") return canReadCommand(current) ? readCommand(current, event.verb, event.tokenMatches, event.itemExists, event.scopeGiven, event.wordingGiven, event.wordingValid) : current;
   return current;
 }
 

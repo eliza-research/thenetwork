@@ -300,14 +300,14 @@ export function enabled(current: PrivacyRequest, event: Event): boolean {
 export function step(current: PrivacyRequest, event: Event): PrivacyRequest {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordLeaveConsent" && canRecordLeaveConsent(current)) return recordLeaveConsent(current, event.recorded, event.membershipBound);
-  if (event.type === "recordAppForget" && canRecordAppForget(current)) return recordAppForget(current);
-  if (event.type === "beginPrivacyRequest" && canBeginPrivacyRequest(current)) return beginPrivacyRequest(current, event.operation);
-  if (event.type === "checkErasureOwner" && canCheckErasureOwner(current)) return checkErasureOwner(current, event.authorityCurrent);
-  if (event.type === "recordAccountCleanup" && canRecordAccountCleanup(current)) return recordAccountCleanup(current);
-  if (event.type === "recordAccountErasure" && canRecordAccountErasure(current)) return recordAccountErasure(current, event.committed);
-  if (event.type === "checkAppExport" && canCheckAppExport(current)) return checkAppExport(current, event.membershipBound);
-  if (event.type === "recordConsentExport" && canRecordConsentExport(current)) return recordConsentExport(current);
+  if (event.type === "recordLeaveConsent") return canRecordLeaveConsent(current) ? recordLeaveConsent(current, event.recorded, event.membershipBound) : current;
+  if (event.type === "recordAppForget") return canRecordAppForget(current) ? recordAppForget(current) : current;
+  if (event.type === "beginPrivacyRequest") return canBeginPrivacyRequest(current) ? beginPrivacyRequest(current, event.operation) : current;
+  if (event.type === "checkErasureOwner") return canCheckErasureOwner(current) ? checkErasureOwner(current, event.authorityCurrent) : current;
+  if (event.type === "recordAccountCleanup") return canRecordAccountCleanup(current) ? recordAccountCleanup(current) : current;
+  if (event.type === "recordAccountErasure") return canRecordAccountErasure(current) ? recordAccountErasure(current, event.committed) : current;
+  if (event.type === "checkAppExport") return canCheckAppExport(current) ? checkAppExport(current, event.membershipBound) : current;
+  if (event.type === "recordConsentExport") return canRecordConsentExport(current) ? recordConsentExport(current) : current;
   return current;
 }
 

@@ -543,11 +543,11 @@ export function enabled(current: Landing, event: Event): boolean {
 export function step(current: Landing, event: Event): Landing {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "mount" && canMount(current, event.device)) return mount(current, event.device);
-  if (event.type === "pressCopy" && canPressCopy(current)) return pressCopy(current, event.copied);
-  if (event.type === "chooseAgent" && canChooseAgent(current, event.agent)) return chooseAgent(current, event.agent, event.copied);
-  if (event.type === "chooseMessages" && canChooseMessages(current)) return chooseMessages(current, event.copied);
-  if (event.type === "settleMessages" && canSettleMessages(current)) return settleMessages(current, event.pageLeft);
+  if (event.type === "mount") return canMount(current, event.device) ? mount(current, event.device) : current;
+  if (event.type === "pressCopy") return canPressCopy(current) ? pressCopy(current, event.copied) : current;
+  if (event.type === "chooseAgent") return canChooseAgent(current, event.agent) ? chooseAgent(current, event.agent, event.copied) : current;
+  if (event.type === "chooseMessages") return canChooseMessages(current) ? chooseMessages(current, event.copied) : current;
+  if (event.type === "settleMessages") return canSettleMessages(current) ? settleMessages(current, event.pageLeft) : current;
   return current;
 }
 

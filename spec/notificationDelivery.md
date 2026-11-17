@@ -25,19 +25,21 @@ pure def lawRequestedIsDueAtCreation(createdAt: int, urgentDelay: int, digestDel
 When a digest includes a proactive item and the member has reached the cap, remove proactive items. If that leaves nothing to send, hold the digest until a slot opens. A requested-only digest uses no proactive slot.
 
 ```quint
-pure def removeProactiveItems(recentSends: int, weeklyCap: int, containsProactive: bool): bool =
-  recentSends >= weeklyCap and containsProactive
+type WeeklyDigest = KeepDigest | KeepRequested | HoldDigest
 
-pure def holdAtWeeklyCap(removeProactive: bool, requestedCount: int): bool =
-  removeProactive and requestedCount <= 0
+pure def digestUsesProactiveSlot(itemCount: int, requestedCount: int): bool =
+  requestedCount < itemCount
 
-pure def digestUsesProactiveSlot(proactiveCount: int): bool = proactiveCount > 0
+pure def weeklyDigest(recentSends: int, weeklyCap: int, itemCount: int, requestedCount: int): WeeklyDigest =
+  if (recentSends < weeklyCap or not(digestUsesProactiveSlot(itemCount, requestedCount))) KeepDigest
+  else if (requestedCount > 0) KeepRequested
+  else HoldDigest
 
-pure def lawCapHoldsOnlyWhenNothingRequestedRemains(removeProactive: bool, requestedCount: int): bool =
-  (requestedCount > 0) implies not(holdAtWeeklyCap(removeProactive, requestedCount))
+pure def lawRequestedOnlyDigestUsesNoSlot(itemCount: int): bool =
+  not(digestUsesProactiveSlot(itemCount, itemCount))
 
-pure def lawRequestedOnlyDigestUsesNoSlot(proactiveCount: int): bool =
-  (proactiveCount <= 0) implies not(digestUsesProactiveSlot(proactiveCount))
+pure def lawWeeklyCapPreservesRequestedItems(recentSends: int, weeklyCap: int, itemCount: int, requestedCount: int): bool =
+  (requestedCount > 0 and requestedCount <= itemCount) implies weeklyDigest(recentSends, weeklyCap, itemCount, requestedCount) != HoldDigest
 ```
 
 ## Story: Receive updates on a surface I use
@@ -65,6 +67,18 @@ pure def lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: bool): bo
 
 pure def lawDifferentPersonOrAssistantCannotCount(samePerson: bool, sameAssistant: bool, allowsUpdates: bool, live: bool): bool =
   (not(samePerson) or not(sameAssistant)) implies not(assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live))
+```
+
+### The text thread carries a digest one connector cannot read
+
+One assistant link names one update reference. Its items must all belong to the same app, and each offered assistant must have a current grant for this person that permits reading updates in that app. Rank only those assistants. Use the shared text thread when the digest spans apps, the current grant lookup is unavailable, or none of the assistants can read the whole digest. Keep one digest per person per send. Check coverage again before recording and enqueueing a prepared link. Rebuild through the same rule if a grant ends before that check.
+
+```quint
+pure def assistantDigestCanLink(singleApp: bool, hasReadableAssistant: bool): bool =
+  singleApp and hasReadableAssistant
+
+pure def lawMixedDigestOrMissingGrantNeverLinks(singleApp: bool, hasReadableAssistant: bool): bool =
+  (not(singleApp) or not(hasReadableAssistant)) implies not(assistantDigestCanLink(singleApp, hasReadableAssistant))
 ```
 
 ### Ignore inactive assistants and assistants whose links went unused twice

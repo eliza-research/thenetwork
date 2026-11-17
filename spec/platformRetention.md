@@ -52,5 +52,5 @@ pure def stopHintCounterPastRetention(lastAt: int, platformCutoff: int): bool =
 pure def lawOrdinaryCounterFollowsPlatformCutoff(lastAt: int, platformCutoff: int): bool =
   rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, 0)) == rowBeforeCutoff(lastAt, platformCutoff)
 pure def lawStopHintCounterStaysInWindow(lastAt: int, platformCutoff: int): bool =
-  not(lastAt < platformCutoff - stopHintWindowMs) implies not(stopHintCounterPastRetention(lastAt, platformCutoff))
+  lastAt >= platformCutoff - stopHintWindowMs implies not(stopHintCounterPastRetention(lastAt, platformCutoff))
 ```

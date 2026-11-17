@@ -20,7 +20,7 @@ import { BlooioAdapter, DryRunAdapter, type ChannelAdapter, type Delivery, type 
 import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor } from "../src/copy.ts";
 import { START } from "./mini.ts";
-import { queueSink } from "../../notify/src/wiring.ts";
+import { deliveryIdFor } from "../../notify/src/scheduler.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 
 const T = 300_000;
@@ -255,9 +255,19 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect(underAge.status).toBe(400);
     expect(underAge.body).toMatchObject({ error: "under_age" });
     expect(await lowestAge(p)).toBe(12);
-    expect((await web.join("slop", 30)).status).toBe(400);
-    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
 
+    // spec/memberAge.md, "Resume a confirmed refusal from the durable age"
+    expect(await sql`select app_id, state from platform.memberships order by app_id`)
+      .toEqual([{ app_id: "friends", state: "removed" }, { app_id: "slop", state: "removed" }]);
+    const consentEvents = () => sql`select app_id, state, source from platform.consent_events where e164 = ${p} order by id`;
+    const afterDecline = await consentEvents();
+    expect(afterDecline).toHaveLength(consents + 2);
+    expect(afterDecline.slice(consents)).toEqual([
+      { app_id: "friends", state: "opted_out", source: "join_declined" },
+      { app_id: "slop", state: "opted_out", source: "join_declined" },
+    ]);
+    expect((await web.join("slop", 30)).status).toBe(400);
+    expect(await consentEvents()).toEqual(afterDecline);
   }, T);
 
   test("a repeated age statement repairs cross-app age propagation after a database failure", async () => {
@@ -320,27 +330,40 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     await text(s, clock, phone, "Rae 30", { app: "friends" });
     await s.close();
     const sent: SendRequest[] = [];
+    let holdQueue = true;
+    class HeldAdapter extends BlooioAdapter {
+      override async deliver(messages: Outbound[]): Promise<Delivery[]> {
+        return holdQueue ? [] : super.deliver(messages);
+      }
+    }
     const { s: restarted } = service(clock, {
-      adapter: (_net, rt) => new BlooioAdapter({
+      adapter: (_net, rt) => new HeldAdapter({
         from: "+12125550100", clock, app: rt.app.id, liveGate: () => true, log: () => {},
         provider: { kind: "sim", send: async request => { sent.push(request); return { providerMessageId: request.idempotencyKey, status: "sent" }; } },
       }),
     });
     await restarted.start();
-    const queue = (restarted.runtimeFor("friends")!.adapter as BlooioAdapter).queue;
+    const runtime = restarted.runtimeFor("friends")!;
+    const queue = (runtime.adapter as BlooioAdapter).queue;
     const person = (await restarted.accounts.personFor(phone))!;
     const input = { personId: person.id, app: "friends", eventType: "plan", subjectId: "expired-plan", urgency: "requested" as const, summary: "Dinner is confirmed." };
-    await restarted.notify!.add({ ...input, expiresAt: clock.now() + MINUTE }, clock.now());
-    const expired = await restarted.notify!.dispatch(clock.now(), queueSink(queue));
-    expect(expired.sent).toHaveLength(1);
+    const enqueue = async (subjectId: string, expiresAt: number) => {
+      const { item } = await restarted.notify!.add({ ...input, subjectId, expiresAt }, clock.now());
+      await restarted.notifyTick();
+      const id = deliveryIdFor(person.id, [item.id]);
+      expect(await queue.statusOf(id)).toBe("pending");
+      expect(await one(sql`select member_id from platform.outbound where id = ${id}`))
+        .toEqual({ member_id: (await memberOf("friends", phone))!.id });
+      return id;
+    };
+    const expired = await enqueue("expired-plan", clock.now() + MINUTE);
     clock.advance(MINUTE);
-    await restarted.notify!.add({ ...input, subjectId: "current-plan", expiresAt: clock.now() + HOUR }, clock.now());
-    const current = await restarted.notify!.dispatch(clock.now(), queueSink(queue));
-    expect(current.sent).toHaveLength(1);
+    const current = await enqueue("current-plan", clock.now() + HOUR);
+    holdQueue = false;
     await queue.inbound(phone);
-    await queue.drain();
-    expect(sent.map(r => r.idempotencyKey)).toEqual([`tn:${current.sent[0]!.deliveryId}`]);
-    expect(await queue.statusOf(expired.sent[0]!.deliveryId)).toBe("expired");
+    await runtime.deliver();
+    expect(sent.map(r => r.idempotencyKey)).toEqual([`tn:${current}`]);
+    expect(await queue.statusOf(expired)).toBe("expired");
   }, T);
 
   test("SVC-04 and SVC-05 after a restart, a waiting reply is sent once; a stale proactive row and an old row expire unsent", async () => {

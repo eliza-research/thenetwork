@@ -164,9 +164,9 @@ export function enabled(current: PromptRun, event: Event): boolean {
 export function step(current: PromptRun, event: Event): PromptRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "routeProfile" && canRouteProfile(current)) return routeProfile(current, event.restricted, event.hardComplete, event.confirmed, event.skipped, event.belowAskCap);
-  if (event.type === "resolveReadback" && canResolveReadback(current)) return resolveReadback(current, event.textAvailable);
-  if (event.type === "chooseQuestion" && canChooseQuestion(current)) return chooseQuestion(current, event.facts, event.unavailable);
+  if (event.type === "routeProfile") return canRouteProfile(current) ? routeProfile(current, event.restricted, event.hardComplete, event.confirmed, event.skipped, event.belowAskCap) : current;
+  if (event.type === "resolveReadback") return canResolveReadback(current) ? resolveReadback(current, event.textAvailable) : current;
+  if (event.type === "chooseQuestion") return canChooseQuestion(current) ? chooseQuestion(current, event.facts, event.unavailable) : current;
   return current;
 }
 

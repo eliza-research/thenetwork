@@ -44,7 +44,7 @@ Use a short, resumable conversation. Explain consent and where facts came from. 
 
 The site entry stays in the person's current agent where direct signup is supported. Use the separate [agent signup rules](policies.md#age-identity-and-enrollment). A person can also choose the shared text line as their entry.
 
-Models: [join flow](../models/join_flow.md), [profile learning](../models/profile_learning.md), [agent loop](../models/chatjson_loop.md), [authorization](../models/auth_edge.md).
+Models: [join flow](../models/join_flow.md), [profile learning](../models/profile_learning.md), [Peon job search](../peonCandidateSearch.md), [agent loop](../models/chatjson_loop.md), [authorization](../models/auth_edge.md).
 
 ## Story F5 — Review and correct my profile
 
@@ -56,7 +56,9 @@ Return the person's own app profile, with source and scope as applicable. Ask fo
 
 In the signed text conversation, `SHOW MY FACTS` shows saved facts for the current app. The member can use a fact reference to request a correction, removal, or scope change. The member confirms the exact edit using a short-lived code. A stale fact or a different app or member cannot use that code.
 
-Models: [generated saved-profile read](../savedProfileRead.md), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+In an authorized assistant, `read_profile` shows safe fields saved in the requesting member's current app. The person grants profile read access separately in their browser. Reading a profile makes no profile edits and starts no new onboarding.
+
+Models: [generated saved-profile read](../savedProfileRead.md), [connector tools](../connectorTools.md#read-saved-profile-fields-only-for-this-apps-active-member), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 
@@ -210,17 +212,17 @@ Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_it
 
 Use stated availability or authorized calendar free/busy, travel constraints and a public venue. Offer 2–3 viable times when a slot is unsettled. If consenting probe answers select a shared slot, the reveal can carry the booked plan. A changed time requires renewed consent. A cancellation notifies participants with minimal detail. The agent suggests booking links and gives requested calendar invites. It holds no money.
 
-Models: [calendar free/busy](../calendarFreeBusy.md), [meeting rescheduling](../meetingReschedule.md), [requested calendar invite](../calendarInvite.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
+Models: [calendar free/busy](../calendarFreeBusy.md), [activity formation and check-in availability](../planFormation.md), [plan dispatch](../planDispatch.md), [Friends partner time choices](../friendsPlanTimeChoice.md), [meeting rescheduling](../meetingReschedule.md), [requested calendar invite](../calendarInvite.md), [venue booking link](../venueBookingLink.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
 
 ## Story F18 — Keep a meeting on track
 
-> As a participant, I want reminders and a way to tell the group when plans change.
+> As a participant, I want reminders and a way to tell the other people I'm meeting when plans change.
 
 ### Logistics follow the accepted opportunity and sending rules
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [meeting settlement](../meetingSettlement.md), [booked group replacement](../bookedGroupReplacement.md), [late arrival in a booked group](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [meeting settlement](../meetingSettlement.md), [booked group replacement](../bookedGroupReplacement.md), [late arrival in a booked meeting](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 
@@ -278,7 +280,7 @@ Models: [gathering review](../monthlyGathering.md), [invitation review](../month
 
 A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
 
-Models: [safety and trust](../models/safety_trust.md), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
+Models: [safety and trust](../models/safety_trust.md), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
 
 ## Story F24 — Export or delete my data
 
@@ -322,7 +324,7 @@ Models: [live travel windows](../travelPresence.md), [signed travel journey](../
 
 Show the app, origin, scrubbed context, reasons, proposed copy, timeline and deadline to the assigned reviewer. Store the decision, reviewer, reason and evidence as audit data. Recheck all participants on approval and dispatch. A materially changed proposal must pass review again. Expiry prevents a late send. Simulated review is confined to the simulation.
 
-Models: [review desk](../models/review_desk.md), [staff console](../models/staff_console.md), [console privacy](../models/console_privacy.md).
+Models: [staff review and plan preview](../staffReview.md), [review desk](../models/review_desk.md), [staff console](../models/staff_console.md), [console privacy](../models/console_privacy.md).
 
 ## Story F28 — Stop asking when I do not answer
 
@@ -372,7 +374,7 @@ Models: [photos and rating](../models/photos_rating.md), [photo relay item](../m
 
 Build a new session around the shared activity, overlapping availability, travel limits and a rotating host. Recheck membership, blocks and eligibility before each session. When a group is ready for its own chat, let its consenting members take it forward. Friends targets the same members meeting again.
 
-Models: [plan crew](../models/plan_crew.md), [plan run](../models/plan_run.md).
+Models: [Friends weekly repeats](../friendsWeek.md#a-friends-repeat-uses-its-own-completed-table-and-a-fresh-review), [plan crew](../models/plan_crew.md), [plan run](../models/plan_run.md).
 
 ## Story F33 — Choose a hiring introduction
 
@@ -382,7 +384,7 @@ Models: [plan crew](../models/plan_crew.md), [plan run](../models/plan_run.md).
 
 Only verified employers with pay ranges can reach a candidate. Exclude protected traits and proxies from automated matching. Respect current-employer blocks and qualification filters. Ask candidates first and send unranked slates with must-have checks after consent. Staff review introductions. Hiring teams make the decisions.
 
-Models: [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
+Models: [Peon job search](../peonCandidateSearch.md), [Peon hiring dispatch](../peonHireDispatch.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
 
 ### Role level and candidate level fit both ways
 
@@ -572,24 +574,21 @@ Spec: [connected assistants page](../connectedAssistants.md).
 
 ### Nothing leaves the conversation without approval, and only a confirmed save is reported as saved
 
-The agent follows the app's SKILL.md. The site API, the app's page and the MCP server own the facts, the code, the account, the join and the read-back.
+The agent follows the app's SKILL.md. The site supplies app facts, the person's browser handles phone verification and signup, and the MCP server confirms the submitted profile and membership status.
 
 Acceptance:
 
-- The ntwrk.party, slop.date and friends.help skills use the in-agent transport: HTTPS to the app's own site, a private cookie session, and the code that the person types into the conversation. The peon.biz skill uses the app's page and connector on a computer, or a prepared text in Messages. The active peon.biz transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
-- A direct skill never falls back to the connector or to a text. An agent that cannot do HTTPS with a private session says "Signup isn't supported in this agent yet." and asks for no number, code or profile.
-- In the in-agent transport, the agent reads the app facts from the skill's own origin before it drafts. Facts for another app stop the flow.
+- The agent drafts for the selected app and hands one link to the person after approval. The person's browser confirms their phone and authorizes the app's connector. The peon.biz skill also supports a prepared text the person sends from Messages. The Peon transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
+- An agent without a supported signup transport explains its capability limit before collecting a profile. The verification code stays in the person's browser. A prepared text is available only where the app supports that signup path.
+- Read the app facts from the skill's own origin before drafting. Facts for another app stop the flow.
 - The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person that matching and introductions are for adults 18 and older.
 - The agent shows a short draft and the current text consent: recurring texts, variable frequency, message and data rates, STOP and HELP, and links to the text terms, the terms and the privacy policy. Only an explicit approval of this profile and this wording continues. A code, a draft or silence is not approval.
-- The agent reuses a live session. It asks for the number only in the code sign-in mode. Another mode ends the flow with no website fallback.
-- The agent requests a code at most once per attempt and never resends one by itself. It sends the person's code once and keeps it out of files and output. It never fakes a security check. Only the person starts a new attempt.
+- The site's authorized signup flow may reuse its live verified browser session. The person enters the number and code on the app's site and controls retries. The agent collects neither credential.
 - An account of another app stops the flow. An existing member is read back, and the agent does not send Join again. An invite-only app without an invitation and an account on hold stop the flow.
-- The agent sends Join once, with the approved fields, the home region, the account marker and the current consent wording and version.
-- The agent reports "saved" only after the read-back matches the approved profile, or after the second status call on the connector shows a live member. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
+- The site's signup flow checks the enrollment fields, home region and current consent. The person confirms those details match the approved draft and separately authorizes the connector. After the app-bound grant becomes active, the agent submits the approved profile once through MCP.
+- The agent reports "saved" only after the service confirms the approved profile submission and the same connector confirms an eligible membership. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
 
-Open founder decision: [agent signup](../agentSignup.md) lets the agent receive the texted code on the in-agent HTTPS transport for ntwrk.party, slop.date and friends.help, but founder decision 10 says that the agent never sees the code, so the owner must choose one rule.
-
-Spec: [agent signup](../agentSignup.md).
+See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.md) and [signup conversation](../agentSignup.md).
 
 ## Story F46 — Use my app's connector from my agent
 
@@ -601,6 +600,7 @@ Acceptance:
 
 - The full surface at `https://<site>/mcp` offers each app. The OpenAI surface at `https://<site>/mcp/openai` never lists slop.date, and the slop.date site has no OpenAI surface.
 - `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
+- `read_profile` needs explicit profile read permission and a current active membership for the same app. It returns only safe saved fields and makes no profile change.
 - `check_status` shows one of six statuses (not joined, invited, onboarding, active, stopped, on hold) for the host app only, with one next step.
 - `submit_profile` sends an approved profile once, and only for an onboarding or active member. For another status it sends nothing and gives the next step. A grant can make at most five profile or draft calls in one day, and a refused call counts.
 - `prepare_signup` shows only on friends.help and ntwrk.party. It saves only an approved first name and an optional home city, at most once per grant. It creates no person, membership or text consent. Those sites have no Join page now, so the person cannot use the draft yet.

@@ -20,9 +20,11 @@ export function dispatchInboxDigest(planned, now, effects) {
         const recipient = pending.length > 0
             ? yield* io("Could not refresh the digest recipient", () => effects.readRecipient(planned.personId)) : undefined;
         const fresh = recipient === undefined ? [] : pending.filter(item => inboxItemAllowedForRecipient(item.urgency === "requested", recipient.proactiveAllowed));
-        const changed = recipient !== undefined && (planned.to !== recipient.to || planned.channel !== recipient.prefs.channel || planned.timeZone !== recipient.timeZone);
+        const destinationChanged = recipient !== undefined && (planned.to !== recipient.to || planned.channel !== recipient.prefs.channel || planned.timeZone !== recipient.timeZone);
+        const linkCurrent = recipient !== undefined && !destinationChanged && fresh.length === planned.itemIds.length
+            ? yield* io("Could not refresh the assistant link", () => effects.linkCurrent(planned, fresh)) : true;
         const refreshed = yield* apply(initial, { type: "rereadItems", plannedCount: planned.itemIds.length,
-            remainingCount: fresh.length, recipientAvailable: recipient !== undefined, destinationChanged: changed });
+            remainingCount: fresh.length, recipientAvailable: recipient !== undefined, destinationChanged: destinationChanged || !linkCurrent });
         if (!recipient || refreshed.phase === "DigestCancelled")
             return { kind: "cancelled", deliveryId: planned.deliveryId };
         const final = refreshed.phase === "ReusingDigest" ? planned
@@ -50,6 +52,9 @@ export function queuedInboxDigestCurrent(deliveryId, now, effects) {
             anyExpired: items.some(item => inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now)),
             anyUnseen: items.some(item => item.seenAt === undefined),
         });
-        return current.phase === "QueuedDigestNeeded";
+        if (current.phase !== "QueuedDigestNeeded")
+            return false;
+        const canClaim = effects.canClaim;
+        return canClaim === undefined || (yield* io("Could not check the queued digest claim", () => canClaim(record, items)));
     }));
 }

@@ -73,7 +73,13 @@ export interface FriendsPolicy {
   crewOptions: boolean;
   /** Count an attendee as "would do it again" when a "see again" was mutual with another attendee. */
   mutualPositive: boolean;
-  /** Days an outcome stays eligible for a crew offer or a repeat. */
+  /**
+   * Days an outcome stays eligible for a crew offer or a repeat. 14: a meetup from Tuesday to Sunday
+   * gets two Monday runs, so a repeat that missed quorum once is offered once more (10 cut the second
+   * run mid-week). Measured on the tuning seeds 1-4 (friends cli.ts, 400 personas, 8 weeks): repeat
+   * 27.6% -> 28.2%, V14 36.0% -> 37.3%. Held-out gate seeds 5-8: repeat 29.7% -> 30.5%, V14
+   * 36.3% -> 37.3%. The repeat margin over its 30% gate is small (spec/matchLane.md, "Friend floors").
+   */
   repeatWindowDays: number;
   /** Members with a crew session, crew offer or repeat this week get no new plan (spreads seats). */
   spreadNew: boolean;
@@ -92,9 +98,9 @@ export interface FriendsPolicy {
   /** One-to-one activity partners a week per member (separate allowance; groups first). */
   partnerIntros: number;
 }
-/** Tuned on seeds 1-4 (docs/results/2026-10-08-friends-pack.md, tuning trail). */
+/** Tuned on seeds 1-4 (docs/results/2026-10-08-friends-pack.md, tuning trail; repeatWindowDays above). */
 export const DEFAULT_FRIENDS_POLICY: FriendsPolicy = {
-  repeat: true, crews: true, crewOptions: false, mutualPositive: true, repeatWindowDays: 10, spreadNew: false,
+  repeat: true, crews: true, crewOptions: false, mutualPositive: true, repeatWindowDays: 14, spreadNew: false,
   toleranceSlack: 1.15, timeOptions: true, tableOptions: 1, openTable: true, split: false,
   universal: true, universalFit: 0.75, partnerIntros: 1,
 };
@@ -140,6 +146,8 @@ export interface FriendsWeekInput {
   outcomes: readonly PlanOutcomeRecord[];
   /** Crews already offered (formed or not): never re-offered. */
   offered: readonly Crew[];
+  /** Serving can reject a repeat before its seats are reserved for the week. */
+  repeatAllowed?: (plan: FriendsPlan) => boolean;
   lastPlannedAt?: ReadonlyMap<MemberId, number>;
 }
 export interface FriendsWeek { sessions: FriendsPlan[]; offers: { crew: Crew; first: FriendsPlan }[]; repeats: FriendsPlan[]; plans: FriendsPlan[]; partners: FriendsPlan[] }
@@ -322,13 +330,31 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     }
     return value;
   };
+  /**
+   * The largest subset of a familiar group (a crew, the positive attendees of one meetup) in which
+   * every pair has a pair value, in the given order; on a tie, the one that keeps earlier members. A
+   * group with one pair that lost its value (a "not again" answer, a block) still meets without one
+   * of the two. A familiar group sat at one table, so it has at most `circleMaximum` (6) members and
+   * this reads at most 2^6 subsets.
+   */
+  const valuedSubset = (ids: readonly MemberId[]): MemberId[] => {
+    const n = ids.length;
+    const member = (mask: number, i: number) => (mask & (1 << (n - 1 - i))) !== 0;
+    let best: MemberId[] = [];
+    for (let mask = (1 << n) - 1; mask > 0; mask--) {
+      const kept = ids.filter((_, i) => member(mask, i));
+      if (kept.length <= best.length) continue;
+      if (kept.every((x, i) => kept.slice(i + 1).every(y => valueOf(x, y) >= 0))) best = kept;
+    }
+    return best;
+  };
 
   // 1. crew sessions
   if (pol.crews) for (const crew of inp.crews) {
     if (crew.handedOff) continue;
     const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
     // The pair values are read for the members the session can seat: eligible, and within travel tolerance.
-    const members = crew.members.filter(id => eligible(id) && tripFits(id, hood(v?.area)));
+    const members = valuedSubset(crew.members.filter(id => eligible(id) && tripFits(id, hood(v?.area))));
     if (members.length < 2) continue;
     const p = crewSessionPlan(w, { ...crew, members }, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg);
     if (!p) continue;
@@ -351,7 +377,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const proposed = detectCrews(recent, [...inp.crews, ...inp.offered], id => w.get(id)?.isHost ?? false, pcfg);
     for (const crew of proposed) {
       const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
-      const members = crew.members.filter(id => eligible(id) && recurringAvailable(week, id) && tripFits(id, hood(v?.area)));
+      const members = valuedSubset(crew.members.filter(id => eligible(id) && recurringAvailable(week, id) && tripFits(id, hood(v?.area))));
       if (members.length < pcfg.crews.minMembers) continue;
       const c2: Crew = { ...crew, members, hostRotation: crew.hostRotation.filter(m => members.includes(m)).length ? crew.hostRotation.filter(m => members.includes(m)) : members };
       const p = crewSessionPlan(w, c2, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg);
@@ -368,7 +394,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       // Members offered a crew this week are taken; everyone else positive gets the same table again
       // (pairs, groups without crews, and groups whose crew offer did not form).
       // The same table again for the largest set of them (in order) in which every pair has a pair value.
-      const ids = pos.slice(0, 6).sort().reduce<MemberId[]>((kept, id) => (kept.every(k => valueOf(k, id) >= 0) ? [...kept, id] : kept), []);
+      const ids = valuedSubset(pos.slice(0, 6).sort());
       if (ids.length < 2) continue;
       const circle = familiarCircle(w, ids);
       if (!circle) continue;
@@ -382,12 +408,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: activityWindow(start, a.durationMin),
-        invited: ids, alternates, partner,
+        invited: ids, alternates, partner, repeatOf: o.planId,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: circleScore(circle), u: {}, familiar: {}, createdAt: now, category: "social",
       };
       const fp = finish(base, "repeat");
-      if (!fp || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
+      if (!fp || inp.repeatAllowed?.(fp) === false
+        || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
       out.repeats.push(fp);
     }
   }

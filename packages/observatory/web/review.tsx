@@ -3,13 +3,13 @@
 // spec/staffReview.md, "A mode change applies only to a bound card"
 // spec/staffReview.md, "An old response cannot clear or move a newer selection"
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { initial as initialReview, ownsReviewResponse, selectedReviewCard, step as stepReview, type ReviewCtl as ReviewState, type ReviewMode } from "../../core/src/generated/staffReview.ts";
+import { initial as initialReview, ownsReviewResponse, planPreviewMatchesCard, selectedReviewCard, step as stepReview, type ReviewCtl as ReviewState, type ReviewMode } from "../../core/src/generated/staffReview.ts";
 import {
   AreaLink as AreaLinkView, Countdown, Disclosure, FactLine, MemberLink as MemberLinkView, MeterBars, OpportunityLink, ReviewActions as ReviewActionsView,
   ReviewCard, ReviewPerson, Segments, StatusMark, VenueLink as VenueLinkView, type MeterRow, type ReviewFlag, type StatusTone,
 } from "@thenetwork/ui";
 import type { ScoreComponents } from "@thenetwork/core";
-import type { ReviewReason } from "../src/types.ts";
+import type { ReviewReason, StaffPlanPreview } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
 import { OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
 import { stateLabel } from "./panels.tsx";
@@ -107,6 +107,50 @@ interface ReviewDraft {
 }
 const reviewKey = (o: Opp | undefined) => o ? JSON.stringify([store.app, store.mode, store.authEpoch, o.id, o.review?.deadline, o.review?.rerolls, o.participants]) : "";
 
+type PlanPreview = StaffPlanPreview | "loading" | "unavailable" | undefined;
+
+function realPlanUnderReview(o: Opp | undefined): o is Opp {
+  return store.mode === "real" && o?.state === "IN_REVIEW" && originOf(o) === "planner";
+}
+
+function usePlanPreview(o: Opp | undefined): PlanPreview {
+  const open = realPlanUnderReview(o) && (store.can("reviewer") || store.can("safety"));
+  const key = open ? reviewKey(o) : "";
+  const app = store.app, id = o?.id, revision = o?.review?.rerolls ?? 0, deadline = o?.review?.deadline;
+  const [result, setResult] = useState<{ key: string; preview?: StaffPlanPreview }>();
+  useEffect(() => {
+    setResult(undefined);
+    if (!key || !id || deadline === undefined) return;
+    let current = true;
+    void store.reviewPlanPreview(id, revision).then(({ data }) => {
+      if (!current) return;
+      const p = data?.preview;
+      // spec/staffReview.md, "Plan approval in the console waits for the selected preview"
+      setResult({ key, preview: p && planPreviewMatchesCard(app, p.app, id, p.opportunityId, revision, p.revision, deadline, p.deadline) ? p : undefined });
+    });
+    return () => { current = false; };
+  }, [key, app, id, revision, deadline]);
+  if (!key) return undefined;
+  return result?.key === key ? result.preview ?? "unavailable" : "loading";
+}
+
+function PlanPreviewFacts({ preview }: { preview: PlanPreview }) {
+  if (!preview) return null;
+  if (typeof preview === "string") return <p role="status" className="text-sm text-muted-foreground">{preview === "loading" ? "Loading the plan for review." : "This plan preview is unavailable."}</p>;
+  const localTimeRange = ({ start, end }: { start: number; end: number }) => `${stamp(start)} – ${stamp(end)} ET`;
+  return <section className="flex flex-col gap-1 text-sm" aria-label="Plan under review">
+    <FactLine parts={[preview.activity, preview.place.name, preview.place.area]} />
+    {preview.options && <div>
+      <span className="text-muted-foreground">Time options</span>
+      <ol role="list" aria-label="Time options">
+        {preview.options.map((slot, index) => <li key={slot.start}>{"ABC"[index]}. {localTimeRange(slot)}</li>)}
+      </ol>
+    </div>}
+    <FactLine parts={[!preview.options && localTimeRange(preview), `Quorum ${preview.quorum} · up to ${preview.maxSeats} seats`]} />
+    <FactLine parts={[`Invitation deadline ${stamp(preview.probeDeadline)} ET`, <span>Alternates {preview.alternates.length === 0 ? "none" : preview.alternates.map((id, i) => <span key={id}>{i > 0 && ", "}{i + 1}. <MemberName id={id} /></span>)}</span>]} />
+  </section>;
+}
+
 function useReviewCtl(cardKey: string): ReviewDraft {
   const [model, setModel] = useState<ReviewState>(initialReview);
   const [note, setNote] = useState("");
@@ -156,8 +200,10 @@ function useReviewCtl(cardKey: string): ReviewDraft {
 }
 
 /** Why approval is blocked for this opportunity, if it is. */
-export function approveBlock(o: Opp): string | undefined {
+export function approveBlock(o: Opp, preview?: PlanPreview): string | undefined {
   if (!store.canAct()) return "Read-only source";
+  if (realPlanUnderReview(o) && (typeof preview !== "object" || !o.review || !planPreviewMatchesCard(store.app, preview.app,
+    o.id, preview.opportunityId, o.review.rerolls ?? 0, preview.revision, o.review.deadline, preview.deadline))) return "Open the current plan preview before approving";
   if (o.participants.some(id => store.members.get(id)?.minor)) return "Members under 18 are never introduced";
   if (o.participants.some(id => store.members.get(id)?.declined)) return "A participant was declined at join";
   if (store.network?.matchingEnabled === false) return "Proactive matching is off (admin switch)";
@@ -185,12 +231,14 @@ async function act(o: Opp, c: ReviewDraft, decision: "approve" | "reject" | "rer
 }
 
 /** Approve, edit, re-roll and reject with one of the app's reason codes. Shared by the queue and the opportunity view. A re-roll keeps the item open with the new person, so the queue stays on it. */
-export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewDraft; onDone?: () => void }) {
+export function ReviewActions({ o, ctl, onDone, planPreview }: { o: Opp; ctl?: ReviewDraft; onDone?: () => void; planPreview?: PlanPreview }) {
   const local = useReviewCtl(ctl ? "" : reviewKey(o));
+  const localPreview = usePlanPreview(ctl ? undefined : o);
+  const preview = ctl ? planPreview : localPreview;
   const c = ctl ?? local;
   useEffect(() => { store.reviewOpen(o.id); }, [o.id]);
   if (!store.canReview()) return null;
-  const block = approveBlock(o);
+  const block = approveBlock(o, preview);
   const edits = c.mode === "EditReview" ? editsOf(o, c.drafts) : undefined;
   const toggle = (m: ReviewMode) => {
     c.setError(null);
@@ -202,7 +250,7 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewDraft; o
   };
   const approve = async () => { if (!block && await act(o, c, "approve")) onDone?.(); };
   return (
-    <ReviewActionsView
+    <>{!ctl && <PlanPreviewFacts preview={preview} />}<ReviewActionsView
       ctl={c.state}
       approveBlock={block}
       edited={!!edits}
@@ -222,7 +270,7 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewDraft; o
       onReject={code => void reject(code as ReviewReason)}
       onReroll={id => void act(o, c, "reroll", { swapOut: id })}
       error={c.error && c.error.oppId === o.id ? c.error : undefined}
-    />
+    /></>
   );
 }
 
@@ -242,6 +290,7 @@ export function ReviewQueue() {
   const selectedId = selectedReviewCard(pending.map(o => o.id), f?.kind === "opportunity" ? f.id : "", selId ?? "");
   const sel = pending.find(o => o.id === selectedId);
   const ctl = useReviewCtl(view === "pending" ? reviewKey(sel) : "");
+  const preview = usePlanPreview(view === "pending" ? sel : undefined);
   const counts = s.network?.review ?? countDecisions();
 
   const select = (o: Opp | undefined, mapFocus = true) => {
@@ -252,13 +301,13 @@ export function ReviewQueue() {
   const next = () => { const i = sel ? pending.indexOf(sel) : -1; return pending[i + 1] ?? pending[i - 1]; };
   const afterDecision = () => { const n = live.current.next(); if (n) live.current.select(n); else setSelId(undefined); };
 
-  const live = useRef({ pending, sel, ctl, view, select, next, afterDecision });
-  useLayoutEffect(() => { live.current = { pending, sel, ctl, view, select, next, afterDecision }; });
+  const live = useRef({ pending, sel, ctl, view, select, next, afterDecision, preview });
+  useLayoutEffect(() => { live.current = { pending, sel, ctl, view, select, next, afterDecision, preview }; });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if ((e.target as Element | null)?.closest?.("input, textarea, select")) return;
-      const { pending, sel, ctl, view, select, afterDecision } = live.current;
+      const { pending, sel, ctl, view, select, afterDecision, preview } = live.current;
       if (view !== "pending") return;
       const handled = () => { e.preventDefault(); e.stopImmediatePropagation(); };
       if (e.key === "Escape" && ctl.mode !== "IdleReview") { handled(); ctl.setMode("IdleReview"); return; }
@@ -267,7 +316,7 @@ export function ReviewQueue() {
       const canAct = store.canReview();
       if (e.key === "j") { handled(); select(pending[Math.min(pending.length - 1, i + 1)]); }
       else if (e.key === "k") { handled(); select(pending[Math.max(0, i - 1)]); }
-      else if (e.key === "a" && canAct) { handled(); if (!approveBlock(sel)) act(sel, ctl, "approve").then(ok => { if (ok) afterDecision(); }); }
+      else if (e.key === "a" && canAct) { handled(); if (!approveBlock(sel, preview)) act(sel, ctl, "approve").then(ok => { if (ok) afterDecision(); }); }
       else if (e.key === "r" && canAct) { handled(); ctl.setError(null); ctl.setMode("RejectReview"); }
       else if (e.key === "s" && canAct && swappable(sel).length) { handled(); ctl.setError(null); ctl.setMode("RerollReview"); }
       else if (e.key === "e" && canAct) {
@@ -316,7 +365,7 @@ export function ReviewQueue() {
         pending.length ? (
           <div className="flex flex-col gap-2">
             {pending.map(o => (
-              <QueueCard key={o.id} o={o} selected={o.id === sel?.id} onSelect={() => select(o)} ctl={ctl} scoreOpen={scoreOpen} setScoreOpen={setScoreOpen} onDone={afterDecision} />
+              <QueueCard key={o.id} o={o} selected={o.id === sel?.id} planPreview={o.id === sel?.id ? preview : undefined} onSelect={() => select(o)} ctl={ctl} scoreOpen={scoreOpen} setScoreOpen={setScoreOpen} onDone={afterDecision} />
             ))}
           </div>
         ) : empty
@@ -373,8 +422,8 @@ function flagsOf(o: Opp, id: string): ReviewFlag[] {
 }
 
 /** One card of the queue. The selected card scrolls into view, also after a re-roll gives it a new deadline and moves it. */
-function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone }: {
-  o: Opp; selected: boolean; onSelect(): void; ctl: ReviewDraft; scoreOpen: boolean; setScoreOpen(v: boolean): void; onDone(): void;
+function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone, planPreview }: {
+  o: Opp; selected: boolean; onSelect(): void; ctl: ReviewDraft; scoreOpen: boolean; setScoreOpen(v: boolean): void; onDone(): void; planPreview?: PlanPreview;
 }) {
   const s = store;
   const ref = useRef<HTMLDivElement>(null);
@@ -409,9 +458,10 @@ function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone
           o.meetingAt && stamp(o.meetingAt),
         ]} />
       )}
+      <PlanPreviewFacts preview={planPreview} />
       <FactLine parts={[
         <span>History: {hist.length ? hist.slice(0, 3).map((h, i) => <span key={h.id}>{i > 0 && ", "}<OppName o={h}>{humanize(h.state)} {stamp(h.createdAt)}</OppName></span>) : "none"}</span>,
-        o.alternates.length > 0 && <span>Alternates: {o.alternates.map((a, i) => <span key={a}>{i > 0 && ", "}<MemberName id={a} /></span>)}</span>,
+        !planPreview && o.alternates.length > 0 && <span>Alternates: {o.alternates.map((a, i) => <span key={a}>{i > 0 && ", "}<MemberName id={a} /></span>)}</span>,
       ]} />
       {o.source !== "player" && o.components && (
         <Disclosure
@@ -422,7 +472,7 @@ function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone
           <ScoreParts c={o.components} />
         </Disclosure>
       )}
-      <ReviewActions o={o} ctl={ctl} onDone={onDone} />
+      <ReviewActions o={o} ctl={ctl} onDone={onDone} planPreview={planPreview} />
     </ReviewCard>
   );
 }

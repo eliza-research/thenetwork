@@ -36,6 +36,8 @@ create table if not exists notify.deliveries (
   outcome           text check (outcome in ('acted', 'ignored')),
   outcome_at        timestamptz
 );
+-- Evidence for an immutable assistant-link body. Legacy rows and plain thread digests have none.
+alter table notify.deliveries add column if not exists assistant_link jsonb;
 create index if not exists deliveries_cap_idx on notify.deliveries (person_id, sent_at) where counts_toward_cap;
 create index if not exists deliveries_pending_idx on notify.deliveries (sent_at) where outcome is null;
 

@@ -31,7 +31,7 @@ pure def alwaysOnlyValidChecksUseCache(check: AuthorityCheck): bool = check.from
 
 ### Only a positive live Cloud response updates the cache
 
-When Cloud answers, recheck the proof expiry. A positive response to a live proof allows use and keeps the cache entry for that session (`cloudCacheKeeps`). A denial invalidates the proof. An unavailable authority produces a retryable result. Neither denial, unavailability nor an expired proof keeps a positive cache entry for that session: the shell removes it.
+When Cloud answers, recheck the proof expiry. A positive response to a live proof allows use. A denial invalidates the proof. An unavailable authority produces a retryable result. Neither denial nor unavailability keeps a positive cache entry for that session: in non-production, the shell clears it. In non-production, a live positive response can refresh the cache only while its validation round is still current. Clearing a session's cache invalidates its in-flight round. Those responses cannot publish a positive entry. A new validation starts a new round. Production validates every use and does not store a positive cache entry (`cloudCachePublication`).
 
 ```quint
 type CloudResponse = CloudAccepted | CloudDenied | CloudUnavailable
@@ -41,20 +41,32 @@ pure def finishCloudCheck(check: AuthorityCheck, answer: CloudResponse, proofLiv
   { ...check, phase: if (not(proofLive) or answer == CloudDenied) AuthorityInvalid
     else if (answer == CloudAccepted) AuthorityValid else AuthorityUnavailable }
 
-pure def cloudCacheKeeps(answer: CloudResponse, proofLive: bool): bool = proofLive and answer == CloudAccepted
-
-pure def lawDenialOrOutageDropsTheCache(answer: CloudResponse): bool =
-  answer != CloudAccepted implies (not(cloudCacheKeeps(answer, true)) and not(cloudCacheKeeps(answer, false)))
-
-pure def lawCachedAnswerAllowsUse(answer: CloudResponse, proofLive: bool): bool =
-  cloudCacheKeeps(answer, proofLive) implies finishCloudCheck(initial, answer, proofLive).phase == AuthorityValid
-
 pure def stepOnlyAnAuthorityResultFinishes(before: AuthorityCheck, via: str, after: AuthorityCheck): bool =
   (before.phase == AwaitingCloud and after.phase != AwaitingCloud) implies via == "finishCloudCheck"
 
 pure def sometimesChecksCloud(check: AuthorityCheck): bool = check.phase == AwaitingCloud
 pure def sometimesAcceptsAuthority(check: AuthorityCheck): bool = check.phase == AuthorityValid
 pure def sometimesCloudIsUnavailable(check: AuthorityCheck): bool = check.phase == AuthorityUnavailable
+
+type CloudCachePublication = PublishCloudValidation | ClearCloudValidation | KeepCloudValidation
+
+pure def cloudCachePublication(productionCloud: bool, validationAccepted: bool, roundCurrent: bool): CloudCachePublication =
+  if (productionCloud) KeepCloudValidation
+  else if (not(validationAccepted)) ClearCloudValidation
+  else if (roundCurrent) PublishCloudValidation
+  else KeepCloudValidation
+
+pure def lawInvalidatedCloudRoundCannotPublish(productionCloud: bool, validationAccepted: bool): bool =
+  cloudCachePublication(productionCloud, validationAccepted, false) != PublishCloudValidation
+
+pure def lawCurrentStagingCloudRoundCanPublish(roundCurrent: bool): bool =
+  (cloudCachePublication(false, true, roundCurrent) == PublishCloudValidation) iff roundCurrent
+
+pure def lawProductionLeavesCloudCacheUnchanged(validationAccepted: bool, roundCurrent: bool): bool =
+  cloudCachePublication(true, validationAccepted, roundCurrent) == KeepCloudValidation
+
+pure def lawStagingRejectedValidationClearsTheCache(roundCurrent: bool): bool =
+  cloudCachePublication(false, false, roundCurrent) == ClearCloudValidation
 ```
 
 ## Story: Use a grant only for its bound identity

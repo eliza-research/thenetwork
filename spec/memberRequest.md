@@ -89,7 +89,7 @@ pure def immediateRequestSearchAllowed(waiting: bool, eligible: bool, busy: bool
     attempted: bool, attemptAge: int, asked: bool, confirmAge: int): bool =
   waiting and eligible and not(busy) and immediateRequestRetryReady(attempted, attemptAge, asked, confirmAge)
 
-pure def lawImmediateSearchNeedsFreeEligibleWaitingRequest(waiting: bool, eligible: bool, busy: bool,
+pure def lawImmediateRetryNeedsEligibleWaitingMember(waiting: bool, eligible: bool, busy: bool,
     attempted: bool, attemptAge: int, asked: bool, confirmAge: int): bool =
   immediateRequestSearchAllowed(waiting, eligible, busy, attempted, attemptAge, asked, confirmAge)
     implies (waiting and eligible and not(busy))

@@ -1,6 +1,8 @@
 // GENERATED from spec/notificationDelivery.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
+export type WeeklyDigest = "KeepDigest" | "KeepRequested" | "HoldDigest";
 /** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
 export type AssistantActivity = "AssistantActive" | "AssistantInactive" | "AssistantUnchanged";
 
@@ -24,34 +26,28 @@ export function lawRequestedIsDueAtCreation(createdAt: number, urgentDelay: numb
 
 /** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
 //@ pure
-export function removeProactiveItems(recentSends: number, weeklyCap: number, containsProactive: boolean): boolean {
-  return recentSends >= weeklyCap && containsProactive;
+export function digestUsesProactiveSlot(itemCount: number, requestedCount: number): boolean {
+  return requestedCount < itemCount;
 }
 
 /** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
 //@ pure
-export function holdAtWeeklyCap(removeProactive: boolean, requestedCount: number): boolean {
-  return removeProactive && requestedCount <= 0;
-}
-
-/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
-//@ pure
-export function digestUsesProactiveSlot(proactiveCount: number): boolean {
-  return proactiveCount > 0;
-}
-
-/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
-//@ pure
-export function lawRequestedOnlyDigestUsesNoSlot(proactiveCount: number): boolean {
+export function lawRequestedOnlyDigestUsesNoSlot(itemCount: number): boolean {
   //@ ensures \result === true
-  return !(proactiveCount <= 0) || !digestUsesProactiveSlot(proactiveCount);
+  return !digestUsesProactiveSlot(itemCount, itemCount);
 }
 
 /** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
 //@ pure
-export function lawCapHoldsOnlyWhenNothingRequestedRemains(removeProactive: boolean, requestedCount: number): boolean {
+export function weeklyDigest(recentSends: number, weeklyCap: number, itemCount: number, requestedCount: number): WeeklyDigest {
+  return recentSends < weeklyCap || !digestUsesProactiveSlot(itemCount, requestedCount) ? "KeepDigest" : (requestedCount > 0 ? "KeepRequested" : "HoldDigest");
+}
+
+/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
+//@ pure
+export function lawWeeklyCapPreservesRequestedItems(recentSends: number, weeklyCap: number, itemCount: number, requestedCount: number): boolean {
   //@ ensures \result === true
-  return !(requestedCount > 0) || !holdAtWeeklyCap(removeProactive, requestedCount);
+  return !(requestedCount > 0 && requestedCount <= itemCount) || weeklyDigest(recentSends, weeklyCap, itemCount, requestedCount) !== "HoldDigest";
 }
 
 /** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
@@ -85,6 +81,19 @@ export function lawAnotherEligibleGrantKeepsAssistantActive(checksComplete: bool
 export function lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: boolean): boolean {
   //@ ensures \result === true
   return projectAssistantActivity(hasEligibleGrant, false) !== "AssistantInactive";
+}
+
+/** Story: Receive updates on a surface I use / The text thread carries a digest one connector cannot read (spec/notificationDelivery.md) */
+//@ pure
+export function assistantDigestCanLink(singleApp: boolean, hasReadableAssistant: boolean): boolean {
+  return singleApp && hasReadableAssistant;
+}
+
+/** Story: Receive updates on a surface I use / The text thread carries a digest one connector cannot read (spec/notificationDelivery.md) */
+//@ pure
+export function lawMixedDigestOrMissingGrantNeverLinks(singleApp: boolean, hasReadableAssistant: boolean): boolean {
+  //@ ensures \result === true
+  return !(!singleApp || !hasReadableAssistant) || !assistantDigestCanLink(singleApp, hasReadableAssistant);
 }
 
 /** Story: Receive updates on a surface I use / Ignore inactive assistants and assistants whose links went unused twice (spec/notificationDelivery.md) */

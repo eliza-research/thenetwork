@@ -181,12 +181,12 @@ export function enabled(current: TurnReceipt, event: Event): boolean {
 export function step(current: TurnReceipt, event: Event): TurnReceipt {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkTurn" && canCheckTurn(current)) return checkTurn(current, event.handled);
-  if (event.type === "checkAuthority" && canCheckAuthority(current)) return checkAuthority(current, event.validAuthority);
-  if (event.type === "readPrevious" && canReadPrevious(current)) return readPrevious(current, event.identical, event.alreadyStored, event.previouslyUnknown, event.finalDelivery);
-  if (event.type === "checkScope" && canCheckScope(current)) return checkScope(current, event.collectedReplies, event.orderedIdsMatch, event.providerIds, event.history);
-  if (event.type === "checkDelivery" && canCheckDelivery(current)) return checkDelivery(current, event.accepted, event.providerIds, event.history, event.accountFree);
-  if (event.type === "recordReceipt" && canRecordReceipt(current)) return recordReceipt(current);
+  if (event.type === "checkTurn") return canCheckTurn(current) ? checkTurn(current, event.handled) : current;
+  if (event.type === "checkAuthority") return canCheckAuthority(current) ? checkAuthority(current, event.validAuthority) : current;
+  if (event.type === "readPrevious") return canReadPrevious(current) ? readPrevious(current, event.identical, event.alreadyStored, event.previouslyUnknown, event.finalDelivery) : current;
+  if (event.type === "checkScope") return canCheckScope(current) ? checkScope(current, event.collectedReplies, event.orderedIdsMatch, event.providerIds, event.history) : current;
+  if (event.type === "checkDelivery") return canCheckDelivery(current) ? checkDelivery(current, event.accepted, event.providerIds, event.history, event.accountFree) : current;
+  if (event.type === "recordReceipt") return canRecordReceipt(current) ? recordReceipt(current) : current;
   return current;
 }
 

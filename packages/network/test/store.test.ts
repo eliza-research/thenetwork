@@ -60,12 +60,17 @@ describe("exportState / importState", () => {
     let atRestart: NetworkState | undefined;
     const resumed = await scripted(7, w => { atRestart = w.net.exportState(); });
     // The restart happened with work in flight: a probe waiting for the member's send window, a hold, open opportunities.
-    const waiting = atRestart!.opps.filter(o => o.stage === "probing" && o.participants.some(p => o.turnAt?.[p] !== undefined && !o.contacted.includes(p)));
-    expect(waiting.length + atRestart!.deferred.length).toBeGreaterThan(0);
+    const waiting = atRestart!.opps.find(o => o.origin === "request" && o.stage === "probing"
+      && o.contacted.length === 0 && o.participants.some(p => o.turnAt?.[p] !== undefined));
+    expect(waiting).toBeDefined();
     expect(atRestart!.trust.some(r => r.level !== "ok")).toBe(true);
     expect(atRestart!.opps.some(o => o.stage !== "closed" && o.stage !== "done")).toBe(true);
-    expect(plain.net.counters.scheduled).toBeGreaterThan(0);
-    expect(plain.net.counters.probesSent).toBeGreaterThan(3);
+    const questions = plain.sent.filter(({ meta }) => (meta.type === "scheduling" && meta.proposalId === waiting!.id)
+      || (meta.type === "probe" && meta.probe?.key === waiting!.id));
+    expect(questions.map(({ to, meta }) => [to, meta.type])).toEqual([
+      [waiting!.requester, "scheduling"], [waiting!.participants.find(id => id !== waiting!.requester), "probe"],
+    ]);
+    expect(plain.meetings.map(meeting => meeting.proposalId)).toContain(waiting!.id);
     expect(resumed.sent).toEqual(plain.sent);
     expect(resumed.logs).toEqual(plain.logs);
     expect(resumed.meetings).toEqual(plain.meetings);

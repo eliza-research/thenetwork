@@ -18,7 +18,7 @@ export type ClientLabel = "ProvidedName" | "UnnamedAssistant" | "NoClientShown";
 /** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 export interface ConsentParts { client: ClientLabel; claimNote: boolean; returnHost: boolean; scopeList: boolean; unavailableNotice: boolean }
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
-export type Scope = "AppsRead" | "MembershipRead" | "ProfileWrite";
+export type Scope = "AppsRead" | "MembershipRead" | "ProfileWrite" | "ProfileRead";
 /** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md) */
 export interface PageChrome { brandMark: boolean; legalLinks: boolean }
 
@@ -37,7 +37,9 @@ export type Event =
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export const noOffers: Offers = { sendCode: false, continueCode: false, allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false };
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
-export const scopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite"];
+export const defaultScopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite"];
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
+export const scopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite", "ProfileRead"];
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export const initial: AuthPage = { view: "Opening", fieldError: "NoFieldError", securityCheck: "CheckOff", turnstileOn: false, codeSent: false, consentSeen: false, approved: false };
 
@@ -157,7 +159,7 @@ export function canReturnFromCloud(page: AuthPage, reply: Reply): boolean {
 /** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function canRetryConnection(page: AuthPage, reply: Reply): boolean {
-  return page.view === "PleaseRetryView" && isCloudReturnReply(reply);
+  return page.view === "PleaseRetryView" && (isOpenReply(reply) || isCloudReturnReply(reply));
 }
 
 /** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
@@ -343,16 +345,42 @@ export function lawConsentNamesClientAndScopes(view: AuthView, clientNamed: bool
   return !isConsentView(view) || (local_1.client !== "NoClientShown" && local_1.claimNote && local_1.returnHost && local_1.scopeList);
 }
 
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function offersSignupConfirmation(view: AuthView, signupAvailable: boolean): boolean {
+  return view === "ConsentView" && signupAvailable;
+}
+
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function showsSignupConfirmation(view: AuthView, signupSaved: boolean): boolean {
+  return view === "ConsentView" && signupSaved;
+}
+
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function lawConsentRetryHasNoSignup(signupAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return !offersSignupConfirmation("ConsentRetryView", signupAvailable);
+}
+
+/** Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization (spec/authorizationPages.md) */
+//@ pure
+export function lawSignupNoticeRequiresSave(view: AuthView): boolean {
+  //@ ensures \result === true
+  return !showsSignupConfirmation(view, false);
+}
+
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeName(scope: Scope): string {
-  return scope === "AppsRead" ? "apps:read" : (scope === "MembershipRead" ? "membership:read" : "profile:write");
+  return scope === "AppsRead" ? "apps:read" : (scope === "MembershipRead" ? "membership:read" : (scope === "ProfileRead" ? "profile:read" : "profile:write"));
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeText(scope: Scope): string {
-  return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : "Save your profile and prepare signup details");
+  return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : (scope === "ProfileRead" ? "Read the profile you saved for this app" : "Save your profile and prepare signup details"));
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
@@ -614,15 +642,15 @@ export function enabled(current: AuthPage, event: Event): boolean {
 export function step(current: AuthPage, event: Event): AuthPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openPage" && canOpenPage(current, event.reply)) return openPage(current, event.reply, event.turnstileOn);
-  if (event.type === "returnFromCloud" && canReturnFromCloud(current, event.reply)) return returnFromCloud(current, event.reply);
-  if (event.type === "retryConnection" && canRetryConnection(current, event.reply)) return retryConnection(current, event.reply);
-  if (event.type === "solveCheck" && canSolveCheck(current)) return solveCheck(current);
-  if (event.type === "expireCheck" && canExpireCheck(current)) return expireCheck(current);
-  if (event.type === "submitPhone" && canSubmitPhone(current, event.reply)) return submitPhone(current, event.reply);
-  if (event.type === "submitCode" && canSubmitCode(current, event.reply)) return submitCode(current, event.reply);
-  if (event.type === "approve" && canApprove(current, event.reply)) return approve(current, event.reply);
-  if (event.type === "cancelRequest" && canCancelRequest(current, event.reply)) return cancelRequest(current, event.reply);
+  if (event.type === "openPage") return canOpenPage(current, event.reply) ? openPage(current, event.reply, event.turnstileOn) : current;
+  if (event.type === "returnFromCloud") return canReturnFromCloud(current, event.reply) ? returnFromCloud(current, event.reply) : current;
+  if (event.type === "retryConnection") return canRetryConnection(current, event.reply) ? retryConnection(current, event.reply) : current;
+  if (event.type === "solveCheck") return canSolveCheck(current) ? solveCheck(current) : current;
+  if (event.type === "expireCheck") return canExpireCheck(current) ? expireCheck(current) : current;
+  if (event.type === "submitPhone") return canSubmitPhone(current, event.reply) ? submitPhone(current, event.reply) : current;
+  if (event.type === "submitCode") return canSubmitCode(current, event.reply) ? submitCode(current, event.reply) : current;
+  if (event.type === "approve") return canApprove(current, event.reply) ? approve(current, event.reply) : current;
+  if (event.type === "cancelRequest") return canCancelRequest(current, event.reply) ? cancelRequest(current, event.reply) : current;
   return current;
 }
 

@@ -62,7 +62,8 @@ function groupEffects(messages: Mini["sent"]): GroupEffect[] {
 await serveJourney<Event>({
   async reset() {
     world = new Mini(Object.values(people).map(person => ({
-      ...person, area: "Williamsburg", interests: ["hiking"], shareable: true,
+      // Neighbors of the venue: a member's known trip must fit the travel limit (spec/planFormation.md).
+      ...person, area: "Inwood", interests: ["hiking"], shareable: true,
     })), {
       review: "human",
       growth: false,
@@ -70,7 +71,7 @@ await serveJourney<Event>({
       plansConfig: { minInvite: 3, size: { max: 3, target: 3 }, partnerPlans: false },
     });
     for (const hiker of hikers) {
-      for (const reply of ["Hi!", "I like hiking and parks.", "Saturday afternoons work for me.", "Small groups are good."]) {
+      for (const reply of ["Hi!", "I like hiking and parks.", "Saturday afternoons and evenings work for me.", "Small groups are good."]) {
         await world.say(people[hiker].id, reply);
       }
     }

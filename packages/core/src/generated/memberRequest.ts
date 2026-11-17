@@ -194,7 +194,7 @@ export function immediateRequestSearchAllowed(waiting: boolean, eligible: boolea
 
 /** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
-export function lawImmediateSearchNeedsFreeEligibleWaitingRequest(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
+export function lawImmediateRetryNeedsEligibleWaitingMember(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
   //@ ensures \result === true
   return !immediateRequestSearchAllowed(waiting, eligible, busy, attempted, attemptAge, asked, confirmAge) || (waiting && eligible && !busy);
 }
@@ -274,14 +274,14 @@ export function enabled(current: MemberRequestFlow, event: Event): boolean {
 export function step(current: MemberRequestFlow, event: Event): MemberRequestFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkRequestAdmission" && canCheckRequestAdmission(current)) return checkRequestAdmission(current, event.repeat, event.categoryAllowed);
-  if (event.type === "routeRepeatedRequest" && canRouteRepeatedRequest(current)) return routeRepeatedRequest(current, event.quiet, event.probing, event.matching);
-  if (event.type === "routeNewRequest" && canRouteNewRequest(current)) return routeNewRequest(current, event.matching, event.eligible, event.busy);
-  if (event.type === "applyRequestWithdrawal" && canApplyRequestWithdrawal(current)) return applyRequestWithdrawal(current, event.matched);
-  if (event.type === "routeImmediateRequestRetry" && canRouteImmediateRequestRetry(current)) return routeImmediateRequestRetry(current, event.ready);
-  if (event.type === "considerScheduledRequestRetry" && canConsiderScheduledRequestRetry(current)) return considerScheduledRequestRetry(current, event.due);
-  if (event.type === "routeScheduledRequestRetry" && canRouteScheduledRequestRetry(current)) return routeScheduledRequestRetry(current, event.eligible, event.busy);
-  if (event.type === "readRequestCandidates" && canReadRequestCandidates(current)) return readRequestCandidates(current, event.anyCandidate);
+  if (event.type === "checkRequestAdmission") return canCheckRequestAdmission(current) ? checkRequestAdmission(current, event.repeat, event.categoryAllowed) : current;
+  if (event.type === "routeRepeatedRequest") return canRouteRepeatedRequest(current) ? routeRepeatedRequest(current, event.quiet, event.probing, event.matching) : current;
+  if (event.type === "routeNewRequest") return canRouteNewRequest(current) ? routeNewRequest(current, event.matching, event.eligible, event.busy) : current;
+  if (event.type === "applyRequestWithdrawal") return canApplyRequestWithdrawal(current) ? applyRequestWithdrawal(current, event.matched) : current;
+  if (event.type === "routeImmediateRequestRetry") return canRouteImmediateRequestRetry(current) ? routeImmediateRequestRetry(current, event.ready) : current;
+  if (event.type === "considerScheduledRequestRetry") return canConsiderScheduledRequestRetry(current) ? considerScheduledRequestRetry(current, event.due) : current;
+  if (event.type === "routeScheduledRequestRetry") return canRouteScheduledRequestRetry(current) ? routeScheduledRequestRetry(current, event.eligible, event.busy) : current;
+  if (event.type === "readRequestCandidates") return canReadRequestCandidates(current) ? readRequestCandidates(current, event.anyCandidate) : current;
   return current;
 }
 

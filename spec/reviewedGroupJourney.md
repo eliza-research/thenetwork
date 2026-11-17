@@ -1,6 +1,6 @@
 # Book and close a reviewed three-person hike
 
-[Story F12](product/stories.md#story-f12--join-a-small-group) requires review, anonymous invitations and quorum. [Story F18](product/stories.md#story-f18--keep-a-meeting-on-track) requires the booked group to close gracefully when its minimum attendance fails. This journey follows a public day hike with three adult invitees who shared a Saturday afternoon window. There are no eligible alternates or smaller hike in the fixture.
+[Story F12](product/stories.md#story-f12--join-a-small-group) requires review, anonymous invitations and quorum. [Story F18](product/stories.md#story-f18--keep-a-meeting-on-track) requires the booked group to close gracefully when its minimum attendance fails. This journey follows a public day hike with three adult invitees who shared a Saturday afternoon and evening window. There are no eligible alternates or smaller hike in the fixture.
 
 ## Story: Join a reviewed public hike only after the group agrees
 

@@ -1,6 +1,6 @@
 // GENERATED from spec/expectedMemberInvitation.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { memberInviteDraftMs as memberInvitation_memberInviteDraftMs, memberInviteMaxMonths as memberInvitation_memberInviteMaxMonths, memberInviteBurstWindowMs as memberInvitation_memberInviteBurstWindowMs, memberInviteBurstPriorCount as memberInvitation_memberInviteBurstPriorCount, memberInviteWindowMs as memberInvitation_memberInviteWindowMs, defaultMemberInviteCapacity as memberInvitation_defaultMemberInviteCapacity, memberInviteUsesAllowance as memberInvitation_memberInviteUsesAllowance, memberInviteWithinWindow as memberInvitation_memberInviteWithinWindow, memberInviteDraftCurrent as memberInvitation_memberInviteDraftCurrent, memberInviteEvidenceValid as memberInvitation_memberInviteEvidenceValid, memberInviteConfirmationReady as memberInvitation_memberInviteConfirmationReady, memberInviteWithinBurstWindow as memberInvitation_memberInviteWithinBurstWindow, memberInviteVouchWeak as memberInvitation_memberInviteVouchWeak, memberInviteBurst as memberInvitation_memberInviteBurst, memberInviteNeedsReview as memberInvitation_memberInviteNeedsReview, memberInviteHeldLinkReleased as memberInvitation_memberInviteHeldLinkReleased, memberInviteLinkCanBeShared as memberInvitation_memberInviteLinkCanBeShared, memberInviteCanAttribute as memberInvitation_memberInviteCanAttribute, memberInviteSourceCurrent as memberInvitation_memberInviteSourceCurrent, memberInviteRelationshipKnown as memberInvitation_memberInviteRelationshipKnown, memberInviteCanIssue as memberInvitation_memberInviteCanIssue, lawUnavailableMemberInviteDoesNotSpend as memberInvitation_lawUnavailableMemberInviteDoesNotSpend, lawMemberInviteRequiresConfirmation as memberInvitation_lawMemberInviteRequiresConfirmation, lawUnusualMemberInviteRequiresReview as memberInvitation_lawUnusualMemberInviteRequiresReview, lawHeldMemberInviteNeedsApproval as memberInvitation_lawHeldMemberInviteNeedsApproval, lawMemberInviteLinkNeedsDirectReply as memberInvitation_lawMemberInviteLinkNeedsDirectReply, lawOldMemberInviteCannotBeAttributed as memberInvitation_lawOldMemberInviteCannotBeAttributed, memberMayRequestInvite as memberInvitation_memberMayRequestInvite, lawMemberInviteNeedsAdult as memberInvitation_lawMemberInviteNeedsAdult, lawMemberInviteNeedsDirectRequest as memberInvitation_lawMemberInviteNeedsDirectRequest } from "./memberInvitation.ts";
+import { memberInviteDraftMs as memberInvitation_memberInviteDraftMs, memberInviteMaxMonths as memberInvitation_memberInviteMaxMonths, memberInviteBurstWindowMs as memberInvitation_memberInviteBurstWindowMs, memberInviteBurstPriorCount as memberInvitation_memberInviteBurstPriorCount, memberInviteWindowMs as memberInvitation_memberInviteWindowMs, defaultMemberInviteCapacity as memberInvitation_defaultMemberInviteCapacity, memberInviteUsesAllowance as memberInvitation_memberInviteUsesAllowance, memberInviteWithinWindow as memberInvitation_memberInviteWithinWindow, memberInviteDraftCurrent as memberInvitation_memberInviteDraftCurrent, memberInviteEvidenceValid as memberInvitation_memberInviteEvidenceValid, memberInviteConfirmationReady as memberInvitation_memberInviteConfirmationReady, memberInviteWithinBurstWindow as memberInvitation_memberInviteWithinBurstWindow, memberInviteVouchWeak as memberInvitation_memberInviteVouchWeak, memberInviteBurst as memberInvitation_memberInviteBurst, memberInviteNeedsReview as memberInvitation_memberInviteNeedsReview, memberInviteHeldLinkMayRelease as memberInvitation_memberInviteHeldLinkMayRelease, memberInviteHeldLinkReleased as memberInvitation_memberInviteHeldLinkReleased, memberInviteLinkCanBeShared as memberInvitation_memberInviteLinkCanBeShared, memberInviteCanAttribute as memberInvitation_memberInviteCanAttribute, memberInviteSourceCurrent as memberInvitation_memberInviteSourceCurrent, memberInviteRelationshipKnown as memberInvitation_memberInviteRelationshipKnown, memberInviteCanIssue as memberInvitation_memberInviteCanIssue, lawUnavailableMemberInviteDoesNotSpend as memberInvitation_lawUnavailableMemberInviteDoesNotSpend, lawMemberInviteRequiresConfirmation as memberInvitation_lawMemberInviteRequiresConfirmation, lawUnusualMemberInviteRequiresReview as memberInvitation_lawUnusualMemberInviteRequiresReview, lawMemberInviteHeldLinkNeedsSignedApproval as memberInvitation_lawMemberInviteHeldLinkNeedsSignedApproval, lawHeldMemberInviteNeedsApproval as memberInvitation_lawHeldMemberInviteNeedsApproval, lawMemberInviteLinkNeedsDirectReply as memberInvitation_lawMemberInviteLinkNeedsDirectReply, lawOldMemberInviteCannotBeAttributed as memberInvitation_lawOldMemberInviteCannotBeAttributed, memberMayRequestInvite as memberInvitation_memberMayRequestInvite, lawMemberInviteNeedsAdult as memberInvitation_lawMemberInviteNeedsAdult, lawMemberInviteNeedsDirectRequest as memberInvitation_lawMemberInviteNeedsDirectRequest } from "./memberInvitation.ts";
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
 export interface ExpectedInviteRequestFacts { direct: boolean; confirmedExpected: boolean; exactTarget: boolean; distinctRecipient: boolean; issuerCurrent: boolean; reviewClear: boolean; recipientAllowed: boolean; firstContact: boolean; transportAvailable: boolean; challengeCurrent: boolean; now: number; expiresAt: number }
@@ -63,8 +63,8 @@ export function expectedInviteMayStage(request: ExpectedInviteRequestFacts): boo
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
 //@ pure
-export function expectedInviteChallengeCanReplay(transportAvailable: boolean, awaitingConfirmation: boolean, exactDraft: boolean, issuedAt: number, now: number, expiresAt: number): boolean {
-  return transportAvailable && awaitingConfirmation && exactDraft && expectedInviteChallengeCurrent(issuedAt, now) && expectedInviteLive(now, expiresAt);
+export function expectedInviteChallengeLive(issuedAt: number, now: number, expiresAt: number): boolean {
+  return expectedInviteChallengeCurrent(issuedAt, now) && expectedInviteLive(now, expiresAt);
 }
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
@@ -96,16 +96,15 @@ export function lawExpectedInviteNeedsAnEligibleFirstContact(request: ExpectedIn
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
 //@ pure
-export function lawExpectedInviteNeedsLiveTransportAndCurrentChallenge(request: ExpectedInviteRequestFacts): boolean {
+export function lawExpectedInviteNeedsLiveTransportAndChallenge(request: ExpectedInviteRequestFacts): boolean {
   //@ ensures \result === true
   return !expectedInviteMayStage(request) || (request.transportAvailable && request.challengeCurrent);
 }
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
 //@ pure
-export function lawUnavailableTransportCannotReplay(approvalPending: boolean, exactDraft: boolean, issuedAt: number, now: number, expiresAt: number): boolean {
-  //@ ensures \result === true
-  return !expectedInviteChallengeCanReplay(false, approvalPending, exactDraft, issuedAt, now, expiresAt);
+export function expectedInviteChallengeCanReplay(transportAvailable: boolean, awaitingConfirmation: boolean, exactDraft: boolean, issuedAt: number, now: number, expiresAt: number): boolean {
+  return transportAvailable && awaitingConfirmation && exactDraft && expectedInviteChallengeLive(issuedAt, now, expiresAt);
 }
 
 /** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
@@ -117,6 +116,13 @@ export function stageExpectedInvite(invite: ExpectedInvite, request: ExpectedInv
   //@ ensures (inv(invite) && canStageExpectedInvite(invite, request)) ==> stepExpectedInviteDeliveriesNeverGoBack(invite, \result)
   //@ ensures (inv(invite) && canStageExpectedInvite(invite, request)) ==> stepExpectedInviteTerminalStatesStayClosed(invite, \result)
   return canStageExpectedInvite(invite, request) ? ({ phase: "Queued", expiresAt: request.expiresAt, deliveries: 0 } as ExpectedInvite) : invite;
+}
+
+/** Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue (spec/expectedMemberInvitation.md) */
+//@ pure
+export function lawUnavailableTransportCannotReplay(approvalPending: boolean, exactDraft: boolean, issuedAt: number, now: number, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return !expectedInviteChallengeCanReplay(false, approvalPending, exactDraft, issuedAt, now, expiresAt);
 }
 
 /** Story: Send an invitation that the recipient expects / One durably claimed dispatch may contact the recipient (spec/expectedMemberInvitation.md) */
@@ -326,12 +332,12 @@ export function enabled(current: ExpectedInvite, event: Event): boolean {
 export function step(current: ExpectedInvite, event: Event): ExpectedInvite {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "stageExpectedInvite" && canStageExpectedInvite(current, event.request)) return stageExpectedInvite(current, event.request);
-  if (event.type === "recordExpectedInviteReceipt" && canRecordExpectedInviteReceipt(current, event.exactPositiveReceipt)) return recordExpectedInviteReceipt(current, event.exactPositiveReceipt);
-  if (event.type === "requeueExpectedInvite" && canRequeueExpectedInvite(current, event.neverAdmitted, event.sameKey)) return requeueExpectedInvite(current, event.neverAdmitted, event.sameKey);
-  if (event.type === "dispatchExpectedInvite" && canDispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload)) return dispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload);
-  if (event.type === "acceptExpectedInvite" && canAcceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed)) return acceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed);
-  if (event.type === "closeExpectedInvite" && canCloseExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined)) return closeExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined);
+  if (event.type === "stageExpectedInvite") return canStageExpectedInvite(current, event.request) ? stageExpectedInvite(current, event.request) : current;
+  if (event.type === "recordExpectedInviteReceipt") return canRecordExpectedInviteReceipt(current, event.exactPositiveReceipt) ? recordExpectedInviteReceipt(current, event.exactPositiveReceipt) : current;
+  if (event.type === "requeueExpectedInvite") return canRequeueExpectedInvite(current, event.neverAdmitted, event.sameKey) ? requeueExpectedInvite(current, event.neverAdmitted, event.sameKey) : current;
+  if (event.type === "dispatchExpectedInvite") return canDispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload) ? dispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload) : current;
+  if (event.type === "acceptExpectedInvite") return canAcceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed) ? acceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed) : current;
+  if (event.type === "closeExpectedInvite") return canCloseExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined) ? closeExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined) : current;
   return current;
 }
 

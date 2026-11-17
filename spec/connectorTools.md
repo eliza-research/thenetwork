@@ -22,7 +22,7 @@ The app registry can disable an otherwise available OpenAI host. Check this sett
 ```quint
 type AppId = Ntwrk | Slop | Peon | Friends
 type Surface = FullSurface | OpenAiSurface
-type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | SubmitProfileTool | GetUpdatesTool
+type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool
 
 pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
 
@@ -48,30 +48,34 @@ pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
 
 ### Public tools need no sign-in, and member tools need the person's own grant
 
-`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` needs its own explicitly authorized profile read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
 
 ```quint
-type Scope = NoScope | MembershipRead | ProfileWrite
+type Scope = NoScope | MembershipRead | ProfileWrite | ProfileRead
 
 pure def scopeFor(tool: ToolName): Scope =
   if (tool == AppInfoTool or tool == StartSignupTool) NoScope
   else if (tool == CheckStatusTool or tool == GetUpdatesTool) MembershipRead
+  else if (tool == ReadProfileTool) ProfileRead
   else ProfileWrite
 
 pure def lawPublicToolsNeedNoSignIn(tool: ToolName): bool =
   (scopeFor(tool) == NoScope) iff (tool == AppInfoTool or tool == StartSignupTool)
 
-pure def grantCovers(tool: ToolName, hasRead: bool, hasWrite: bool): bool =
+pure def grantCovers(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool): bool =
   scopeFor(tool) == NoScope or (scopeFor(tool) == MembershipRead and hasRead) or
-  (scopeFor(tool) == ProfileWrite and hasWrite)
+  (scopeFor(tool) == ProfileWrite and hasWrite) or (scopeFor(tool) == ProfileRead and hasProfileRead)
 
-pure def lawGrantCoversPublicTools(tool: ToolName, hasRead: bool, hasWrite: bool): bool =
-  scopeFor(tool) == NoScope implies grantCovers(tool, hasRead, hasWrite)
+pure def lawGrantCoversPublicTools(tool: ToolName, hasRead: bool, hasWrite: bool, hasProfileRead: bool): bool =
+  scopeFor(tool) == NoScope implies grantCovers(tool, hasRead, hasWrite, hasProfileRead)
+
+pure def lawProfileReadScopeIsSeparate(hasRead: bool, hasWrite: bool): bool =
+  not(grantCovers(ReadProfileTool, hasRead, hasWrite, false))
 ```
 
 ### The member status decides which member tool can act
 
-The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join on the site or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support.
+The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join on the site or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status.
 
 ```quint
 type MemberStatus = NotJoined | Invited | Onboarding | Active | Stopped | OnHold
@@ -79,8 +83,20 @@ type NextStep = JoinOnSite | GetInvitation | AcceptInvitation | ReplyToLastText 
 
 pure def liveMember(status: MemberStatus): bool = status == Active or status == Onboarding
 
+pure def connectorMembershipStatus(storedStatus: str, reviewRequired: bool, optedOut: bool): MemberStatus =
+  if (reviewRequired or storedStatus == "restricted") OnHold
+  else if (storedStatus == "paused") Stopped
+  else if (storedStatus == "active") (if (optedOut) Stopped else Active)
+  else if (storedStatus == "onboarding") (if (optedOut) Stopped else Onboarding)
+  else if (storedStatus == "invited") Invited
+  else NotJoined
+
+pure def lawStoppedMembershipCannotSubmitProfile(storedStatus: str, reviewRequired: bool): bool =
+  not(liveMember(connectorMembershipStatus(storedStatus, reviewRequired, true)))
+
 pure def toolAllowedFor(tool: ToolName, status: MemberStatus): bool =
   if (tool == SubmitProfileTool) liveMember(status)
+  else if (tool == ReadProfileTool) status == Active
   else if (tool == PrepareSignupTool) (status == NotJoined or status == Invited)
   else true
 
@@ -111,12 +127,13 @@ The agent first reaches one host on one surface. The host is fixed before any to
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
 type ToolResult =
   NoResult | PublicFacts | AppNotAvailable | SignInNeeded | StatusShown | ProfileAccepted |
-  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday
+  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday | SavedProfileShown | SavedProfileUnavailable
 type Connection = {
   phase: ConnectionPhase,
   host: AppId,
   surface: Surface,
   hasWrite: bool,
+  hasProfileRead: bool,
   status: MemberStatus,
   profileApproved: bool,
   profileSent: bool,
@@ -128,7 +145,7 @@ type Connection = {
   lastResult: ToolResult
 }
 pure val initial: Connection = {
-  phase: Unbound, host: Ntwrk, surface: FullSurface, hasWrite: false, status: NotJoined,
+  phase: Unbound, host: Ntwrk, surface: FullSurface, hasWrite: false, hasProfileRead: false, status: NotJoined,
   profileApproved: false, profileSent: false, sentToday: 0, draftPrepared: false,
   tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: NoResult
 }
@@ -145,8 +162,8 @@ pure def lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): bool =
 
 pure def canAuthorize(c: Connection): bool = c.phase == Anonymous or c.phase == Revoked
 
-pure def authorize(c: Connection, withWrite: bool): Connection =
-  { ...c, phase: Connected, hasWrite: withWrite, sentToday: 0, draftPrepared: false, lastResult: NoResult }
+pure def authorize(c: Connection, withWrite: bool, withProfileRead: bool): Connection =
+  { ...c, phase: Connected, hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, draftPrepared: false, lastResult: NoResult }
 
 pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
   (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
@@ -158,7 +175,7 @@ pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
   bound(c) and toolListed(c.host, c.surface, tool) and
   ((c.phase == Anonymous and scopeFor(tool) != NoScope) or
    c.phase == Revoked or
-   (c.phase == Connected and scopeFor(tool) == ProfileWrite and not(c.hasWrite)))
+   (c.phase == Connected and not(grantCovers(tool, true, c.hasWrite, c.hasProfileRead))))
 
 pure def callWithoutAccess(c: Connection, tool: ToolName): Connection =
   { ...c, lastResult: SignInNeeded }
@@ -192,11 +209,11 @@ pure def lawOnlyObservedOwnerChangeEndsGrant(available: bool, held: bool, samePe
 pure def canCallAfterOwnerChange(c: Connection): bool = c.phase == Connected
 
 pure def callAfterOwnerChange(c: Connection): Connection =
-  { ...c, phase: Revoked, hasWrite: false, lastResult: SignInNeeded }
+  { ...c, phase: Revoked, hasWrite: false, hasProfileRead: false, lastResult: SignInNeeded }
 
 pure def memberResult(r: ToolResult): bool =
   r == StatusShown or r == ProfileAccepted or r == ProfileNotForStatus or r == DraftSaved or
-  r == DraftRefused or r == UpdatesShown or r == TooManyToday
+  r == DraftRefused or r == UpdatesShown or r == TooManyToday or r == SavedProfileShown or r == SavedProfileUnavailable
 
 pure def alwaysMemberResultsNeedConnection(c: Connection): bool =
   memberResult(c.lastResult) implies c.phase == Connected
@@ -220,9 +237,26 @@ pure def changeMemberStatus(c: Connection, newStatus: MemberStatus): Connection 
   { ...c, status: newStatus }
 ```
 
+### Read saved profile fields only for this app's active member
+
+`read_profile` reads the grant owner's saved first name, about text, interests and general location for this app. The platform rechecks the current phone, member, age, restrictions and app consent. The MCP response includes only safe saved text. It excludes pending drafts, contact details, verification codes, private engine facts and photos. A refused or empty read returns a null profile. The read leaves profile and conversation state unchanged.
+
+```quint
+pure def canCallReadProfile(c: Connection): bool = c.phase == Connected and c.hasProfileRead
+
+pure def callReadProfile(c: Connection, currentMembership: bool, safeFields: bool): Connection =
+  { ...c, lastResult: if (toolAllowedFor(ReadProfileTool, c.status) and currentMembership and safeFields) SavedProfileShown else SavedProfileUnavailable }
+
+pure def stepSavedProfileNeedsReadAuthority(before: Connection, via: str, after: Connection): bool =
+  (after.lastResult == SavedProfileShown and before.lastResult != SavedProfileShown) implies
+    (via == "callReadProfile" and before.phase == Connected and before.hasProfileRead and before.status == Active)
+
+pure def sometimesSavedProfileShown(c: Connection): bool = c.lastResult == SavedProfileShown
+```
+
 ### The agent sends an approved profile once, only for a live member, within the daily limit
 
-The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once; the agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
+The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once. The agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. Check the exact phone owner and any current opt-out again before forwarding a claimed profile to the app. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
 
 ```quint
 pure val profileDailyCap = 5

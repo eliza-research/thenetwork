@@ -359,12 +359,12 @@ export function enabled(current: StaffSignIn, event: Event): boolean {
 export function step(current: StaffSignIn, event: Event): StaffSignIn {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openConsole" && canOpenConsole(current)) return openConsole(current, event.tokenFound);
-  if (event.type === "answerIdentity" && canAnswerIdentity(current, event.grants)) return answerIdentity(current, event.answer, event.viaAccess, event.secondFactorShown, event.grants);
-  if (event.type === "submitToken" && canSubmitToken(current, event.tokenChars)) return submitToken(current, event.tokenChars);
-  if (event.type === "signInAgain" && canSignInAgain(current)) return signInAgain(current);
-  if (event.type === "retryCheck" && canRetryCheck(current)) return retryCheck(current);
-  if (event.type === "endSession" && canEndSession(current)) return endSession(current, event.roleRemoved);
+  if (event.type === "openConsole") return canOpenConsole(current) ? openConsole(current, event.tokenFound) : current;
+  if (event.type === "answerIdentity") return canAnswerIdentity(current, event.grants) ? answerIdentity(current, event.answer, event.viaAccess, event.secondFactorShown, event.grants) : current;
+  if (event.type === "submitToken") return canSubmitToken(current, event.tokenChars) ? submitToken(current, event.tokenChars) : current;
+  if (event.type === "signInAgain") return canSignInAgain(current) ? signInAgain(current) : current;
+  if (event.type === "retryCheck") return canRetryCheck(current) ? retryCheck(current) : current;
+  if (event.type === "endSession") return canEndSession(current) ? endSession(current, event.roleRemoved) : current;
   return current;
 }
 

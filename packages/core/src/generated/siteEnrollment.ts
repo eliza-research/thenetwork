@@ -5,6 +5,8 @@
 export type EnrollmentPhase = "AwaitingAccountView" | "AccountChanged" | "AwaitingProfile" | "InvalidProfile" | "AwaitingConsent" | "ConsentMismatch" | "AwaitingEligibility" | "NeedsReview" | "AwaitingMembership" | "NeedsInvite" | "InvalidInvitation" | "AwaitingAge" | "BelowJoinAge" | "ReturnExisting" | "AwaitingPersistence" | "Created" | "JoinHookFailed";
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 export interface Enrollment { phase: EnrollmentPhase; viewChecked: boolean; validProfile: boolean; currentConsent: boolean; currentEligibility: boolean; rejoin: boolean; invited: boolean; referred: boolean; invalidReferral: boolean; ageAllowed: boolean }
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+export interface JoinConsentEvidence { smsAccepted: boolean; wordingSupplied: boolean; wordingAccepted: boolean; versionSupplied: boolean; versionAccepted: boolean }
 /** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md) */
 export type ReferralFact = "NoReferral" | "InvalidReferral" | "VerifiedReferral";
 /** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md) */
@@ -20,6 +22,8 @@ export type Event =
   | { type: "checkJoinAge"; ageEligible: boolean }
   | { type: "finishJoin"; hookSucceeded: boolean };
 
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+export const completeJoinConsent: JoinConsentEvidence = { smsAccepted: true, wordingSupplied: true, wordingAccepted: true, versionSupplied: true, versionAccepted: true };
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 export const initial: Enrollment = { phase: "AwaitingAccountView", viewChecked: false, validProfile: false, currentConsent: false, currentEligibility: false, rejoin: false, invited: false, referred: false, invalidReferral: false, ageAllowed: false };
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
@@ -67,6 +71,12 @@ export function checkAccountView(joining: Enrollment, viewMatches: boolean): Enr
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
 //@ pure
+export function joinConsentEvidenceAllowed(evidence: JoinConsentEvidence): boolean {
+  return evidence.smsAccepted && (evidence.wordingSupplied || evidence.versionSupplied) && (!evidence.wordingSupplied || evidence.wordingAccepted) && (!evidence.versionSupplied || evidence.versionAccepted);
+}
+
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+//@ pure
 export function canDecodeProfile(joining: Enrollment): boolean {
   return joining.phase === "AwaitingProfile" && joining.viewChecked;
 }
@@ -78,6 +88,13 @@ export function decodeProfile(joining: Enrollment, decoded: boolean): Enrollment
   //@ ensures (inv(joining) && canDecodeProfile(joining)) ==> alwaysExistingMembershipStaysExisting(\result)
   //@ ensures (inv(joining) && canDecodeProfile(joining)) ==> alwaysReferralOnlyOnNewMembership(\result)
   return { ...joining, validProfile: decoded, phase: decoded ? "AwaitingConsent" : "InvalidProfile" };
+}
+
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+//@ pure
+export function lawEverySuppliedJoinConsentFieldMustAgree(evidence: JoinConsentEvidence): boolean {
+  //@ ensures \result === true
+  return !((evidence.wordingSupplied && !evidence.wordingAccepted) || (evidence.versionSupplied && !evidence.versionAccepted)) || !joinConsentEvidenceAllowed(evidence);
 }
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
@@ -263,13 +280,13 @@ export function enabled(current: Enrollment, event: Event): boolean {
 export function step(current: Enrollment, event: Event): Enrollment {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkAccountView" && canCheckAccountView(current)) return checkAccountView(current, event.viewMatches);
-  if (event.type === "decodeProfile" && canDecodeProfile(current)) return decodeProfile(current, event.decoded);
-  if (event.type === "confirmConsent" && canConfirmConsent(current)) return confirmConsent(current, event.consentMatches);
-  if (event.type === "checkEligibility" && canCheckEligibility(current)) return checkEligibility(current, event.eligible);
-  if (event.type === "checkMembership" && canCheckMembership(current)) return checkMembership(current, event.membershipFacts);
-  if (event.type === "checkJoinAge" && canCheckJoinAge(current)) return checkJoinAge(current, event.ageEligible);
-  if (event.type === "finishJoin" && canFinishJoin(current)) return finishJoin(current, event.hookSucceeded);
+  if (event.type === "checkAccountView") return canCheckAccountView(current) ? checkAccountView(current, event.viewMatches) : current;
+  if (event.type === "decodeProfile") return canDecodeProfile(current) ? decodeProfile(current, event.decoded) : current;
+  if (event.type === "confirmConsent") return canConfirmConsent(current) ? confirmConsent(current, event.consentMatches) : current;
+  if (event.type === "checkEligibility") return canCheckEligibility(current) ? checkEligibility(current, event.eligible) : current;
+  if (event.type === "checkMembership") return canCheckMembership(current) ? checkMembership(current, event.membershipFacts) : current;
+  if (event.type === "checkJoinAge") return canCheckJoinAge(current) ? checkJoinAge(current, event.ageEligible) : current;
+  if (event.type === "finishJoin") return canFinishJoin(current) ? finishJoin(current, event.hookSucceeded) : current;
   return current;
 }
 

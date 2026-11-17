@@ -345,10 +345,10 @@ export function enabled(current: CandidateSearch, event: Event): boolean {
 export function step(current: CandidateSearch, event: Event): CandidateSearch {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginSearch" && canBeginSearch(current, event.limit, event.budget)) return beginSearch(current, event.limit, event.budget);
-  if (event.type === "checkCandidate" && canCheckCandidate(current, event.ordinal)) return checkCandidate(current, event.value, event.ordinal);
-  if (event.type === "closeExact" && canCloseExact(current, event.unseenBound)) return closeExact(current, event.unseenBound);
-  if (event.type === "closeBudgeted" && canCloseBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft)) return closeBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft);
+  if (event.type === "beginSearch") return canBeginSearch(current, event.limit, event.budget) ? beginSearch(current, event.limit, event.budget) : current;
+  if (event.type === "checkCandidate") return canCheckCandidate(current, event.ordinal) ? checkCandidate(current, event.value, event.ordinal) : current;
+  if (event.type === "closeExact") return canCloseExact(current, event.unseenBound) ? closeExact(current, event.unseenBound) : current;
+  if (event.type === "closeBudgeted") return canCloseBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft) ? closeBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft) : current;
   return current;
 }
 

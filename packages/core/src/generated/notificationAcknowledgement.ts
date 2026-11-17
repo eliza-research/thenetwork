@@ -1,6 +1,8 @@
 // GENERATED from spec/notificationAcknowledgement.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+export type NetworkTextProjection = "SkipRecordedText" | "ProjectOpportunityText" | "ProjectUnboundText";
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export type AcknowledgementPhase = "AcknowledgementStarting" | "AwaitingReadToken" | "MarkingInboxSeen" | "InboxSeen" | "NoInboxRead" | "DeliveryUnchanged" | "DeliveryActed";
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
@@ -14,6 +16,12 @@ export type Event =
   | { type: "recordInboxSeen" }
   | { type: "readDeliveryClosure"; deliveryClosed: boolean };
 
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+export const threadUpdateCommand: string = "updates";
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+export const threadUpdatePageSize: number = 3;
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+export const networkTextSummaryLimit: number = 500;
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export const initial: AcknowledgementFlow = { phase: "AcknowledgementStarting" };
 
@@ -36,10 +44,30 @@ export function lawScopedReadRequiresAppMatch(sameApp: boolean): boolean {
   return !appAllowsInboxItem(true, sameApp) || sameApp;
 }
 
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+//@ pure
+export function mayShowThreadUpdate(sharedLine: boolean, sameRoutedApp: boolean, activeAppOwner: boolean): boolean {
+  return activeAppOwner && appAllowsInboxItem(!sharedLine, sameRoutedApp);
+}
+
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawDedicatedThreadCannotShowAnotherApp(sameRoutedApp: boolean, activeAppOwner: boolean): boolean {
+  //@ ensures \result === true
+  return !mayShowThreadUpdate(false, sameRoutedApp, activeAppOwner) || sameRoutedApp;
+}
+
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: boolean, activeAppOwner: boolean): boolean {
+  //@ ensures \result === true
+  return !mayShowThreadUpdate(true, sameRoutedApp, activeAppOwner) || activeAppOwner;
+}
+
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
-export function inboxOpportunityTerminal(opportunityStatus: string): boolean {
-  return opportunityStatus === "COMPLETED" || opportunityStatus === "FEEDBACK_COLLECTED" || opportunityStatus === "DECLINED" || opportunityStatus === "EXPIRED" || opportunityStatus === "CANCELLED" || opportunityStatus === "SKIPPED" || opportunityStatus === "ABANDONED" || opportunityStatus === "QUORUM_FAILED";
+export function networkTextCanProduceInboxItem(system: boolean, messageType: string): boolean {
+  return !system && (messageType === "probe" || messageType === "plan_probe" || messageType === "proposal" || messageType === "reminder" || messageType === "feedback_request" || messageType === "cancellation" || messageType === "scheduling");
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
@@ -50,14 +78,21 @@ export function networkTextDeliveryKey(messageId: string, opportunityId: string)
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
-export function networkTextProjectionNeeded(deliveryRecorded: boolean): boolean {
-  return !deliveryRecorded;
+export function inboxOpportunityTerminal(opportunityStatus: string): boolean {
+  return opportunityStatus === "COMPLETED" || opportunityStatus === "FEEDBACK_COLLECTED" || opportunityStatus === "DECLINED" || opportunityStatus === "EXPIRED" || opportunityStatus === "CANCELLED" || opportunityStatus === "SKIPPED" || opportunityStatus === "ABANDONED" || opportunityStatus === "QUORUM_FAILED";
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
-export function inboxOpportunityAllowsUpdate(bound: boolean, found: boolean, opportunityStatus: string): boolean {
-  return !bound || (found && !inboxOpportunityTerminal(opportunityStatus));
+export function networkTextProjection(deliveryRecorded: boolean, opportunityBound: boolean): NetworkTextProjection {
+  return deliveryRecorded ? "SkipRecordedText" : (opportunityBound ? "ProjectOpportunityText" : "ProjectUnboundText");
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawSystemTextProducesNoInboxItem(messageType: string): boolean {
+  //@ ensures \result === true
+  return !networkTextCanProduceInboxItem(true, messageType);
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
@@ -76,9 +111,15 @@ export function lawEachNewTextKeepsItsOwnKey(firstMessage: string, laterMessage:
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
-export function lawRecordedTextIsNotProjectedAgain(deliveryRecorded: boolean): boolean {
+export function inboxOpportunityAllowsUpdate(bound: boolean, found: boolean, opportunityStatus: string): boolean {
+  return !bound || (found && !inboxOpportunityTerminal(opportunityStatus));
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawRecordedTextHasNoNewProjection(opportunityBound: boolean): boolean {
   //@ ensures \result === true
-  return networkTextProjectionNeeded(deliveryRecorded) === !deliveryRecorded;
+  return networkTextProjection(true, opportunityBound) === "SkipRecordedText";
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
@@ -103,9 +144,22 @@ export function mayRedeemInboxToken(sameOwner: boolean, expiresAt: number, at: n
 
 /** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
 //@ pure
+export function inboxTokenMayRecordRedemption(matchingLiveItems: number): boolean {
+  return matchingLiveItems > 0;
+}
+
+/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
+//@ pure
 export function lawInboxTokenExpiresAtDeadline(expiresAt: number): boolean {
   //@ ensures \result === true
   return !mayRedeemInboxToken(true, expiresAt, expiresAt);
+}
+
+/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawNoMatchingAppItemsMeansNoRedemption(matchingLiveItems: number): boolean {
+  //@ ensures \result === true
+  return !(matchingLiveItems <= 0) || !inboxTokenMayRecordRedemption(matchingLiveItems);
 }
 
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
@@ -213,11 +267,11 @@ export function enabled(current: AcknowledgementFlow, event: Event): boolean {
 export function step(current: AcknowledgementFlow, event: Event): AcknowledgementFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "selectInboxRead" && canSelectInboxRead(current)) return selectInboxRead(current, event.withToken);
-  if (event.type === "resolveInboxReadToken" && canResolveInboxReadToken(current)) return resolveInboxReadToken(current, event.valid);
-  if (event.type === "selectShownSubjects" && canSelectShownSubjects(current)) return selectShownSubjects(current, event.hasVisibleItems);
-  if (event.type === "recordInboxSeen" && canRecordInboxSeen(current)) return recordInboxSeen(current);
-  if (event.type === "readDeliveryClosure" && canReadDeliveryClosure(current)) return readDeliveryClosure(current, event.deliveryClosed);
+  if (event.type === "selectInboxRead") return canSelectInboxRead(current) ? selectInboxRead(current, event.withToken) : current;
+  if (event.type === "resolveInboxReadToken") return canResolveInboxReadToken(current) ? resolveInboxReadToken(current, event.valid) : current;
+  if (event.type === "selectShownSubjects") return canSelectShownSubjects(current) ? selectShownSubjects(current, event.hasVisibleItems) : current;
+  if (event.type === "recordInboxSeen") return canRecordInboxSeen(current) ? recordInboxSeen(current) : current;
+  if (event.type === "readDeliveryClosure") return canReadDeliveryClosure(current) ? readDeliveryClosure(current, event.deliveryClosed) : current;
   return current;
 }
 

@@ -23,7 +23,7 @@ pure def lawCalendarNeedsBookingNotice(currentAdult: bool, scheduled: bool, conf
 
 ### A calendar link follows the booked revision and the current owner
 
-The signed reply and the app-scoped download grant commit together. The link expires after 15 minutes or at the meeting start, whichever comes first. Recheck the phone, member, opt-in, booking and exact start and revision on each download and replay. The owner is current only when the grant's phone still owns the same active, opted-in adult membership. The file contains the public time and venue. It has no guest list, contact details, or private context.
+The signed reply and the app-scoped download grant commit together. The link expires after 15 minutes or at the meeting start, whichever comes first. Recheck the phone, member, opt-in, booking and exact start and revision on each download and replay. The owner is current only while the grant's phone owns the same active, opted-in adult membership. The file contains the public time and venue. It has no guest list, contact details, or private context.
 
 ```quint
 pure val calendarInviteLifetimeMs = 15 * 60000

@@ -25,9 +25,11 @@ for its current exact owner, link, recipient and unconfirmed draft. Its
 expiry and the same carrier checks still apply. Check current recipient
 eligibility and suppression at confirmation. A recipient
 gets at most one service invitation in the rolling invitation window, even
-across apps. The first-contact fact is true only when this recipient holds
-no other service invitation reservation in that window and has not declined. Commit the delivery key and recipient binding together with
-the existing invitation under the same concurrency controls.
+across apps. The recipient must have no live reservation in that window
+and must not have declined. Check transport and the current challenge
+before reserving the recipient. Commit the delivery key and recipient
+binding together with the existing invitation under the same concurrency
+controls.
 The member sees the same response when private recipient facts prevent
 contact. Do not tell the member another person's membership status.
 
@@ -76,13 +78,15 @@ pure def expectedInviteLive(now: int, expiresAt: int): bool = now >= 0 and now <
 pure def expectedInviteChallengeCurrent(issuedAt: int, now: int): bool =
   MemberInvite::memberInviteDraftCurrent(now - issuedAt)
 
+pure def expectedInviteChallengeLive(issuedAt: int, now: int, expiresAt: int): bool =
+  expectedInviteChallengeCurrent(issuedAt, now) and expectedInviteLive(now, expiresAt)
+
 pure def expectedInviteTransportAllows(carrierAcceptsFirstContact: bool, liveApproved: bool): bool =
   carrierAcceptsFirstContact and liveApproved
 
 pure def expectedInviteChallengeCanReplay(transportAvailable: bool, awaitingConfirmation: bool,
   exactDraft: bool, issuedAt: int, now: int, expiresAt: int): bool =
-  transportAvailable and awaitingConfirmation and exactDraft and
-    expectedInviteChallengeCurrent(issuedAt, now) and expectedInviteLive(now, expiresAt)
+  transportAvailable and awaitingConfirmation and exactDraft and expectedInviteChallengeLive(issuedAt, now, expiresAt)
 
 pure def lawUnavailableTransportCannotReplay(approvalPending: bool, exactDraft: bool, issuedAt: int, now: int, expiresAt: int): bool =
   not(expectedInviteChallengeCanReplay(false, approvalPending, exactDraft, issuedAt, now, expiresAt))
@@ -111,7 +115,7 @@ pure def lawExpectedInviteNeedsCurrentReview(request: ExpectedInviteRequestFacts
 pure def lawExpectedInviteNeedsAnEligibleFirstContact(request: ExpectedInviteRequestFacts): bool =
   expectedInviteMayStage(request) implies (request.recipientAllowed and request.firstContact)
 
-pure def lawExpectedInviteNeedsLiveTransportAndCurrentChallenge(request: ExpectedInviteRequestFacts): bool =
+pure def lawExpectedInviteNeedsLiveTransportAndChallenge(request: ExpectedInviteRequestFacts): bool =
   expectedInviteMayStage(request) implies (request.transportAvailable and request.challengeCurrent)
 ```
 

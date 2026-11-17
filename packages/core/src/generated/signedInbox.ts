@@ -65,9 +65,9 @@ export function recordClaim(turn: SignedInbox, inserted: boolean, senderLock: bo
 
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 //@ pure
-export function lawClaimRunsOnlyUnderLockAndOpenAdmission(inserted: boolean, senderLock: boolean, admissionOpen: boolean): boolean {
+export function lawOnlyOpenClaimCanRun(inserted: boolean, senderLock: boolean, admissionOpen: boolean): boolean {
   //@ ensures \result === true
-  return !(recordClaim(({ phase: "Claiming" } as SignedInbox), inserted, senderLock, admissionOpen).phase === "RunningTurn") || (inserted && senderLock && admissionOpen);
+  return !(recordClaim(initial, inserted, senderLock, admissionOpen).phase === "RunningTurn") || (inserted && senderLock && admissionOpen);
 }
 
 /** Story: Handle each signed message once without delaying consent / A replay must match a stored request (spec/signedInbox.md) */
@@ -92,6 +92,12 @@ export function lawChangedRequestConflicts(responseAvailable: boolean, processin
 
 /** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
 //@ pure
+export function firstContactNoticeInResponse(exactReplyIncluded: boolean, underageDecline: boolean): boolean {
+  return exactReplyIncluded && !underageDecline;
+}
+
+/** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
+//@ pure
 export function canRecordCompletion(turn: SignedInbox): boolean {
   return turn.phase === "RunningTurn";
 }
@@ -101,6 +107,13 @@ export function canRecordCompletion(turn: SignedInbox): boolean {
 export function recordCompletion(turn: SignedInbox, saved: boolean): SignedInbox {
   //@ ensures (inv(turn) && canRecordCompletion(turn)) ==> stepRetryNeedsReleasedClaim(turn, "recordCompletion", \result)
   return saved ? ({ phase: "Finished" } as SignedInbox) : turn;
+}
+
+/** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
+//@ pure
+export function lawDeclineCannotSpendFirstContactNotice(exactReplyIncluded: boolean): boolean {
+  //@ ensures \result === true
+  return !firstContactNoticeInResponse(exactReplyIncluded, true);
 }
 
 /** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
@@ -160,6 +173,19 @@ export function sometimesCanRetryCompliance(turn: SignedInbox): boolean {
   return turn.phase === "RetryCompliance";
 }
 
+/** Story: Handle each signed message once without delaying consent / A member command commits its result and its exact reply together (spec/signedInbox.md) */
+//@ pure
+export function atomicMemberReplyMatches(expected: string, actual: string, count: number, directReply: boolean): boolean {
+  return expected === actual && count === 1 && directReply;
+}
+
+/** Story: Handle each signed message once without delaying consent / A member command commits its result and its exact reply together (spec/signedInbox.md) */
+//@ pure
+export function lawAtomicMemberReplyNeedsExactKind(expected: string, actual: string, count: number, directReply: boolean): boolean {
+  //@ ensures \result === true
+  return !atomicMemberReplyMatches(expected, actual, count, directReply) || (expected === actual && count === 1 && directReply);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: SignedInbox, event: Event): boolean {
@@ -177,12 +203,12 @@ export function enabled(current: SignedInbox, event: Event): boolean {
 export function step(current: SignedInbox, event: Event): SignedInbox {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordClaim" && canRecordClaim(current)) return recordClaim(current, event.inserted, event.senderLock, event.admissionOpen);
-  if (event.type === "readPrior" && canReadPrior(current)) return readPrior(current, event.rowPresent, event.sameRequest, event.responseAvailable, event.processing);
-  if (event.type === "recordCompletion" && canRecordCompletion(current)) return recordCompletion(current, event.saved);
-  if (event.type === "handleFailure" && canHandleFailure(current)) return handleFailure(current, event.compliance);
-  if (event.type === "checkRescue" && canCheckRescue(current)) return checkRescue(current, event.processing, event.effectCommitted);
-  if (event.type === "recordRescue" && canRecordRescue(current)) return recordRescue(current, event.changed);
+  if (event.type === "recordClaim") return canRecordClaim(current) ? recordClaim(current, event.inserted, event.senderLock, event.admissionOpen) : current;
+  if (event.type === "readPrior") return canReadPrior(current) ? readPrior(current, event.rowPresent, event.sameRequest, event.responseAvailable, event.processing) : current;
+  if (event.type === "recordCompletion") return canRecordCompletion(current) ? recordCompletion(current, event.saved) : current;
+  if (event.type === "handleFailure") return canHandleFailure(current) ? handleFailure(current, event.compliance) : current;
+  if (event.type === "checkRescue") return canCheckRescue(current) ? checkRescue(current, event.processing, event.effectCommitted) : current;
+  if (event.type === "recordRescue") return canRecordRescue(current) ? recordRescue(current, event.changed) : current;
   return current;
 }
 

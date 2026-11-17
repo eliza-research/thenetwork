@@ -147,11 +147,11 @@ export function enabled(current: SharedContext, event: Event): boolean {
 export function step(current: SharedContext, event: Event): SharedContext {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkAccount" && canCheckAccount(current)) return checkAccount(current, event.canReadAccount);
-  if (event.type === "checkMembership" && canCheckMembership(current)) return checkMembership(current, event.exactMember);
-  if (event.type === "checkMember" && canCheckMember(current)) return checkMember(current, event.memberAndModeExist);
-  if (event.type === "checkLabels" && canCheckLabels(current)) return checkLabels(current, event.labelsSafe);
-  if (event.type === "checkFacets" && canCheckFacets(current)) return checkFacets(current, event.facetCount, event.oversized);
+  if (event.type === "checkAccount") return canCheckAccount(current) ? checkAccount(current, event.canReadAccount) : current;
+  if (event.type === "checkMembership") return canCheckMembership(current) ? checkMembership(current, event.exactMember) : current;
+  if (event.type === "checkMember") return canCheckMember(current) ? checkMember(current, event.memberAndModeExist) : current;
+  if (event.type === "checkLabels") return canCheckLabels(current) ? checkLabels(current, event.labelsSafe) : current;
+  if (event.type === "checkFacets") return canCheckFacets(current) ? checkFacets(current, event.facetCount, event.oversized) : current;
   return current;
 }
 

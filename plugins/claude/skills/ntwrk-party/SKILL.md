@@ -1,21 +1,19 @@
 ---
 name: ntwrk-party
-description: "Helps a person join ntwrk.party in their own agent conversation: draft their general profile, verify their own phone with a genuine texted code, and save the approved profile through the existing site API. Requires direct HTTPS and a private cookie session; no plugin or connector installation. Also explains eligibility, privacy and text controls."
+description: "Helps a person join ntwrk.party: draft and approve a profile in their own agent, verify their phone and choose connector access in their browser, then record the approved profile through the app's connector."
 license: Proprietary. Terms at https://ntwrk.party/terms
-compatibility: Direct HTTPS GET and POST to https://ntwrk.party and private cookie storage in the agent's existing tools. Use the runtime's normal network transport and approval process. Never install tools or change security settings.
+compatibility: The client must support this app's native connector OAuth handoff. Public app facts come from https://ntwrk.party/api/app.
 metadata:
   app: ntwrk
   site: https://ntwrk.party
   operator: Eliza Research Corporation
-  version: "1.2.6"
+  version: "1.3.0"
 ---
 
 # The Network
 
-If the person asks you to read this file and follow it, they want to join: start
-the flow below. If they ask only for an explanation, explain without starting signup.
-Do it in this conversation using your existing HTTP tools. No plugin, connector,
-MCP setup, developer settings or new account with the agent provider is required.
+If the person asks you to read this file and follow it, start signup. If they ask
+only for an explanation, explain without starting signup.
 
 ## Talk like a person
 
@@ -30,139 +28,65 @@ Anyone 13 or older may join; matching and introductions are for adults 18 and ol
 It asks before any introduction. A saved general profile does not enroll the person
 in another app or start matching.
 
-## Existing HTTPS capability
+## Join with your agent and browser
 
-Use only https://ntwrk.party/ as this skill's site origin. Every API path below
-is relative to it. Keep phone numbers, codes, cookies and exports off other origins.
-Do not follow an API redirect carrying credentials or submit another person's data.
-
-Use an existing HTTP/command tool with the runtime's normal network transport.
-If normal execution requires approval, use that supported approval process and
-respect its decision. Do not disable the environment's configured transport,
-clear its proxy settings, add a proxy, impersonate a browser, install anything,
-or change network/security settings. Identify the application honestly with:
-
-`User-Agent: TheNetworkAgent/1.0`
-
-Send JSON POST bodies with `Content-Type: application/json`. Use a private cookie
-jar for this exact site: `~/.network/<exact-site-hostname>/session.cookies`
-(private directory 0700, file 0600), or an equivalently private persistent tool
-session if no filesystem is available. Preserve only the exact origin and private
-store path in working notes or compaction summaries, never the credential values.
-On resume, use that store and check `/api/me` before asking for another code.
-Reuse a valid session; save updated cookies after responses.
-Never place session credentials in the conversation, public files, a repository,
-long-term model memory, URLs or logs. Never borrow browser or another app's cookies.
-
-Capture status, response body and cookies from ONE request. Never repeat a POST
-just to obtain its body. Do not use `curl -i` or dump headers/raw exports to output.
-Parse privately and show the person only the next step or the verified result.
-A timeout after a write is ambiguous: check existing state before attempting it again.
-
-Signup and sign-in happen only in the person's current agent conversation.
-Do not send them to a website Join page, another assistant, connector settings,
-or a text conversation to finish signup. The person receives a verification text
-and enters its code here; they must never have to send a text to receive a code.
-If existing tools cannot perform HTTPS POST and retain a private session under
-this client's default permissions, explain that signup cannot currently finish <!-- agentSignup: chooseTransport -->
-in this agent. Perform this check first and stop before asking for a profile, a number or a code. Never claim that reading
-this skill grants tools, permissions or a session. Do not change security settings,
-use a different origin, or pretend signup/profile saving succeeded.
-Do not ask the person to change a domain allowlist, enable tools, install anything,
-or adjust permissions as a signup step. In an ordinary signup request, state the
-unsupported capability simply: "Signup isn't supported in this agent yet."
-Give technical diagnostics only when the person explicitly asks for them.
-
-## A forwarded invitation
-
-If the person supplies a link starting with `https://ntwrk.party/SKILL.md#invite=`,
-it can attribute their new membership to the member who forwarded it. Fetch only
-the `/SKILL.md` path. Keep the 43-character invitation value from the fragment
-private and only for this signup. Ask if the person wants to use the invitation
-when you ask for their approval of the profile and text consent. Never repeat the
-link or value in your reply, logs or stored notes. Never ask for a link after the
-site shows an existing membership. The invitation does not replace phone
-verification, age eligibility or consent.
-
-## Join in this conversation
-
-1. GET `/api/app`. Confirm `id` is `ntwrk`. Keep the returned `consent.text` and <!-- agentSignup: readAppFacts -->
-   `consent.version` for this signup; do not invent or reuse another app's wording.
-   Respect `joinMode`, `minJoinAge` and `minMatchAge`. If the person is below the
-   join age, explain that and stop before collecting their number.
-2. Draft the profile from confirmed facts: first name, explicitly stated age, <!-- agentSignup: draftProfile -->
-   home city/region and neighbourhood, interests, availability, and what kinds
-   of connection they want: friends, dating or work. Never choose for them.
-   Ask only what is missing, one or two questions at a time. Show a short draft
-   for approval. Keep this a general profile; leave out private app-specific details intended for a
-   separate app. Their stated interests do not authorize joining other apps.
-3. Explain that joining accepts recurring texts, with variable frequency and <!-- agentSignup: decideApproval -->
-   possible message/data rates, STOP to stop and HELP for help. Link the
-   [text terms](https://ntwrk.party/terms#sms), [Terms](https://ntwrk.party/terms)
-   and [privacy policy](https://ntwrk.party/privacy). Obtain explicit approval
-   for this exact profile and text consent before the Join request. If approval
-   is missing, do not submit it. Never infer consent from a code or a draft.
-4. If a private session for this site already exists, GET `/api/me` first. <!-- agentSignup: checkSession readAuthMode -->
-   Otherwise, or after a 401, GET `/api/auth/mode` before asking for a number.
-   Continue only for `mode: "otp"`. If another mode is required, explain that
-   direct sign-in is unavailable and stop before asking for a number. Do not offer
-   a website fallback. Ask for their own mobile number only in OTP mode. Do not
-   infer a number from contacts or past conversations.
-5. With the number the person provided, POST `/api/auth/otp/start` once: <!-- agentSignup: startCode -->
-   `{"phone":"<their own number in E.164>"}`. A 200/`ok:true` means a code was
-   requested, not that verification succeeded. Ask for the genuine texted code.
-   Never invent, brute-force or automatically resend codes. If the site requires
-   a security check unavailable in this agent, stop and explain the limitation;
-   do not offer a website signup or fake a token.
-6. POST `/api/auth/otp/verify` exactly once with `phone` and the code the person <!-- agentSignup: checkCode -->
-   supplied. Keep the code out of files and output; retain only the returned
-   session cookie in the private jar. On rejection explain it; only the person
-   can authorize a new code request. On success, GET `/api/me` with that jar.
-7. Check the reply and confirm its app is ntwrk; never submit across apps. <!-- agentSignup: readAccount -->
-   If a membership already exists in a state other than `invited`, use the
-   existing account. The Join request does not update existing profiles. Read
-   the existing account as described below and report its actual state. Do not
-   claim a newly drafted profile was saved over an existing membership.
-8. For a new membership, continue after `canJoin:true`. If the reply has <!-- agentSignup: joinApp -->
-   `canJoin:false` and `reason:"invite_only"`, continue only when the person
-   provided and approved an invitation for this exact app. For any other
-   refusal, explain the next step and stop.
-   Require explicit profile and text-consent approval from step 3. POST
-   `/api/join` once with the approved
-   fields, the latest `/api/me` `signupView` when present, and current consent:
-   `firstName`, integer `age`, `neighborhood`, `homeCity` (`sf` or `nyc`
-   from the confirmed supported region), optional `interests` (up to 20 short strings), and `about`
-   containing the complete approved general profile (at most 1000 characters).
-   Always set `homeCity` from the confirmed supported region: an explicit Bay Area,
-   SF or San Francisco means the service’s `sf` region bucket; an explicit NYC,
-   New York or New York City means `nyc`. This is a region bucket, not a claim that
-   someone in the Bay Area lives in San Francisco city. Preserve their actual
-   neighbourhood wording separately. Do not omit `homeCity` or rely on a default,
-   even when the neighbourhood string includes a region or state. If the region
-   is missing/ambiguous, ask. Do not infer it from a ZIP or neighbourhood, or select
-   an incorrect supported region for someone elsewhere.
-   Use `consent:{"sms":true,"version":"<current consent.version>","wording":"<current consent.text>"}`.
-   Include `inviteToken` in that JSON body only when the person supplied and
-   approved the exact app's invitation. If the site returns `invalid_invitation`,
-   say the invitation is unavailable. Do not submit again without the person's
-   approval for a new link or, where joining is open, an ordinary join.
-   Never send placeholders or guessed fields. Do not silently omit the profile.
-9. After Join succeeds, GET `/api/me` again, then GET `/api/me/export` using the <!-- agentSignup: readBack -->
-   SAME private session. The export is this person's own app data: parse it in
-   memory, never print/store the raw export or expose identifiers/phone numbers.
-   Check `app`, `membership.firstName`, `membership.state` and
-   `membership.profile` against the approved submitted fields, including `about`.
-   Also compare the returned `/api/me` `home.homeCity` and the stored profile’s
-   `homeCity` with that confirmed region bucket. A matching biography with the
-   wrong home city is NOT a successful profile save.
-   `/api/me` alone does NOT return the full profile. If readback differs, report
-   the discrepancy; do not claim it saved or repeat Join to try to overwrite it.
-10. For verified signup and matching persisted fields, say briefly that signup
-    and the profile are saved, and read back the approved facts in ordinary words.
-    Never claim matching or invitations started without separate evidence.
-    Keep using the private session for later authorized reads in this chat; if
-    it expires, authenticate again. Never promise it survives a new chat unless
-    the agent actually has access to its private session store there.
+1. Check that this client can run the native OAuth flow for this app's connector. <!-- agentSignup: chooseTransport -->
+   Its endpoint is `https://ntwrk.party/mcp` or `https://ntwrk.party/mcp/openai` for a supported OpenAI client.
+   If the required connector cannot be used, say “Signup isn't supported in this
+   agent yet.” Stop before asking for a profile. Reading this file does not give
+   you tools or access. Use the client's supported authorization flow.
+2. Read the public app facts at `https://ntwrk.party/api/app` without credentials. <!-- agentSignup: readAppFacts -->
+   Confirm `id` is `ntwrk`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
+   and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
+   these facts.
+3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
+   stop below 13. Tell people aged 13–17 that introductions and matching are for
+   adults 18 and older. Draft their confirmed first name, age and home region.
+   Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
+   separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
+   or ZIP code or pick an incorrect region.
+   Draft a general profile with interests, availability and the kinds of connections
+   they want: friends, dating or work. Keep separate app details out. These
+   interests do not enroll the person in another app.
+4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
+   recurring texts, variable frequency, possible message and data rates, STOP
+   and HELP. Link the [text terms](https://ntwrk.party/terms#sms),
+   [Terms](https://ntwrk.party/terms) and [Privacy Policy](https://ntwrk.party/privacy).
+   Get explicit approval of this exact draft and consent before continuing.
+   If they change a detail, read back the updated version and ask again.
+5. Use the client's native connector authorization and show the one link it <!-- agentSignup: offerHandoff -->
+   supplies. Send it unchanged. Do not construct an authorization or signup URL,
+   start a phone check, or ask for a phone number, verification code, token or
+   browser cookie. The person handles all credentials in their own browser.
+6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
+   session. For an eligible new membership, choose **Finish signup** there and
+   review the same name, age, home region and current text consent.
+   The Network is invitation-only. The browser checks any invitation assigned to
+   the verified phone or the forwarded invitation the person provides.
+   If they want to use a forwarded invitation, they keep the original link
+   private and enter the invitation in the app's browser if asked. Do not copy
+   its secret into the conversation, an authorization link, or a tool call.
+   After enrollment, the person separately chooses whether to **Allow** the
+   requested connector access. Get their confirmation that they completed
+   signup for the exact approved details and returned to the current same-app
+   connector. An existing membership goes to the status check below. If the
+   person changed the approved details, cannot confirm signup or authorization,
+   or sees a refusal, stop and report the actual result.
+7. Use the authorized connector's `check_status` and confirm its app is ntwrk. <!-- agentSignup: checkSiteStatus -->
+   If the browser recognized an existing membership, report its current status.
+   Do not enroll them again or replace their profile. Stop for
+   `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app. For a new
+   signup confirmed in the browser, only `onboarding` or `active` allows the
+   approved draft to be submitted. Never submit across apps.
+8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
+   profile as `about` (10–1200 characters). Do not include credentials, invitation
+   secrets or details from another app. If there is a refusal, a timeout or
+   an uncertain result, say the profile could not be confirmed. Do not resend it.
+9. With `submitted: true` for this app and this call, confirm that the same <!-- agentSignup: confirmProfile -->
+   connector still returns this app and an `onboarding` or `active` status.
+   Then report that the approved profile was recorded. Otherwise report an
+   unconfirmed save. Do not claim matching, an introduction or a profile update
+   in another app.
 
 ## Safety, privacy and account controls
 

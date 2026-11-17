@@ -74,7 +74,7 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
     const hours = command.hours;
     if (!hours) return "Use whole local hours, like ‘quiet hours 10 pm to 8 am’ or ‘quiet hours 22:00 to 08:00’.";
     patch = { quietHours: hours };
-    reply = quietHoursEmpty(hours[0], hours[1]) ? "Quiet hours are off for this app." : `Quiet hours are ${displayHour(hours[0])} to ${displayHour(hours[1])} local time for this app.`;
+    reply = quietHoursEmpty(...hours) ? "Quiet hours are off for this app." : `Quiet hours are ${displayHour(hours[0])} to ${displayHour(hours[1])} local time for this app.`;
   } else {
     const { category, enable } = command;
     const age = category === "romance" && enable ? await accounts.lowestAge(e164, binding.person) : undefined;

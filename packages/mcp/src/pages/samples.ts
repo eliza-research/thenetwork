@@ -1,5 +1,5 @@
 import { defaultApps, type McpApp } from "../apps.ts";
-import { codePage, consentPage, consentsPage, messagePage, type MessageTitle, phonePage } from "../pages.ts";
+import { codePage, consentPage, consentsPage, messagePage, type MessageTitle, phonePage, signupPage } from "../pages.ts";
 import { SCOPES, type Grant } from "../store.ts";
 
 /** A connector page with fictional data, named for the design preview. */
@@ -21,6 +21,12 @@ export const samplePages: SamplePage[] = [
   { name: "Code", render: app => codePage(app, "preview", "0123") },
   { name: "Code: not accepted", render: app => codePage(app, "preview", "0123", { error: "That code did not work. Check the newest text and try again." }) },
   { name: "Consent", render: app => consentPage(app, "preview", "Your assistant", "assistant.example", "https://assistant.example", [...SCOPES]) },
+  { name: "Consent: finish signup", render: app => consentPage(app, "preview", "Your assistant", "assistant.example", "https://assistant.example", [...SCOPES], { canSignup: true }) },
+  { name: "Signup", render: app => signupPage(app, "preview", {
+    consent: { text: "I agree to receive recurring text messages. Reply STOP to stop and HELP for help.", version: "preview" },
+    requiresInvitation: app.joinMode === "invite", signupView: "preview",
+  }) },
+  { name: "Consent: signup confirmed", render: app => consentPage(app, "preview", "Your assistant", "assistant.example", "https://assistant.example", [...SCOPES], { signupSaved: true, signupApproval: "preview" }) },
   { name: "Consent: unnamed, try again", render: app => consentPage(app, "preview", null, "assistant.example", "https://assistant.example", [...SCOPES], { unavailable: true }) },
   { name: "Connected assistants", render: app => consentsPage(app, [grant("grant_a", "Your assistant"), grant("grant_b", null)], ms => new Date(ms).toISOString().slice(0, 10)) },
   { name: "Connected assistants: confirm removal", render: app => consentsPage(app, [grant("grant_a", "Your assistant")], ms => new Date(ms).toISOString().slice(0, 10), { confirmation: { grantId: "grant_a", proof: "preview" } }) },

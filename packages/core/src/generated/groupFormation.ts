@@ -217,11 +217,11 @@ export function enabled(current: Formation, event: Event): boolean {
 export function step(current: Formation, event: Event): Formation {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "startSearch" && canStartSearch(current, event.forcedEligible)) return startSearch(current, event.forcedEligible, event.hostRequired);
-  if (event.type === "choosePrimary" && canChoosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits)) return choosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits);
-  if (event.type === "openAlternates" && canOpenAlternates(current, event.alternateLimit)) return openAlternates(current, event.alternateLimit);
-  if (event.type === "reserveAlternate" && canReserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved)) return reserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved);
-  if (event.type === "finishGroup" && canFinishGroup(current)) return finishGroup(current);
+  if (event.type === "startSearch") return canStartSearch(current, event.forcedEligible) ? startSearch(current, event.forcedEligible, event.hostRequired) : current;
+  if (event.type === "choosePrimary") return canChoosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits) ? choosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits) : current;
+  if (event.type === "openAlternates") return canOpenAlternates(current, event.alternateLimit) ? openAlternates(current, event.alternateLimit) : current;
+  if (event.type === "reserveAlternate") return canReserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved) ? reserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved) : current;
+  if (event.type === "finishGroup") return canFinishGroup(current) ? finishGroup(current) : current;
   return current;
 }
 

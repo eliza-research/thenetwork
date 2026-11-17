@@ -1,7 +1,7 @@
 import { createCipheriv, createSecretKey, hkdfSync, randomBytes } from "node:crypto";
 import {
-  seedInvitationBatchDecision, seedInvitationBatchSizeAllowed, seedInvitationCitySupported, seedInvitationExpiresAt,
-  seedInvitationMayDecline, seedInvitationMayRedeem, seedInvitationRecipientCurrent,
+  seedInvitationBatchDecision, seedInvitationBatchReplayLive, seedInvitationBatchSizeAllowed, seedInvitationCitySupported,
+  seedInvitationExpiresAt, seedInvitationMayDecline, seedInvitationMayRedeem, seedInvitationRecipientCurrent,
 } from "../../core/src/generated/seedInvitation.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { AppId } from "./apps.ts";
@@ -92,7 +92,7 @@ export class SeedInvitations {
       validCity: normalized.every(entry => seedInvitationCitySupported(entry.homeCity)),
       validRecipients: normalized.every(entry => entry.e164 !== undefined),
       uniqueRecipients: new Set(normalized.map(entry => entry.e164)).size === normalized.length,
-      entryCount: entries.length,
+      entryCount: normalized.length,
       shortestVouchBytes: Math.min(...vouchBytes),
       longestVouchBytes: Math.max(...vouchBytes),
     };
@@ -107,7 +107,8 @@ export class SeedInvitations {
       where app_id=${app} and id=${batchId}`;
     if (!original || original.issuer_id !== issuerId) return { kind: "unavailable" };
     if (original.body_hash !== bodyHash) return { kind: "conflict" };
-    const decision = seedInvitationBatchDecision({ ...facts, batchNew: !!created, sameBatch: original.issued_at.getTime() <= issuedAt, batchLive: original.expires_at.getTime() > issuedAt });
+    const batchLive = seedInvitationBatchReplayLive(original.issued_at.getTime(), original.expires_at.getTime(), issuedAt);
+    const decision = seedInvitationBatchDecision({ ...facts, batchNew: !!created, sameBatch: true, batchLive });
     if (decision === "RejectSeedBatch") return { kind: "unavailable" };
 
     const links = normalized.map(({ homeCity }, ordinal) => ({

@@ -26,7 +26,7 @@ import {
 import {
   initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
-import { profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { joinConsentEvidenceAllowed, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
@@ -35,7 +35,7 @@ import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
 import { signupAccountView } from "./sessions.ts";
-import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
+import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod, RecordedMemberAge } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
 /** A started number change must be confirmed with the code from the new number within this time. */
@@ -93,12 +93,17 @@ export interface JoinInput {
 }
 
 export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "invalid" | "review" | "consent_wording" | "account_changed";
+export class JoinReviewRequired extends Error {}
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
-/** True when the client's consent names this app's canonical opt-in text (by its words or its version). */
-export const consentMatches = (app: Pick<AppInfo, "consent">, c: JoinInput["consent"]) =>
-  c.version !== undefined ? c.version === app.consent.version && (c.wording === undefined || squash(c.wording) === squash(app.consent.text))
-    : c.wording !== undefined && squash(c.wording) === squash(app.consent.text);
+/** Every supplied consent field must match this app's current opt-in. */
+export const consentMatches = (app: Pick<AppInfo, "consent">, c: JoinInput["consent"]) => joinConsentEvidenceAllowed({
+  smsAccepted: c.sms === true,
+  wordingSupplied: c.wording !== undefined,
+  wordingAccepted: c.wording !== undefined && squash(c.wording) === squash(app.consent.text),
+  versionSupplied: c.version !== undefined,
+  versionAccepted: c.version === app.consent.version,
+});
 
 /** Check and clean a join body. Returns undefined when it is not valid. */
 export function parseJoin(body: unknown): JoinInput | undefined {
@@ -107,9 +112,16 @@ export function parseJoin(body: unknown): JoinInput | undefined {
   const str = (v: unknown, max: number) => (typeof v === "string" && v.trim().length > 0 && v.trim().length <= max ? v.trim() : undefined);
   const firstName = str(b.firstName, 50);
   if (!firstName || !validAge(b.age) || !Number.isInteger(b.age)) return undefined;
-  const c = b.consent as Record<string, unknown> | undefined;
-  const wording = str(c?.wording, 2000), version = str(c?.version, 40);
-  if (!c || c.sms !== true || (!wording && !version)) return undefined;
+  if (!b.consent || typeof b.consent !== "object" || Array.isArray(b.consent)) return undefined;
+  const c = b.consent as Record<string, unknown>;
+  const wording = str(c.wording, 2000), version = str(c.version, 40);
+  if (!joinConsentEvidenceAllowed({
+    smsAccepted: c.sms === true,
+    wordingSupplied: c.wording !== undefined,
+    wordingAccepted: wording !== undefined,
+    versionSupplied: c.version !== undefined,
+    versionAccepted: version !== undefined,
+  })) return undefined;
   const out: JoinInput = { firstName, age: b.age as number, consent: { sms: true, ...(wording ? { wording } : {}), ...(version ? { version } : {}) } };
   if (b.neighborhood !== undefined) { const v = str(b.neighborhood, 80); if (!v) return undefined; out.neighborhood = v; }
   const coarseHome = homeCityOf(out.neighborhood);
@@ -142,6 +154,7 @@ export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
 
 export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: EnrollmentReferral }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
+type MemberForgetReason = "leave" | "account_erasure" | "phone_reassignment";
 
 export interface AccountHooks {
   /** Resolve an explicit invitation for this app after the account and consent gates. */
@@ -153,7 +166,7 @@ export interface AccountHooks {
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
   onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string; scope: StopScope }): Promise<void> | void;
   /** Delete the member's network rows for this app (the generalized forget path). */
-  onForget?(ctx: MemberHookContext): Promise<void> | void;
+  onForget?(ctx: MemberHookContext, reason: MemberForgetReason): Promise<void> | void;
   /** Erase person-bound records that can exist without an app membership. */
   onEraseAccount?(personId: string): Promise<void> | void;
   /** The member's own network data for this app (facets, intents, opportunities, messages). */
@@ -249,7 +262,7 @@ export class Accounts {
       return true;
     }
     for (const m of await this.store.memberships(ph.personId)) {
-      if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 });
+      if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 }, "phone_reassignment");
     }
     await this.hooks.onEraseAccount?.(ph.personId);
     return this.store.deleteAll(ph.personId, e164, this.phoneHash(e164), at, true);
@@ -286,7 +299,7 @@ export class Accounts {
     const policy = stepPhoneChange(current, { type: "checkStartPolicy", oldNumberAllowed: !await this.banned(who.e164, person) });
     if (policy.phase !== "AwaitingRateLimit") return numberChangeRefused(policy.failure);
     const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY });
-    const rated = stepPhoneChange(policy, { type: "checkStartRate", startsBefore: slot.count - 1 });
+    const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok, startsBefore: slot.count - 1 });
     if (rated.phase !== "AwaitingCodeSend") return numberChangeRefused(rated.failure);
     const sent = stepPhoneChange(rated, { type: "recordCodeSend", sendAccepted: await sendCode() });
     if (sent.phase !== "AwaitingPendingWrite") return numberChangeRefused(sent.failure);
@@ -322,10 +335,11 @@ export class Accounts {
       const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
       const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), now: () => this.now() });
-      const result = stepPhoneChange(allowed, {
-        type: "recordMove",
-        moveResult: moved === "ok" ? "MoveApplied" : moved === "number_in_use" ? "MoveNumberTaken" : moved === "stale_request" ? "MoveRequestStale" : "MoveMissingPhone",
-      });
+      const moveResult = {
+        ok: "MoveApplied", number_in_use: "MoveNumberTaken", no_phone: "MoveMissingPhone", banned: "MoveBanned",
+        stale_request: "MoveRequestStale",
+      } as const;
+      const result = stepPhoneChange(allowed, { type: "recordMove", moveResult: moveResult[moved] });
       if (result.phase !== "Moved") return numberChangeRefused(result.failure);
       return { ok: true };
     });
@@ -363,6 +377,18 @@ export class Accounts {
         // A prior hook may have failed after noteAge committed. Reconcile on retry, even if the
         // statement is unchanged or older than the stored minimum. The hook only lowers app ages.
         await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+      }
+    }
+  }
+
+  /** Project a durable chat observation. The write's owner survives a change of phone number. */
+  async projectRecordedAge(recorded: RecordedMemberAge): Promise<void> {
+    try {
+      await this.store.cleanupRecordedAgeFloor(recorded);
+    } finally {
+      const person = recorded.personId ? await this.store.getPerson(recorded.personId) : undefined;
+      if (person?.deletedAt === null && validAge(person.lowestAge)) {
+        await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
       }
     }
   }
@@ -414,7 +440,7 @@ export class Accounts {
     return m;
   }
 
-  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     if (enrollment.phase !== "AwaitingConsent") return { ok: false, error: "invalid" };
     const consent = stepEnrollment(enrollment, { type: "confirmConsent", consentMatches: consentMatches(app, input.consent) });
     if (consent.phase !== "AwaitingEligibility") return { ok: false, error: "consent_wording" };
@@ -422,7 +448,7 @@ export class Accounts {
     return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent, inviteToken, signupView));
   }
 
-  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     const at = this.now();
     const held = (await this.seen(who.e164)) === "held";
     let person = held ? undefined : await this.personFor(who.e164);
@@ -455,7 +481,7 @@ export class Accounts {
       if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
       return { ok: false, error: "under_age" };
     }
-    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing };
+    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing, created: false };
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge);
@@ -470,11 +496,8 @@ export class Accounts {
     };
     const referredJoin = ageCheck.referred && referral;
     if (!referredJoin) {
-      // A new opt-in by the person: a delete of everything no longer suppresses the number.
-      await this.store.unsuppress(this.phoneHash(who.e164));
-      await this.store.putMembership(membership);
-      await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at });
-      await this.store.attachPerson(who.e164, person.id);
+      const consent = { e164: who.e164, app: app.id, state: "opted_in" as const, source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
+      if (!await this.store.admitMembership(membership, consent, this.phoneHash(who.e164))) return { ok: false, error: "review" };
     }
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
@@ -488,16 +511,17 @@ export class Accounts {
     }
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
     if (result.phase === "JoinHookFailed" && !hook.ok) {
+      if (hook.error instanceof JoinReviewRequired) return { ok: false, error: "review" };
       if (referredJoin) {
         if (hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
       } else {
-        await this.store.forgetMembership(person.id, app.id, at);
+        await this.store.forgetMembership(person.id, app.id, at, membership.memberId);
         await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
       }
       throw hook.error;
     }
     if (result.phase !== "Created") return { ok: false, error: "invalid" };
-    return { ok: true, membership };
+    return { ok: true, membership, created: true };
   }
 
   /** The site's stop button: every app on this number (PRD 40.3), unless PLATFORM_STOP_SCOPE=app. */
@@ -533,7 +557,7 @@ export class Accounts {
       type: "recordLeaveConsent", recorded: admission.ok, membershipBound: hasScopedMembership(!!who.personId, !!m, m?.state === "removed"),
     });
     if (optedOut.phase === "AwaitingAppForget" && who.personId && m) {
-      await this.hooks.onForget?.({ app, personId: who.personId, memberId: m.memberId, e164: who.e164 });
+      await this.hooks.onForget?.({ app, personId: who.personId, memberId: m.memberId, e164: who.e164 }, "leave");
       await this.store.forgetMembership(who.personId, app.id, at, m.memberId);
       return stepPrivacy(optedOut, { type: "recordAppForget" }).phase === "CompletePrivacyRequest";
     }
@@ -551,7 +575,7 @@ export class Accounts {
     if (who.personId) {
       for (const m of await this.store.memberships(who.personId)) {
         if (hasScopedMembership(true, true, m.state === "removed"))
-          await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: who.personId, memberId: m.memberId, e164: who.e164 });
+          await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: who.personId, memberId: m.memberId, e164: who.e164 }, "account_erasure");
       }
       await this.hooks.onEraseAccount?.(who.personId);
     }

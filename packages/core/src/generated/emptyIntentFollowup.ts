@@ -23,7 +23,7 @@ export function emptyIntentWaitOver(statementAgeMs: number, waitDays: number): b
 //@ pure
 export function lawNewStatementWaitsBeforeAFollowup(waitDays: number): boolean {
   //@ ensures \result === true
-  return waitDays <= 0 || !emptyIntentWaitOver(0, waitDays);
+  return !(waitDays > 0) || !emptyIntentWaitOver(0, waitDays);
 }
 
 /** Story: Hear when nothing fits yet / Explain an empty search after its configured wait (spec/emptyIntentFollowup.md) */

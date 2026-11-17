@@ -23,7 +23,7 @@
 //    nothing committed, the claim is released and the gateway retries the same messageId (turn_failed).
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
-  initial as initialSignedInbox, leaseRenewMs, mayStartClaimWrite, ordinaryTurnMustWait, processingLeaseMs,
+  firstContactNoticeInResponse, initial as initialSignedInbox, leaseRenewMs, mayStartClaimWrite, ordinaryTurnMustWait, processingLeaseMs,
   signedAdmissionOpen, step as stepSignedInbox, turnTombstoneKeepMs, unresolvedBlockMs, type SignedInbox,
 } from "../../core/src/generated/signedInbox.ts";
 import { webhookAnswer, webhookArrival, webhookAttemptLimit, webhookScanLimit } from "../../core/src/generated/webhookInbox.ts";
@@ -62,11 +62,11 @@ export interface InboundTurn {
   confirmation?: {id: string; body: string};
   /** This unit attempted to store its own complete reply. The row determines whether it committed. */
   atomicReplyCompletion?: true;
-  /** Undo work committed outside the turn's own transactions (the one-time notice row) when the turn ends without an answer. */
-  onFail?: Array<() => Promise<unknown>>;
+  /** Publish the notice key only in the completion write for this exact collected reply. */
+  firstContactNotice?: { phoneHash: string; replyId: string };
 }
 export interface CollectedReply {id: string; body: string; kind: "reply" | "compliance"}
-export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "gathering_rsvp" | "gathering_followup";
+export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "gathering_rsvp" | "gathering_followup" | "inbox_updates" | "travel_presence" | "peon_candidate_search";
 
 interface WebhookEnvelope {
   ev: InboundMessage;
@@ -92,23 +92,24 @@ export class Inbox {
     const now = this.o.clock.now();
     // STOP, START and HELP are never held back by an earlier turn that did not finish (consent always gets through).
     const keyword = isComplianceText(input.text);
-    let senderLock = false, admissionOpen = false;
-    const wrote = await this.o.sql.begin(async tx => {
+    const claim = await this.o.sql.begin(async tx => {
       const [lock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`inbox-sender:${normalizeAddress(input.from)}`})) as acquired`;
       // spec/signedInbox.md, "A worker runs only a committed claim"
-      senderLock = !!lock.acquired;
-      admissionOpen = senderLock && (admitUntil === undefined || signedAdmissionOpen(true, this.o.clock.now(), admitUntil));
-      if (!mayStartClaimWrite(senderLock, admissionOpen)) return [];
+      const senderLock = !!lock.acquired;
+      const admissionOpen = signedAdmissionOpen(admitUntil !== undefined, this.o.clock.now(), admitUntil ?? 0)
+        && signedAdmissionOpen(admitUntil !== undefined, now, admitUntil ?? 0);
+      if (!mayStartClaimWrite(senderLock, admissionOpen)) return { senderLock, admissionOpen, inserted: false };
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - processingLeaseMs)}`;
-      return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
+      const rows = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
-      where ${signedAdmissionOpen(admitUntil !== undefined, now, admitUntil ?? 0)} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
+      where not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
         or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - unresolvedBlockMs)})))))
       on conflict do nothing returning id`;
+      return { senderLock, admissionOpen, inserted: rows.length > 0 };
     });
-    const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", inserted: wrote.length > 0, senderLock, admissionOpen });
+    const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", ...claim });
     if (claimed.phase === "CheckingPrior") {
       // spec/signedInbox.md, "A replay must match a stored request"
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
@@ -133,10 +134,9 @@ export class Inbox {
       const body = await this.turns.run(turn, () => run(turn));
       const committed = await this.committedReply(turn);
       if (committed) return {status: 200, body: committed};
-      const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,handled_at=${new Date(this.o.clock.now())},
-        handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
+      const saved = await this.finish(turn, body);
       // spec/signedInbox.md, "Completion and compliance recovery depend on the stored row"
-      const completed = stepSignedInbox(claimed, { type: "recordCompletion", saved: rows.length > 0 });
+      const completed = stepSignedInbox(claimed, { type: "recordCompletion", saved });
       if (completed.phase !== "Finished") { this.o.log(`[alert] signed turn ${id} lost its claim before completion (swept or resolved by staff)`); throw new Error("Turn ownership changed before completion"); }
       return {status:200,body};
     } catch (e) {
@@ -148,7 +148,6 @@ export class Inbox {
         if (rescued) { this.o.log(`[inbound] compliance turn ${id} failed after its consent change: ${(e as Error).message}`); return rescued; }
       }
       await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
-      await this.undo(turn);
       return {status:409,body:{error:"turn_unresolved",retryable:false}};
     } finally {
       clearInterval(renew);
@@ -161,8 +160,34 @@ export class Inbox {
     return row?.response as TurnResponse | undefined;
   }
 
-  private async undo(turn: InboundTurn) {
-    for (const f of turn.onFail ?? []) await f().catch(e => this.o.log(`[inbound] undo after a failed turn: ${(e as Error).message}`));
+  private async finish(turn: InboundTurn, body: TurnResponse, recoveredReplies?: CollectedReply[]): Promise<boolean> {
+    const notice = turn.firstContactNotice;
+    const phoneHash = notice && body.outcome === "handled" && firstContactNoticeInResponse(
+      body.replyIds?.includes(notice.replyId) === true, body.reason === "under_age",
+    ) ? notice.phoneHash : null;
+    const at = new Date(this.o.clock.now());
+    const [result] = await this.o.sql<{ saved: boolean }[]>`with completed as (
+        update platform.inbound set status='done', response=${body}::jsonb, handled_at=${at},
+          replies=coalesce(${recoveredReplies ? { items: recoveredReplies } : null}::jsonb->'items', replies),
+          handled_order=nextval('platform.inbound_handled_seq'),
+          event=null, sender=null, app_id=${turn.app ?? null}, member_id=${turn.memberId ?? null}
+        where id=${turn.id} and status='processing' returning id
+      ), notice as (
+        insert into platform.eliza_notices(phone_hash, sent_at)
+        select ${phoneHash}::text, ${at} from completed where ${phoneHash !== null}
+        on conflict (phone_hash) do nothing
+      )
+      select exists (select 1 from completed) as saved`;
+    return result?.saved === true;
+  }
+
+  async discardFirstContactNotice(tx: SQL, turn: InboundTurn): Promise<void> {
+    const notice = turn.firstContactNotice;
+    if (!notice) return;
+    await tx`update platform.inbound set replies=(select coalesce(jsonb_agg(reply order by pos), '[]'::jsonb)
+      from jsonb_array_elements(replies) with ordinality as collected(reply, pos) where reply->>'id' is distinct from ${notice.replyId})
+      where id=${turn.id} and status='processing'`;
+    turn.firstContactNotice = undefined;
   }
 
   /**
@@ -181,7 +206,6 @@ export class Inbox {
     if (recovery.phase === "ReleasingClaim") {
       const released = await this.o.sql`delete from platform.inbound where id=${id} and status='processing' returning id`;
       if (stepSignedInbox(recovery, { type: "recordRescue", changed: released.length > 0 }).phase !== "RetryCompliance") return undefined;
-      await this.undo(turn);
       return {status:409,body:{error:"turn_failed",retryable:true}};
     }
     if (recovery.phase !== "PreservingCompliance") return undefined;
@@ -190,10 +214,8 @@ export class Inbox {
     const body: TurnResponse = {outcome: "handled", replies: replies.map(r => r.body), replyIds: replies.map(r => r.id), delivery: "collected",
       replyKind: replies.length && replies.every(r => r.kind === "compliance") ? "compliance" : "reply", accountEligible: false,
       app: turn.app ?? null, memberId: turn.memberId ?? null, reason: "compliance_partial", ...(turn.consent ? {consent: turn.consent} : {})};
-    const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
-      handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
-      app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
-    return stepSignedInbox(recovery, { type: "recordRescue", changed: rows.length > 0 }).phase === "Finished" ? {status: 200, body} : undefined;
+    const saved = await this.finish(turn, body, replies);
+    return stepSignedInbox(recovery, { type: "recordRescue", changed: saved }).phase === "Finished" ? {status: 200, body} : undefined;
   }
 
   /** Persist only causal replies in the same transaction as their Network effects. */

@@ -26,8 +26,14 @@ export function lawAWindowCannotContinueAtItsEnd(startAt: number, endAt: number)
 
 /** Story: Set availability for a time window / STOP takes precedence over a participation setting (spec/participationWindow.md) */
 //@ pure
+export function participationWindowModeKnown(scheduledMode: string): boolean {
+  return (["open", "paused", "busy", "traveling"] as string[]).includes(scheduledMode);
+}
+
+/** Story: Set availability for a time window / STOP takes precedence over a participation setting (spec/participationWindow.md) */
+//@ pure
 export function participationOverride(optedOut: boolean, windowActive: boolean, scheduledMode: string): ParticipationOverride {
-  return optedOut ? "UsePaused" : (!windowActive ? "KeepBase" : (scheduledMode === "open" ? "UseNormal" : (scheduledMode === "paused" ? "UsePaused" : (scheduledMode === "busy" || scheduledMode === "traveling" ? "UseQuiet" : "KeepBase"))));
+  return optedOut ? "UsePaused" : (!windowActive ? "KeepBase" : (scheduledMode === "open" ? "UseNormal" : (scheduledMode === "paused" ? "UsePaused" : (participationWindowModeKnown(scheduledMode) ? "UseQuiet" : "KeepBase"))));
 }
 
 /** Story: Set availability for a time window / STOP takes precedence over a participation setting (spec/participationWindow.md) */
@@ -41,5 +47,5 @@ export function lawStopAlwaysPauses(windowActive: boolean, scheduledMode: string
 //@ pure
 export function lawUnknownModeKeepsBase(scheduledMode: string): boolean {
   //@ ensures \result === true
-  return !(scheduledMode !== "open" && scheduledMode !== "paused" && scheduledMode !== "busy" && scheduledMode !== "traveling") || participationOverride(false, true, scheduledMode) === "KeepBase";
+  return !(!participationWindowModeKnown(scheduledMode)) || participationOverride(false, true, scheduledMode) === "KeepBase";
 }

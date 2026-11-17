@@ -74,6 +74,19 @@ export function alwaysAnswersComeFromInvitees(offer: CrewOfferState): boolean {
   return !offer.yes.some((id: string) => !offer.offered.includes(id)) && !offer.no.some((id: string) => !offer.offered.includes(id));
 }
 
+/** Story: Opt in to a recurring crew / A crew reply follows acceptance of its exact offer (spec/crewOffer.md) */
+//@ pure
+export function crewOfferReplyCurrent(memberReply: boolean, accepted: boolean, openedAt: number, stagedAt: number, acceptedAt: number, receivedAt: number, now: number): boolean {
+  return memberReply && accepted && openedAt <= stagedAt && stagedAt <= acceptedAt && acceptedAt <= receivedAt && receivedAt <= now && exact_crewOffer(now - openedAt) <= crewOfferWindowMs;
+}
+
+/** Story: Opt in to a recurring crew / A crew reply follows acceptance of its exact offer (spec/crewOffer.md) */
+//@ pure
+export function lawCrewReplyNeedsExactAcceptance(memberReply: boolean, openedAt: number, stagedAt: number, acceptedAt: number, receivedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !crewOfferReplyCurrent(memberReply, false, openedAt, stagedAt, acceptedAt, receivedAt, now);
+}
+
 /** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function canFinishCrewAnswers(offer: CrewOfferState): boolean {
@@ -140,6 +153,19 @@ export function crewMemberWindowAvailable(present: boolean, noNearbyBooking: boo
   return present && noNearbyBooking && statedAllows;
 }
 
+/** Story: Meet in a new recurring session / A new recurring session uses a current public venue (spec/crewOffer.md) */
+//@ pure
+export function crewSessionVenueAllowed(isPublic: boolean, sameCity: boolean, supportsActivity: boolean, fullWindowOpen: boolean): boolean {
+  return isPublic && sameCity && supportsActivity && fullWindowOpen;
+}
+
+/** Story: Meet in a new recurring session / A new recurring session uses a current public venue (spec/crewOffer.md) */
+//@ pure
+export function lawCrewCannotUseAClosingVenue(isPublic: boolean, sameCity: boolean, supportsActivity: boolean): boolean {
+  //@ ensures \result === true
+  return !crewSessionVenueAllowed(isPublic, sameCity, supportsActivity, false);
+}
+
 /** Story: Take over the recurring crew / Handoff counts booked sessions that reached feedback (spec/crewOffer.md) */
 //@ pure
 export function crewHandoffDue(openSession: boolean, completedCount: number, requiredCount: number): boolean {
@@ -163,12 +189,12 @@ export function enabled(current: CrewOfferState, event: Event): boolean {
 export function step(current: CrewOfferState, event: Event): CrewOfferState {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "extendOffer" && canExtendOffer(current, event.memberId, event.enjoyedPlan)) return extendOffer(current, event.memberId, event.enjoyedPlan);
-  if (event.type === "openOffer" && canOpenOffer(current)) return openOffer(current, event.invitees);
-  if (event.type === "recordCrewAnswer" && canRecordCrewAnswer(current, event.memberId)) return recordCrewAnswer(current, event.memberId, event.accepted);
-  if (event.type === "finishCrewAnswers" && canFinishCrewAnswers(current)) return finishCrewAnswers(current);
-  if (event.type === "expireCrewOffer" && canExpireCrewOffer(current, event.elapsedMs)) return expireCrewOffer(current, event.elapsedMs);
-  if (event.type === "forgetCrewInvitee" && canForgetCrewInvitee(current)) return forgetCrewInvitee(current, event.memberId);
+  if (event.type === "extendOffer") return canExtendOffer(current, event.memberId, event.enjoyedPlan) ? extendOffer(current, event.memberId, event.enjoyedPlan) : current;
+  if (event.type === "openOffer") return canOpenOffer(current) ? openOffer(current, event.invitees) : current;
+  if (event.type === "recordCrewAnswer") return canRecordCrewAnswer(current, event.memberId) ? recordCrewAnswer(current, event.memberId, event.accepted) : current;
+  if (event.type === "finishCrewAnswers") return canFinishCrewAnswers(current) ? finishCrewAnswers(current) : current;
+  if (event.type === "expireCrewOffer") return canExpireCrewOffer(current, event.elapsedMs) ? expireCrewOffer(current, event.elapsedMs) : current;
+  if (event.type === "forgetCrewInvitee") return canForgetCrewInvitee(current) ? forgetCrewInvitee(current, event.memberId) : current;
   return current;
 }
 

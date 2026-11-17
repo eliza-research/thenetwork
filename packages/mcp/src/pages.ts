@@ -8,6 +8,7 @@ import { brandIdFor } from "../../ui/src/brand/landing.ts";
 import { AuthCodeView, type CodeFieldError } from "../../ui/src/components/AuthCodeView.tsx";
 import { type AuthMessage, AuthMessageView } from "../../ui/src/components/AuthMessageView.tsx";
 import { AuthPhoneView, type PhoneFieldError } from "../../ui/src/components/AuthPhoneView.tsx";
+import { AuthSignupView, type AuthSignupViewProps } from "../../ui/src/components/AuthSignupView.tsx";
 import { ConnectedAssistantsView } from "../../ui/src/components/ConnectedAssistantsView.tsx";
 import { ConsentView } from "../../ui/src/components/ConsentView.tsx";
 import { connectorApp, type McpApp } from "./apps.ts";
@@ -81,10 +82,19 @@ export function codePage(app: McpApp, rid: string, last4: string, o: { error?: C
 }
 
 /** One pending OAuth connection, not an account page or a sign-in destination. */
-export function consentPage(app: McpApp, rid: string, clientName: string | null, redirectHost: string, redirectOrigin: string, scopes: Scope[], o: { unavailable?: boolean } = {}) {
+export function consentPage(app: McpApp, rid: string, clientName: string | null, redirectHost: string, redirectOrigin: string, scopes: Scope[],
+  o: { unavailable?: boolean; canSignup?: boolean; signupSaved?: boolean; signupApproval?: string } = {}) {
   const shown = pageFor(o.unavailable ? "ReplyConsentRetry" : "ReplyConsent");
-  const view = h(ConsentView, { app: appKeyOf(app), view: shown.view === "ConsentRetryView" ? "ConsentRetryView" : "ConsentView", rid, clientName, redirectHost, scopes });
+  const view = h(ConsentView, { app: appKeyOf(app), view: shown.view === "ConsentRetryView" ? "ConsentRetryView" : "ConsentView", rid,
+    clientName, redirectHost, scopes, canSignup: o.canSignup, signupSaved: o.signupSaved, signupApproval: o.signupApproval });
   return respond(app, "Allow access", view, { formTargets: [redirectOrigin], status: o.unavailable ? 503 : 200 });
+}
+
+export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error">;
+
+/** The verified browser's transient form for confirming the app's signup. */
+export function signupPage(app: McpApp, rid: string, options: SignupPageOptions) {
+  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), rid, ...options }), { status: options.error ? 400 : 200 });
 }
 
 const messageReplies = {

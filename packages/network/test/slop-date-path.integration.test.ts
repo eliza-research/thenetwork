@@ -10,11 +10,15 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
+import { copy } from "../src/copy.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -43,6 +47,17 @@ async function text(s: NetworkService, clock: SimClock, from: string, body: stri
   const result = (await res.json()).result as string;
   debug(`${from} -> "${body}" (${result})`);
   return result;
+}
+async function signedText(s: NetworkService, clock: SimClock, secret: string, from: string, messageId: string, text: string) {
+  const turn: TurnRequest = { app: "slop", channel: "blooio", from, messageId, text, transport: "imessage", receivedAt: clock.now(), to: null };
+  const body = JSON.stringify(turn);
+  const headers = await svcSign(secret, { id: messageId, path: TURN_PATH, method: "POST", body, nowS: Math.floor(clock.now() / 1000) });
+  const res = await s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body }));
+  expect(res.status).toBe(200);
+  const response = await res.json() as TurnResponse;
+  expect(response.outcome).toBe("handled");
+  if (response.outcome !== "handled") throw new Error(`Expected direct advice, got ${response.outcome}`);
+  return response.replies;
 }
 const staff = (s: NetworkService, token: string, method: string, path: string, b?: unknown) =>
   s.fetch(new Request(`http://127.0.0.1:4848${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(b ? { "content-type": "application/json" } : {}) }, ...(b ? { body: JSON.stringify(b) } : {}) }));
@@ -75,6 +90,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
 
   test("join, onboard, review approval, mutual yes, date booked, check-in, report to the safety queue, pair kept apart", async () => {
     const clock = new SimClock(START);
+    const turnSecret = "synthetic-slop-safety-turn-signing-secret";
     // Only the explicitly requested arm may use the runner's real provider.
     // The service receives its normal opt-in settings, never a test LLM.
     const engineJudge = process.env.NETWORK_ENGINE_JUDGE === "1";
@@ -88,7 +104,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       expect(Number(judgeEnv.NETWORK_ENGINE_JUDGE_BUDGET_USD)).toBe(0.25);
     }
     const s = svc = new NetworkService({
-      url: URL_, clock, instance: "slop-date", log: () => {}, env: { PLATFORM_ENV: "dev", ...judgeEnv }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
+      url: URL_, clock, instance: "slop-date", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret, ...judgeEnv }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER},safety:${SAFETY}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
       adapter: () => new DryRunAdapter(() => {}),
     });
@@ -202,22 +218,52 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await fromAssistant("Report Sam, he was rude to me and I want to block him.");
     // Words that would be abuse from the sender ("he owes me money") describe Sam: Rae is not scored or dropped.
     await fromAssistant("Block Sam, he owes me money and keeps texting.");
+    await fromAssistant("I am in immediate danger.");
+    expect((await inbox(rae)).some(m => m.body.startsWith(copy.immediateDanger))).toBe(false);
     expect(s.runtimeFor("slop")!.net.trust.level(rae as never)).toBe("ok");
     expect((await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`)[0]?.state).toBe("SCHEDULED");
     expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports ?? []).toHaveLength(0);
 
     // ---- After the date: the check-in, and Rae's answer files a report.
     const meetingAt = booked.meeting_at ? new Date(booked.meeting_at).getTime() : clock.now() + 3 * DAY;
+    // The booking and its two reminders use the thread allowance. Rae answers the day-of check-in herself.
+    const checkInAt = meetingAt - 2 * HOUR;
+    if (checkInAt > clock.now()) await run(s, clock, checkInAt - clock.now(), HOUR);
+    expect(await last(rae)).toMatch(/^Still good for /);
+    await text(s, clock, RAE, "Yes, I'm still coming.");
     if (meetingAt > clock.now()) await run(s, clock, meetingAt - clock.now() + 3 * HOUR, HOUR);
     for (let i = 0; i < 48 && !(await inbox(rae)).some(m => /How did your date with/.test(m.body)); i++) await run(s, clock, HOUR, HOUR);
     expect(await last(rae)).toMatch(/How did your date with/);
-    await text(s, clock, RAE, "He was really rude and kept harassing me after I said I wanted to leave.");
+    // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+    const [prompt] = await sql<{ id: string; body: string }[]>`select id,body from network.messages
+      where app_id='slop' and member_id=${rae} and opportunity_id=${item.oppId} and type='feedback_request' and direction='outbound'`;
+    const syntheticHistory = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records an accepted prompt"); } } });
+    // The member gets guidance even before the exact feedback prompt is accepted. Until then, the
+    // service cannot treat her statement as a report against the counterpart of that prompt.
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-help-before-feedback-receipt", "He is following me right now.")).toEqual([copy.immediateDanger]);
+    expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports).toHaveLength(0);
+    await sql.begin(async tx => {
+      await syntheticHistory.recordCollected(tx, [{ id: prompt!.id, memberId: rae, to: RAE, kind: "transactional", text: prompt!.body }]);
+      await syntheticHistory.collectedReceipt(tx, [prompt!.id], "accepted", clock.now());
+    });
+    // Move past the usual identical-reply window before the second distinct emergency statement.
+    clock.advance(11 * MINUTE);
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-unattributed-present-danger", "I am in immediate danger.")).toEqual([copy.immediateDanger]);
+    expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports).toHaveLength(0);
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-help-after-feedback-receipt", "He is following me right now.")).toEqual([
+      `${copy.immediateDanger} ${copy.reported(true)}`,
+    ]);
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-help-after-feedback-receipt", "He is following me right now.")).toEqual([
+      `${copy.immediateDanger} ${copy.reported(true)}`,
+    ]);
 
     const reports = await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json() as any;
     debug(JSON.stringify(reports));
     expect(reports.ok).toBe(true);
     expect(reports.reports).toHaveLength(1);
-    expect(reports.reports[0]).toMatchObject({ kind: "harassment", source: "check_in", status: "open", reporterId: rae, subjectId: sam, opportunityId: item.oppId });
+    expect(reports.reports[0]).toMatchObject({ kind: "unsafe", source: "check_in", status: "open", reporterId: rae, subjectId: sam, opportunityId: item.oppId });
+    expect((await s.runtimeFor("slop")!.pg.load())?.opps.find(o => o.id === item.oppId)?.post?.[rae]).toBeUndefined();
 
     // ---- The pair is kept apart: a blocked edge in the snapshot, and no new proposal between them.
     const snap = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
@@ -234,7 +280,9 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const net = s.runtimeFor("slop")!.net;
     await text(s, clock, RAE, "ok"); // nothing unanswered: she could be asked again
     expect(net.eligible(rae as never)).toBe(true);
-    await text(s, clock, SAM, "report Rae, she threatened me after the date");
+    expect(await signedText(s, clock, turnSecret, SAM, "slop-report-present-danger", "Report Rae, she is threatening me right now.")).toEqual([
+      `${copy.immediateDanger} ${copy.reported(true)}`,
+    ]);
     const byText = ((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports.find((r: any) => r.subjectId === rae);
     expect(byText).toMatchObject({ kind: "unsafe", source: "message", status: "open", reporterId: sam });
     expect(net.eligible(rae as never)).toBe(false);
@@ -281,6 +329,121 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     debug(all.join(" | "));
     expect(all.some(b => /looking for women/.test(b))).toBe(true);
     expect(all.some(b => /looking for men/.test(b))).toBe(false);
+    await s.close(); svc = undefined;
+  }, T);
+
+  test.each(["before booking", "before queued reveal"] as const)("a current dating limit stops an approved match %s", async (phase) => {
+    // spec/datingRadius.md, "Both members' current dating limits apply until reveal"
+    const clock = new SimClock(START);
+    const queued = phase === "before queued reveal";
+    const attempted: string[] = [];
+    const turnSecret = "synthetic-slop-probe-receipt-signing-secret";
+    const adapter = new BlooioAdapter({ app: "slop", from: "+12125550169", clock, liveGate: () => true, log: () => {}, provider: {
+      kind: "sim", send: async request => {
+        attempted.push(request.idempotencyKey);
+        return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
+      },
+    } });
+    const s = svc = new NetworkService({
+      url: URL_, clock, instance: "slop-current-limits", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret }, networks: [{ id: "slop:nyc" }],
+      tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 4 }, photoStorage: null, notify: false,
+      adapter: () => adapter,
+    });
+    await s.start();
+    const phones = queued ? ["+12125550167", "+12125550168"] : ["+12125550165", "+12125550166"];
+    const profiles = queued ? [
+      ["Fern, 49", "I'm a woman into men. Live in Greenpoint, love climbing and live music", "I'm a woman looking for men, 47 to 58, within 5 miles of 11222"],
+      ["Gabe, 51", "I'm a man into women. Williamsburg, I climb and go to shows", "I'm a man looking for women, 45 to 55, within 5 miles of 11211"],
+    ] : [
+      ["Della, 29", "I'm a woman into men. Live in Greenpoint, love climbing and live music", "I'm a woman looking for men, 27 to 38, within 5 miles of 11222"],
+      ["Ezra, 31", "I'm a man into women. Williamsburg, I climb and go to shows", "I'm a man looking for women, 25 to 35, within 5 miles of 11211"],
+    ];
+    for (const [idx, phone] of phones.entries()) {
+      for (const body of ["slop", ...profiles[idx]!, "Something serious, no smokers", "Weekend evenings work best"]) await text(s, clock, phone, body);
+      await adapter.engaged(phone);
+    }
+    const ids = await Promise.all(phones.map(memberId));
+    expect(ids).toEqual([expect.any(String), expect.any(String)]);
+    expect((await staff(s, ADMIN, "POST", "/apps/slop/matching", { on: true })).status).toBe(200);
+    type Review = { oppId: string; revision: number; proposal: { participants: string[] } };
+    let item: Review | undefined;
+    for (let i = 0; i < 12 && !item; i++) {
+      await run(s, clock, 2 * HOUR);
+      const queue = await (await staff(s, REVIEWER, "GET", "/apps/slop/review")).json() as { items: Review[] };
+      item = queue.items.find(row => ids.every(id => row.proposal.participants.includes(id!)));
+    }
+    expect(item).toBeDefined();
+    const { oppId, revision } = item!;
+    if (!queued) await adapter.queue.setLineSafety("review");
+    expect(await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(oppId)}`, { decision: "approve", revision })).json()).toEqual({ ok: true });
+    const probes = () => sql<{ id: string; member_id: string }[]>`select id,member_id from network.messages where app_id='slop' and opportunity_id=${oppId} and type='probe' and direction='outbound' order by ts,id`;
+    for (let hour = 0; hour < 24 && !(await probes()).length; hour++) await run(s, clock, HOUR);
+    const [first] = await probes();
+    expect(first).toBeDefined();
+    const firstPhone = phones[ids.indexOf(first!.member_id)]!;
+    const secondPhone = phones.find(phone => phone !== firstPhone)!;
+    if (!queued) {
+      // A queued probe is an open turn in memory, but its recipient has never seen it.
+      expect(await adapter.queue.statusOf(first!.id)).toBe("retry_scheduled");
+      expect(attempted).not.toContain(`tn:${first!.id}`);
+      const earlyAt = clock.now();
+      const rt = s.runtimeFor("slop")!;
+      const firstStatus = async () => (await rt.pg.load())?.opps.find(o => o.id === oppId)?.status.find(([id]) => id === first!.member_id)?.[1];
+      await text(s, clock, firstPhone, "Yes, the first time works");
+      expect(await firstStatus()).toBe("probing");
+      expect(await probes()).toHaveLength(1);
+      await adapter.queue.setLineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      expect(await adapter.queue.statusOf(first!.id)).toBe("sent");
+      const late: TurnRequest = { app: "slop", channel: "blooio", from: firstPhone, messageId: "slop-early-answer-replayed-late",
+        text: "Yes, the first time works", transport: "imessage", receivedAt: earlyAt, to: null };
+      const body = JSON.stringify(late);
+      const signed = await svcSign(turnSecret, { id: late.messageId, path: TURN_PATH, method: "POST", body, nowS: Math.floor(clock.now() / 1000) });
+      expect((await s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...signed }, body }))).status).toBe(200);
+      expect(await firstStatus()).toBe("probing");
+      // Older stored probe slots recover only this same recipient's unique message at the recorded time.
+      await rt.unitOfWork(net => {
+        const state = net.exportState();
+        delete state.members.find(member => member.id === first!.member_id)?.awaiting?.probeReceiptId;
+        net.importState(state);
+      });
+    }
+    await text(s, clock, firstPhone, "Yes, the first time works");
+    for (let hour = 0; hour < 24 && (await probes()).length < 2; hour++) await run(s, clock, HOUR);
+    const deliveredProbes = await probes();
+    expect(deliveredProbes).toHaveLength(2);
+    expect(attempted).toEqual(expect.arrayContaining(deliveredProbes.map(probe => `tn:${probe.id}`)));
+
+    const reveals = () => sql<{ id: string }[]>`select id from network.messages where app_id='slop' and opportunity_id=${oppId} and type='proposal' and direction='outbound'`;
+    if (queued) {
+      await adapter.queue.setLineSafety("review");
+      await text(s, clock, secondPhone, "Yes, the first time works");
+      const staged = await reveals();
+      expect(staged).toHaveLength(2);
+      for (const row of staged) expect(await adapter.queue.statusOf(row.id)).toBe("retry_scheduled");
+    }
+
+    // The verified member's assistant updates their dating age range after both anonymous probes.
+    const [owner] = await sql<{ person_id: string }[]>`select person_id from platform.phone_identities where e164=${firstPhone}`;
+    const preference = firstPhone === phones[0] ? "men" : "women";
+    expect(await s.submitProfile(owner!.person_id, "slop", firstPhone, `I'm looking for ${preference}, ages 40 to 45, within 5 miles.`)).toBe("accepted");
+    const rt = s.runtimeFor("slop")!;
+    expect((await rt.pg.load())?.members.find(m => m.id === first!.member_id)?.appTags?.map(tag => tag.tag)).toContain("romance:age:40-45");
+    if (queued) {
+      await adapter.queue.setLineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      for (const row of await reveals()) {
+        expect(await adapter.queue.statusOf(row.id)).toBe("suppressed_ineligible");
+        expect(attempted).not.toContain(`tn:${row.id}`);
+      }
+    } else {
+      await text(s, clock, secondPhone, "Yes, the first time works");
+      const [row] = await sql`select state from network.opportunities where app_id='slop' and id=${oppId}`;
+      expect(row?.state).not.toBe("SCHEDULED");
+      expect(await reveals()).toEqual([]);
+    }
     await s.close(); svc = undefined;
   }, T);
 });

@@ -264,10 +264,10 @@ export function enabled(current: ProfileFactEdit, event: Event): boolean {
 export function step(current: ProfileFactEdit, event: Event): ProfileFactEdit {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "stageProfileFact" && canStageProfileFact(current, event.stageFacts, event.operation, event.stagedAt)) return stageProfileFact(current, event.stageFacts, event.operation, event.stagedAt);
-  if (event.type === "confirmProfileFact" && canConfirmProfileFact(current, event.applyFacts)) return confirmProfileFact(current, event.applyFacts);
-  if (event.type === "replayProfileFact" && canReplayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt)) return replayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt);
-  if (event.type === "closeProfileFact" && canCloseProfileFact(current, event.now, event.exactCancellation)) return closeProfileFact(current, event.now, event.exactCancellation);
+  if (event.type === "stageProfileFact") return canStageProfileFact(current, event.stageFacts, event.operation, event.stagedAt) ? stageProfileFact(current, event.stageFacts, event.operation, event.stagedAt) : current;
+  if (event.type === "confirmProfileFact") return canConfirmProfileFact(current, event.applyFacts) ? confirmProfileFact(current, event.applyFacts) : current;
+  if (event.type === "replayProfileFact") return canReplayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt) ? replayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt) : current;
+  if (event.type === "closeProfileFact") return canCloseProfileFact(current, event.now, event.exactCancellation) ? closeProfileFact(current, event.now, event.exactCancellation) : current;
   return current;
 }
 

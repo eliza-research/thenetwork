@@ -75,6 +75,33 @@ pure def holdAuthority(actorPresent: bool, reportMatches: bool): StaffActionResu
 pure def holdSubjectKnown(knownMember: bool, reportOnFile: bool): bool = knownMember or reportOnFile
 ```
 
+## Story: Get immediate safety guidance in a member conversation
+
+> As a member who says that I am in danger now, I want emergency guidance before any report confirmation or follow-up.
+
+### Direct current-danger text gets immediate guidance first
+
+Recognize a direct affirmative statement of current danger or an explicit request for emergency help now. Do not infer immediacy from a past event or an urgent report category alone. Inspect only the person’s own plain text, after carrier commands and existing identity admission. A copied profile or reaction cannot take this branch. Reply to the member without asking for contact details or opening a normal conversation. The reply starts with guidance to contact local emergency services. Use a fixed reply so a saved acknowledgement or other updates do not move ahead of it.
+
+A report that named a subject still follows the same report and block decisions. A danger disclosure during a post-meeting check-in can record a report only with an exact current check-in receipt and explicit report language about the counterpart. It does not confirm attendance or consent to meet again. Otherwise, leave unrelated prompts unchanged and issue guidance alone. The Network does not dispatch emergency services.
+
+```quint
+pure def immediateDangerReply(directText: bool, currentDanger: bool): bool =
+  directText and currentDanger
+
+pure def lawEmergencyReplyRequiresOwnText(currentDanger: bool): bool =
+  not(immediateDangerReply(false, currentDanger))
+
+pure def lawEmergencyReplyRequiresCurrentDanger(directText: bool): bool =
+  not(immediateDangerReply(directText, false))
+
+pure def emergencyCheckInReport(exactReceipt: bool, attributedReport: bool): bool =
+  exactReceipt and attributedReport
+
+pure def lawEmergencyCheckInNeedsReceipt(attributedReport: bool): bool =
+  not(emergencyCheckInReport(false, attributedReport))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.
@@ -102,6 +129,24 @@ pure def lawDecidedReportDoesNotRestrictMatching(decision: ReportDecision, metBe
 
 pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: bool, reportMatches: bool): bool =
   reportAfterDecision(ReportDismissed, decision, sameMember, reportMatches) == ReportDismissed
+```
+
+### The exact open report follows its subject through ordinary app leave
+
+An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. When the runtime forgets the member, the shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
+
+```quint
+pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
+  ordinaryLeave and reportRestrictsMatching(reportPhase, metBefore, urgent)
+
+pure def archivedReportHoldAllowed(exactSubject: bool, matchingRestriction: bool): bool =
+  exactSubject and matchingRestriction
+
+pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
+  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) implies reportPhase == ReportOpen
+
+pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
+  not(archivedReportHoldAllowed(false, matchingRestriction))
 ```
 
 ### A ban allows only carrier commands and app leave

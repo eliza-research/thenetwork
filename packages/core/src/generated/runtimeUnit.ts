@@ -146,10 +146,10 @@ export function enabled(current: RuntimeUnit, event: Event): boolean {
 export function step(current: RuntimeUnit, event: Event): RuntimeUnit {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordAction" && canRecordAction(current)) return recordAction(current);
-  if (event.type === "recordSave" && canRecordSave(current)) return recordSave(current);
-  if (event.type === "recordLoad" && canRecordLoad(current)) return recordLoad(current, event.snapshotFound);
-  if (event.type === "recordRestore" && canRecordRestore(current)) return recordRestore(current);
+  if (event.type === "recordAction") return canRecordAction(current) ? recordAction(current) : current;
+  if (event.type === "recordSave") return canRecordSave(current) ? recordSave(current) : current;
+  if (event.type === "recordLoad") return canRecordLoad(current) ? recordLoad(current, event.snapshotFound) : current;
+  if (event.type === "recordRestore") return canRecordRestore(current) ? recordRestore(current) : current;
   return current;
 }
 

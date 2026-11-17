@@ -1,15 +1,14 @@
 // Generic match profiles: one per lane membership of a matchable member or entity (a member, or a
 // peon job seat owned by a manager). Packs supply the vectors; the engine owns the rest.
-import type { Category, City, FacetKind, MemberId } from "@thenetwork/core";
+import type { Category, City, MemberId } from "@thenetwork/core";
 import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
   type LaneSide, type MatchLane,
 } from "../../../core/src/generated/matchLane.ts";
 import { planProfileCapacityAllows } from "../../../core/src/generated/planDecision.ts";
-import { tokenize } from "../embed.ts";
 import { sendTimeReason } from "../filters.ts";
 import type { MemberStandingRow } from "../types.ts";
-import { intentText, type MemberIndex, type World } from "../world.ts";
+import type { World } from "../world.ts";
 import { standingObservations } from "./standing.ts";
 
 export type EntityId = string & { readonly __brand: "EntityId" };
@@ -119,20 +118,6 @@ export function internTags(tags: Iterable<string>): TagInterner {
   return {
     size: sorted.length,
     tagSet: list => [...new Set(list.flatMap(tag => { const id = ids.get(tag); return id === undefined ? [] : [id]; }))].sort((x, y) => x - y),
-  };
-}
-
-const OFFER_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
-const SEEK_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["desire", "goal"]);
-const INTEREST_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["interest", "trait"]);
-
-/** Generic tags from a member's matchable or shareable facets (MemberIndex.match) and live intents. */
-export function defaultTags(mi: MemberIndex): EntityTags {
-  const of = (kinds: ReadonlySet<FacetKind>) => mi.match.filter(f => kinds.has(f.kind)).flatMap(f => f.tags);
-  return {
-    offers: of(OFFER_KINDS),
-    seeks: [...of(SEEK_KINDS), ...mi.intents.flatMap(i => tokenize(intentText(i)))],
-    interests: of(INTEREST_KINDS),
   };
 }
 

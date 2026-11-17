@@ -898,18 +898,18 @@ export function enabled(current: ConsolePanels, event: Event): boolean {
 export function step(current: ConsolePanels, event: Event): ConsolePanels {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "receiveViewer" && canReceiveViewer(current, event.viewMode, event.realOnly)) return receiveViewer(current, event.viewMode, event.analystRole, event.adminRole, event.simRoleHeld, event.realOnly);
-  if (event.type === "receiveLab" && canReceiveLab(current, event.runCount)) return receiveLab(current, event.labOn, event.runCount, event.activeRuns);
-  if (event.type === "startLab" && canStartLab(current, event.armCount, event.seedCount, event.days)) return startLab(current, event.armCount, event.seedCount, event.days);
-  if (event.type === "receiveLabStart" && canReceiveLabStart(current)) return receiveLabStart(current, event.accepted);
-  if (event.type === "receiveRuns" && canReceiveRuns(current, event.runTotal)) return receiveRuns(current, event.runTotal);
-  if (event.type === "toggleCompare" && canToggleCompare(current)) return toggleCompare(current);
-  if (event.type === "pickRun" && canPickRun(current, event.alreadyPicked)) return pickRun(current, event.alreadyPicked);
-  if (event.type === "receiveDiff" && canReceiveDiff(current)) return receiveDiff(current, event.loaded);
-  if (event.type === "chooseFeedSegment" && canChooseFeedSegment(current, event.segment)) return chooseFeedSegment(current, event.segment);
-  if (event.type === "receiveGame" && canReceiveGame(current)) return receiveGame(current, event.present, event.over, event.levelPlaying);
-  if (event.type === "resetWorld" && canResetWorld(current, event.chooseLevel)) return resetWorld(current, event.chooseLevel);
-  if (event.type === "checkLevel" && canCheckLevel(current)) return checkLevel(current);
+  if (event.type === "receiveViewer") return canReceiveViewer(current, event.viewMode, event.realOnly) ? receiveViewer(current, event.viewMode, event.analystRole, event.adminRole, event.simRoleHeld, event.realOnly) : current;
+  if (event.type === "receiveLab") return canReceiveLab(current, event.runCount) ? receiveLab(current, event.labOn, event.runCount, event.activeRuns) : current;
+  if (event.type === "startLab") return canStartLab(current, event.armCount, event.seedCount, event.days) ? startLab(current, event.armCount, event.seedCount, event.days) : current;
+  if (event.type === "receiveLabStart") return canReceiveLabStart(current) ? receiveLabStart(current, event.accepted) : current;
+  if (event.type === "receiveRuns") return canReceiveRuns(current, event.runTotal) ? receiveRuns(current, event.runTotal) : current;
+  if (event.type === "toggleCompare") return canToggleCompare(current) ? toggleCompare(current) : current;
+  if (event.type === "pickRun") return canPickRun(current, event.alreadyPicked) ? pickRun(current, event.alreadyPicked) : current;
+  if (event.type === "receiveDiff") return canReceiveDiff(current) ? receiveDiff(current, event.loaded) : current;
+  if (event.type === "chooseFeedSegment") return canChooseFeedSegment(current, event.segment) ? chooseFeedSegment(current, event.segment) : current;
+  if (event.type === "receiveGame") return canReceiveGame(current) ? receiveGame(current, event.present, event.over, event.levelPlaying) : current;
+  if (event.type === "resetWorld") return canResetWorld(current, event.chooseLevel) ? resetWorld(current, event.chooseLevel) : current;
+  if (event.type === "checkLevel") return canCheckLevel(current) ? checkLevel(current) : current;
   return current;
 }
 

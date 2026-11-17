@@ -130,9 +130,9 @@ export function enabled(current: PhotoDelivery, event: Event): boolean {
 export function step(current: PhotoDelivery, event: Event): PhotoDelivery {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "claimAction" && canClaimAction(current, event.actionKey, event.currentItem)) return claimAction(current, event.actionKey, event.currentItem);
-  if (event.type === "observeApproval" && canObserveApproval(current)) return observeApproval(current, event.expiresAt);
-  if (event.type === "issueDelivery" && canIssueDelivery(current, event.intentKey, event.currentItem, event.issueAt, event.checkedAt)) return issueDelivery(current, event.intentKey, event.currentItem, event.issueAt, event.checkedAt);
+  if (event.type === "claimAction") return canClaimAction(current, event.actionKey, event.currentItem) ? claimAction(current, event.actionKey, event.currentItem) : current;
+  if (event.type === "observeApproval") return canObserveApproval(current) ? observeApproval(current, event.expiresAt) : current;
+  if (event.type === "issueDelivery") return canIssueDelivery(current, event.intentKey, event.currentItem, event.issueAt, event.checkedAt) ? issueDelivery(current, event.intentKey, event.currentItem, event.issueAt, event.checkedAt) : current;
   return current;
 }
 

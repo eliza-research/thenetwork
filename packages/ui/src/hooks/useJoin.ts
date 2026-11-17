@@ -5,6 +5,7 @@ import {
   browserInvitationMayBind,
   browserInvitationMayRetry,
   browserInvitationMaySubmit,
+  browserPrefillMayPresentReceipt,
   canAnswerCloudStart,
   canAnswerCodeStart,
   canAnswerJoin,
@@ -14,7 +15,7 @@ import {
   enabled,
   type Event,
   fragmentAgeAccepted,
-  fragmentNameMax,
+  fragmentNameKept,
   initial,
   type JoinPage,
   minJoinAgeShown,
@@ -95,11 +96,12 @@ interface PrivateInvitation {
 
 function readLink(): LinkFields {
   const fields = new URLSearchParams(window.location.hash.slice(1));
+  const suppliedName = fields.get("firstName") ?? "";
   const invites = window.location.pathname === "/join" ? fields.getAll("invite") : [];
   const value = invites.length === 1 ? invites[0] : undefined;
   return {
     viaAgent: new URLSearchParams(window.location.search).get("via") === "agent",
-    name: (fields.get("firstName") ?? "").slice(0, fragmentNameMax),
+    name: suppliedName.slice(0, fragmentNameKept(suppliedName.length)),
     age: fields.get("age") ?? "",
     ...(invites.length > 0 ? { invitation: {
       // A 32-byte base64url token has 43 characters and zero trailing padding bits.
@@ -188,8 +190,9 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       invitation.current = link.invitation;
       clearFragment();
       const receipt = takeCloudReceipt();
-      const freshLink = link.viaAgent || link.name !== "" || link.age !== "" || !!link.invitation;
-      const [app, session] = await Promise.all([readApp(), readSession(freshLink ? undefined : receipt)]);
+      const presentedReceipt = browserPrefillMayPresentReceipt(link.viaAgent, link.name !== "", link.age !== "", !!link.invitation)
+        ? receipt : undefined;
+      const [app, session] = await Promise.all([readApp(), readSession(presentedReceipt)]);
       const view = readAccount(session);
       const prefill = session.joinPrefill;
       if (prefill) send({ type: "restoreCloudPrefill", view, fromAgent: prefill.viaAgent, hasFields: !!(prefill.firstName || prefill.age) },

@@ -29,7 +29,8 @@ The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessio
 //
 // Abstractions: one crew offer to a, b, c, then sessions by abstract week slot. A session opportunity is
 // reviewed like any plan; here it ends "held" (its time passed) or "failed" (rejected, expired in review, or no
-// quorum).
+// quorum). The shell supplies exact-offer receipt authority and whether the current public venue can host
+// the full slot. Provider receipt timestamps and venue calendar entries are outside this model.
 //
 // The model follows the code after the fixes for SD-144 and SD-444 (counting). The notice part of SD-444 is
 // skipped (a founder decision): its invariant stays out of `safety`.
@@ -122,8 +123,10 @@ module plan_crew {
   }
 
   /** onCrewAnswer (network.ts:3192): when everyone answered, resolveCrew (network.ts:3203). */
-  action crewAnswer(m: str, yes: bool): bool = all {
-    crewStage == "offered", CREW0.contains(m), not(crewYes.contains(m)), not(crewNo.contains(m)),
+  action crewAnswer(m: str, yes: bool): bool = crewAnswerCurrent(m, yes, true)
+
+  action crewAnswerCurrent(m: str, yes: bool, receiptCurrent: bool): bool = all {
+    receiptCurrent, now <= CREW_TIMEOUT, crewStage == "offered", CREW0.contains(m), not(crewYes.contains(m)), not(crewNo.contains(m)),
     val y = if (yes) crewYes.union(Set(m)) else crewYes
     val n = if (yes) crewNo else crewNo.union(Set(m))
     all {
@@ -137,7 +140,7 @@ module plan_crew {
 
   /** The offer resolves after 3 days (network.ts:3221). */
   action crewTimeout = all {
-    crewStage == "offered", now >= CREW_TIMEOUT,
+    crewStage == "offered", now > CREW_TIMEOUT,
     resolveCrew(crewYes), crewYes' = crewYes, crewNo' = crewNo,
     crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
     crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold, keepEnv,
@@ -148,7 +151,9 @@ module plan_crew {
    * place (stage done: SD-444 counting fixed; still no member hears it, the skipped notice part); then enough
    * seats; then the dedupe on the plan id, which the crew and the slot fix (SD-144 fixed).
    */
-  action crewTick = all {
+  action crewTick = crewTickWithVenue(true)
+
+  action crewTickWithVenue(venueCurrent: bool): bool = all {
     crewStage == "formed", not(crewHandedOff),
     crewOpps.keys().forall(k => crewOpps.get(k) != "review"),
     val held = crewOpps.keys().filter(k => crewOpps.get(k) == "held").size()
@@ -159,6 +164,7 @@ module plan_crew {
     if (held >= HANDOFF) all {
       crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewHandedOff' = true,
     } else all {
+      venueCurrent,
       crewMembers.filter(id => seatOk(id)).size() >= CREW_MIN,
       not(dup),
       crewSessions' = crewSessions.append(planId),
@@ -197,7 +203,8 @@ module plan_crew {
     // Actor events are rare (1 in 10), so that random traces also reach the hand-off.
     nondet roll = 0.to(9).oneOf()
     any {
-      crewAnswer(m, yes), crewTimeout, crewTick, crewSessionEnd(99 + crewSessions.length(), yes), crewWeekPass,
+      crewAnswerCurrent(m, yes, roll != 9), crewTimeout, crewTickWithVenue(roll != 8),
+      crewSessionEnd(99 + crewSessions.length(), yes), crewWeekPass,
       clock, all { roll == 0, any { stop(m), goWatch(m), minorSignal(m) } },
     }
   }
@@ -246,6 +253,14 @@ module plan_crew {
 
   // ------------------------------------------------------------------------------------------------
   // Run tests (concrete traces)
+
+  run unfinishedCrewOfferCannotAcceptTest =
+    init.then(crewAnswerCurrent("a", true, false)).fail()
+
+  run closedVenueCannotCreateCrewSessionTest =
+    init
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTickWithVenue(false)).fail()
 
   /** SD-144 fixed: a session that fails in review is not proposed again for the same slot. */
   run sd144SlotOnceTest =

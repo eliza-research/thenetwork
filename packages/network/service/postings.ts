@@ -18,6 +18,7 @@
 //                    posting ends its open seat items at once. Each call writes network.staff_audit.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Facet, Intent, MemberId } from "@thenetwork/core";
+import { peonCompanyKey } from "../../engine/src/packs/peon/schema.ts";
 import { postingFacts, postingFromFacts, postingProblem, type JobPosting } from "../src/jobs.ts";
 import type { AuditEntry, StaffRole, StaffUser } from "../../observatory/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
@@ -54,7 +55,7 @@ export async function loadPostings(tx: SQL, app: string, managerId?: MemberId): 
 
 /** Staff verified this hiring manager's company (an id like "acme"): the company facts every seat of theirs carries. */
 export async function verifyEmployer(tx: SQL, app: string, memberId: MemberId, company: string, at: number): Promise<void> {
-  const co = company.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+  const co = peonCompanyKey(company);
   await tx`delete from network.facets where app_id = ${app} and member_id = ${memberId} and id in (${`${memberId}-peon-company`}, ${`${memberId}-peon-verified`})`;
   await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from) values
     (${app}, ${`${memberId}-peon-company`}, ${memberId}, 'fact', ${`Company: ${company.slice(0, 80)}`}, ${tx.array([`peon:company:${co}`], "TEXT")}, 'shareable', 'vouched', 'staff', 1, 'confirmed', ${new Date(at)}),

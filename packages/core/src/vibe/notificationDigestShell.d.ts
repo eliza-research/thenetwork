@@ -29,19 +29,23 @@ interface DispatchEffects<P extends DigestPlan, I extends DigestItem, R extends 
     /** @throws {never} */
     readRecipient(personId: string): Promise<R | undefined>;
     /** @throws {never} */
+    linkCurrent(plan: P, items: I[]): Promise<boolean>;
+    /** @throws {never} */
     rebuild(recipient: R, items: I[]): Promise<P>;
     /** @throws {never} */
     record(plan: P): Promise<boolean>;
     /** @throws {never} */
     enqueue(plan: P): Promise<unknown>;
 }
-interface RevalidationEffects {
+interface RevalidationEffects<R extends DigestRecord, I extends DigestItem> {
     /** @throws {never} */
-    readDelivery(deliveryId: string): Promise<DigestRecord | undefined>;
+    readDelivery(deliveryId: string): Promise<R | undefined>;
     /** @throws {never} */
     idFor(personId: string, itemIds: string[]): string;
     /** @throws {never} */
-    readItems(ids: string[]): Promise<DigestItem[]>;
+    readItems(ids: string[]): Promise<I[]>;
+    /** @throws {never} */
+    canClaim?(record: R, items: I[]): Promise<boolean>;
 }
 type DispatchResult<P> = {
     kind: "queued";
@@ -59,5 +63,5 @@ export declare function dispatchInboxDigest<P extends DigestPlan, I extends Dige
  * A queued body is immutable. Revalidate its complete item set at send time.
  * @throws {never}
  */
-export declare function queuedInboxDigestCurrent(deliveryId: string, now: number, effects: RevalidationEffects): Promise<boolean>;
+export declare function queuedInboxDigestCurrent<R extends DigestRecord, I extends DigestItem>(deliveryId: string, now: number, effects: RevalidationEffects<R, I>): Promise<boolean>;
 export {};

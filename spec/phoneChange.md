@@ -19,7 +19,7 @@ type PhoneChangePhase = Beginning | CheckingStartOwner | CheckingConfirmOwner | 
 type PhoneChangeFailure = NoFailure | SameNumber | ReviewNeeded | NoPerson | RateLimited | NoPendingChange | InvalidCode | NumberInUse
 type CurrentPhone = OwnedPhone | UnavailablePhone | WrongPerson
 type MovePolicy = MoveAllowed | MoveBlocked | NumberTaken
-type MoveOutcome = MoveApplied | MoveNumberTaken | MoveMissingPhone | MoveRequestStale
+type MoveOutcome = MoveApplied | MoveNumberTaken | MoveMissingPhone | MoveBanned | MoveRequestStale
 type PhoneChange = { phase: PhoneChangePhase, failure: PhoneChangeFailure, codeVerified: bool, moveAllowed: bool }
 
 pure val initial: PhoneChange = { phase: Beginning, failure: NoFailure, codeVerified: false, moveAllowed: false }
@@ -51,16 +51,21 @@ pure def checkStartPolicy(change: PhoneChange, oldNumberAllowed: bool): PhoneCha
 
 ### A challenge needs a send slot and a persisted request
 
-The account has three start requests per day. A start request can continue only when the account made fewer than three start requests earlier on that day. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
+The account has three start requests per day. The store must grant a slot while the prior count is below three. A start request can continue only when the store grants the slot and the account made fewer than three start requests earlier on that day. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
 
 ```quint
 pure val phoneChangesPerDay: int = 3
 
+pure def phoneChangeSlotOpen(startsBefore: int): bool = 0 <= startsBefore and startsBefore < phoneChangesPerDay
 pure def canCheckStartRate(change: PhoneChange): bool = change.phase == AwaitingRateLimit
-pure def phoneChangeSlotOpen(startsBefore: int): bool = startsBefore < phoneChangesPerDay
-pure def checkStartRate(change: PhoneChange, startsBefore: int): PhoneChange =
-  if (phoneChangeSlotOpen(startsBefore)) { ...change, phase: AwaitingCodeSend }
+pure def checkStartRate(change: PhoneChange, slotGranted: bool, startsBefore: int): PhoneChange =
+  if (slotGranted and phoneChangeSlotOpen(startsBefore)) { ...change, phase: AwaitingCodeSend }
   else { ...change, phase: Refused, failure: RateLimited }
+
+pure def lawFourthStartIsRefused(change: PhoneChange, startsBefore: int): bool =
+  startsBefore >= phoneChangesPerDay implies checkStartRate(change, true, startsBefore).failure == RateLimited
+pure def lawDeniedStartSlotIsRefused(change: PhoneChange, startsBefore: int): bool =
+  checkStartRate(change, false, startsBefore).failure == RateLimited
 
 pure def canRecordCodeSend(change: PhoneChange): bool = change.phase == AwaitingCodeSend
 pure def recordCodeSend(change: PhoneChange, sendAccepted: bool): PhoneChange =
@@ -69,9 +74,6 @@ pure def recordCodeSend(change: PhoneChange, sendAccepted: bool): PhoneChange =
 
 pure def canRecordPendingWrite(change: PhoneChange): bool = change.phase == AwaitingPendingWrite
 pure def recordPendingWrite(change: PhoneChange): PhoneChange = { ...change, phase: PendingRecorded }
-
-pure def lawFourthStartIsRefused(startsBefore: int): bool =
-  startsBefore >= 3 implies not(phoneChangeSlotOpen(startsBefore))
 ```
 
 ### A live pending request needs a valid code
@@ -80,11 +82,13 @@ Use the current person's pending request. A pending request with a new number is
 
 ```quint
 pure val phoneChangeLifetimeMs: int = 15 * 60 * 1000
-pure val elapsedMsValues = Set(0, 900000, 900001)
+pure val elapsedMsValues = Set(-1, 0, 900000, 900001)
 
-pure def pendingWindowOpen(elapsedMs: int): bool = not(elapsedMs > phoneChangeLifetimeMs)
+pure def pendingWindowOpen(elapsedMs: int): bool = 0 <= elapsedMs and elapsedMs <= phoneChangeLifetimeMs
 pure def lawWindowIncludesDeadline(offsetMs: int): bool =
   offsetMs == phoneChangeLifetimeMs implies pendingWindowOpen(offsetMs)
+pure def lawWindowExcludesFutureRequest(offsetMs: int): bool =
+  offsetMs < 0 implies not(pendingWindowOpen(offsetMs))
 
 pure def canReadPending(change: PhoneChange): bool = change.phase == AwaitingPendingRead
 pure def readPending(change: PhoneChange, hasTarget: bool, elapsedMs: int): PhoneChange =
@@ -99,7 +103,7 @@ pure def recordVerification(change: PhoneChange, otpVerified: bool): PhoneChange
 
 ### The verified request can move only when both numbers allow it
 
-Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target and the request's lifetime again after verification. A missing, superseded or expired request cannot move and returns the no-pending-change outcome. A missing or held current identity returns review and a number claimed before the move returns the in-use outcome. Only a completed store move permits success.
+Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target, the request's lifetime and both ban decisions again after verification. A missing, superseded or expired request cannot move and returns the no-pending-change outcome. A ban or missing or held current identity returns review. A number claimed before the move returns the in-use outcome. Only a completed store move permits success.
 
 ```quint
 pure def canCheckMovePolicy(change: PhoneChange): bool = change.phase == AwaitingMovePolicy and change.codeVerified
@@ -107,6 +111,12 @@ pure def checkMovePolicy(change: PhoneChange, policy: MovePolicy): PhoneChange =
   if (policy == MoveBlocked) { ...change, phase: Refused, failure: ReviewNeeded }
   else if (policy == NumberTaken) { ...change, phase: Refused, failure: NumberInUse }
   else { ...change, phase: AwaitingMove, moveAllowed: true }
+
+pure def lockedPhoneMoveAllowed(currentBanned: bool, targetBanned: bool): bool =
+  not(currentBanned or targetBanned)
+
+pure def lawBannedPhoneCannotMove(currentBanned: bool, targetBanned: bool): bool =
+  (currentBanned or targetBanned) implies not(lockedPhoneMoveAllowed(currentBanned, targetBanned))
 
 pure def canRecordMove(change: PhoneChange): bool =
   change.phase == AwaitingMove and change.codeVerified and change.moveAllowed
@@ -116,6 +126,9 @@ pure def recordMove(change: PhoneChange, moveResult: MoveOutcome): PhoneChange =
   else if (moveResult == MoveNumberTaken) { ...change, phase: Refused, failure: NumberInUse }
   else if (moveResult == MoveRequestStale) { ...change, phase: Refused, failure: NoPendingChange }
   else { ...change, phase: Refused, failure: ReviewNeeded }
+
+pure def lawStaleMoveRemainsUnconfirmed(change: PhoneChange): bool =
+  recordMove(change, MoveRequestStale).failure == NoPendingChange
 ```
 
 ### Reporting a move requires both the new code and current move authority

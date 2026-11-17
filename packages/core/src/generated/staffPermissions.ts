@@ -138,8 +138,8 @@ export function enabled(current: RouteCheck, event: Event): boolean {
 export function step(current: RouteCheck, event: Event): RouteCheck {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "enterHandler" && canEnterHandler(current)) return enterHandler(current);
-  if (event.type === "authorizeRoute" && canAuthorizeRoute(current)) return authorizeRoute(current, event.routeFacts, event.roles, event.requiredRoles);
+  if (event.type === "enterHandler") return canEnterHandler(current) ? enterHandler(current) : current;
+  if (event.type === "authorizeRoute") return canAuthorizeRoute(current) ? authorizeRoute(current, event.routeFacts, event.roles, event.requiredRoles) : current;
   return current;
 }
 

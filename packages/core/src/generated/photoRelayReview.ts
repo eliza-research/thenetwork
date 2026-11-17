@@ -220,13 +220,13 @@ export function enabled(current: PhotoSelection, event: Event): boolean {
 export function step(current: PhotoSelection, event: Event): PhotoSelection {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkSelection" && canCheckSelection(current)) return checkSelection(current, event.inputValid, event.explicitConsent);
-  if (event.type === "checkParties" && canCheckParties(current)) return checkParties(current, event.senderMatches, event.differentPeople, event.differentMembers);
-  if (event.type === "checkPhoto" && canCheckPhoto(current)) return checkPhoto(current, event.currentPhoto);
-  if (event.type === "resolveNotice" && canResolveNotice(current)) return resolveNotice(current, event.readyNotice);
-  if (event.type === "recordSelection" && canRecordSelection(current)) return recordSelection(current);
-  if (event.type === "recordReview" && canRecordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive)) return recordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive);
-  if (event.type === "revokeSelection" && canRevokeSelection(current, event.ownerMatches)) return revokeSelection(current, event.ownerMatches);
+  if (event.type === "checkSelection") return canCheckSelection(current) ? checkSelection(current, event.inputValid, event.explicitConsent) : current;
+  if (event.type === "checkParties") return canCheckParties(current) ? checkParties(current, event.senderMatches, event.differentPeople, event.differentMembers) : current;
+  if (event.type === "checkPhoto") return canCheckPhoto(current) ? checkPhoto(current, event.currentPhoto) : current;
+  if (event.type === "resolveNotice") return canResolveNotice(current) ? resolveNotice(current, event.readyNotice) : current;
+  if (event.type === "recordSelection") return canRecordSelection(current) ? recordSelection(current) : current;
+  if (event.type === "recordReview") return canRecordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive) ? recordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive) : current;
+  if (event.type === "revokeSelection") return canRevokeSelection(current, event.ownerMatches) ? revokeSelection(current, event.ownerMatches) : current;
   return current;
 }
 

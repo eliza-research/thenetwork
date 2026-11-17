@@ -9,6 +9,7 @@ import { lastEvents, resolveConsent } from "../../packages/platform/src/consent.
 import { APP_IDS, type AppId } from "../../packages/platform/src/apps.ts";
 import { proxySignature } from "../../packages/platform/src/proxy.ts";
 import { PHOTO_CONSENT } from "../../packages/platform/src/photos.ts";
+import { SESSION_GRACE_MS, SESSION_ROTATE_MS } from "../../packages/platform/src/sessions.ts";
 import { pkceS256, sha256hex } from "../../packages/mcp/src/util.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
@@ -64,16 +65,12 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(md.headers.get("content-type")).toBe("text/plain; charset=utf-8");
       const text = await md.text();
       expect(text).toContain(`name: ${s.skill}`);
-      // Each guide names its app-bound transport: direct phone/session HTTP for Friends,
-      // the existing site MCP endpoint for the other apps.
-      if (["friends", "slop", "ntwrk"].includes(app)) {
-        expect(text).toContain(`https://${s.domain}/`);
-        expect(text).toContain("/api/auth/otp/start");
-        expect(text).toContain("/api/auth/otp/verify");
-        expect(text).toContain("/api/me/export");
-        expect(text).toContain("session.cookies");
-        expect(text).not.toContain("In ChatGPT, add ");
-      } else expect(text).toContain(`https://${s.domain}/mcp`);
+      expect(text).toContain(`https://${s.domain}/mcp`);
+      if (app !== "peon") {
+        expect(text).toContain("native connector authorization");
+        expect(text).toContain("Call `submit_profile` once");
+        expect(text).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
+      }
       expect(text).not.toContain("https://api.ntwrk.party/mcp");
       const idx = await st.site(app, "/.well-known/agent-skills/index.json");
       expect(idx.status).toBe(200);
@@ -527,24 +524,20 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const app = await (await st.site("ntwrk", "/api/app")).json() as { joinMode: string };
       expect(app.joinMode).toBe("invite");
       const skill = await (await st.site("ntwrk", "/SKILL.md")).text();
-      expect(skill).toContain("`canJoin:false`");
-      expect(skill).toContain('`reason:"invite_only"`');
-      expect(skill).toContain("provided and approved an invitation for this exact app");
-      expect(skill).toContain("`inviteToken`");
+      expect(skill).toContain("The Network is invitation-only.");
+      expect(skill).toContain("enter the invitation in the app's browser");
+      expect(skill).toContain("native connector authorization");
       expect(skill).not.toContain("https://ntwrk.party/settings");
-      expect(skill).toContain("/api/auth/otp/verify");
-      expect(skill).toContain("/api/me/export");
-      expect(skill).toContain("session.cookies");
-      expect(skill).not.toContain("In ChatGPT, add ");
+      expect(skill).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
       const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
       expect(info.join.mode).toBe("invite");
-      expect(info.join.how).toContain("Use a forwarded invitation link in your own agent");
+      expect(info.join.how).toContain("Use a forwarded invitation in the app's browser");
       expect(info.join.how).toContain("connector authorization");
       expect(info.join.how).not.toContain("The agent asks what they are looking for");
       const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
       const invite = toolData(await signup("ntwrk"));
       expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/SKILL.md" });
-      expect(invite.instructions_for_person).toContain("Use a forwarded invitation link in your own agent");
+      expect(invite.instructions_for_person).toContain("Use a forwarded invitation in the app's browser");
       expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
       for (const app of ["peon", "friends"] as const) {
@@ -555,7 +548,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const path = new URL(open.url).pathname;
         expect(path).toBe(app === "peon" ? "/join" : "/SKILL.md");
         expect((await st.site(app, path)).status).toBe(200);
-        expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code in that signup session");
+        expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code on that page");
       }
       expect((await signup("slop")).body!.result.isError).toBe(true);
       expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
@@ -577,7 +570,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (name === "submit_profile") expect(data.submitted).toBe(false);
           if (app === "ntwrk") {
             expect(data.next_step).toContain("invite-only");
-            expect(data.next_step).toContain("Use a forwarded invitation link in your own agent");
+            expect(data.next_step).toContain("Use a forwarded invitation in the app's browser");
             expect(data.next_step).not.toContain("sign up there");
           } else expect(data.next_step).toContain("https://friends.help/SKILL.md");
         }
@@ -941,6 +934,42 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(after.res.status).toBe(401);
     }, T);
 
+    test("keeps an exact removal confirmation through a browser session rotation", async () => {
+      const phone = newPhone();
+      const { b, res } = await webJoin(st, "friends", phone, { age: 29 });
+      expect(res.status).toBe(200);
+      const oldCookie = b.jar.get("sid_friends");
+      if (!oldCookie) throw new Error("missing verified site session");
+      const justBeforeRotation = new Date(st.clock.now() - SESSION_ROTATE_MS + 1000);
+      const aged = await sql`update platform.sessions set created_at=${justBeforeRotation},started_at=${justBeforeRotation}
+        where app_id='friends' and e164=${phone} and revoked_at is null returning token_hash`;
+      expect(aged).toHaveLength(1);
+
+      const connection = await connectMcp(st, "friends", phone, { browser: b });
+      const access = connection.token?.access_token;
+      expect(access).toBeTypeOf("string");
+      const list = await (await st.site("friends", "/oauth/consents", { browser: b })).text();
+      const grant = /name="remove" value="([^"]+)"/.exec(list)?.[1];
+      if (!grant) throw new Error("missing live grant");
+      const confirm = await (await st.site("friends", `/oauth/consents?remove=${encodeURIComponent(grant)}`, { browser: b })).text();
+      const confirmation = /name="confirmation" value="([^"]+)"/.exec(confirm)?.[1];
+      if (!confirmation) throw new Error("missing bound confirmation");
+
+      st.clock.advance(2000);
+      expect((await st.site("friends", "/api/me", { browser: b })).status).toBe(200);
+      expect(b.jar.get("sid_friends")).not.toBe(oldCookie);
+      st.clock.advance(SESSION_GRACE_MS + 1);
+      const staleBrowser = new Browser();
+      staleBrowser.jar.set("sid_friends", oldCookie);
+      const post = (browser: Browser) => st.site("friends", "/oauth/consents/revoke", { browser, form: { grant, confirmation } });
+      expect((await post(staleBrowser)).status).toBe(401);
+      const removed = await post(b);
+      expect(removed.status).toBe(200);
+      expect((await removed.text()).includes("Access removed.")).toBe(true);
+      expect((await rpc(st, "friends", "/mcp", "tools/call", {name: "check_status", arguments: {}}, access)).res.status).toBe(401);
+      expect(await (await post(b)).text()).not.toContain("Access removed.");
+    }, T);
+
     test("agent-first sign-up: join on the site, connect, submit_profile reaches the member's own Network; an age in it counts (decision 10)", async () => {
       const phone = newPhone();
       const b = new Browser();
@@ -1002,7 +1031,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
       // get_updates takes an update reference (T-XXXXXX), never a verification code.
       for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : ["app"]);
-      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "start_signup", "submit_profile"]);
+      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "read_profile", "start_signup", "submit_profile"]);
     });
   });
 

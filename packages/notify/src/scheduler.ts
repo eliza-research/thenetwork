@@ -14,17 +14,19 @@
 
 import { createHash, randomInt } from "node:crypto";
 import {
-  appAllowsInboxItem, canRecordInboxSeen, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
+  appAllowsInboxItem, canRecordInboxSeen, inboxTokenMayRecordRedemption, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
 } from "../../core/src/generated/notificationAcknowledgement.ts";
-import { digestUsesProactiveSlot, holdAtWeeklyCap, inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
-import { inboxItemAllowedForRecipient } from "../../core/src/generated/notificationDispatch.ts";
+import { assistantDigestCanLink, digestUsesProactiveSlot, inboxDueAt, weeklyDigest } from "../../core/src/generated/notificationDelivery.ts";
+import { inboxItemAllowedForRecipient, inboxItemExpired, queuedDigestClaimAllowed } from "../../core/src/generated/notificationDispatch.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
-import { composeText } from "./compose.ts";
-import type { NotifyStore } from "./store.ts";
+import { composeText, composeThreadText } from "./compose.ts";
+import { assistantLink, buttonPageLink, updatePrompt } from "./links.ts";
+import { TOKEN_PATTERN } from "./reference.ts";
+import type { DigestAssistantLink, NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
 import { newToken, TOKEN_TTL_MS, type TaskToken } from "./tokens.ts";
-import type { Channel, InboxItem, InboxItemInput, Surface } from "./types.ts";
+import { isAssistant, type Assistant, type Channel, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
 
 export interface Recipient {
   personId: string;
@@ -39,6 +41,8 @@ export interface Recipient {
 export interface RecipientDirectory {
   get(personId: string): Recipient | undefined | Promise<Recipient | undefined>;
 }
+
+type AssistantUpdatesLookup = (personId: string, app: string) => Promise<readonly Surface[]>;
 
 /** The Notifier's sink: packages/blooio OutboundQueue through queueSink, or the service's unit of work. */
 export interface OutboundSink {
@@ -80,6 +84,7 @@ export interface SendPlan {
   itemIds: string[];
   delivery: Delivery;
   token?: string;
+  assistantLink?: DigestAssistantLink;
   text: string;
   countsTowardCap: boolean;
 }
@@ -89,12 +94,19 @@ export interface Hold { personId: string; reason: HoldReason; until?: number }
 
 export const deliveryIdFor = (personId: string, itemIds: string[]) =>
   `ntf_${createHash("sha256").update(personId + "\n" + [...itemIds].sort().join(",")).digest("hex").slice(0, 20)}`;
+const digestBodyHash = (text: string) => createHash("sha256").update(text).digest("hex");
 
 export class Notifier {
   readonly cfg: SchedulerConfig;
+  private assistantUpdatesLookup?: AssistantUpdatesLookup;
 
   constructor(readonly store: NotifyStore, private readonly directory: RecipientDirectory, cfg: Partial<SchedulerConfig> = {}) {
     this.cfg = { ...DEFAULT_CONFIG, ...cfg };
+  }
+
+  /** The connector is the authority for membership-read access in the digest's app. */
+  setAssistantUpdatesLookup(lookup: AssistantUpdatesLookup): void {
+    this.assistantUpdatesLookup = lookup;
   }
 
   /** Producers (engine, plans, reminders) add items here. Deduped on (person, app, event, subject). */
@@ -137,14 +149,13 @@ export class Notifier {
       if (this.cfg.isQuiet(now, r.timeZone)) { holds.push({ personId, reason: "quiet_hours" }); continue; }
 
       const recent = await this.store.capSendsSince(personId, now - WEEK_MS + 1);
-      if (removeProactiveItems(recent.length, this.cfg.weeklyCap, items.some(i => i.urgency !== "requested"))) {
-        const requested = items.filter(i => i.urgency === "requested");
-        if (holdAtWeeklyCap(true, requested.length)) {
-          holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
-          continue;
-        }
-        items = requested;
+      const requested = items.filter(i => i.urgency === "requested");
+      const budget = weeklyDigest(recent.length, this.cfg.weeklyCap, items.length, requested.length);
+      if (budget === "HoldDigest") {
+        holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
+        continue;
       }
+      if (budget === "KeepRequested") items = requested;
       sends.push(await this.build(r, items, now));
     }
     return { sends, holds };
@@ -158,10 +169,38 @@ export class Notifier {
     throw new Error("could not draw an unused task token");
   }
 
+  private async digestAssistants(personId: string, items: InboxItem[]): Promise<Assistant[]> {
+    const app = items[0]?.app;
+    const singleApp = !!app && items.every(item => item.app === app);
+    let assistants: Assistant[] = [];
+    if (singleApp && this.assistantUpdatesLookup) {
+      try { assistants = (await this.assistantUpdatesLookup(personId, app)).filter(isAssistant); }
+      catch { /* The verified member can still get the digest in their text thread. */ }
+    }
+    return assistantDigestCanLink(singleApp, assistants.length > 0) ? assistants : [];
+  }
+
+  private async linkCurrent(plan: SendPlan, items: InboxItem[]): Promise<boolean> {
+    const { delivery } = plan;
+    if (delivery.mode === "thread") return true;
+    const assistants = await this.digestAssistants(plan.personId, items);
+    return delivery.mode === "deeplink" ? assistants.includes(delivery.assistant)
+      : delivery.assistants.every(assistant => assistants.includes(assistant));
+  }
+
   private async build(r: Recipient, items: InboxItem[], now: number): Promise<SendPlan> {
-    const delivery = resolveDelivery(r.prefs, await this.store.signals(r.personId), now);
+    const assistants = await this.digestAssistants(r.personId, items);
+    const signals = (await this.store.signals(r.personId)).filter(signal => !isAssistant(signal.surface) || assistants.includes(signal.surface));
+    const delivery = resolveDelivery(r.prefs, signals, now);
     const itemIds = items.map(i => i.id);
     const token = delivery.mode === "thread" ? undefined : await this.issueToken(r.personId, itemIds, now);
+    const text = composeText(items, delivery, token, this.cfg.pageBase);
+    const assistantLink = delivery.mode === "thread" ? undefined : {
+      app: items[0]!.app,
+      assistants: delivery.mode === "deeplink" ? [delivery.assistant] : delivery.assistants,
+      expiresAt: now + this.cfg.tokenTtlMs,
+      bodyHash: digestBodyHash(text),
+    };
     return {
       personId: r.personId,
       deliveryId: deliveryIdFor(r.personId, itemIds),
@@ -171,8 +210,9 @@ export class Notifier {
       itemIds,
       delivery,
       token,
-      text: composeText(items, delivery, token, this.cfg.pageBase),
-      countsTowardCap: digestUsesProactiveSlot(items.filter(i => i.urgency !== "requested").length),
+      assistantLink,
+      text,
+      countsTowardCap: digestUsesProactiveSlot(items.length, items.filter(i => i.urgency === "requested").length),
     };
   }
 
@@ -185,11 +225,13 @@ export class Notifier {
       const result = await dispatchInboxDigest(planned, now, {
         readItems: ids => this.store.getItems(ids),
         readRecipient: async personId => this.directory.get(personId),
+        linkCurrent: (plan, items) => this.linkCurrent(plan, items),
         rebuild: (recipient, items) => this.build(recipient, items, now),
         record: final => this.store.recordDelivery({
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
           target: final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel,
           countsTowardCap: final.countsTowardCap, sentAt: now,
+          assistantLink: final.assistantLink,
         }),
         enqueue: async final => sink.enqueue({
           idempotencyKey: final.deliveryId, channel: final.channel, to: final.to, text: final.text,
@@ -215,6 +257,52 @@ export class Notifier {
     });
   }
 
+  /** Only the exact URL authored for this queued body is eligible for the contact leak exception. */
+  async queuedDigestHandoffUrl(id: string, text: string): Promise<string | undefined> {
+    const record = await this.store.getDelivery(id);
+    const link = record?.assistantLink;
+    if (!link || link.bodyHash !== digestBodyHash(text)) return;
+    const lines = text.split("\n");
+    if (lines.length !== 2) return;
+    const url = lines[1]!;
+    const parsed = URL.parse(url);
+    if (!parsed) return;
+    const prompt = parsed.searchParams.get("prompt") ?? parsed.searchParams.get("q");
+    const token = prompt?.split(" ").at(-1) ?? parsed.pathname.split("/").at(-1) ?? "";
+    if (!TOKEN_PATTERN.test(token)) return;
+    if (url === buttonPageLink(token, this.cfg.pageBase)
+      || link.assistants.some(assistant => url === assistantLink(assistant, updatePrompt(token)))) return url;
+  }
+
+  queuedDigestClaimCurrent(
+    row: { id: string; personId: string; text: string },
+    now: () => number,
+    reads: Pick<NotifyStore, "getDelivery" | "getItems">,
+    readAssistants?: AssistantUpdatesLookup,
+  ): Promise<boolean> {
+    return queuedInboxDigestCurrent(row.id, now(), {
+      readDelivery: id => reads.getDelivery(id),
+      idFor: deliveryIdFor,
+      readItems: ids => reads.getItems(ids),
+      canClaim: async (record, items) => {
+        const sameRecipient = record.personId === row.personId && items.every(item => item.personId === row.personId);
+        const link = record.assistantLink;
+        const itemExpired = (at: number) => items.some(item => inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, at));
+        if (!link) {
+          return !itemExpired(now()) && queuedDigestClaimAllowed(sameRecipient, row.text === composeThreadText(items), false, false, false, false);
+        }
+        const boundLink = link.bodyHash === digestBodyHash(row.text);
+        const appScoped = items.every(item => item.app === link.app);
+        const assistants = sameRecipient && boundLink && appScoped && link.expiresAt > now() && readAssistants
+          ? await readAssistants(row.personId, link.app) : [];
+        const checkedAt = now();
+        return !itemExpired(checkedAt)
+          && queuedDigestClaimAllowed(sameRecipient, false, boundLink, appScoped, link.expiresAt > checkedAt,
+            link.assistants.length > 0 && link.assistants.every(assistant => assistants.includes(assistant)));
+      },
+    });
+  }
+
   private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
     const outcome = stepAcknowledgement(acknowledgementInitial, {
       type: "readDeliveryClosure",
@@ -224,11 +312,13 @@ export class Notifier {
   }
 
   /** Resolve a token for its owner. null for unknown, expired or foreign tokens (shown as "no update"). */
-  private async redeem(token: string, callerPersonId: string, surface: Surface, now: number): Promise<InboxItem[] | null> {
+  private async redeem(token: string, callerPersonId: string, surface: Surface, now: number, app?: string): Promise<InboxItem[] | null> {
     const t = await this.store.getToken(token.trim().toUpperCase());
     if (!t || !mayRedeemInboxToken(t.personId === callerPersonId, t.expiresAt, now)) return null;
+    const items = (await this.store.getItems(t.itemIds)).filter(item => item.personId === callerPersonId
+      && appAllowsInboxItem(app !== undefined, item.app === app) && !inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now));
+    if (!inboxTokenMayRecordRedemption(items.length)) return null;
     await this.store.markTokenRedeemed(t.token, surface, now);
-    const items = await this.store.getItems(t.itemIds);
     await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, callerPersonId, now);
     return items;
   }
@@ -245,7 +335,7 @@ export class Notifier {
     let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
     let read = stepAcknowledgement(acknowledgementInitial, { type: "selectInboxRead", withToken: !!token });
     if (read.phase === "AwaitingReadToken" && token) {
-      const own = await this.redeem(token, callerPersonId, surface, now);
+      const own = await this.redeem(token, callerPersonId, surface, now, opts.app);
       read = stepAcknowledgement(read, { type: "resolveInboxReadToken", valid: own !== null });
       if (own) {
         const wanted = new Set(own.map(i => i.id));

@@ -15,8 +15,8 @@ An authenticated app admin with a stable operator identity can create
 one batch of distinct recipients. Each invitation has a valid recipient
 number, an intended supported cohort city, and private vouch evidence.
 Accept one to 100 entries per request and one to 500 UTF-8 bytes of
-vouch text per entry: the shortest and the longest vouch text of the
-batch must both be in that range. Record the exact app and issuing operator. Protect
+trimmed vouch text per entry. Check both the shortest and longest vouch
+in the normalized batch. Record the exact app and issuing operator. Protect
 the private vouch evidence in storage. Use the ordinary invitation
 lifetime of 30 days. Return a separate link for each recipient to the
 operator. This operation creates invitations and an audit entry.
@@ -50,7 +50,7 @@ pure val issuedAtValues = Set(-1, 0, 1, 100)
 pure val nowValues = Set(-1, 0, 1, 100, 2592000000, 2592000100)
 pure val eligibleBatch: SeedBatchFacts = {
   appAdmin: true, stableActor: true, validCity: true, validRecipients: true,
-  uniqueRecipients: true, entryCount: 1, shortestVouchBytes: 1, longestVouchBytes: 500,
+  uniqueRecipients: true, entryCount: 2, shortestVouchBytes: 1, longestVouchBytes: 500,
   batchNew: true, sameBatch: false, batchLive: true
 }
 
@@ -64,6 +64,7 @@ pure val batchValues = Set(eligibleBatch,
   { ...eligibleBatch, entryCount: 101 },
   { ...eligibleBatch, shortestVouchBytes: 0 },
   { ...eligibleBatch, longestVouchBytes: 501 },
+  { ...eligibleBatch, shortestVouchBytes: 500, longestVouchBytes: 1 },
   { ...eligibleBatch, batchNew: false, sameBatch: false },
   { ...eligibleBatch, batchNew: false, sameBatch: true },
   { ...eligibleBatch, batchNew: false, sameBatch: true, batchLive: false })
@@ -81,14 +82,15 @@ pure def seedInvitationBatchAuthorized(batch: SeedBatchFacts): bool =
     and batch.uniqueRecipients and seedInvitationBatchSizeAllowed(batch.entryCount)
     and seedInvitationVouchSizeAllowed(batch.shortestVouchBytes)
     and seedInvitationVouchSizeAllowed(batch.longestVouchBytes)
+    and batch.shortestVouchBytes <= batch.longestVouchBytes
 
 pure def lawSeedInvitationIssueNeedsOperator(batch: SeedBatchFacts): bool =
   seedInvitationBatchAuthorized(batch) implies (batch.appAdmin and batch.stableActor)
 
 pure def lawSeedInvitationBatchStaysInSizeLimits(batch: SeedBatchFacts): bool =
   seedInvitationBatchAuthorized(batch) implies
-    (batch.entryCount >= 1 and batch.entryCount <= 100
-      and batch.shortestVouchBytes >= 1 and batch.longestVouchBytes <= 500)
+    (seedInvitationBatchSizeAllowed(batch.entryCount) and batch.shortestVouchBytes >= 1
+      and batch.shortestVouchBytes <= batch.longestVouchBytes and batch.longestVouchBytes <= seedInvitationVouchByteLimit)
 ```
 
 ### A retry can return only the original live batch
@@ -103,6 +105,9 @@ needs the original batch to be live at the time of the request. Keep
 recipient account status out of staff responses.
 
 ```quint
+pure def seedInvitationBatchReplayLive(issuedAt: int, expiresAt: int, now: int): bool =
+  issuedAt >= 0 and issuedAt <= now and now < expiresAt
+
 pure def seedInvitationBatchDecision(batch: SeedBatchFacts): SeedBatchDecision =
   if (not(seedInvitationBatchAuthorized(batch))) RejectSeedBatch
   else if (batch.batchNew) IssueSeedBatch
@@ -199,45 +204,36 @@ pure def lawSeedInvitationRedemptionRequiresNewEligibleJoin(redemption: SeedRede
 pure def sometimesSeedInvitationRedeemed(invite: SeedInvitation): bool = invite.phase == SeedRedeemed
 ```
 
-### Decline, suppression and expiry end the invitation
+### Decline and expiry close the invitation
 
 The exact confirmed recipient may decline an open invitation. The
 shared-line STOP and existing safety controls continue to apply.
-A declined, suppressed, banned, or expired recipient cannot use the
-invitation. Clear private vouch material when the invitation is declined
-or its 30-day retention ends. A suppression or ban alone closes the
-invitation but does not clear the vouch material at that time; the
-shell's expiry purge deletes it when the retention ends. An issued
-invitation keeps its vouch material until it closes or is redeemed. A
-terminal invitation cannot issue or redeem again.
+Current suppression or a ban blocks redemption through the eligibility
+check. Clear private vouch material on a verified decline or when the
+30-day retention ends. An issued invitation keeps its vouch material
+until it closes or is redeemed. A terminal invitation cannot issue or
+redeem again.
 
 ```quint
 pure def seedInvitationMayDecline(exactRecipient: bool, open: bool): bool = exactRecipient and open
 
-pure def canCloseSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool, suppressedOrBanned: bool): bool =
+pure def canCloseSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool): bool =
   invite.phase == SeedIssued and
-    (seedInvitationMayDecline(exactDecline, invite.phase == SeedIssued) or suppressedOrBanned
+    (seedInvitationMayDecline(exactDecline, seedInvitationBatchReplayLive(invite.issuedAt, seedInvitationExpiresAt(invite.issuedAt), now))
       or now >= seedInvitationExpiresAt(invite.issuedAt))
 
-pure def seedInvitationCloseClearsVouch(invite: SeedInvitation, now: int, exactDecline: bool): bool =
-  seedInvitationMayDecline(exactDecline, invite.phase == SeedIssued) or now >= seedInvitationExpiresAt(invite.issuedAt)
-
-pure def closeSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool, suppressedOrBanned: bool): SeedInvitation =
-  if (canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned))
-    { ...invite, phase: SeedClosed,
-      vouchRetained: invite.vouchRetained and not(seedInvitationCloseClearsVouch(invite, now, exactDecline)) }
+pure def closeSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool): SeedInvitation =
+  if (canCloseSeedInvitation(invite, now, exactDecline))
+    { ...invite, phase: SeedClosed, vouchRetained: false }
   else invite
 
-pure def lawSeedInvitationDeclineOrExpiryClearsVouch(issuedAt: int, now: int, exactDecline: bool, suppressedOrBanned: bool): bool =
+pure def lawSeedInvitationDeclineOrExpiryClearsVouch(issuedAt: int, now: int, exactDecline: bool): bool =
   val issuedInvite = { phase: SeedIssued, issuedAt: issuedAt, vouchRetained: true }
-  seedInvitationCloseClearsVouch(issuedInvite, now, exactDecline)
-    implies not(closeSeedInvitation(issuedInvite, now, exactDecline, suppressedOrBanned).vouchRetained)
+  canCloseSeedInvitation(issuedInvite, now, exactDecline)
+    implies not(closeSeedInvitation(issuedInvite, now, exactDecline).vouchRetained)
 
-pure def alwaysOnlyIssuedOrClosedInvitationKeepsVouch(invite: SeedInvitation): bool =
-  invite.vouchRetained implies (invite.phase == SeedIssued or invite.phase == SeedClosed)
-
-pure def alwaysIssuedSeedInvitationKeepsVouch(invite: SeedInvitation): bool =
-  invite.phase == SeedIssued implies invite.vouchRetained
+pure def alwaysOnlyIssuedSeedInvitationKeepsVouch(invite: SeedInvitation): bool =
+  invite.vouchRetained == (invite.phase == SeedIssued)
 
 pure def alwaysIssuedSeedInvitationHasTimestamp(invite: SeedInvitation): bool =
   invite.phase != SeedUnissued implies invite.issuedAt >= 0

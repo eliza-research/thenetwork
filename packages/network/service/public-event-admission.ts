@@ -1,6 +1,7 @@
 import { canBeMatched } from "@thenetwork/core";
 import type { QueueRow, RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { publicEventClaimAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { NetworkState } from "../src/network.ts";
 import { publicEventRevision } from "../src/public-event-revision.ts";
@@ -52,16 +53,16 @@ export async function publicEventContactAdmission(tx: SQL, row: QueueRow, runtim
     && !opp.review.invalidated && opp.stage === expectedStage;
   if (!exactContact) return refused;
   const [event] = await readPublicEvents(tx, now, city, eventId);
-  const sameListing = !!event && publicEventRevisionMatches(opp.publicEventRevision, publicEventRevision(event));
-  if (!sameListing) return refused;
+  if (!event || !publicEventRevisionMatches(opp.publicEventRevision, publicEventRevision(event))) return refused;
 
+  const minimumAge = listedEventMinimumAge(event);
   const members = await tx<{ age: number | null; prefs: { categoriesOptIn?: unknown; formats?: unknown } | null }[]>`
     select ages.age,m.prefs from network.members m
     join platform.matching_ages ages on ages.app_id=m.app_id and ages.member_id=m.id
     where m.app_id=${row.app} and m.id=any(${tx.array(participants, "TEXT")}) and m.account_status='active' and not m.opted_out`;
   const participantsEligible = members.length === participants.length && members.every(({ age, prefs }) => publicEventMemberAllowsMatch(
-    canBeMatched(age ?? undefined), Array.isArray(prefs?.categoriesOptIn) && prefs.categoriesOptIn.includes(opp.category),
+    canBeMatched(age), (age ?? -1) >= minimumAge, Array.isArray(prefs?.categoriesOptIn) && prefs.categoriesOptIn.includes(opp.category),
     Array.isArray(prefs?.formats) && prefs.formats.includes("event"),
   ));
-  return publicEventClaimAllowed(sameListing, exactContact, participantsEligible) ? { ok: true } : refused;
+  return publicEventClaimAllowed(true, exactContact, participantsEligible) ? { ok: true } : refused;
 }

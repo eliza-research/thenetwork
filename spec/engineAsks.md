@@ -1,6 +1,6 @@
 # Matching information questions
 
-The [matching engine flow model](models/matching_engine.md) follows questions for missing matching information. The engine collects suggestions from the current app pack before it selects proposals. The shell supplies stored question history, profile facts, market membership, and existing eligibility checks. It builds the question text and proposal ranking as before. When Slop selects both compatibility questions in one run, the shell adds the basics question before the type question. The service applies its own admission rules when it sends questions.
+The [matching engine flow model](models/matching_engine.md) follows questions for missing matching information. The engine collects suggestions from the current app pack before it selects proposals. Slop owns dating preference questions under the [matching lane rules](matchLane.md). The shell supplies stored question history, profile facts, market membership, and existing eligibility checks. When Slop selects both compatibility questions, the shell adds the basics question before the type question. The service applies its own admission rules when it sends questions.
 
 ## Story: Ask for the information needed to find a match
 
@@ -46,18 +46,6 @@ pure def sometimesPublishesQuestions(s: AskRun): bool =
   s.phase == QuestionsPublished and countReservedQuestions(s, "a") > 0
 ```
 
-### The Network asks for dating preferences once
-
-If the member has a live dating intent with missing preferences, the Network considers the preference question if it has never recorded it before. The member must also pass the existing dating eligibility check.
-
-```quint
-pure def networkPreferenceQuestion(datingEligible: bool, missingPreferences: bool, activeIntent: bool, previouslyAsked: bool): bool =
-  datingEligible and missingPreferences and activeIntent and not(previouslyAsked)
-
-pure def lawIneligibleMemberGetsNoPreferenceQuestion(missingPreferences: bool, activeIntent: bool, previouslyAsked: bool): bool =
-  not(networkPreferenceQuestion(false, missingPreferences, activeIntent, previouslyAsked))
-```
-
 ### Slop finishes required questions before proposing optional ones
 
 Consider an adult profile with dating opt-in that is active and clear of holds. Ask about missing matching fields, seven days apart per question, while their individual ask count remains below the configured positive cap. Zero disables that cap. The optional questions become eligible after the required fields are complete.
@@ -78,7 +66,7 @@ pure def requiredQuestionDue(elapsedMs: int, asked: int, cap: int): bool =
 
 ### Slop can offer a wider radius or ask about compatibility
 
-Offer a wider dating radius once when widening is enabled, the member's pool is small enough, and the current radius is narrower than the offered radius. When compatibility questions are enabled, missing basics can make the basics question and a missing type can make the type question. Each question waits 21 days before it can be repeated. The type question also needs its own switch.
+Offer a wider dating radius once when widening is enabled, the member's pool is small enough, and the current radius is narrower than the offered radius. With compatibility questions enabled, consider each question for its own missing information. Each question waits 21 days before it can be repeated. The type question also needs its own switch.
 
 ```quint
 pure val compatibilityWaitMs = 1814400000
@@ -96,4 +84,20 @@ pure def compatibilityTypeQuestionDue(typeEnabled: bool, typeMissing: bool, elap
 
 pure def lawTypeQuestionNeedsItsSwitch(typeMissing: bool, elapsedMs: int): bool =
   not(compatibilityTypeQuestionDue(false, typeMissing, elapsedMs))
+```
+
+### A queued question still belongs to the member's open turn
+
+An engine follow-up that had to wait can go out only while its exact message is the member's open question in this app. After the member writes, asks to pause, starts a different question, or becomes ineligible, suppress the stale message. Recheck the saved question and the current account under the outbound claim lock. A question stops waiting after the same 24 hours used for the [probe question hold](probeDispatch.md#wait-for-the-members-send-window-and-current-availability). Replies in a current onboarding conversation follow their own path.
+
+```quint
+import probeDispatch as Probe from "./probeDispatch"
+
+pure val engineQuestionDeliveryPrefix = "engine-question:"
+
+pure def queuedEngineQuestionAllowed(exactQuestion: bool, memberEligible: bool, askedAt: int, now: int): bool =
+  exactQuestion and memberEligible and askedAt >= 0 and askedAt <= now and now - askedAt < Probe::questionHoldMs
+
+pure def lawEngineQuestionNeedsOpenTurn(memberEligible: bool, askedAt: int, now: int): bool =
+  not(queuedEngineQuestionAllowed(false, memberEligible, askedAt, now))
 ```

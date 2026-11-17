@@ -113,9 +113,9 @@ export function enabled(current: RelayLifecycle, event: Event): boolean {
 export function step(current: RelayLifecycle, event: Event): RelayLifecycle {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordVerdict" && canRecordVerdict(current)) return recordVerdict(current, event.verdict, event.rateOnly, event.hasText, event.ageSignal);
-  if (event.type === "recordDelivery" && canRecordDelivery(current, event.policyPermits)) return recordDelivery(current, event.delivery, event.policyPermits);
-  if (event.type === "reviewHold" && canReviewHold(current)) return reviewHold(current, event.released);
+  if (event.type === "recordVerdict") return canRecordVerdict(current) ? recordVerdict(current, event.verdict, event.rateOnly, event.hasText, event.ageSignal) : current;
+  if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits) ? recordDelivery(current, event.delivery, event.policyPermits) : current;
+  if (event.type === "reviewHold") return canReviewHold(current) ? reviewHold(current, event.released) : current;
   return current;
 }
 

@@ -17,7 +17,7 @@ pure def participationControlAllowed(signedDirect: bool, ownActiveMembership: bo
 
 ### Quiet hours use the member's local clock
 
-Save two explicitly specified whole hours. Ask for clarification when the text does not determine both endpoints. Accept overnight windows. Explicitly turning quiet hours off stores an empty window, with the same start and end hour.
+Save two explicitly specified whole hours. Ask for clarification when the text does not determine both endpoints. Accept overnight windows. A window with the same start and end hour is empty. Explicitly turning quiet hours off sets both endpoints to midnight. A signup or an update to a different setting keeps the saved hours.
 
 ```quint
 pure def controlQuietHoursValid(startHour: int, endHour: int): bool =

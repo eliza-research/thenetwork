@@ -125,6 +125,23 @@ export function sometimesKeepsQueuedDigest(digest) {
 export function sometimesSuppressesQueuedDigest(digest) {
     return digest.phase === "QueuedDigestObsolete";
 }
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function queuedDigestClaimAllowed(sameRecipient, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable) {
+    return sameRecipient && (threadCopy || (boundLink && appScoped && referenceLive && allAssistantsReadable));
+}
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function lawUnreadableQueuedLinkCannotSend(sameRecipient, boundLink, appScoped, referenceLive) {
+    //@ ensures \result === true
+    return !queuedDigestClaimAllowed(sameRecipient, false, boundLink, appScoped, referenceLive, false);
+}
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function lawForeignQueuedDigestCannotSend(threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable) {
+    //@ ensures \result === true
+    return !queuedDigestClaimAllowed(false, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable);
+}
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {
@@ -145,16 +162,16 @@ export function enabled(current, event) {
 export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
-    if (event.type === "rereadItems" && canRereadItems(current))
-        return rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged);
-    if (event.type === "recordDigest" && canRecordDigest(current))
-        return recordDigest(current, event.recorded);
-    if (event.type === "enqueueDigest" && canEnqueueDigest(current))
-        return enqueueDigest(current);
-    if (event.type === "readQueuedDigest" && canReadQueuedDigest(current))
-        return readQueuedDigest(current, event.sameDigest);
-    if (event.type === "revalidateQueuedItems" && canRevalidateQueuedItems(current))
-        return revalidateQueuedItems(current, event.allPresent, event.anyExpired, event.anyUnseen);
+    if (event.type === "rereadItems")
+        return canRereadItems(current) ? rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged) : current;
+    if (event.type === "recordDigest")
+        return canRecordDigest(current) ? recordDigest(current, event.recorded) : current;
+    if (event.type === "enqueueDigest")
+        return canEnqueueDigest(current) ? enqueueDigest(current) : current;
+    if (event.type === "readQueuedDigest")
+        return canReadQueuedDigest(current) ? readQueuedDigest(current, event.sameDigest) : current;
+    if (event.type === "revalidateQueuedItems")
+        return canRevalidateQueuedItems(current) ? revalidateQueuedItems(current, event.allPresent, event.anyExpired, event.anyUnseen) : current;
     return current;
 }
 /**

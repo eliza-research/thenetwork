@@ -82,7 +82,7 @@ export function enabled(current: Screening, event: Event): boolean {
 export function step(current: Screening, event: Event): Screening {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordCheck" && canRecordCheck(current, event.checked)) return recordCheck(current, event.checked, event.reason);
+  if (event.type === "recordCheck") return canRecordCheck(current, event.checked) ? recordCheck(current, event.checked, event.reason) : current;
   return current;
 }
 

@@ -105,6 +105,18 @@ pure def sometimesAgreed(participant: ParticipantProbe): bool = participant.phas
 pure def sometimesSettledNo(participant: ParticipantProbe): bool = participant.phase == Unavailable
 ```
 
+### A Slop answer follows acceptance of the exact question
+
+A reviewed Slop probe or its replacement time question can receive an answer only after the transport accepted that exact app, opportunity, and recipient's question. A pending queue row and an unresolved collected reply grant no authority to accept an answer. A direct response received before acceptance cannot settle the probe if it reaches the service later. The local simulator may record its own accepted delivery.
+
+```quint
+pure def slopProbeReplyCurrent(direct: bool, transportAccepted: bool, receivedAt: int, acceptedAt: int): bool =
+  direct and transportAccepted and receivedAt >= acceptedAt
+
+pure def lawSlopProbeNeedsAcceptance(direct: bool, receivedAt: int, acceptedAt: int): bool =
+  not(slopProbeReplyCurrent(direct, false, receivedAt, acceptedAt))
+```
+
 ### A replacement keeps the requester or hiring manager and all eligible group members
 
 If a requester or hiring manager becomes unavailable, close the opportunity. Otherwise try up to three replacements over the life of the opportunity. An alternate must be eligible and have neither a conflicting first name nor a block, avoid rule, or disqualifying prior pair with anyone staying. Try alternates in order. If no alternate is accepted, a group can continue after removing the unavailable member when at least three members remain available to participate. Close all other opportunities.
@@ -122,6 +134,14 @@ pure def mayTryAlternate(alternatesRemain: bool, replaced: int): bool = alternat
 
 pure def alternateAllowed(eligible: bool, sameFirstName: bool, conflict: bool): bool =
   eligible and not(sameFirstName) and not(conflict)
+
+import opportunityLifecycle as Opportunity from "./opportunityLifecycle"
+
+pure def groupMayRemainWithoutAlternate(group: bool, remaining: int): bool =
+  group and Opportunity::groupCanContinue(remaining)
+
+pure def lawOneToOneClosesWithoutAlternate(remaining: int): bool =
+  not(groupMayRemainWithoutAlternate(false, remaining))
 
 pure def lawRequiredParticipantCannotBeReplaced(probing: bool, requesterOut: bool, managerOut: bool): bool =
   (requesterOut or managerOut) implies replacementRoute(probing, requesterOut, managerOut) != FindAlternate

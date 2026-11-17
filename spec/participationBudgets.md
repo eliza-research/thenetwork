@@ -33,7 +33,7 @@ pure def lawNoGeneralUnsolicitedBudgetForReceivingOrPaused(participation: str): 
 
 ### A minor's solo offers have a smaller default cap
 
-The attention controller limits eligible solo offers to one initial invite per seven days for a member aged 13–17, within any stricter limit of their participation state. The stricter budget is the one that allows fewer invites per day. For example, Quiet keeps one in thirty days and Paused keeps zero. Age and content eligibility are separate rules.
+The attention controller limits eligible solo offers to one initial invite per seven days for a member aged 13–17, within any stricter limit of their participation state. Use the budget that allows fewer invites per day. Quiet keeps one invite in thirty days. Paused keeps zero. Age and content eligibility are separate rules.
 
 ```quint
 pure val minorInitialInviteBudget: OutreachBudget = { limit: 1, periodDays: 7 }
@@ -50,8 +50,7 @@ pure def lawMinorKeepsQuietBudget(participation: str): bool =
 pure def lawPausedMinorGetsNoInvites(participation: str): bool =
   (participation == "paused") implies minorInviteBudget(participation).limit == 0
 
-pure def lawMinorNeverAboveOneInvite(participation: str): bool =
-  minorInviteBudget(participation).limit <= 1
+pure def lawMinorNeverAboveOneInvite(participation: str): bool = minorInviteBudget(participation).limit <= 1
 ```
 
 ## Story: Receive separately budgeted plans and check-ins

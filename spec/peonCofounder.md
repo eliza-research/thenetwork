@@ -17,7 +17,7 @@ pure def peonCofounderMayPair(firstEligible: bool, secondEligible: bool, sameMar
 
 pure def lawCofounderRequiresTwoEligiblePeers(appMember: bool, jobSeat: bool, currentIntent: bool, professionalOptIn: bool, acceptsOneToOne: bool, contactOpen: bool, noOpenOpportunity: bool, secondEligible: bool, sameMarket: bool): bool =
   peonCofounderMayPair(peonCofounderMayProfile(appMember, jobSeat, currentIntent, professionalOptIn, acceptsOneToOne, contactOpen, noOpenOpportunity), secondEligible, sameMarket)
-    implies (appMember and not(jobSeat) and currentIntent and contactOpen and noOpenOpportunity and secondEligible and sameMarket)
+    implies (appMember and not(jobSeat) and currentIntent and professionalOptIn and acceptsOneToOne and contactOpen and noOpenOpportunity and secondEligible and sameMarket)
 ```
 
 The bounded search reads same-app, matchable work context. Job-intake data stays in Hire. Only [permitted lane evidence](memberStanding.md) affects standing. A shared goal alone supplies no skill or offer. The engine's reciprocal fit rule, not this definition, lets a pair pass only when both peers receive useful work from the other.

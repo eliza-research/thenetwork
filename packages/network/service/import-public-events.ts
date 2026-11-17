@@ -1,5 +1,6 @@
+import { isDeepStrictEqual } from "node:util";
 import { DAY, RealClock, type Clock } from "@thenetwork/core";
-import { publicEventAllowed, publicEventPublicationNewer, publicEventScanComplete, publicEventScanMaxBytes, publicEventScanResponseAllowed, publicEventScanRowLimit } from "../../core/src/generated/publicEventCatalog.ts";
+import { publicEventAllowed, publicEventDuplicateAllowed, publicEventPublicationNewer, publicEventScanComplete, publicEventScanMaxBytes, publicEventScanResponseAllowed, publicEventScanRowLimit } from "../../core/src/generated/publicEventCatalog.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { km, NEIGHBORHOODS, VENUES } from "../src/geo.ts";
@@ -38,9 +39,12 @@ function listingLink(raw: unknown): string | undefined {
   return `https://www.nycgovparks.org${url.pathname}`;
 }
 
-function parkEvent(raw: unknown, checkedAt: number): PublishedParkEvent | undefined {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const row = raw as Record<string, unknown>;
+function isFeedListing(raw: unknown): raw is Record<string, unknown> {
+  return !!raw && typeof raw === "object" && !Array.isArray(raw) && "guid" in raw
+    && ("starttime" in raw || "endtime" in raw || "title" in raw);
+}
+
+function parkEvent(row: Record<string, unknown>, checkedAt: number): PublishedParkEvent | undefined {
   const id = typeof row.guid === "number" && Number.isSafeInteger(row.guid) ? String(row.guid) : text(row.guid);
   const link = listingLink(row.link);
   const start = localTime(row.starttime), end = localTime(row.endtime);
@@ -83,14 +87,20 @@ export async function importPublicEvents(sql: SQL, clock: Clock, request: typeof
   let raw: unknown;
   try { raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
   catch { throw new Error("NYC Parks feed did not return a complete UTF-8 JSON listing"); }
-  if (!Array.isArray(raw) || !publicEventScanComplete(bytes.length, raw.length,
-    raw.length === 0 || raw.some(row => row && typeof row === "object" && "guid" in row && "starttime" in row))) {
+  if (!Array.isArray(raw)) throw new Error("NYC Parks feed did not return a complete event listing");
+  const rows = raw.filter(isFeedListing);
+  if (!publicEventScanComplete(bytes.length, raw.length, rows.length === raw.length)) {
     throw new Error("NYC Parks feed did not return a complete event listing");
   }
   const events = new Map<string, PublishedParkEvent>();
-  for (const row of raw) {
+  for (const row of rows) {
     const event = parkEvent(row, checkedAt);
-    if (event && !events.has(event.source_id)) events.set(event.source_id, event);
+    if (!event) continue;
+    const previous = events.get(event.source_id);
+    if (!publicEventDuplicateAllowed(previous !== undefined, isDeepStrictEqual(previous, event))) {
+      throw new Error("NYC Parks feed returned conflicting listings for one source id");
+    }
+    if (!previous) events.set(event.source_id, event);
   }
   return sql.begin(async tx => {
     await tx`set local role network_public_event_ingest`;

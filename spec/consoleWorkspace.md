@@ -103,7 +103,7 @@ pure def lawRowsNeedAnAnswer(panel: WorkPanel, answer: PanelAnswer, rowCount: in
 
 ### Each panel opens only for the roles that can read it
 
-Held texts, safety cases and reports need the safety role. The matching switch and the lab need the analyst role. The audit log needs the admin role. The bias monitor needs the analyst role and real data. Member requests are open to every staff role.
+Held texts, safety cases and reports need the safety role. The server records the staff member and selected app before it reads or returns the safety queue. An audit failure refuses the read. The matching switch and the lab need the analyst role. The audit log needs the admin role. The bias monitor needs the analyst role and real data. Member requests are open to every staff role.
 
 ```quint
 pure def panelAllowed(panel: WorkPanel, staff: StaffView): bool =

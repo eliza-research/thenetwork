@@ -145,6 +145,50 @@ export function canReserveRecurring(s: FriendsRun, kind: RecurringKind, members:
   return (s.phase === "CrewSessions" && kind === "Session") || (((s.phase === "CrewOffers" && kind === "Offer") || (s.phase === "RepeatPlans" && kind === "Repeat")) && !members.some((memberId: string) => !recurringAvailable(s, memberId)));
 }
 
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatSourceAllowed(completed: boolean, settlementComplete: boolean, crewActive: boolean, alreadyOffered: boolean): boolean {
+  return completed && settlementComplete && !(crewActive || alreadyOffered);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatBookingProofCurrent(replyRevision: number, currentRevision: number, settledBooking: boolean): boolean {
+  return replyRevision >= 0 && replyRevision === currentRevision && settledBooking;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatAttendanceAllowed(booked: boolean, came: boolean, again: boolean, noShowReported: boolean, crewDeclined: boolean): boolean {
+  return booked && came && again && !(noShowReported || crewDeclined);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatRosterCurrent(expected: string[], offered: string[]): boolean {
+  return expected.length >= 3 && expected.length <= 6 && equal_friendsWeek(expected, offered);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatHostIndex(previousIndex: number, seats: number): number {
+  return previousIndex < 0 || exact_friendsWeek(previousIndex + 1) >= seats ? 0 : exact_friendsWeek(previousIndex + 1);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendsRepeatNeedsSettledBooking(replyRevision: number, currentRevision: number): boolean {
+  //@ ensures \result === true
+  return !friendsRepeatBookingProofCurrent(replyRevision, currentRevision, false);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendsRepeatNeedsOriginalRoster(expected: string[], offered: string[]): boolean {
+  //@ ensures \result === true
+  return !friendsRepeatRosterCurrent(expected, offered) || equal_friendsWeek(expected, offered);
+}
+
 /** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function newPlanUsed(s: FriendsRun, memberId: string): boolean {
@@ -273,14 +317,14 @@ export function enabled(current: FriendsRun, event: Event): boolean {
 export function step(current: FriendsRun, event: Event): FriendsRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginCrewOffers" && canBeginCrewOffers(current)) return beginCrewOffers(current);
-  if (event.type === "beginRepeats" && canBeginRepeats(current)) return beginRepeats(current);
-  if (event.type === "beginNewPlans" && canBeginNewPlans(current)) return beginNewPlans(current, event.spreadNew);
-  if (event.type === "beginPartners" && canBeginPartners(current)) return beginPartners(current);
-  if (event.type === "finishWeek" && canFinishWeek(current)) return finishWeek(current);
-  if (event.type === "reserveRecurring" && canReserveRecurring(current, event.kind, event.members)) return reserveRecurring(current, event.kind, event.members);
-  if (event.type === "reserveNewPlan" && canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates)) return reserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates);
-  if (event.type === "reservePartner" && canReservePartner(current, event.pair, event.limit)) return reservePartner(current, event.pair, event.limit);
+  if (event.type === "beginCrewOffers") return canBeginCrewOffers(current) ? beginCrewOffers(current) : current;
+  if (event.type === "beginRepeats") return canBeginRepeats(current) ? beginRepeats(current) : current;
+  if (event.type === "beginNewPlans") return canBeginNewPlans(current) ? beginNewPlans(current, event.spreadNew) : current;
+  if (event.type === "beginPartners") return canBeginPartners(current) ? beginPartners(current) : current;
+  if (event.type === "finishWeek") return canFinishWeek(current) ? finishWeek(current) : current;
+  if (event.type === "reserveRecurring") return canReserveRecurring(current, event.kind, event.members) ? reserveRecurring(current, event.kind, event.members) : current;
+  if (event.type === "reserveNewPlan") return canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates) ? reserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates) : current;
+  if (event.type === "reservePartner") return canReservePartner(current, event.pair, event.limit) ? reservePartner(current, event.pair, event.limit) : current;
   return current;
 }
 
@@ -346,4 +390,12 @@ export function lookup0_friendsWeek(m: Record<string, number>, k: string, otherw
 export function exact_friendsWeek(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_friendsWeek(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_friendsWeek((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

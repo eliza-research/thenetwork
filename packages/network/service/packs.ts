@@ -32,6 +32,7 @@ import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
 import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
 import { slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
+import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/slop/rules.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppOnboarding, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { mustMarks, seatJob, SEAT_COPY } from "../src/jobs.ts";
@@ -226,6 +227,7 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       }
       return { ...input, facets, presence, intents };
     },
+    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, "nyc", options),
     onboarding: slopOnboarding,
     timeOptions(o, now, input) {
       const p = plan(o, input());

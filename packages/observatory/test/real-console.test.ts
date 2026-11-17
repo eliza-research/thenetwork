@@ -88,8 +88,17 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     const inbound = rt.entries.filter(e => e.kind === "message" && e.message.direction === "inbound" && !e.message.system);
     expect(inbound.length).toBeGreaterThan(0);
     expect(inbound.every(e => e.kind === "message" && e.message.body === HIDDEN_MESSAGE)).toBe(true);
-    const outbound = rt.entries.filter(e => e.kind === "message" && e.message.direction === "outbound" && !e.message.system);
-    expect(outbound.every(e => e.kind === "message" && e.message.guard === "passed")).toBe(true);
+    const outbound = (t: typeof rt) => t.entries.flatMap(e => e.kind === "message" && e.message.direction === "outbound" && !e.message.system ? [e.message] : []);
+    const stored = outbound(rt);
+    expect(stored.length).toBeGreaterThan(0);
+    const statuses = (messages: typeof stored) => new Map(messages.map(m => [m.id, m.status]));
+    expect(statuses(stored)).toEqual(statuses(outbound(gt)));
+    // spec/consoleMemberView.md, "The timeline shows recorded delivery and leak evidence for the exact message"
+    // The game export has message statuses and no provider queue evidence.
+    for (const message of stored) {
+      expect(message).not.toHaveProperty("guard");
+      expect(message).not.toHaveProperty("deliveryReason");
+    }
     // A reveal for this member shows their own words (and only on this call).
     const rv = (await real.timeline(id, { reveal: true }))!;
     expect(rv.entries.some(e => e.kind === "message" && e.message.direction === "inbound" && e.message.body !== HIDDEN_MESSAGE)).toBe(true);

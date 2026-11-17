@@ -743,6 +743,25 @@ test("collection commits one private pending batch and one content-free receipt 
   expect(await facets()).toHaveLength(0);
 });
 
+test("a full parent turn can replay its saved collection but cannot save a new batch", async () => {
+  const batchId = randomUUID(), blockedBatchId = randomUUID();
+  const turnId = "msg:blooio:collect-last-slot", blockedTurnId = "msg:blooio:collect-no-slot";
+  await storedTurn("collect-last-slot", collectionText(batchId));
+  await storedTurn("collect-no-slot", collectionText(blockedBatchId));
+  const otherReceipts = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`other:${i}`, { state: "completed" }]));
+  await sql`update platform.inbound set action_receipts=${otherReceipts}::jsonb - 'other:15' where id=${turnId}`;
+  await sql`update platform.inbound set action_receipts=${otherReceipts}::jsonb where id=${blockedTurnId}`;
+
+  const claim = { batchId, turnId, requestSha256: digest("last receipt writes") };
+  const preview = await store.propose(owner, input(), now, claim);
+  expect(preview?.id).toBe(batchId);
+  expect(await store.propose(owner, input(), now, claim)).toEqual(preview);
+  expect(await store.propose(owner, input(), now, {
+    batchId: blockedBatchId, turnId: blockedTurnId, requestSha256: digest("all receipts occupied"),
+  })).toBeNull();
+  expect(await sql`select id from platform.profile_suggestion_batches`).toEqual([{ id: batchId }]);
+}, 15_000);
+
 test("collection replay never recreates deleted, rejected, edited or withdrawn suggestions", async () => {
   for (const action of ["delete", "reject", "edit", "withdraw"]) {
     const batchId = randomUUID();

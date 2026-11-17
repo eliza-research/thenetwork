@@ -277,20 +277,20 @@ export function enabled(current: ChallengeFlow, event: Event): boolean {
 export function step(current: ChallengeFlow, event: Event): ChallengeFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "requestCode" && canRequestCode(current)) return requestCode(current);
-  if (event.type === "readSendAddress" && canReadSendAddress(current)) return readSendAddress(current, event.allowed);
-  if (event.type === "readSendPhoneHour" && canReadSendPhoneHour(current)) return readSendPhoneHour(current, event.allowed, event.gapLeft);
-  if (event.type === "readSendPhoneDay" && canReadSendPhoneDay(current)) return readSendPhoneDay(current, event.allowed);
-  if (event.type === "readSendGlobal" && canReadSendGlobal(current)) return readSendGlobal(current, event.allowed);
-  if (event.type === "recordSend" && canRecordSend(current)) return recordSend(current, event.providerAccepted);
-  if (event.type === "finishStart" && canFinishStart(current)) return finishStart(current);
-  if (event.type === "beginVerification" && canBeginVerification(current)) return beginVerification(current, event.codeWellFormed);
-  if (event.type === "readCheckAddress" && canReadCheckAddress(current)) return readCheckAddress(current, event.allowed);
-  if (event.type === "readCheckPhone" && canReadCheckPhone(current)) return readCheckPhone(current, event.allowed);
-  if (event.type === "readChallenge" && canReadChallenge(current)) return readChallenge(current, event.matchingProvider);
-  if (event.type === "claimAttempt" && canClaimAttempt(current)) return claimAttempt(current, event.claimed);
-  if (event.type === "checkCode" && canCheckCode(current)) return checkCode(current, event.correct);
-  if (event.type === "consumeChallenge" && canConsumeChallenge(current)) return consumeChallenge(current, event.consumed);
+  if (event.type === "requestCode") return canRequestCode(current) ? requestCode(current) : current;
+  if (event.type === "readSendAddress") return canReadSendAddress(current) ? readSendAddress(current, event.allowed) : current;
+  if (event.type === "readSendPhoneHour") return canReadSendPhoneHour(current) ? readSendPhoneHour(current, event.allowed, event.gapLeft) : current;
+  if (event.type === "readSendPhoneDay") return canReadSendPhoneDay(current) ? readSendPhoneDay(current, event.allowed) : current;
+  if (event.type === "readSendGlobal") return canReadSendGlobal(current) ? readSendGlobal(current, event.allowed) : current;
+  if (event.type === "recordSend") return canRecordSend(current) ? recordSend(current, event.providerAccepted) : current;
+  if (event.type === "finishStart") return canFinishStart(current) ? finishStart(current) : current;
+  if (event.type === "beginVerification") return canBeginVerification(current) ? beginVerification(current, event.codeWellFormed) : current;
+  if (event.type === "readCheckAddress") return canReadCheckAddress(current) ? readCheckAddress(current, event.allowed) : current;
+  if (event.type === "readCheckPhone") return canReadCheckPhone(current) ? readCheckPhone(current, event.allowed) : current;
+  if (event.type === "readChallenge") return canReadChallenge(current) ? readChallenge(current, event.matchingProvider) : current;
+  if (event.type === "claimAttempt") return canClaimAttempt(current) ? claimAttempt(current, event.claimed) : current;
+  if (event.type === "checkCode") return canCheckCode(current) ? checkCode(current, event.correct) : current;
+  if (event.type === "consumeChallenge") return canConsumeChallenge(current) ? consumeChallenge(current, event.consumed) : current;
   return current;
 }
 

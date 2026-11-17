@@ -95,7 +95,7 @@ async function currentCalendarInvite(tx: SQL, accounts: Accounts, app: AppInfo, 
   const phone = owner ? { e164: owner.e164 } : await accounts.byPhoneHash(grant.phone_hash);
   const binding = phone ? await memberCommandOwner(tx, accounts, { app, memberId: grant.member_id, e164: phone.e164 }) : undefined;
   const currentOwner = phone && binding?.member ? canMatchInApp(await accounts.lowestAge(phone.e164, binding.person), app) : false;
-  const [current] = await bookings(tx, app, grant.network_id, grant.member_id, clock(), grant.opportunity_id);
+  const [current] = currentOwner ? await bookings(tx, app, grant.network_id, grant.member_id, clock(), grant.opportunity_id) : [];
   const now = clock();
   if (!current || !calendarDownloadAllowed(currentOwner, eligible(current, now), current.meeting_at.getTime() === grant.meeting_at.getTime(),
     current.revision === grant.schedule_revision, now, grant.expires_at.getTime())) return;

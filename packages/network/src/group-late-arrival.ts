@@ -1,5 +1,5 @@
-import type { MemberId } from "@thenetwork/core";
-import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
+import type { MemberId, OpportunityKind } from "@thenetwork/core";
+import { lateArrivalDeliveryPrefix, lateArrivalIsPair } from "../../core/src/generated/groupLateArrival.ts";
 
 export interface LateArrivalDelivery {
   app: string;
@@ -8,6 +8,10 @@ export interface LateArrivalDelivery {
   revision: number;
   from: MemberId;
   to: MemberId;
+}
+
+export function isLateArrivalPairBooking(booking: { kind: OpportunityKind; participants: readonly MemberId[]; plan?: { partner: boolean } }): boolean {
+  return lateArrivalIsPair(booking.kind === "group", !!booking.plan && !booking.plan.partner, new Set(booking.participants).size);
 }
 
 /** Accept an explicit report, leaving named requests to the existing relay conversation. */

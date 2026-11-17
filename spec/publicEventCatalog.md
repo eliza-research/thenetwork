@@ -22,7 +22,7 @@ pure def publicEventAllowed(officialLink: bool, publicPlace: bool, online: bool,
 
 ### A successful complete scan replaces the previous source and expires if refresh stops
 
-Publish a complete scan atomically, with one row per source id. Accept only a full HTTP 200 response with no redirect or range marker, containing valid UTF-8 JSON in at most 8 MiB and fewer than 5,000 rows. A complete empty array can replace a previous publication. A partial, oversized, truncated or failed scan leaves the last publication and its timestamp in place. A scan started earlier cannot replace a newer scan. The daily source is usable for two days after a successful scan. The shell reads only the requested city's current published listings. Republishing identical events does not change matching evidence.
+Publish a complete scan atomically, with one row per source id. Accept only a full HTTP 200 response with no redirect or range marker, containing valid UTF-8 JSON in at most 8 MiB and fewer than 5,000 rows. Every row must carry the source id field and at least one known listing field. A recognizable row can still be ineligible, such as a listing with no start time. A complete empty array can replace a previous publication. A partial, oversized, truncated or failed scan leaves the last publication and its timestamp in place. A scan started earlier cannot replace a newer scan. The daily source is usable for two days after a successful scan. The shell reads only the requested city's current published listings. Republishing identical events does not change matching evidence.
 
 ```quint
 pure val publicEventFreshDays = 2
@@ -35,8 +35,8 @@ pure val rowsReadValues = Set(0, 1, publicEventScanRowLimit - 1, publicEventScan
 pure def publicEventScanResponseAllowed(responseStatus: int, rangeMarked: bool, redirected: bool): bool =
   responseStatus == 200 and not(rangeMarked) and not(redirected)
 
-pure def publicEventScanComplete(bytesRead: int, rowsRead: int, recognizable: bool): bool =
-  0 < bytesRead and bytesRead <= publicEventScanMaxBytes and 0 <= rowsRead and rowsRead < publicEventScanRowLimit and recognizable
+pure def publicEventScanComplete(bytesRead: int, rowsRead: int, allRowsRecognizable: bool): bool =
+  0 < bytesRead and bytesRead <= publicEventScanMaxBytes and 0 <= rowsRead and rowsRead < publicEventScanRowLimit and allRowsRecognizable
 
 pure def lawPartialEventScanCannotPublish(redirected: bool): bool =
   not(publicEventScanResponseAllowed(206, false, redirected)) and not(publicEventScanResponseAllowed(200, true, redirected))
@@ -51,20 +51,35 @@ pure def lawCatalogExpiresAtLimit(checkedAt: int): bool =
   not(publicEventCatalogFresh(checkedAt, checkedAt + publicEventFreshDays * 86400000))
 ```
 
+### A source id identifies a single normalized listing in each scan
+
+Keep one copy of identical normalized listings with the same source id. If two eligible rows for the same id disagree on the published listing fields, reject the scan and retain the prior publication and timestamp.
+
+```quint
+pure def publicEventDuplicateAllowed(previousPresent: bool, sameListing: bool): bool =
+  not(previousPresent) or sameListing
+
+pure def lawConflictingPublicEventRowsCannotPublish(sameListing: bool): bool =
+  not(sameListing) implies not(publicEventDuplicateAllowed(true, sameListing))
+```
+
 ### A contact or booking uses the same current listing that entered review
 
-A change to the listed event, venue or time invalidates a pending opportunity. Recheck the bound listing and each participant's adult eligibility, category choice and event format before reviewer approval, while sending invitations, and before booking. Use that listing's venue, time and official link when confirming a co-attendance. A solo event suggestion can include the same public link. Independent consent and the usual review and dispatch rules still apply.
+A change to the listed event, venue or time invalidates a pending opportunity. Require every participant to be an adult and meet any higher minimum age given in the listing, such as 21+. Recheck the bound listing, age, category choice and event format before reviewer approval, while sending invitations, and before booking. Use that listing's venue, time and official link when confirming a co-attendance. A solo event suggestion can include the same public link. Independent consent and the usual review and dispatch rules still apply.
 
 ```quint
 pure def publicEventRevisionMatches(bound: str, available: str): bool = bound != "" and bound == available
 
-pure def publicEventMemberAllowsMatch(adult: bool, categoryAllowed: bool, eventFormatAllowed: bool): bool =
-  adult and categoryAllowed and eventFormatAllowed
+pure def publicEventMemberAllowsMatch(adult: bool, minimumAgeMet: bool, categoryAllowed: bool, eventFormatAllowed: bool): bool =
+  adult and minimumAgeMet and categoryAllowed and eventFormatAllowed
+
+pure def lawEventMinimumAgeAppliesToAdults(categoryAllowed: bool, eventFormatAllowed: bool): bool =
+  not(publicEventMemberAllowsMatch(true, false, categoryAllowed, eventFormatAllowed))
 ```
 
 ### A queued event contact still needs the reviewed listing at final claim
 
-Recheck the exact published listing and each active participant's adult eligibility, category choice and event format when claiming a queued invitation, booking confirmation or reminder. Use the persisted opportunity and message to bind this check. Read the current catalog under the lock that serializes publication with the outbound claim. A moved, expired or removed listing cannot authorize the old contact. A cancellation or unrelated message follows its own claim rules.
+Recheck the exact published listing and each active participant's adult eligibility, listing minimum age, category choice and event format when claiming a queued invitation, booking confirmation or reminder. Use the persisted opportunity and message to bind this check. Read the current catalog under the lock that serializes publication with the outbound claim. A moved, expired or removed listing cannot authorize the old contact. A cancellation or unrelated message follows its own claim rules.
 
 ```quint
 pure def publicEventClaimAllowed(sameListing: bool, exactContact: bool, participantsEligible: bool): bool =

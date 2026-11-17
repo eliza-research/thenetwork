@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
-export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets" | "HoldDidNotApply" | "BanNeedsCrossApp" | "BanNoPerson" | "ReadingBanPhones" | "BanNoPhone" | "ReadingExistingBan" | "BanAlreadyExists" | "ApplyingPhoneBan" | "ApplyingPersonBan" | "PerformingAuditedAction" | "RecordingAuditResult";
+export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets" | "HoldDidNotApply" | "BanNeedsCrossApp" | "BanNoPerson" | "ReadingBanPhones" | "BanNoPhone" | "ReadingExistingBan" | "BanAlreadyExists" | "ApplyingPhoneBan" | "ApplyingPersonBan" | "ResumingBanProjection" | "PerformingAuditedAction" | "RecordingAuditResult";
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export interface ServiceSafetyFlow { phase: ServiceSafetyPhase; phoneOnly: boolean }
 /** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
@@ -15,7 +15,7 @@ export type Event =
   | { type: "recordCompletedSafetyAction" }
   | { type: "startStaffBan"; everywhere: boolean; hasPerson: boolean; phoneOnly: boolean }
   | { type: "readStaffBanPhones"; hasPhone: boolean }
-  | { type: "checkExistingStaffBan"; alreadyBanned: boolean };
+  | { type: "checkExistingStaffBan"; alreadyBanned: boolean; pendingProjection: boolean };
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export const initial: ServiceSafetyFlow = { phase: "ServiceSafetyStarting", phoneOnly: false };
@@ -53,8 +53,8 @@ export function lawLocalStaffTargetStaysInScope(requestedRuntime: boolean): bool
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 //@ pure
-export function staffSafetyReportFor(isRequested: boolean, reportId: string): string {
-  return isRequested ? reportId : "";
+export function staffSafetyReportFor(ownsReport: boolean, reportId: string): string {
+  return ownsReport ? reportId : "";
 }
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
@@ -81,6 +81,70 @@ export function lawOtherTargetsGetNoReport(reportId: string): boolean {
 //@ pure
 export function sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "HoldRemainingTargets";
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldScope(allAppsAuthority: boolean, currentApp: string): string {
+  return allAppsAuthority ? "*" : currentApp;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldCoversApp(localHold: boolean, globalHold: boolean, appReleased: boolean): boolean {
+  return localHold || (globalHold && !appReleased);
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldLiftAllowed(globallyCovered: boolean, allAppsAuthority: boolean): boolean {
+  return !globallyCovered || allAppsAuthority;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldSnapshotStatus(accountStatus: string, staffHeld: boolean): string {
+  return staffHeld ? "restricted" : accountStatus;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function lawLocalStaffCannotReleaseGlobalHold(globallyCovered: boolean): boolean {
+  //@ ensures \result === true
+  return !globallyCovered || !durableStaffHoldLiftAllowed(globallyCovered, false);
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function lawReleaseOfOneAppLeavesOtherAppsHeld(globalHold: boolean): boolean {
+  //@ ensures \result === true
+  return !globalHold || (!durableStaffHoldCoversApp(false, globalHold, true) && durableStaffHoldCoversApp(false, globalHold, false));
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function carryTrustHoldOnAppLeave(ordinaryAppLeave: boolean, trustLevel: string): boolean {
+  return ordinaryAppLeave && trustLevel === "hold";
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function carriedTrustHoldRecordAllowed(currentOwner: boolean, canonicalBan: boolean, staffHoldCoversApp: boolean): boolean {
+  return currentOwner && !(canonicalBan || staffHoldCoversApp);
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function lawWatchDoesNotCarryAcrossLeave(ordinaryAppLeave: boolean): boolean {
+  //@ ensures \result === true
+  return !carryTrustHoldOnAppLeave(ordinaryAppLeave, "watch");
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function lawCarriedTrustHoldRequiresOneCurrentOwner(canonicalBan: boolean, staffHoldCoversApp: boolean): boolean {
+  //@ ensures \result === true
+  return !carriedTrustHoldRecordAllowed(false, canonicalBan, staffHoldCoversApp);
 }
 
 /** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
@@ -173,9 +237,9 @@ export function canCheckExistingStaffBan(flow: ServiceSafetyFlow): boolean {
 
 /** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
-export function checkExistingStaffBan(flow: ServiceSafetyFlow, alreadyBanned: boolean): ServiceSafetyFlow {
+export function checkExistingStaffBan(flow: ServiceSafetyFlow, alreadyBanned: boolean, pendingProjection: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canCheckExistingStaffBan(flow)) ==> stepSafetyResultFollowsAction(flow, "checkExistingStaffBan", \result)
-  return { ...flow, phase: alreadyBanned ? "BanAlreadyExists" : (flow.phoneOnly ? "ApplyingPhoneBan" : "ApplyingPersonBan") };
+  return { ...flow, phase: alreadyBanned && pendingProjection ? "ResumingBanProjection" : (alreadyBanned ? "BanAlreadyExists" : (flow.phoneOnly ? "ApplyingPhoneBan" : "ApplyingPersonBan")) };
 }
 
 /** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
@@ -188,6 +252,52 @@ export function sometimesAppliesPhoneBan(flow: ServiceSafetyFlow): boolean {
 //@ pure
 export function sometimesAppliesPersonBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ApplyingPersonBan";
+}
+
+/** Story: Apply a confirmed phone or person ban / A ban covers the reported number and the number current at the decision (spec/staffSafetyService.md) */
+//@ pure
+export function includeLockedBanPhone(observedHash: string, currentHash: string): boolean {
+  return observedHash !== "" && currentHash !== "" && currentHash !== observedHash;
+}
+
+/** Story: Apply a confirmed phone or person ban / A ban covers the reported number and the number current at the decision (spec/staffSafetyService.md) */
+//@ pure
+export function lawNoDuplicateLockedBanPhone(hash: string): boolean {
+  //@ ensures \result === true
+  return !includeLockedBanPhone(hash, hash);
+}
+
+/** Story: Apply a confirmed phone or person ban / An interrupted ban resumes from its saved authority (spec/staffSafetyService.md) */
+//@ pure
+export function lawIncompleteRecordedBanCanResume(flow: ServiceSafetyFlow): boolean {
+  //@ ensures \result === true
+  return checkExistingStaffBan(flow, true, true).phase === "ResumingBanProjection";
+}
+
+/** Story: Apply a confirmed phone or person ban / An interrupted ban resumes from its saved authority (spec/staffSafetyService.md) */
+//@ pure
+export function lawCompletedBanCannotResume(flow: ServiceSafetyFlow): boolean {
+  //@ ensures \result === true
+  return checkExistingStaffBan(flow, true, false).phase === "BanAlreadyExists";
+}
+
+/** Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person (spec/staffSafetyService.md) */
+//@ pure
+export function staffBanEnrollmentAllowed(liveOwner: boolean, verifiedBinding: boolean, banned: boolean): boolean {
+  return liveOwner && verifiedBinding && !banned;
+}
+
+/** Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person (spec/staffSafetyService.md) */
+//@ pure
+export function staffBanSnapshotStatus(accountStatus: string, banned: boolean): string {
+  return banned ? "restricted" : accountStatus;
+}
+
+/** Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person (spec/staffSafetyService.md) */
+//@ pure
+export function lawBannedEnrollmentCannotCommit(liveOwner: boolean, verifiedBinding: boolean): boolean {
+  //@ ensures \result === true
+  return !staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true);
 }
 
 /** Do the rules allow this event in this state? */
@@ -207,12 +317,12 @@ export function enabled(current: ServiceSafetyFlow, event: Event): boolean {
 export function step(current: ServiceSafetyFlow, event: Event): ServiceSafetyFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "readPrimaryHold" && canReadPrimaryHold(current)) return readPrimaryHold(current, event.applied);
-  if (event.type === "recordRequestedSafetyAudit" && canRecordRequestedSafetyAudit(current)) return recordRequestedSafetyAudit(current);
-  if (event.type === "recordCompletedSafetyAction" && canRecordCompletedSafetyAction(current)) return recordCompletedSafetyAction(current);
-  if (event.type === "startStaffBan" && canStartStaffBan(current)) return startStaffBan(current, event.everywhere, event.hasPerson, event.phoneOnly);
-  if (event.type === "readStaffBanPhones" && canReadStaffBanPhones(current)) return readStaffBanPhones(current, event.hasPhone);
-  if (event.type === "checkExistingStaffBan" && canCheckExistingStaffBan(current)) return checkExistingStaffBan(current, event.alreadyBanned);
+  if (event.type === "readPrimaryHold") return canReadPrimaryHold(current) ? readPrimaryHold(current, event.applied) : current;
+  if (event.type === "recordRequestedSafetyAudit") return canRecordRequestedSafetyAudit(current) ? recordRequestedSafetyAudit(current) : current;
+  if (event.type === "recordCompletedSafetyAction") return canRecordCompletedSafetyAction(current) ? recordCompletedSafetyAction(current) : current;
+  if (event.type === "startStaffBan") return canStartStaffBan(current) ? startStaffBan(current, event.everywhere, event.hasPerson, event.phoneOnly) : current;
+  if (event.type === "readStaffBanPhones") return canReadStaffBanPhones(current) ? readStaffBanPhones(current, event.hasPhone) : current;
+  if (event.type === "checkExistingStaffBan") return canCheckExistingStaffBan(current) ? checkExistingStaffBan(current, event.alreadyBanned, event.pendingProjection) : current;
   return current;
 }
 
@@ -235,7 +345,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recordCompletedSafetyAction") return { type: "recordCompletedSafetyAction" };
   if (raw.type === "startStaffBan" && typeof raw.everywhere === "boolean" && typeof raw.hasPerson === "boolean" && typeof raw.phoneOnly === "boolean") return { type: "startStaffBan", everywhere: raw.everywhere, hasPerson: raw.hasPerson, phoneOnly: raw.phoneOnly };
   if (raw.type === "readStaffBanPhones" && typeof raw.hasPhone === "boolean") return { type: "readStaffBanPhones", hasPhone: raw.hasPhone };
-  if (raw.type === "checkExistingStaffBan" && typeof raw.alreadyBanned === "boolean") return { type: "checkExistingStaffBan", alreadyBanned: raw.alreadyBanned };
+  if (raw.type === "checkExistingStaffBan" && typeof raw.alreadyBanned === "boolean" && typeof raw.pendingProjection === "boolean") return { type: "checkExistingStaffBan", alreadyBanned: raw.alreadyBanned, pendingProjection: raw.pendingProjection };
   return undefined;
 }
 
@@ -253,7 +363,7 @@ export function parseState(x: unknown): ServiceSafetyFlow | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "ServiceSafetyStarting" || raw.phase === "HoldRemainingTargets" || raw.phase === "HoldDidNotApply" || raw.phase === "BanNeedsCrossApp" || raw.phase === "BanNoPerson" || raw.phase === "ReadingBanPhones" || raw.phase === "BanNoPhone" || raw.phase === "ReadingExistingBan" || raw.phase === "BanAlreadyExists" || raw.phase === "ApplyingPhoneBan" || raw.phase === "ApplyingPersonBan" || raw.phase === "PerformingAuditedAction" || raw.phase === "RecordingAuditResult") && typeof raw.phoneOnly === "boolean" && Object.keys(raw).length === 2)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "ServiceSafetyStarting" || raw.phase === "HoldRemainingTargets" || raw.phase === "HoldDidNotApply" || raw.phase === "BanNeedsCrossApp" || raw.phase === "BanNoPerson" || raw.phase === "ReadingBanPhones" || raw.phase === "BanNoPhone" || raw.phase === "ReadingExistingBan" || raw.phase === "BanAlreadyExists" || raw.phase === "ApplyingPhoneBan" || raw.phase === "ApplyingPersonBan" || raw.phase === "ResumingBanProjection" || raw.phase === "PerformingAuditedAction" || raw.phase === "RecordingAuditResult") && typeof raw.phoneOnly === "boolean" && Object.keys(raw).length === 2)) return undefined;
   const parsed: ServiceSafetyFlow = ({ phase: raw.phase, phoneOnly: raw.phoneOnly });
   return inv(parsed) ? parsed : undefined;
 }

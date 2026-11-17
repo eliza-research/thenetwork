@@ -12,7 +12,7 @@ Production uses the generated [notification delivery rules](../notificationDeliv
 
 The VibeLang dispatch shell rechecks the recipient before recording. The Postgres store locks the selected items in ID order, checks that each still belongs to the recipient and remains pending, and records the claim and notice flags in one transaction. The machine treats that transaction's response as an effect result.
 
-The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger.
+The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger. This model's plan action represents two accepted seats with booking receipts. Its feedback action represents an exact prompt and a timely reply. Factual confirmation and worthwhile feedback are separate parts of that reply.
 
 The generated [Capital ledger spec](../capitalLedger.md) governs event admission, contribution qualification, append-only reversals, and which entries count against the rolling credit cap. The [Capital levers](../capitalLevers.md) use admitted credits to calculate allowances. The signed [contribution history](../contributionHistory.md) replays committed app events and projects only the current adult member's verified acts.
 
@@ -616,10 +616,12 @@ module notify_capital {
     es.foldl(S, (acc, e) => if (ids(acc).contains((e.typ, e.key))) acc else acc.append(e))
 
   // The Network's own view of a member (network.ts MemberState), the part that drives emits.
-  // saidGood: the post-meeting answer "it went well" (o.post[m].good). gotValue: value_received emitted.
-  type NetM = { joined: bool, minor: bool, activated: bool, invitedBy: str, left: bool, saidGood: bool, gotValue: bool }
+  // A single feedback reply can carry separate worthwhile and explicit attendance facts.
+  type NetM = { joined: bool, minor: bool, activated: bool, invitedBy: str, left: bool, gaveFeedback: bool,
+                saidGood: bool, confirmedRoster: bool, gotValue: bool }
   type NetC = { m: str -> NetM, plan: Set[str], planDone: bool, helpDone: bool }
-  pure val NO_NETM: NetM = { joined: false, minor: false, activated: false, invitedBy: "", left: false, saidGood: false, gotValue: false }
+  pure val NO_NETM: NetM = { joined: false, minor: false, activated: false, invitedBy: "", left: false, gaveFeedback: false,
+                            saidGood: false, confirmedRoster: false, gotValue: false }
   pure val NET0: NetC = { m: MEMBERS.mapBy(_ => NO_NETM), plan: Set(), planDone: false, helpDone: false }
 
   // The runtime's in-memory ledger (runtime.ts:126, capital.ts capitalWiring).
@@ -692,26 +694,28 @@ module notify_capital {
          { ...netc, plan: Set(m1, m2) }),
   }
 
-  // The positive check-in after the meeting (onFeedback, network.ts:2786-2808). SD-154 fix 226f278:
-  // onFeedback no longer emits; it keeps "it went well" in o.post, and finalize emits value_received.
-  action cSayGood(m: str): bool = all {
-    netc.plan.contains(m), not(netc.planDone), live(m), not(netc.m.get(m).saidGood),
-    emit([], { ...netc, m: netc.m.set(m, { ...netc.m.get(m), saidGood: true }) }),
+  // The exact member reply during open settlement records facts without value credit.
+  action cGiveFeedback(m: str, worthwhile: bool, confirmedRoster: bool): bool = all {
+    netc.plan.contains(m), not(netc.planDone), live(m), not(netc.m.get(m).gaveFeedback),
+    emit([], { ...netc, m: netc.m.set(m, { ...netc.m.get(m), gaveFeedback: true, saidGood: worthwhile,
+                                         confirmedRoster: confirmedRoster }) }),
   }
 
-  // finalize (network.ts:2965-3005): both said they came and nobody missing. For each booked member
-  // in order: plan_attended (verified by the other as counterpart), feedback_given, and (SD-154 fix)
-  // value_received when they said it went well, with confirmedBy = the other attendee (flag true).
+  pure def planConfirmers(n: NetC, m: str): Set[str] = n.plan.exclude(Set(m)).filter(p => n.m.get(p).confirmedRoster)
+  pure def settledWorthwhileValue(n: NetC, m: str): bool = n.m.get(m).saidGood and planConfirmers(n, m) != Set()
+
+  // This successful plan trace assumes both attended. The value event has the exact other
+  // participant who confirmed the meeting. A worthwhile report alone cannot produce it.
   action cFinalize: bool = all {
     netc.plan != Set(), not(netc.planDone),
     netc.plan.forall(p => live(p) and not(netc.m.get(p).minor)),
     emit(MEMBERS_SORTED.select(p => netc.plan.contains(p)).foldl([], (acc, p) => {
-           val base = acc.append(ev("plan_attended", planKey(p), now, p, "", netc.plan.exclude(Set(p)), false))
-                         .append(ev("feedback_given", planKey(p), now, p, "", Set(), false))
-           if (netc.m.get(p).saidGood) base.append(ev("value_received", planKey(p), now, p, "", netc.plan.exclude(Set(p)), true)) else base
+           val base = if (settledWorthwhileValue(netc, p)) acc.append(ev("value_received", planKey(p), now, p, "", planConfirmers(netc, p), true)) else acc
+           val attended = base.append(ev("plan_attended", planKey(p), now, p, "", netc.plan.exclude(Set(p)), false))
+           if (netc.m.get(p).gaveFeedback) attended.append(ev("feedback_given", planKey(p), now, p, "", Set(), false)) else attended
          }),
          { ...netc, planDone: true,
-           m: MEMBERS.mapBy(p => if (netc.plan.contains(p) and netc.m.get(p).saidGood) { ...netc.m.get(p), gotValue: true } else netc.m.get(p)) }),
+           m: MEMBERS.mapBy(p => if (netc.plan.contains(p) and settledWorthwhileValue(netc, p)) { ...netc.m.get(p), gotValue: true } else netc.m.get(p)) }),
   }
 
   // helpFeedback (network.ts helpFeedback): help_given then help_confirmed, same t, useful.
@@ -816,8 +820,7 @@ module notify_capital {
 
   // PRD 39.2.2: the voucher earns when the invitee is active and gets value from a member other than
   // the voucher (and not from the voucher's close circle, SD-350) inside 30 days, with no safety flag.
-  // AGENTS.md decision 11 (fixes-core 26). Was SD-154; holds since 226f278 (value_received at
-  // finalize with confirmedBy). The provider is the other plan member. The rule is checked on traces
+  // SD-154: value_received uses the other attendee's factual confirmation at settlement. The rule is checked on traces
   // where the ledger saw every event: no failed unit, no clock step back (the ledger refuses events,
   // SD-156 design), and no restart after a forget (SD-155).
   val vouchCreditFollowsValue: bool =
@@ -827,7 +830,7 @@ module notify_capital {
       val r = mem.members.get(m)
       val v = n.invitedBy
       not(n.gotValue and v != "" and r.activated and eligibleIn(mem, m) and eligibleIn(mem, v)
-          and netc.plan.exclude(Set(m)).exists(w => w != v and eligibleIn(mem, w) and not(tied(mem, v, w))))
+          and planConfirmers(netc, m).exists(w => w != v and eligibleIn(mem, w) and not(tied(mem, v, w))))
       or r.vouchCredited
     })
 
@@ -922,12 +925,14 @@ module notify_capital {
     nondet m2 = MEMBERS.oneOf()
     nondet inviter = Set("", "a", "b", "c").oneOf()
     nondet adult = Set(true, false).oneOf()
+    nondet worthwhile = Set(true, false).oneOf()
+    nondet factual = Set(true, false).oneOf()
     any {
       cJoin(m, adult, inviter),
       cActivate(m),
       cLearnMinor(m),
       cPlanAccept(m, m2),
-      cSayGood(m),
+      cGiveFeedback(m, worthwhile, factual),
       cFinalize,
       cHelp(m, m2),
       cCommit,
@@ -1130,10 +1135,7 @@ module notify_capital {
       .expect(and { mem.rejects == 1, unit.select(e => e.typ == "age_updated") == [], eligibleIn(mem, "a"),
                     not(noMinorEligible), safety })
 
-  // SD-154 (fixed, 226f278; packages/network/test/capital-vouch.integration.test.ts "SD-154 an
-  // invitee who meets a member and says it went well earns the voucher the vouch credit"). Both say
-  // it went well; finalize emits value_received with confirmedBy; the voucher earns 10 NC, also
-  // after a restart.
+  // The invitee's worthwhile reply and the counterpart's factual reply earn the voucher once.
   run vouchCreditedTest =
     initWith("capital", "active")
       .then(all { cJoin("a", true, ""), notifyUnchanged })
@@ -1141,8 +1143,8 @@ module notify_capital {
       .then(all { cJoin("c", true, ""), notifyUnchanged })
       .then(all { cActivate("b"), notifyUnchanged })
       .then(all { cPlanAccept("b", "c"), notifyUnchanged })
-      .then(all { cSayGood("b"), notifyUnchanged })
-      .then(all { cSayGood("c"), notifyUnchanged })
+      .then(all { cGiveFeedback("b", true, false), notifyUnchanged })
+      .then(all { cGiveFeedback("c", false, true), notifyUnchanged })
       .then(all { cFinalize, notifyUnchanged })
       .expect(and { mem.members.get("b").vouchCredited, balance(mem, "a") == VOUCH, vouchCreditFollowsValue })
       .then(all { cCommit, notifyUnchanged })
@@ -1151,7 +1153,7 @@ module notify_capital {
 
   // SD-350 (fixed, 5781195; packages/network/test/capital-ties.integration.test.ts "SD-350 a member
   // who helped the voucher 40 days ago does not earn the voucher the vouch credit"). c helped the
-  // voucher a; a's invitee b then meets c and both say it went well: no vouch credit.
+  // voucher a; a's invitee b then meets c, who confirms: no vouch credit.
   run tiedProviderNoVouchTest =
     initWith("capital", "active")
       .then(all { cJoin("a", true, ""), notifyUnchanged })
@@ -1160,7 +1162,8 @@ module notify_capital {
       .then(all { cJoin("b", true, "a"), notifyUnchanged })
       .then(all { cActivate("b"), notifyUnchanged })
       .then(all { cPlanAccept("b", "c"), notifyUnchanged })
-      .then(all { cSayGood("b"), notifyUnchanged })
+      .then(all { cGiveFeedback("b", true, false), notifyUnchanged })
+      .then(all { cGiveFeedback("c", false, true), notifyUnchanged })
       .then(all { cFinalize, notifyUnchanged })
       .expect(and { netc.m.get("b").gotValue, not(mem.members.get("b").vouchCredited),
                     balance(mem, "a") == 0, balance(mem, "c") == HELP + ATTEND + FEEDBACK, safety })

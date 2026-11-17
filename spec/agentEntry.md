@@ -2,7 +2,7 @@
 
 A person reaches the agent experience in four ways: the prompt on an app's landing page, a plugin in their agent, the agent skill catalog of a site, or a link in an update text. The landing page, its prompt and its agent tiles are in [landing entry](landingEntry.md). The skill files and the skill catalog of each site are in [site pages](sitePages.md). The brand data, with the skill name of each app, is in [brand identity](brandIdentity.md). The plugin build owns the plugin skill copies and their MCP endpoints. The notification service owns the update reference and the link in the text. The agent owns what it does with the skill ([agent signup](agentSignup.md)) and with the connector ([connector tools](connectorTools.md)). This spec models how each entry resolves to one app skill or to the updates tool. Public sites have no sign-in link, settings page or member dashboard.
 
-The person's agent follows the text of the site prompt and of the app's SKILL.md. No code of this repository runs inside that agent. The plugin build calls `pluginListsSkill`, `pluginEndpoint` and `skillFor` when it writes the plugin skill copies. The site build checks the signup step markers of each SKILL.md against the [agent signup](agentSignup.md) model. No runtime code enforces the entry routes of this model, or `canSubmitProfile` and `canRequestNewCode` of the agent signup model, on the agent side. The connector server enforces its own rules on each tool call ([connector tools](connectorTools.md)).
+The person's agent follows the text of the site prompt and of the app's SKILL.md. No code of this repository runs inside that agent. The plugin build calls `pluginListsSkill`, `pluginEndpoint` and `skillFor` when it writes the plugin skill copies. The site build checks the signup step markers of each SKILL.md against the [agent signup](agentSignup.md) model. No runtime code enforces the entry routes of this model, or the agent signup model on the agent side. The connector server enforces its own rules on each tool call ([connector tools](connectorTools.md)).
 
 ## Story: Get from an app site or a text into my own agent
 
@@ -109,7 +109,7 @@ pure def stepUpdateShownOnlyByTheUpdatesTool(before: Entry, via: str, after: Ent
 
 ### An update text links to an assistant only when the person uses one
 
-An update text that links to an assistant carries only the reference, in the prompt `Ask The Network for update T-7F3K9Q`, and nothing else about the update. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update itself goes in the text thread. On iMessage, the text links straight to the assistant with the prompt filled in. On SMS and Telegram, the text links to one ntwrk.party page with a button for each assistant. Each assistant link fills the prompt and never sends it: ChatGPT takes `?prompt=`, because its `?q=` sends the prompt at once on the web.
+An update text that links to an assistant carries only the reference, in the prompt `Ask The Network for update T-7F3K9Q`, and nothing else about the update. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update itself goes in the text thread. A member can reply `updates` on the phone text thread to read their current inbox one page at a time. On iMessage, the text links straight to the assistant with the prompt filled in. On SMS and Telegram, the text links to `https://ntwrk.party/t/<reference>` with a button for each assistant. The handoff uses the reference from the path and does not look up the update, check whether it exists, or use account data. A valid reference always produces the same page structure. Each assistant link fills the prompt and never sends it: ChatGPT takes `?prompt=`, because its `?q=` sends the prompt at once on the web.
 
 ```quint
 type Channel = IMessage | Sms | Telegram
@@ -117,6 +117,8 @@ type LinkedAssistant = ChatGptAssistant | ClaudeAssistant | GrokAssistant
 type UpdateDelivery = InThread | AssistantLink | ButtonPage
 
 pure val updatePromptLead = "Ask The Network for update "
+pure val updateHandoffPrefix = "/t/"
+pure val linkedAssistants: List[LinkedAssistant] = List(ChatGptAssistant, ClaudeAssistant, GrokAssistant)
 
 pure def updateLinkTemplate(assistant: LinkedAssistant): str =
   if (assistant == ChatGptAssistant) "https://chatgpt.com/?prompt={q}"
@@ -139,7 +141,7 @@ pure def lawChatGptLinkNeverSends(assistant: LinkedAssistant): bool =
 
 ### Every entry can reach its result
 
-The supported paths include signup through a skill from each entry that leads to a skill (a site prompt, the Claude plugin, the OpenAI plugin and the skill catalog), an explanation, a shown update, an update that shows nothing, a request to connect, and a refused route.
+The supported paths include signup through a skill from a site, Claude plugin, OpenAI plugin, or skill catalog. A person can also reach an explanation, a shown update, an update that shows nothing, a request to connect, or a refused route.
 
 ```quint
 pure def sometimesFollowingSkill(s: Entry): bool = s.phase == FollowingSkill

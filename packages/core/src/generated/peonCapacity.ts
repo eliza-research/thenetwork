@@ -72,14 +72,21 @@ export function sometimesPublishedWithCandidate(l: SeatLedger): boolean {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
+export function bookedNeedsSyntheticAcceptance(hasMeeting: boolean, closed: boolean, hasFeedback: boolean): boolean {
+  return bookedOccupies(hasMeeting, closed) && !hasFeedback;
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
 export function seatRecordOccupies(openOpportunity: boolean, disposition: string): boolean {
   return openOpportunity || interactionOccupies(disposition);
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
-export function bookedNeedsSyntheticAcceptance(hasMeeting: boolean, closed: boolean, hasFeedback: boolean): boolean {
-  return bookedOccupies(hasMeeting, closed) && !hasFeedback;
+export function lawEndedInteractionFreesOpening(openOpportunity: boolean): boolean {
+  //@ ensures \result === true
+  return seatRecordOccupies(openOpportunity, "declined") === openOpportunity;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
@@ -94,13 +101,6 @@ export function lawFeedbackReplacesSyntheticAcceptance(hasMeeting: boolean, clos
 export function lawOpenOpportunityOccupies(disposition: string): boolean {
   //@ ensures \result === true
   return seatRecordOccupies(true, disposition);
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function lawEndedInteractionFreesOpening(openOpportunity: boolean): boolean {
-  //@ ensures \result === true
-  return seatRecordOccupies(openOpportunity, "declined") === openOpportunity;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
@@ -162,8 +162,8 @@ export function enabled(current: SeatLedger, event: Event): boolean {
 export function step(current: SeatLedger, event: Event): SeatLedger {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "observeCandidate" && canObserveCandidate(current, event.candidate, event.occupies)) return observeCandidate(current, event.candidate, event.occupies);
-  if (event.type === "publishLedger" && canPublishLedger(current)) return publishLedger(current);
+  if (event.type === "observeCandidate") return canObserveCandidate(current, event.candidate, event.occupies) ? observeCandidate(current, event.candidate, event.occupies) : current;
+  if (event.type === "publishLedger") return canPublishLedger(current) ? publishLedger(current) : current;
   return current;
 }
 

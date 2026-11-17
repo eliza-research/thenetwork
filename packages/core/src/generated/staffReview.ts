@@ -1,5 +1,6 @@
 // GENERATED from spec/staffReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 export type ReviewMode = "IdleReview" | "RejectReview" | "EditReview" | "RerollReview";
@@ -108,6 +109,39 @@ export function canSettleReview(ctl: ReviewCtl, cardKey: string, revision: numbe
   return ownsReviewResponse(ctl, cardKey, revision);
 }
 
+/** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */
+//@ pure
+export function reviewPlanPreviewCurrent(pending: boolean, hasPlan: boolean, seenRevision: number, currentRevision: number, currentTime: number, deadline: number): boolean {
+  return pending && hasPlan && reviewDeadline_reviewRevisionCurrent(seenRevision, currentRevision) && !reviewDeadline_reviewLate(currentTime, deadline);
+}
+
+/** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */
+//@ pure
+export function lawPlanPreviewClosesAtDeadline(pending: boolean, hasPlan: boolean, revision: number, deadline: number): boolean {
+  //@ ensures \result === true
+  return !reviewPlanPreviewCurrent(pending, hasPlan, revision, revision, deadline, deadline);
+}
+
+/** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */
+//@ pure
+export function lawPlanPreviewRefusesOlderRevision(currentTime: number, deadline: number, revision: number): boolean {
+  //@ ensures \result === true
+  return !reviewPlanPreviewCurrent(true, true, revision, exact_staffReview(revision + 1), currentTime, deadline);
+}
+
+/** Story: Review the opportunity I selected / Plan approval in the console waits for the selected preview (spec/staffReview.md) */
+//@ pure
+export function planPreviewMatchesCard(cardApp: string, previewApp: string, cardId: string, previewId: string, cardRevision: number, previewRevision: number, cardDeadline: number, previewDeadline: number): boolean {
+  return cardApp === previewApp && cardId === previewId && reviewDeadline_reviewRevisionCurrent(cardRevision, previewRevision) && cardDeadline === previewDeadline;
+}
+
+/** Story: Review the opportunity I selected / Plan approval in the console waits for the selected preview (spec/staffReview.md) */
+//@ pure
+export function lawOlderPlanPreviewCannotEnableApproval(app: string, id: string, revision: number, deadline: number): boolean {
+  //@ ensures \result === true
+  return !planPreviewMatchesCard(app, app, id, id, exact_staffReview(revision + 1), revision, deadline, deadline);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ReviewCtl, event: Event): boolean {
@@ -123,10 +157,10 @@ export function enabled(current: ReviewCtl, event: Event): boolean {
 export function step(current: ReviewCtl, event: Event): ReviewCtl {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "bindCard" && canBindCard(current, event.cardKey)) return bindCard(current, event.cardKey);
-  if (event.type === "changeReviewMode" && canChangeReviewMode(current)) return changeReviewMode(current, event.requestedMode, event.togglePanel);
-  if (event.type === "requireReviewNote" && canRequireReviewNote(current)) return requireReviewNote(current);
-  if (event.type === "settleReview" && canSettleReview(current, event.cardKey, event.revision)) return settleReview(current, event.cardKey, event.revision);
+  if (event.type === "bindCard") return canBindCard(current, event.cardKey) ? bindCard(current, event.cardKey) : current;
+  if (event.type === "changeReviewMode") return canChangeReviewMode(current) ? changeReviewMode(current, event.requestedMode, event.togglePanel) : current;
+  if (event.type === "requireReviewNote") return canRequireReviewNote(current) ? requireReviewNote(current) : current;
+  if (event.type === "settleReview") return canSettleReview(current, event.cardKey, event.revision) ? settleReview(current, event.cardKey, event.revision) : current;
   return current;
 }
 

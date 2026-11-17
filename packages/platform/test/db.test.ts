@@ -164,7 +164,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       const allowed = (role: string, rel: string): boolean => {
         if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
-        if (apps.includes(app) && [`network.network_state_console_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
+        if (apps.includes(app) && [`network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
         if (catalog.includes(rel)) return apps.includes(app) || role === "network_observatory_cross_app";
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
         if (role === "network_observatory_audit") return rel === "network.staff_audit";
@@ -173,11 +173,16 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       };
       const open = rows.filter((r: any) => !(r.kind === "r" && r.rls) && !allowed(r.role, r.rel)).map((r: any) => `${r.role} ${r.rel}`);
       expect(open).toEqual([]);
+      const outboundReaders = rows.filter(r => r.rel.startsWith("network.outbound_evidence_")).map(r => `${r.role} ${r.rel}`);
+      expect(outboundReaders.sort()).toEqual([
+        "network_observatory network.outbound_evidence_ntwrk",
+        ...apps.map(app => `network_observatory_${app} network.outbound_evidence_${app}`),
+      ].sort());
       const catalogWriters = await sql`
         select r.rolname as role, c.relname as relation
         from pg_roles r cross join pg_class c join pg_namespace n on n.oid = c.relnamespace
         where r.rolname like 'network\\_observatory%' and n.nspname = 'network'
-          and c.relname in ('public_events', 'public_event_imports')
+          and (c.relname in ('public_events', 'public_event_imports') or c.relname in ${sql(apps.map(app => `outbound_evidence_${app}`))})
           and has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')`;
       expect(catalogWriters).toEqual([]);
       expect(rows.filter((r: any) => r.rel === "network.network_state_console" || r.rel === "network.network_state")).toEqual([]);

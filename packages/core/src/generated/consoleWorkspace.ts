@@ -1,6 +1,6 @@
 // GENERATED from spec/consoleWorkspace.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, holdSubjectKnown as safetyCase_holdSubjectKnown, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, liveCase as safetyCase_liveCase, markCaseHeld as safetyCase_markCaseHeld, markCaseLifted as safetyCase_markCaseLifted, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, initial as safetyCase_initial, reportAfterDecision as safetyCase_reportAfterDecision, reportRestrictsMatching as safetyCase_reportRestrictsMatching, canRecordCaseEvent as safetyCase_canRecordCaseEvent, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, minorClearResult as safetyCase_minorClearResult, recordCaseEvent as safetyCase_recordCaseEvent, canMarkCaseHeld as safetyCase_canMarkCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, canCloseCase as safetyCase_canCloseCase, lawDecidedReportDoesNotRestrictMatching as safetyCase_lawDecidedReportDoesNotRestrictMatching, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase } from "./safetyCase.ts";
+import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, holdSubjectKnown as safetyCase_holdSubjectKnown, immediateDangerReply as safetyCase_immediateDangerReply, emergencyCheckInReport as safetyCase_emergencyCheckInReport, archivedReportHoldAllowed as safetyCase_archivedReportHoldAllowed, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, liveCase as safetyCase_liveCase, markCaseHeld as safetyCase_markCaseHeld, markCaseLifted as safetyCase_markCaseLifted, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, lawEmergencyReplyRequiresOwnText as safetyCase_lawEmergencyReplyRequiresOwnText, lawEmergencyReplyRequiresCurrentDanger as safetyCase_lawEmergencyReplyRequiresCurrentDanger, initial as safetyCase_initial, lawEmergencyCheckInNeedsReceipt as safetyCase_lawEmergencyCheckInNeedsReceipt, reportAfterDecision as safetyCase_reportAfterDecision, canRecordCaseEvent as safetyCase_canRecordCaseEvent, reportRestrictsMatching as safetyCase_reportRestrictsMatching, lawArchivedHoldRequiresExactSubject as safetyCase_lawArchivedHoldRequiresExactSubject, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, minorClearResult as safetyCase_minorClearResult, recordCaseEvent as safetyCase_recordCaseEvent, canMarkCaseHeld as safetyCase_canMarkCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, canCloseCase as safetyCase_canCloseCase, lawDecidedReportDoesNotRestrictMatching as safetyCase_lawDecidedReportDoesNotRestrictMatching, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, carryReportOnAppLeave as safetyCase_carryReportOnAppLeave, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase, lawOnlyOpenReportsCarry as safetyCase_lawOnlyOpenReportsCarry } from "./safetyCase.ts";
 
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type ReportStep = "HoldPersonStep" | "BanPhoneStep" | "BanPersonStep" | "DismissStep" | "ClearMinorStep";
@@ -1650,41 +1650,41 @@ export function step(current: Workspace, event: Event): Workspace {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "receiveViewer") return receiveViewer(current, event.viewMode, event.safetyRole, event.adminRole, event.analystRole, event.simRoleHeld, event.globalPiiShown);
-  if (event.type === "receiveHeldText" && canReceiveHeldText(current)) return receiveHeldText(current, event.photoItem, event.minorItem);
-  if (event.type === "typeHeldReason" && canTypeHeldReason(current)) return typeHeldReason(current, event.reasonChars);
-  if (event.type === "markPhotoReviewed" && canMarkPhotoReviewed(current)) return markPhotoReviewed(current, event.reviewed);
-  if (event.type === "loadHeldPhoto" && canLoadHeldPhoto(current)) return loadHeldPhoto(current, event.loaded);
-  if (event.type === "decideHeld" && canDecideHeld(current, event.choice)) return decideHeld(current, event.choice);
-  if (event.type === "receiveHeldAnswer" && canReceiveHeldAnswer(current)) return receiveHeldAnswer(current, event.accepted);
-  if (event.type === "receiveCase" && canReceiveCase(current)) return receiveCase(current, event.heldCase);
-  if (event.type === "toggleCaseRow" && canToggleCaseRow(current)) return toggleCaseRow(current);
-  if (event.type === "actOnCase" && canActOnCase(current, event.caseStep)) return actOnCase(current, event.caseStep);
-  if (event.type === "receiveCaseAnswer" && canReceiveCaseAnswer(current)) return receiveCaseAnswer(current, event.accepted);
-  if (event.type === "receiveReport" && canReceiveReport(current)) return receiveReport(current, event.minorKind);
-  if (event.type === "typeReportNote" && canTypeReportNote(current)) return typeReportNote(current, event.noteChars);
-  if (event.type === "actOnReport" && canActOnReport(current, event.reportStep)) return actOnReport(current, event.reportStep);
-  if (event.type === "receiveReportAnswer" && canReceiveReportAnswer(current)) return receiveReportAnswer(current, event.accepted);
+  if (event.type === "receiveHeldText") return canReceiveHeldText(current) ? receiveHeldText(current, event.photoItem, event.minorItem) : current;
+  if (event.type === "typeHeldReason") return canTypeHeldReason(current) ? typeHeldReason(current, event.reasonChars) : current;
+  if (event.type === "markPhotoReviewed") return canMarkPhotoReviewed(current) ? markPhotoReviewed(current, event.reviewed) : current;
+  if (event.type === "loadHeldPhoto") return canLoadHeldPhoto(current) ? loadHeldPhoto(current, event.loaded) : current;
+  if (event.type === "decideHeld") return canDecideHeld(current, event.choice) ? decideHeld(current, event.choice) : current;
+  if (event.type === "receiveHeldAnswer") return canReceiveHeldAnswer(current) ? receiveHeldAnswer(current, event.accepted) : current;
+  if (event.type === "receiveCase") return canReceiveCase(current) ? receiveCase(current, event.heldCase) : current;
+  if (event.type === "toggleCaseRow") return canToggleCaseRow(current) ? toggleCaseRow(current) : current;
+  if (event.type === "actOnCase") return canActOnCase(current, event.caseStep) ? actOnCase(current, event.caseStep) : current;
+  if (event.type === "receiveCaseAnswer") return canReceiveCaseAnswer(current) ? receiveCaseAnswer(current, event.accepted) : current;
+  if (event.type === "receiveReport") return canReceiveReport(current) ? receiveReport(current, event.minorKind) : current;
+  if (event.type === "typeReportNote") return canTypeReportNote(current) ? typeReportNote(current, event.noteChars) : current;
+  if (event.type === "actOnReport") return canActOnReport(current, event.reportStep) ? actOnReport(current, event.reportStep) : current;
+  if (event.type === "receiveReportAnswer") return canReceiveReportAnswer(current) ? receiveReportAnswer(current, event.accepted) : current;
   if (event.type === "chooseRequestSegment") return chooseRequestSegment(current, event.segment);
-  if (event.type === "receiveConfig" && canReceiveConfig(current)) return receiveConfig(current, event.matchingEnabled, event.locked, event.canChange);
-  if (event.type === "pressMatchingSwitch" && canPressMatchingSwitch(current)) return pressMatchingSwitch(current);
-  if (event.type === "endConfirmation" && canEndConfirmation(current)) return endConfirmation(current);
-  if (event.type === "confirmMatchingSwitch" && canConfirmMatchingSwitch(current)) return confirmMatchingSwitch(current);
-  if (event.type === "receiveSwitchAnswer" && canReceiveSwitchAnswer(current)) return receiveSwitchAnswer(current, event.accepted);
-  if (event.type === "loadAudit" && canLoadAudit(current)) return loadAudit(current);
-  if (event.type === "receiveAudit" && canReceiveAudit(current)) return receiveAudit(current, event.loaded);
-  if (event.type === "submitProposal" && canSubmitProposal(current, event.pickCount, event.minorPicked, event.sparksLeft, event.gameOver)) return submitProposal(current, event.pickCount, event.minorPicked, event.sparksLeft, event.gameOver);
-  if (event.type === "receiveProposalAnswer" && canReceiveProposalAnswer(current)) return receiveProposalAnswer(current, event.accepted);
-  if (event.type === "openWorldMenu" && canOpenWorldMenu(current)) return openWorldMenu(current);
-  if (event.type === "closeWorldMenu" && canCloseWorldMenu(current)) return closeWorldMenu(current);
-  if (event.type === "sendWorldEvent" && canSendWorldEvent(current, event.worldEvent)) return sendWorldEvent(current, event.worldEvent);
-  if (event.type === "startReveal" && canStartReveal(current)) return startReveal(current);
-  if (event.type === "typeRevealReason" && canTypeRevealReason(current)) return typeRevealReason(current, event.reasonChars);
-  if (event.type === "chooseRevealMinutes" && canChooseRevealMinutes(current, event.minutes)) return chooseRevealMinutes(current, event.minutes);
-  if (event.type === "cancelReveal" && canCancelReveal(current)) return cancelReveal(current);
-  if (event.type === "submitReveal" && canSubmitReveal(current)) return submitReveal(current);
-  if (event.type === "receiveRevealAnswer" && canReceiveRevealAnswer(current)) return receiveRevealAnswer(current, event.granted);
-  if (event.type === "endReveal" && canEndReveal(current)) return endReveal(current);
-  if (event.type === "expireReveal" && canExpireReveal(current)) return expireReveal(current);
+  if (event.type === "receiveConfig") return canReceiveConfig(current) ? receiveConfig(current, event.matchingEnabled, event.locked, event.canChange) : current;
+  if (event.type === "pressMatchingSwitch") return canPressMatchingSwitch(current) ? pressMatchingSwitch(current) : current;
+  if (event.type === "endConfirmation") return canEndConfirmation(current) ? endConfirmation(current) : current;
+  if (event.type === "confirmMatchingSwitch") return canConfirmMatchingSwitch(current) ? confirmMatchingSwitch(current) : current;
+  if (event.type === "receiveSwitchAnswer") return canReceiveSwitchAnswer(current) ? receiveSwitchAnswer(current, event.accepted) : current;
+  if (event.type === "loadAudit") return canLoadAudit(current) ? loadAudit(current) : current;
+  if (event.type === "receiveAudit") return canReceiveAudit(current) ? receiveAudit(current, event.loaded) : current;
+  if (event.type === "submitProposal") return canSubmitProposal(current, event.pickCount, event.minorPicked, event.sparksLeft, event.gameOver) ? submitProposal(current, event.pickCount, event.minorPicked, event.sparksLeft, event.gameOver) : current;
+  if (event.type === "receiveProposalAnswer") return canReceiveProposalAnswer(current) ? receiveProposalAnswer(current, event.accepted) : current;
+  if (event.type === "openWorldMenu") return canOpenWorldMenu(current) ? openWorldMenu(current) : current;
+  if (event.type === "closeWorldMenu") return canCloseWorldMenu(current) ? closeWorldMenu(current) : current;
+  if (event.type === "sendWorldEvent") return canSendWorldEvent(current, event.worldEvent) ? sendWorldEvent(current, event.worldEvent) : current;
+  if (event.type === "startReveal") return canStartReveal(current) ? startReveal(current) : current;
+  if (event.type === "typeRevealReason") return canTypeRevealReason(current) ? typeRevealReason(current, event.reasonChars) : current;
+  if (event.type === "chooseRevealMinutes") return canChooseRevealMinutes(current, event.minutes) ? chooseRevealMinutes(current, event.minutes) : current;
+  if (event.type === "cancelReveal") return canCancelReveal(current) ? cancelReveal(current) : current;
+  if (event.type === "submitReveal") return canSubmitReveal(current) ? submitReveal(current) : current;
+  if (event.type === "receiveRevealAnswer") return canReceiveRevealAnswer(current) ? receiveRevealAnswer(current, event.granted) : current;
+  if (event.type === "endReveal") return canEndReveal(current) ? endReveal(current) : current;
+  if (event.type === "expireReveal") return canExpireReveal(current) ? expireReveal(current) : current;
   return current;
 }
 

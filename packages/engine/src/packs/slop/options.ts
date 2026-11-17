@@ -15,7 +15,7 @@ export interface SlopPackOptions {
    */
   verification: { required: boolean };
   /** Behavioural trust holds from the Network's own records (reports, negative feedback, no-shows, blocks). */
-  trust: { enabled: boolean; negativeFrom: number; blockedBy: number; noShows: number; eagerYes: number };
+  trust: { enabled: boolean; negativeFrom: number; /** Distinct encounter-backed blocks. */ blockedBy: number; noShows: number; eagerYes: number };
   /** Ask for an unknown age range, distance or orientation instead of proposing on a guess. */
   asks: boolean;
   /** Also ask (without holding proposals back) for goal, dealbreakers and lifestyle basics when unknown. */

@@ -53,8 +53,8 @@ async function stage(app: AppId, to: string) {
   return { ...key, ...result };
 }
 
-function confirm(input: Awaited<ReturnType<typeof stage>>) {
-  return scoped(input.app, tx => store.confirm(tx, { ...input, transportAvailable: true }, authorize, enqueue));
+function confirm(input: Awaited<ReturnType<typeof stage>>, transportAvailable = true) {
+  return scoped(input.app, tx => store.confirm(tx, { ...input, transportAvailable }, authorize, enqueue));
 }
 
 if (pgAvailable) {
@@ -81,7 +81,10 @@ test.skipIf(!pgAvailable)("confirmation atomically queues one bound contact acro
   expect(sealed?.stored).not.toContain(first.link);
   expect(sealed?.stored).not.toContain(first.code);
   expect(await scoped("friends", tx => tx`select 1 from platform.expected_member_invitations where token_hash=${first.tokenHash}`)).toHaveLength(0);
-  expect(await scoped(first.app, tx => store.confirm(tx, { ...first, inviterMemberId: "another_owner", transportAvailable: true }, authorize, enqueue))).toBeUndefined();
+  expect(await confirm({ ...first, inviterMemberId: "another_owner" })).toBeUndefined();
+  expect(await confirm(first, false)).toBeUndefined();
+  expect(await sql`select id from platform.outbound`).toHaveLength(0);
+  expect(await sql`select recipient_hash from platform.expected_invitation_contacts`).toHaveLength(0);
 
   await expect(scoped(first.app, tx => store.confirm(tx, { ...first, transportAvailable: true }, authorize, async (inner, delivery) => {
     await enqueue(inner, delivery);
@@ -137,7 +140,7 @@ test.skipIf(!pgAvailable)("confirmation atomically queues one bound contact acro
   expect(await scoped("friends", tx => tx`select 1 from platform.expected_member_invitations where token_hash=${expiredChallenge.tokenHash}`)).toHaveLength(0);
 
   const competing = await Promise.all([stage("ntwrk", another), stage("friends", another)]);
-  const competingOutcomes = await Promise.all(competing.map(confirm));
+  const competingOutcomes = await Promise.all(competing.map(input => confirm(input)));
   expect(competingOutcomes.filter(value => value === "queued")).toHaveLength(1);
   const winner = competing[competingOutcomes.indexOf("queued")];
   if (!winner) throw new Error("Expected one owner of the shared recipient fence");
@@ -150,4 +153,18 @@ test.skipIf(!pgAvailable)("confirmation atomically queues one bound contact acro
   expect(await scoped(winner.app, tx => store.verifyRecipient(tx, winner))).toBe(true);
   expect(await scoped("ntwrk", tx => store.decline(tx, another))).toBe(true);
   expect(await scoped(winner.app, tx => store.verifyRecipient(tx, winner))).toBe(false);
+});
+
+test.skipIf(!pgAvailable)("a challenge expiring during admission leaves the recipient reservation available", async () => {
+  const pending = await stage("ntwrk", "+12125550108");
+  const attempt = await scoped(pending.app, tx => store.confirm(tx, { ...pending, transportAvailable: true }, async () => {
+    now = pending.expiresAt;
+    return true;
+  }, enqueue));
+  expect(attempt).toBeUndefined();
+  expect(await sql`select id from platform.outbound where to_address=${pending.to}`).toHaveLength(0);
+  const fresh = await scoped(pending.app, tx => store.stage(tx, pending));
+  expect(fresh).toBeDefined();
+  if (!fresh) throw new Error("An expired challenge should allow a fresh confirmation");
+  expect(await confirm({ ...pending, ...fresh })).toBe("queued");
 });

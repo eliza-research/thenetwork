@@ -74,6 +74,12 @@ export declare function revalidateQueuedItems(digest: DigestFlow, allPresent: bo
 export declare function sometimesKeepsQueuedDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 export declare function sometimesSuppressesQueuedDigest(digest: DigestFlow): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+export declare function queuedDigestClaimAllowed(sameRecipient: boolean, threadCopy: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean, allAssistantsReadable: boolean): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+export declare function lawUnreadableQueuedLinkCannotSend(sameRecipient: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+export declare function lawForeignQueuedDigestCannotSend(threadCopy: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean, allAssistantsReadable: boolean): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: DigestFlow, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

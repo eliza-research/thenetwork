@@ -29,7 +29,7 @@ pure def lawOptedOutOnlyGetsCompliance(compliance: bool): bool =
 
 ### A cancelled booking can notify a participant who received the booked plan
 
-Give a terminal booking cancellation one ID per opportunity and recipient. Before delivery, verify the exact stored cancellation, a cancelled booked plan, and an accepted seat that received its booking. A cancellation must arrive before the original meeting start. The text does not identify other participants or the reason. Verify consent, quiet hours, and text safety as for other cancellation messages.
+Give a terminal booking cancellation one ID per opportunity and recipient. An accepted seat with a recorded booking notice can get a queued cancellation. Before delivery, verify the exact stored cancellation, the cancelled booked plan, and [receipt of the booking notice](meetingSettlement.md#claim-a-cancellation-only-for-a-member-who-received-booking-details). A cancellation must arrive before the meeting start. The text does not identify other participants or the reason. Verify consent, quiet hours, and text safety as for other cancellation messages.
 
 ```quint
 pure val bookedCancellationPrefix = "booked-cancellation:"
@@ -51,6 +51,24 @@ pure def queuedProbePolicy(proactiveProbe: bool, paused: bool, categoryAllowed: 
 
 pure def lawPausedProbeCannotProceed(categoryAllowed: bool): bool =
   queuedProbePolicy(true, true, categoryAllowed) == RecipientIneligible
+```
+
+### Recheck blocks between the participants before contact
+
+A queued probe, plan probe, schedule, booking notice, or reminder needs a current roster with no block between its members. A block in any app applies in either direction. A canonical ban, applicable staff hold, or carried open report restriction on any member of that roster stops the contact even while the app's runtime still has the earlier state. Use the exact roster recorded on a booking notice when present. Otherwise use the recipient and the current participating seats. Declined, dropped, unavailable, and alternate seats do not join that roster. Read the current restrictions again before returning a stored signed reply that carries this contact. Neutral cancellation and safety replies keep their own admission rules.
+
+```quint
+pure val peerContactTypes: List[str] = List("probe", "plan_probe", "scheduling", "proposal", "reminder")
+pure val peerContactSeatStatuses: List[str] = List("pending", "checking", "available", "accepted", "confirmed", "attended")
+
+pure def queuedPeerContactPolicy(rosterBlocked: bool, rosterRestricted: bool): Admission =
+  if (rosterBlocked or rosterRestricted) RecipientIneligible else Proceed
+
+pure def lawBlockedRosterCannotProceed(rosterRestricted: bool): bool =
+  queuedPeerContactPolicy(true, rosterRestricted) != Proceed
+
+pure def lawRestrictedRosterCannotProceed(rosterBlocked: bool): bool =
+  queuedPeerContactPolicy(rosterBlocked, true) != Proceed
 ```
 
 ### Replies, quiet hours and unanswered messages limit when a send can go out

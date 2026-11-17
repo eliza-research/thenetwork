@@ -101,8 +101,8 @@ export function enabled(current: LineConsent, event: Event): boolean {
 export function step(current: LineConsent, event: Event): Turn {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "textStop" && canTextStop(current)) return textStop(current);
-  if (event.type === "textStart" && canTextStart(current, event.app, event.sentWithLastStop)) return textStart(current, event.app, event.sentWithLastStop);
+  if (event.type === "textStop") return canTextStop(current) ? textStop(current) : { state: current, out: ([] as ConsentUpdate[]) };
+  if (event.type === "textStart") return canTextStart(current, event.app, event.sentWithLastStop) ? textStart(current, event.app, event.sentWithLastStop) : { state: current, out: ([] as ConsentUpdate[]) };
   return { state: current, out: ([] as ConsentUpdate[]) };
 }
 

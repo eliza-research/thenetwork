@@ -14,7 +14,7 @@ import type { ConsoleApp } from "../src/apps.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
   JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
-  MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser,
+  MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffRole, StaffUser,
 } from "../src/types.ts";
 
 /** Default switcher order; the server's list in /api/me replaces it. Core's type module is browser-safe. */
@@ -563,6 +563,7 @@ class ObsStore {
   /** slop photos: admin or safety, a typed reason, verified adults only. */
   photos(id: string, reason: string) { return this.fetch<{ ok: boolean; photos?: MemberPhoto[]; error?: string }>(`/api/member/${encodeURIComponent(id)}/photos`, { reason }); }
   opportunity(id: string) { return this.fetch<OpportunityDetail>(`/api/opportunity/${encodeURIComponent(id)}`); }
+  reviewPlanPreview(id: string, revision: number) { return this.fetch<{ ok: true; preview: StaffPlanPreview }>(`/api/review/${encodeURIComponent(id)}/plan?revision=${revision}`); }
   safety() { return this.fetch<SafetyInfo>("/api/safety"); }
   safetyAction(a: SafetyAction) { return this.fetch<ControlResult>("/api/safety", a); }
   held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }

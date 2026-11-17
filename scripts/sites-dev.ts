@@ -13,8 +13,8 @@ import { serveHttp } from "../packages/core/src/runtime/http.ts";
 import { fileAt } from "../packages/core/src/runtime/files.ts";
 import { existsSync, statSync, watch } from "node:fs";
 import { join, normalize, sep } from "node:path";
-import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage } from "../deploy/router.ts";
-import { SECURITY_HEADERS, SITES, buildSite, resetSiteApp, site as findSite, type Site } from "../sites/sites.ts";
+import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage, updateHandoffPage } from "../deploy/router.ts";
+import { PAGE_FILES, SECURITY_HEADERS, SITES, buildSite, resetSiteApp, site as findSite, type Site } from "../sites/sites.ts";
 
 const HOP = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length", "accept-encoding"];
 /** Client-set IP headers are dropped: the backend never takes a rate-limit bucket from a header a browser sets. */
@@ -83,6 +83,7 @@ function file(outdir: string, pathname: string): { path: string; status: number 
     if (c === "_headers" || c === "_redirects") return null;
     const full = normalize(join(outdir, c));
     if (!full.startsWith(outdir + sep)) return null;
+    if (full === join(outdir, PAGE_FILES.UpdateHandoffPage)) return null;
     if (existsSync(full) && statSync(full).isFile()) return { path: full, status: 200 };
   }
   const nf = join(outdir, "404.html");
@@ -95,6 +96,11 @@ export async function serveSite(s: Site, opts: DevOptions) {
     port: opts.port,
     hostname: "127.0.0.1",
     async fetch(req) {
+      const handoff = await updateHandoffPage(req, s.app, async () => {
+        const template = join(opts.outdir, PAGE_FILES.UpdateHandoffPage);
+        return existsSync(template) ? new Response(await fileAt(template).blob()) : new Response(null, { status: 404 });
+      });
+      if (handoff) return handoff;
       const retired = retiredSitePage(req, s.app);
       if (retired) return retired;
       const url = new URL(req.url);

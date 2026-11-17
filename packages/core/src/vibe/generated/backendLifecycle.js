@@ -180,20 +180,20 @@ export function enabled(current, event) {
 export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
-    if (event.type === "releaseTick" && canReleaseTick(current, event.tickKey))
-        return releaseTick(current, event.tickKey);
-    if (event.type === "reserveTick" && canReserveTick(current, event.tickKey))
-        return reserveTick(current, event.tickKey);
-    if (event.type === "startTimer" && canStartTimer(current))
-        return startTimer(current, event.at);
-    if (event.type === "beginShutdown" && canBeginShutdown(current))
-        return beginShutdown(current);
-    if (event.type === "recordListenerDrain" && canRecordListenerDrain(current))
-        return recordListenerDrain(current);
-    if (event.type === "settleWorkDrain" && canSettleWorkDrain(current, event.timedOut))
-        return settleWorkDrain(current, event.timedOut);
-    if (event.type === "recordBackendClose" && canRecordBackendClose(current))
-        return recordBackendClose(current);
+    if (event.type === "releaseTick")
+        return canReleaseTick(current, event.tickKey) ? releaseTick(current, event.tickKey) : current;
+    if (event.type === "reserveTick")
+        return canReserveTick(current, event.tickKey) ? reserveTick(current, event.tickKey) : current;
+    if (event.type === "startTimer")
+        return canStartTimer(current) ? startTimer(current, event.at) : current;
+    if (event.type === "beginShutdown")
+        return canBeginShutdown(current) ? beginShutdown(current) : current;
+    if (event.type === "recordListenerDrain")
+        return canRecordListenerDrain(current) ? recordListenerDrain(current) : current;
+    if (event.type === "settleWorkDrain")
+        return canSettleWorkDrain(current, event.timedOut) ? settleWorkDrain(current, event.timedOut) : current;
+    if (event.type === "recordBackendClose")
+        return canRecordBackendClose(current) ? recordBackendClose(current) : current;
     return current;
 }
 /**

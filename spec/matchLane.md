@@ -52,7 +52,7 @@ The table below is the starting table. Each number is a decision. Change a numbe
 
 | Lane | utilityFloor | parityBand | parityFreeGap | penalty per point | balance | exchangeFloor | tolerance % | offset | weeklyCapacity | searchLimit | searchBudget | circle min/max/pairFloor |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Friend | 300 | 100 | 100 | 0 | no | 0 | 100 | 0 | 3 | 12 | 600 | 3/6/350 |
+| Friend | 150 | 100 | 100 | 0 | no | 0 | 100 | 0 | 3 | 12 | 600 | 3/6/150 |
 | Date | 350 | 15 | 10 | 10 | no | 0 | 100 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Cofounder | 400 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Intro | 350 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 3 | 12 | 600 | 3/6/400 |
@@ -61,6 +61,16 @@ The table below is the starting table. Each number is a decision. Change a numbe
 | Invest | 400 | 15 | 5 | 15 | no | 0 | 100 | 0 | 2 | 8 | 400 | 0/0/0 |
 
 - **Utility floor.** Decision: each member must get at least this much from the other, so a pair is never one-sided. The work lanes (Cofounder, Hire, Invest) ask for more than the social lanes. The acceptance rate of the two sides of approved probes tunes it; a floor that refuses pairs that both sides accept in the per-app worlds is too high.
+- **Friend floors: a friend pair needs no shared stated interest.** Decision (2026-11-16): the Friend utility floor and the Friend circle pair floor are both 150, not 300 and 350. Proximity, a shared schedule and an activity that anyone can share (a dinner, a coffee) are enough for a friendship. Friend weighs affinity 6, complement 1 and closeness 2, and friends.help supplies no pack value, so a member who shares no stated interest and covers none of the other member's seeks gets at most 2 x 1000 / 9 = 222, and a typical neighbour gets about 150 from closeness alone. Floors of 300 and 350 therefore refused every such pair, which is about half of the pairs within 30 minutes of each other, and the weekly planner could not seat the neighbours at a dinner or coffee table. Measured with `sim --only friends` (pinned seeds 5 to 8, 8 weeks, 400 personas), all runs on one copy of the tree that differ only in the step named, one step at a time. Values: repeat-meetup rate (gate 30% or more), V14 (gate 0.75x oracle 42.1% and 1.75x random 17.0%), lowest borough ratio (gate 0.7) with its worst seed, friendship forming against random (gate 2x), harm against random (gate 0.5x):
+  - Before (300 and 350, planner of e53fe984): 27.1%, 21.8%, 0.70 (worst seed 0.41), 2.4x, 0.27x. 26 of 29 gates pass.
+  - Utility floor 300 to 150 only: 20.6%, 23.6%, 0.58 (0.44), 2.0x, 0.37x. 25 of 29. A lower utility floor alone gives more pairs to the pair stage, but the tables still need the circle pair floor 350, so the planner seats fewer familiar groups.
+  - Circle pair floor 350 to 150 only (utility floor 150): 27.4%, 36.1%, 0.85 (0.68), 3.8x, 0.48x. 28 of 29.
+  - The planner keeps the largest valued subset of a crew or a repeat group (planner change, no spec number): 29.7%, 36.3%, 0.83 (0.47), 4.5x, 0.48x. 28 of 29.
+  - The planner's repeat window 10 to 14 days (planner change, no spec number): 30.5%, 37.3%, 0.80 (0.63), 4.0x, 0.48x. 29 of 29. This is the shipped state.
+  - Both floors at another value with the shipped planner: 100 gave 28.2%, 37.5%, 0.73 (0.52), 4.6x, 0.42x (28 of 29); 200 gave 21.5%, 27.7%, 0.62 (0.21), 2.9x, 0.43x (26 of 29); 250 gave 27.2%, 26.2%, 0.76 (0.44), 3.1x, 0.46x (26 of 29). Only 150 passes every gate.
+  The margins are small: repeat passes by 0.5 points and harm is 0.48x against 0.5x. Harm events rise with the number of meetups (0.27x to 0.48x). On the tuning seeds 1 to 4 (`packages/sim/src/apps/friends/cli.ts --seeds 1-4`), the shipped state gives repeat 28.2%, V14 37.3%, borough 0.83 and harm 0.61x, against 19.4%, 20.4%, 0.82 and 0.28x before; repeat and harm do not reach their gates there.
+  The Friend lane also serves ntwrk social pairs, social events, social groups and newcomer welcome circles. On the ntwrk planted worlds (`sim --only matching --quick --matching-pack ntwrk`), 300 and 350 against 150 and 150 gave the same 276 pairs, 6 groups, 110 circles, standing correlation 0.800 and worse-side utility 583.2; ARI 0.660 to 0.661, purity 0.754 to 0.755, pair precision 0.584 to 0.586; touches per profile at N 1,000 116.0 to 167.4 (checks 15.6 to 15.7). On the network consent arms (21 days, seeds 1 to 3), meetings went from 130 to 158 (gate more than 140), held plans from 0,0,0 to 0,0,2, everyone-yes 0.858 to 0.857, invite-yes 0.929 to 0.926, and the judge found 0 invariants at 150 (at 300 and 350, seed 1 had one `decliner_exposed`, which this change does not cause).
+  The circle pair floor equals the utility floor. For Friend this keeps every valued pair eligible for a circle: a valued pair has both utilities at the utility floor or above, the harmonic mean of two utilities is between them (spec/pairValue.md, "The two utilities combine as an integer harmonic mean"), and Friend's penalty per point is 0, so the standing penalty is 0 (spec/pairValue.md, "Each point of gap above the free gap lowers the value"). In a lane with a penalty above 0 this does not hold.
 - **Parity band and free gap.** Decision: the private standing gap, after the offset, must stay inside the band plus both uncertainties, and the gap inside the free gap costs nothing. Friend has no vertical standing, so its band is the full range. Date uses a band of 15 points on the private appearance standing, plus both uncertainties. Date uses a free gap of 10 points, not 5. With 5, each point of a small gap that is inside the rating noise lowered the pair value, and members at the edge of the rating range, where fewer partners sit near them, lost their weekly assignment to pairs in the middle. On the slop block's pinned seeds (13 to 16, 4 weeks, 300 per city, with the exposure floor in the weekly assignment), the lowest rating quintile's dates against the overall rate went from 0.839 to 0.928 (gate 0.85 or more). Dates per member-month against random went from 0.822 to 0.834, and second dates per seed against random went from 1.811 to 1.541. On seeds 1 to 8, the same change moved the lowest quintile from 0.853 to 0.960 and kept second dates per member-month at 0.041. The penalty per point past the free gap stays 10, so each point of a large gap still costs the same; only the first 10 points are free. Cofounder and Intro use track record and allow a wider band than Hire and Invest. The reply and acceptance rate by standing gap tunes it, and the parity gate counter (pairs past the band) must stay 0.
 - **Penalty per point.** Decision: each point of gap past the free gap lowers the pair value by this much. Hire and Invest use the largest penalty, because a level mismatch costs both sides most there. The acceptance rate by gap inside the band tunes it.
 - **Balance, exchange floor and tolerance.** Decision: Cofounder and Intro require a balanced exchange. Each side must receive at least 200 and the two values may differ by at most 50 percent of the larger. Mentor has no balance rule, because the Offering side consents to the asymmetry. Hire and Invest use the parity band and offset as their two-way check. The share of accepted introductions that one side reports as one-sided tunes it.
@@ -82,10 +92,10 @@ pure val standingUncertaintyCeiling: int = 20
 pure def laneLimits(lane: MatchLane): LaneLimits =
   match lane {
     | Friend => {
-        rules: { utilityFloor: 300, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0,
+        rules: { utilityFloor: 150, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0,
                  balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 },
         standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600,
-        circleMinimum: 3, circleMaximum: 6, circlePairFloor: 350
+        circleMinimum: 3, circleMaximum: 6, circlePairFloor: 150
       }
     | Date => {
         rules: { utilityFloor: 350, parityBand: 15, parityFreeGap: 10, parityPenaltyPerPoint: 10,
@@ -158,7 +168,7 @@ The directed utility of one member for another has four terms: complement (what 
 | Mentor | 5 | 3 | 1 | 1 |
 | Invest | 6 | 2 | 1 | 1 |
 
-- **Friend** weights affinity most, because a member who looks for a friend often states no seeks, so complement is often empty. Its utility floor is set for that reason.
+- **Friend** weights affinity most, because a member who looks for a friend often states no seeks, so complement is often empty. A shared interest raises a friend pair's value, but it is not required: closeness alone can reach the Friend utility floor (the decision "Friend floors" above).
 - **Date** weights complement and the pack value equally, because in a date the app pack's own directed value counts as much as what one member offers of what the other seeks.
 - **The work lanes** (Cofounder, Intro, Hire, Mentor, Invest) weight complement most, because a work introduction is useful only when one side has what the other seeks. Mentor gives affinity more weight than the other work lanes, because a mentee and a mentor must share a field.
 

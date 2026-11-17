@@ -12,9 +12,10 @@ import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
 import { gateMemberFacing, hardGate, prepareDeepReview, type DeepVerdict } from "./judgeDeep.ts";
 import { prepareScreen, screenDecision, screenSnapshot, type ScreenVerdict } from "./judgeScreen.ts";
+import { emptyIntentWaitOver } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
 import { standingIntentCandidateInScope } from "../../core/src/generated/standingIntent.ts";
-import { emptyIntentWaitOver } from "../../core/src/generated/emptyIntentFollowup.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
@@ -121,14 +122,14 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // (networkPack: the GENERATOR_NAMES flags; a name the config does not know runs).
   const gate = cfg.generators as Record<string, boolean | undefined>;
   const intentScope = input.standingIntentSearch && new Set(input.standingIntentSearch);
-  const publishedEvents = new Set(w.events.filter(event => event.listing).map(event => event.id));
+  const publishedEvents = new Map(w.events.filter(event => event.listing).map(event => [event.id, listedEventMinimumAge(event)]));
   for (const g of pack.generators) {
     if (g.name in gate && !gate[g.name]) continue;
     const ts = performance.now();
     const proposed = g.run(ctx);
     const generated = publishedEvents.size ? proposed.filter(c => {
-      if (c.anchor?.type !== "event" || !publishedEvents.has(c.anchor.id)) return true;
-      return c.participants.every(id => publicEventPreferencesAllow(w.get(id)?.m, c.category));
+      const minimumAge = c.anchor?.type === "event" ? publishedEvents.get(c.anchor.id) : undefined;
+      return minimumAge === undefined || c.participants.every(id => publicEventPreferencesAllow(w.get(id)?.m, c.category, minimumAge));
     }) : proposed;
     const got = intentScope ? generated.filter(c => standingIntentCandidateInScope(true,
       c.anchor?.type === "intent" && intentScope.has(c.anchor.id),

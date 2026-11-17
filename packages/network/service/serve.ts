@@ -37,6 +37,7 @@ export interface ServiceMcpOptions {
 export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions = {}): Promise<McpHandler | undefined> {
   const env = o.env ?? process.env;
   const log = o.log ?? console.log;
+  const now = o.now ?? (() => svc.clock.now());
   const dev = devShortcutsAllowed(env);
   const stageOrigins = stagingSiteOrigins(env);
   const privateOpenAiApps = o.privateOpenAiApps ?? (env.MCP_PRIVATE_OPENAI_APPS ?? "").split(",").map(s => s.trim()).filter(Boolean);
@@ -111,10 +112,16 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
     }),
-    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
+    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now,
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
+  svc.notify?.setAssistantUpdatesLookup((personId, app) => isMcpAppId(app) ? mcp.assistantUpdateSurfaces(personId, app) : Promise.resolve([]));
+  if (store instanceof PgOAuthStore) {
+    svc.setNotificationClaimSurfaces(async (tx, personId, phoneKey, app) => isMcpAppId(app)
+      ? mcp.assistantUpdateSurfacesForClaim(await store.assistantGrantsForClaim(tx, personId, phoneKey, app, now()))
+      : []);
+  }
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);

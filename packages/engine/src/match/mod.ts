@@ -1,6 +1,6 @@
 // The generic, pack-free matching core.
 export {
-  buildProfiles, defaultTags, internTags, isEntityId, laneCategory, partnerSide,
+  buildProfiles, internTags, isEntityId, laneCategory, partnerSide,
   type EntityId, type EntityStanding, type EntityTags, type MatchEntity, type MatchProfile, type Membership,
   type PackTraits, type PackVectors, type TagInterner, type TagSet,
 } from "./profile.ts";

@@ -25,6 +25,12 @@ export function unansweredInviteCountAfterInbound(count: number, inbound: boolea
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
 //@ pure
+export function outreachEngagementSource(source: string): boolean {
+  return source === "thread";
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
 export function unansweredInviteCounts(accepted: boolean, acceptedAt: number, expired: boolean, expiredAt: number, now: number): boolean {
   return accepted && acceptedAt <= now && ((expired && acceptedAt <= expiredAt && expiredAt <= now) || exact_outreachPolicy(now - acceptedAt) >= unansweredInviteWaitMs);
 }
@@ -53,7 +59,14 @@ export function lawTooFewInvitationsDoNotPause(count: number): boolean {
 //@ pure
 export function lawInboundMessageEndsThePause(count: number): boolean {
   //@ ensures \result === true
-  return !unansweredInvitePause(unansweredInviteCountAfterInbound(count, true));
+  return !unansweredInvitePause(unansweredInviteCountAfterInbound(count, outreachEngagementSource("thread")));
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
+export function lawAssistantProfileKeepsUnanswered(count: number): boolean {
+  //@ ensures \result === true
+  return unansweredInviteCountAfterInbound(count, outreachEngagementSource("mcp")) === count;
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */

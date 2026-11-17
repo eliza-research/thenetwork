@@ -143,8 +143,8 @@ export function enabled(current: AlertDispatch, event: Event): boolean {
 export function step(current: AlertDispatch, event: Event): AlertDispatch {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "prepareDispatch" && canPrepareDispatch(current)) return prepareDispatch(current, event.noticeCount, event.postsLastHour, event.hourlyLimit);
-  if (event.type === "recordDelivery" && canRecordDelivery(current)) return recordDelivery(current, event.accepted);
+  if (event.type === "prepareDispatch") return canPrepareDispatch(current) ? prepareDispatch(current, event.noticeCount, event.postsLastHour, event.hourlyLimit) : current;
+  if (event.type === "recordDelivery") return canRecordDelivery(current) ? recordDelivery(current, event.accepted) : current;
   return current;
 }
 

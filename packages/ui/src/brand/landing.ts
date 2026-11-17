@@ -86,13 +86,12 @@ export function statusText(status: StatusLine, agent: AgentId, links: Pick<Landi
     case "TextTheNumber":
       // spec/landingEntry.md, "The device decides whether the entry opens Messages or shows the number"
       return messagesFallbackTemplate(status === "MessageCopied")
-        .replace("{message}", () => links.joinMessage)
-        .replace("{number}", () => links.textLine);
+        .replace(/\{message\}|\{number\}/g, field => field === "{message}" ? links.joinMessage : links.textLine);
   }
 }
 
 /** The path and the link text of each page that the footer can link. */
-export const sitePageLinks: Record<SitePage, { href: string; label: string }> = {
+export const sitePageLinks: Partial<Record<SitePage, { href: string; label: string }>> = {
   LandingPage: { href: "/", label: "Home" },
   PrivacyPage: { href: "/privacy", label: "Privacy" },
   TermsPage: { href: "/terms", label: "Terms" },

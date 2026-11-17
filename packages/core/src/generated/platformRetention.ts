@@ -64,7 +64,7 @@ export function stopHintCounterPastRetention(lastAt: number, platformCutoff: num
 //@ pure
 export function lawStopHintCounterStaysInWindow(lastAt: number, platformCutoff: number): boolean {
   //@ ensures \result === true
-  return !(!(lastAt < exact_platformRetention(platformCutoff - stopHintWindowMs))) || !stopHintCounterPastRetention(lastAt, platformCutoff);
+  return !(lastAt >= exact_platformRetention(platformCutoff - stopHintWindowMs)) || !stopHintCounterPastRetention(lastAt, platformCutoff);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

@@ -3,7 +3,7 @@
 import { cofounderIntentObjective as cofounderIntent_cofounderIntentObjective, cofounderIntentDetails as cofounderIntent_cofounderIntentDetails, canSaveCofounderIntent as cofounderIntent_canSaveCofounderIntent, cofounderIntentBlocksNew as cofounderIntent_cofounderIntentBlocksNew, lawUnsignedTurnCannotSetCofounderIntent as cofounderIntent_lawUnsignedTurnCannotSetCofounderIntent, lawCofounderIntentNeedsOwnAffirmation as cofounderIntent_lawCofounderIntentNeedsOwnAffirmation, lawClosedCofounderIntentCanBeReplaced as cofounderIntent_lawClosedCofounderIntentCanBeReplaced } from "./cofounderIntent.ts";
 import { type LaneShape as matchLane_LaneShape, type LaneSide as matchLane_LaneSide, type LaneWeights as matchLane_LaneWeights, type MatchLane as matchLane_MatchLane, type LaneLimits as matchLane_LaneLimits } from "./matchLane.ts";
 import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, type UtilityTerm as pairValue_UtilityTerm } from "./pairValue.ts";
-import { type StandingIntentPhase as standingIntent_StandingIntentPhase } from "./standingIntent.ts";
+import { type StandingPresencePhase as standingIntent_StandingPresencePhase, type StandingIntentPhase as standingIntent_StandingIntentPhase } from "./standingIntent.ts";
 
 
 /** Story: Both peers still want a cofounder / A review, probe and reveal require both exact intents (spec/cofounderDispatch.md) */
