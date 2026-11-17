@@ -1,11 +1,11 @@
 import { DAY, RealClock, type Clock } from "@thenetwork/core";
-import { publicEventAllowed, publicEventPublicationNewer } from "../../core/src/generated/publicEventCatalog.ts";
+import { publicEventAllowed, publicEventPublicationNewer, publicEventScanComplete, publicEventScanMaxBytes, publicEventScanResponseAllowed, publicEventScanRowLimit } from "../../core/src/generated/publicEventCatalog.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { readCapped } from "../../platform/src/body.ts";
 import { km, NEIGHBORHOODS, VENUES } from "../src/geo.ts";
 
 const SOURCE = "nyc-parks";
 const FEED = "https://data.cityofnewyork.us/resource/w3wp-dpdi.json";
-const MAX_ROWS = 5000;
 const nyOffsets = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", timeZoneName: "longOffset" });
 const offsetAt = (at: number) => nyOffsets.formatToParts(at).find(part => part.type === "timeZoneName")!.value.slice(3);
 const YOUTH = /\b(kids?|children|family|families|teens?|toddlers?|youth|junior|school-age|summer camps?)\b/iu;
@@ -68,12 +68,23 @@ export async function importPublicEvents(sql: SQL, clock: Clock, request: typeof
   const url = new URL(FEED);
   url.search = new URLSearchParams({
     $select: "guid,link,title,location,parknames,starttime,endtime,categories,coordinates",
-    $limit: String(MAX_ROWS), $order: "guid",
+    $limit: String(publicEventScanRowLimit), $order: "guid",
   }).toString();
   const response = await request(url, { redirect: "error", signal: AbortSignal.timeout(15_000), headers: { accept: "application/json" } });
-  if (!response.ok) throw new Error(`NYC Parks feed returned HTTP ${response.status}`);
-  const raw: unknown = await response.json();
-  if (!Array.isArray(raw) || raw.length >= MAX_ROWS || (raw.length > 0 && !raw.some(row => row && "guid" in Object(row) && "starttime" in Object(row)))) {
+  if (!publicEventScanResponseAllowed(response.status, response.headers.has("content-range"), response.redirected)) {
+    void response.body?.cancel().catch(() => {});
+    throw new Error(`NYC Parks feed did not return a full response (HTTP ${response.status})`);
+  }
+  const bytes = await readCapped(response, publicEventScanMaxBytes);
+  if (bytes === "too_large") {
+    void response.body?.cancel().catch(() => {});
+    throw new Error("NYC Parks feed exceeded the scan byte cap");
+  }
+  let raw: unknown;
+  try { raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { throw new Error("NYC Parks feed did not return a complete UTF-8 JSON listing"); }
+  if (!Array.isArray(raw) || !publicEventScanComplete(bytes.length, raw.length,
+    raw.length === 0 || raw.some(row => row && typeof row === "object" && "guid" in row && "starttime" in row))) {
     throw new Error("NYC Parks feed did not return a complete event listing");
   }
   const events = new Map<string, PublishedParkEvent>();

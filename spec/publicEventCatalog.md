@@ -22,10 +22,24 @@ pure def publicEventAllowed(officialLink: bool, publicPlace: bool, online: bool,
 
 ### A successful complete scan replaces the previous source and expires if refresh stops
 
-Publish a complete scan atomically, with one row per source id. A scan started earlier cannot replace a newer scan. A failure leaves the last scan in place. The daily source is usable for two days after a successful scan. The shell reads only the requested city's current published listings. Republishing identical events does not change matching evidence.
+Publish a complete scan atomically, with one row per source id. Accept only a full HTTP 200 response with no redirect or range marker, containing valid UTF-8 JSON in at most 8 MiB and fewer than 5,000 rows. A complete empty array can replace a previous publication. A partial, oversized, truncated or failed scan leaves the last publication and its timestamp in place. A scan started earlier cannot replace a newer scan. The daily source is usable for two days after a successful scan. The shell reads only the requested city's current published listings. Republishing identical events does not change matching evidence.
 
 ```quint
 pure val publicEventFreshDays = 2
+pure val publicEventScanMaxBytes = 8 * 1024 * 1024
+pure val publicEventScanRowLimit = 5000
+pure val responseStatusValues = Set(200, 206, 299, 503)
+pure val bytesReadValues = Set(0, 1, publicEventScanMaxBytes, publicEventScanMaxBytes + 1)
+pure val rowsReadValues = Set(0, 1, publicEventScanRowLimit - 1, publicEventScanRowLimit)
+
+pure def publicEventScanResponseAllowed(responseStatus: int, rangeMarked: bool, redirected: bool): bool =
+  responseStatus == 200 and not(rangeMarked) and not(redirected)
+
+pure def publicEventScanComplete(bytesRead: int, rowsRead: int, recognizable: bool): bool =
+  0 < bytesRead and bytesRead <= publicEventScanMaxBytes and 0 <= rowsRead and rowsRead < publicEventScanRowLimit and recognizable
+
+pure def lawPartialEventScanCannotPublish(redirected: bool): bool =
+  not(publicEventScanResponseAllowed(206, false, redirected)) and not(publicEventScanResponseAllowed(200, true, redirected))
 
 pure def publicEventPublicationNewer(seen: bool, checkedAt: int, incomingAt: int): bool =
   not(seen) or incomingAt > checkedAt

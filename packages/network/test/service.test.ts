@@ -395,7 +395,28 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
 
     clock.advance(MINUTE);
     expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: true, events: 1 });
+    const lastFullScan = clock.now();
+    clock.advance(MINUTE);
     await expect(importPublicEvents(sql, clock, async () => new Response(null, { status: 503 }))).rejects.toThrow("HTTP 503");
+    await expect(importPublicEvents(sql, clock, async () => Response.json([], {
+      status: 206, headers: { "content-range": "bytes 0-1/50" },
+    }))).rejects.toThrow("HTTP 206");
+    await expect(importPublicEvents(sql, clock, async () => Response.json([], {
+      headers: { "content-range": "bytes 0-1/50" },
+    }))).rejects.toThrow("did not return a full response");
+    const invalidUtf8 = new TextEncoder().encode(JSON.stringify([{ ...fixture, title: "%" }]));
+    invalidUtf8[invalidUtf8.indexOf("%".charCodeAt(0))] = 255;
+    await expect(importPublicEvents(sql, clock, async () => new Response(invalidUtf8))).rejects.toThrow("UTF-8 JSON");
+
+    const megabyteOfSpaces = new Uint8Array(1024 * 1024).fill(32);
+    const oversized = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new TextEncoder().encode("[]"));
+      for (let i = 0; i < 9; i++) controller.enqueue(megabyteOfSpaces);
+      controller.close();
+    } });
+    await expect(importPublicEvents(sql, clock, async () => new Response(oversized))).rejects.toThrow("scan byte cap");
+    expect(await sql`select checked_at from network.public_event_imports where source='nyc-parks'`).toEqual([{ checked_at: new Date(lastFullScan) }]);
+    expect((await s.runtimeFor("ntwrk")!.scoped(tx => loadSnapshot(tx, clock.now(), { app: "ntwrk", city: "nyc" }))).events).toEqual(snapshot.events);
     expect(await s.tick()).toBe(true);
     expect(await runCount()).toBe(2);
     expect((await loadSnapshot(sql, publishedAt + 2 * DAY + MINUTE, { app: "ntwrk" })).events).toBeUndefined();
