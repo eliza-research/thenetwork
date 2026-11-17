@@ -210,6 +210,11 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
 
     // ---- After the date: the check-in, and Rae's answer files a report.
     const meetingAt = booked.meeting_at ? new Date(booked.meeting_at).getTime() : clock.now() + 3 * DAY;
+    // The booking and its two reminders use the thread allowance. Rae answers the day-of check-in herself.
+    const checkInAt = meetingAt - 2 * HOUR;
+    if (checkInAt > clock.now()) await run(s, clock, checkInAt - clock.now(), HOUR);
+    expect(await last(rae)).toMatch(/^Still good for /);
+    await text(s, clock, RAE, "Yes, I'm still coming.");
     if (meetingAt > clock.now()) await run(s, clock, meetingAt - clock.now() + 3 * HOUR, HOUR);
     for (let i = 0; i < 48 && !(await inbox(rae)).some(m => /How did your date with/.test(m.body)); i++) await run(s, clock, HOUR, HOUR);
     expect(await last(rae)).toMatch(/How did your date with/);

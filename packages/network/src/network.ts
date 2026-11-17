@@ -85,7 +85,7 @@ import {
   probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
-import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachEngagementSource, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import {
   interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
 } from "../../core/src/generated/interruptionFeedback.ts";
@@ -888,28 +888,29 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.dirty = true;
     const m = this.member(msg.memberId);
     this.syncMember(m);
-    // The member's own ask (a first message in a day, or one that asks for something) allows follow-ups;
-    // an answer resets the unsolicited streak unless it only acknowledges a logistics text (PRD F28).
+    // spec/outreachPolicy.md, "Count a sent invitation at terminal expiry or after 72 hours"
     const nowIn = this.now(), body = msg.body ?? "";
-    const initiated = !m.lastSent || nowIn - m.lastSent.at > DAY;
-    if (initiated || MEMBER_ASK.test(body)) { m.askAt = nowIn; m.askUsed = 0; }
-    if (initiated || m.lastOutUnsol || !ACK_ONLY.test(body.trim())) m.unsolStreak = 0;
-    m.lastInbound = nowIn; m.msgsIn++;
+    const fromThread = outreachEngagementSource(msg.source ?? "thread");
     this.outboundBefore = m.outbound ?? 0;
-    this.invitesBeforeReply = new Set(m.pendingAsks.flatMap(invite => {
-      if (!invite.opportunityId) return [];
-      const receipt = invite.deliveryId && this.ctx.initialInviteReceipt?.(invite.deliveryId);
-      return invite.acceptedAt !== undefined || (receipt && receipt.kind === "accepted") ? [invite.opportunityId] : [];
-    }));
-    // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
-    // A profile from the member's AI assistant (source "mcp") is not the member answering: it teaches no send time.
-    if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     const replyOpen = this.askOpen(m, nowIn);
-    this.heardFrom(m);
-    // "Don't send my number": a pending number swap of theirs is withdrawn at once (relay.ts), whatever else the message says.
-    if (!msg.keyword && msg.source !== "mcp" && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
+    if (fromThread) {
+      // The member's own ask permits follow-ups. A logistics acknowledgement keeps the unsolicited streak.
+      const initiated = !m.lastSent || nowIn - m.lastSent.at > DAY;
+      if (initiated || MEMBER_ASK.test(body)) { m.askAt = nowIn; m.askUsed = 0; }
+      if (initiated || m.lastOutUnsol || !ACK_ONLY.test(body.trim())) m.unsolStreak = 0;
+      m.lastInbound = nowIn; m.msgsIn++;
+      this.invitesBeforeReply = new Set(m.pendingAsks.flatMap(invite => {
+        if (!invite.opportunityId) return [];
+        const receipt = invite.deliveryId && this.ctx.initialInviteReceipt?.(invite.deliveryId);
+        return invite.acceptedAt !== undefined || (receipt && receipt.kind === "accepted") ? [invite.opportunityId] : [];
+      }));
+      if (!msg.keyword) m.replies = [...(m.replies ?? []), nowIn].slice(-60);
+      this.heardFrom(m);
+      // "Don't send my number" withdraws a pending number swap at once, whatever else the message says.
+      if (!msg.keyword && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
+    }
     this.replyTo = m.id;
-    this.memberReply = !msg.keyword && msg.source !== "mcp";
+    this.memberReply = fromThread && !msg.keyword;
     this.understood = u;
     try { return this.handleInbound(m, msg, privateInviteTurn, replyOpen, queueCofounderIntent) === "open" ? "open" : "handled"; }
     finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; this.invitesBeforeReply.clear(); }

@@ -10,7 +10,7 @@ Check review and deadlines, participant answers, name disclosure, STOP, cancella
 
 Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch](../probeDispatch.md), [review deadline rule](../reviewDeadline.md), and [meeting confirmation and attendance settlement](../meetingSettlement.md). The Network shell keeps the roster, persisted statuses, channel effects, and attendance records. The [repeat encounter rules](../repeatEncounter.md) cover a new review after two private responses to the same completed meeting.
 
-The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers the pair path. Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
+The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action. Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
 
 The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
 

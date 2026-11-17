@@ -18,7 +18,7 @@ pure val personDailyCap: int = 3
 
 ### Count a sent invitation at terminal expiry or after 72 hours
 
-Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current inbound message clears the member's unanswered entries. A stored entry from before delivery tracking uses its original recorded time.
+Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current message from the member's thread clears their unanswered entries, resets the thread counters, and updates the last engagement time. An assistant's profile submission can teach the profile or complete interview intake. It leaves the outreach pause, unanswered entries, thread counters, and response windows in place. A stored entry from before delivery tracking uses its original recorded time.
 
 ```quint
 pure val unansweredInviteWaitMs: int = 72 * 3600000
@@ -45,8 +45,13 @@ pure def lawTooFewInvitationsDoNotPause(count: int): bool =
 pure def unansweredInviteCountAfterInbound(count: int, inbound: bool): int =
   if (inbound) 0 else count
 
+pure def outreachEngagementSource(source: str): bool = source == "thread"
+
 pure def lawInboundMessageEndsThePause(count: int): bool =
-  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, true)))
+  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, outreachEngagementSource("thread"))))
+
+pure def lawAssistantProfileKeepsUnanswered(count: int): bool =
+  unansweredInviteCountAfterInbound(count, outreachEngagementSource("mcp")) == count
 ```
 
 ### Re-engagement requires current evidence of silence
