@@ -45,7 +45,7 @@ Omitted home keeps the legacy runtime default.
 | `POST /api/auth/otp/verify {phone, code}` | `{ok:true}` and a session cookie, or `400 invalid_code` |
 | `POST /api/auth/logout` | `{ok:true}`, cookie cleared |
 | `GET /api/me` | 401, or `{app, phoneMasked, membership, smsOptedIn, canJoin, reason?}` |
-| `POST /api/join {firstName, age, homeCity?, neighborhood?, zip?, interests?, about?, consent: {sms: true, wording? , version?}}` | `{ok:true, membership}` or `400 under_age \| invite_only \| invalid \| consent_wording`. The wording must be the app's canonical text (or its version) from `GET /api/app`. |
+| `POST /api/join {firstName, age, homeCity?, neighborhood?, zip?, interests?, about?, consent: {sms: true, wording?, version?}}` | `{ok:true, membership}` or `400 under_age \| invite_only \| invalid \| consent_wording`. Supply the app's current wording or version from `GET /api/app`. If both are supplied, both must match. |
 | `POST /api/me/share {fromApp, fields}` | Stores a base-profile grant (`first_name`, `city`, `age_band`, `interests`). No site shows it. |
 | `GET /api/me/export` | This app's data only |
 | `POST /api/me/share/revoke {fromApp}` | Revokes a grant. The same answer either way. |

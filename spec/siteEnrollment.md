@@ -57,7 +57,7 @@ pure def checkAccountView(joining: Enrollment, viewMatches: bool): Enrollment =
 
 ### Decode the profile and accept current consent before locking the account
 
-Reject a malformed profile. The account service accepts the app's current consent wording or version under the existing matching rules. Typed in-process callers already hold a validated profile and start at the consent step.
+Reject a malformed profile. Text consent must be explicit and include the app's current wording, current version or both. Every supplied field must decode and agree with the current consent. A blank or malformed field does not become an omitted field. Typed in-process callers already hold a validated profile and start at the consent step.
 
 ```quint
 pure def canDecodeProfile(joining: Enrollment): bool = joining.phase == AwaitingProfile and joining.viewChecked
@@ -66,6 +66,30 @@ pure def decodeProfile(joining: Enrollment, decoded: bool): Enrollment =
   { ...joining, validProfile: decoded, phase: if (decoded) AwaitingConsent else InvalidProfile }
 
 pure val typedJoinEntry: Enrollment = { ...initial, phase: AwaitingConsent, validProfile: true, viewChecked: true }
+
+type JoinConsentEvidence = {
+  smsAccepted: bool, wordingSupplied: bool, wordingAccepted: bool, versionSupplied: bool, versionAccepted: bool
+}
+
+pure val completeJoinConsent: JoinConsentEvidence = {
+  smsAccepted: true, wordingSupplied: true, wordingAccepted: true, versionSupplied: true, versionAccepted: true
+}
+pure val evidenceValues = Set(completeJoinConsent,
+  { ...completeJoinConsent, smsAccepted: false },
+  { ...completeJoinConsent, wordingAccepted: false },
+  { ...completeJoinConsent, versionAccepted: false },
+  { ...completeJoinConsent, wordingSupplied: false, wordingAccepted: false },
+  { ...completeJoinConsent, versionSupplied: false, versionAccepted: false },
+  { smsAccepted: true, wordingSupplied: false, wordingAccepted: false, versionSupplied: false, versionAccepted: false })
+
+pure def joinConsentEvidenceAllowed(evidence: JoinConsentEvidence): bool =
+  evidence.smsAccepted and (evidence.wordingSupplied or evidence.versionSupplied) and
+  (not(evidence.wordingSupplied) or evidence.wordingAccepted) and
+  (not(evidence.versionSupplied) or evidence.versionAccepted)
+
+pure def lawEverySuppliedJoinConsentFieldMustAgree(evidence: JoinConsentEvidence): bool =
+  ((evidence.wordingSupplied and not(evidence.wordingAccepted)) or
+    (evidence.versionSupplied and not(evidence.versionAccepted))) implies not(joinConsentEvidenceAllowed(evidence))
 
 pure def canConfirmConsent(joining: Enrollment): bool = joining.phase == AwaitingConsent and joining.validProfile and joining.viewChecked
 

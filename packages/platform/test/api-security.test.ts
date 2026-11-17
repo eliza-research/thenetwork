@@ -114,15 +114,26 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
   test("PLAT-24 only the app's canonical opt-in wording is accepted; the ledger stores that text and its version", async () => {
     const c = make(store), phone = newPhone();
     const cookie = await c.login("peon", phone);
-    const bad = await c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, wording: "I agree to nothing in particular" } }, { cookie });
+    const joinWith = (consent: { sms: boolean; wording?: unknown; version?: unknown }) =>
+      c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent }, { cookie });
+    const approved = APPS.peon.consent;
+    const bad = await joinWith({ sms: true, wording: "I agree to nothing in particular" });
     expect(bad.body).toEqual({ ok: false, error: "consent_wording" });
-    const otherApp = await c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, wording: APPS.slop.consent.text } }, { cookie });
+    const otherApp = await joinWith({ sms: true, wording: APPS.slop.consent.text, version: approved.version });
     expect(otherApp.body.error).toBe("consent_wording");
+    for (const submitted of [
+      { sms: true, wording: "   ", version: approved.version },
+      { sms: true, wording: approved.text, version: null },
+    ]) {
+      expect((await joinWith(submitted)).body).toEqual({ ok: false, error: "invalid" });
+    }
     expect(await store.findPhone(phone)).toBeUndefined();
-    const ok = await c.call("peon", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, wording: `  ${APPS.peon.consent.text.replace(/ /g, "\n ")} ` } }, { cookie });
+    expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBeUndefined();
+    expect(await store.consentEvents(phone, "peon")).toEqual([]);
+    const ok = await joinWith({ sms: true, wording: `  ${approved.text.replace(/ /g, "\n ")} ` });
     expect(ok.status).toBe(200);
-    const [e] = await store.consentEvents(phone, "peon");
-    expect([e!.wording, e!.wordingVersion]).toEqual([APPS.peon.consent.text, APPS.peon.consent.version]);
+    expect((await joinWith({ sms: true, wording: approved.text, version: approved.version })).status).toBe(200);
+    expect((await store.consentEvents(phone, "peon")).map(e => [e.wording, e.wordingVersion])).toEqual([[approved.text, approved.version]]);
   });
 
   test("CSRF: a non-JSON POST, a cross-site Origin and a cross-site fetch are refused; same-site passes", async () => {

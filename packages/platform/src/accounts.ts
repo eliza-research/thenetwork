@@ -26,7 +26,7 @@ import {
 import {
   initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
-import { profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { joinConsentEvidenceAllowed, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
@@ -96,10 +96,14 @@ export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "in
 export class JoinReviewRequired extends Error {}
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
-/** True when the client's consent names this app's canonical opt-in text (by its words or its version). */
-export const consentMatches = (app: Pick<AppInfo, "consent">, c: JoinInput["consent"]) =>
-  c.version !== undefined ? c.version === app.consent.version && (c.wording === undefined || squash(c.wording) === squash(app.consent.text))
-    : c.wording !== undefined && squash(c.wording) === squash(app.consent.text);
+/** Every supplied consent field must match this app's current opt-in. */
+export const consentMatches = (app: Pick<AppInfo, "consent">, c: JoinInput["consent"]) => joinConsentEvidenceAllowed({
+  smsAccepted: c.sms === true,
+  wordingSupplied: c.wording !== undefined,
+  wordingAccepted: c.wording !== undefined && squash(c.wording) === squash(app.consent.text),
+  versionSupplied: c.version !== undefined,
+  versionAccepted: c.version === app.consent.version,
+});
 
 /** Check and clean a join body. Returns undefined when it is not valid. */
 export function parseJoin(body: unknown): JoinInput | undefined {
@@ -108,9 +112,16 @@ export function parseJoin(body: unknown): JoinInput | undefined {
   const str = (v: unknown, max: number) => (typeof v === "string" && v.trim().length > 0 && v.trim().length <= max ? v.trim() : undefined);
   const firstName = str(b.firstName, 50);
   if (!firstName || !validAge(b.age) || !Number.isInteger(b.age)) return undefined;
-  const c = b.consent as Record<string, unknown> | undefined;
-  const wording = str(c?.wording, 2000), version = str(c?.version, 40);
-  if (!c || c.sms !== true || (!wording && !version)) return undefined;
+  if (!b.consent || typeof b.consent !== "object" || Array.isArray(b.consent)) return undefined;
+  const c = b.consent as Record<string, unknown>;
+  const wording = str(c.wording, 2000), version = str(c.version, 40);
+  if (!joinConsentEvidenceAllowed({
+    smsAccepted: c.sms === true,
+    wordingSupplied: c.wording !== undefined,
+    wordingAccepted: wording !== undefined,
+    versionSupplied: c.version !== undefined,
+    versionAccepted: version !== undefined,
+  })) return undefined;
   const out: JoinInput = { firstName, age: b.age as number, consent: { sms: true, ...(wording ? { wording } : {}), ...(version ? { version } : {}) } };
   if (b.neighborhood !== undefined) { const v = str(b.neighborhood, 80); if (!v) return undefined; out.neighborhood = v; }
   const coarseHome = homeCityOf(out.neighborhood);
