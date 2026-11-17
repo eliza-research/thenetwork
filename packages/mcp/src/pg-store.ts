@@ -7,7 +7,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -45,6 +45,10 @@ const insertCode = (sql: SQL, c: AuthCode) => sql`insert into oauth.codes (hash,
       values (${c.hash}, ${c.grantId}, ${c.clientId}, ${c.redirectUri}, ${c.codeChallenge}, ${c.resource}, ${sql.array(c.scopes, "TEXT")}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.usedAt)})`;
 
 const insertAudit = (sql: SQL, a: AuditRow) => sql`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
+const insertToken = (sql: SQL, t: Token) => sql`insert into oauth.tokens (hash, kind, grant_id, client_id, app_id, resource, scopes, created_at, expires_at, revoked_at, rotated_at)
+  values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${sql.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
+
+const expiredCodeExchange = new Error("OAuth code exchange expired during transaction");
 
 type CheckBrowserOwner = (tx: SQL, owner: BrowserGrantRemoval) => Promise<boolean>;
 
@@ -229,17 +233,31 @@ export class PgOAuthStore implements OAuthStore {
     const rows=await this.sql`select * from oauth.codes where hash=${hash}`;
     return rows[0]?code(rows[0]):undefined;
   }
-  async takeCode(hash: string, at: number) {
-    // One statement: the first caller gets used_at = null back, every later caller sees the earlier use.
-    const [r] = await this.sql`with prev as (select * from oauth.codes where hash = ${hash} for update)
-      update oauth.codes c set used_at = coalesce(c.used_at, ${ts(at)}) from prev where c.hash = prev.hash
-      returning prev.*`;
-    return r ? code(r) : undefined;
+  async commitCodeExchange(exchange: CodeExchange) {
+    try {
+      return await this.sql.begin(async tx => {
+        // Grant first, in the same order as refresh and revocation.
+        const [grantRow] = await tx`select * from oauth.grants where id=${exchange.grant.id} for update`;
+        const [codeRow] = await tx`select * from oauth.codes where hash=${exchange.code.hash} for update`;
+        const approval = grantRow ? grant(grantRow) : undefined;
+        const credential = codeRow ? code(codeRow) : undefined;
+        const at = exchange.now();
+        const result = checkCodeExchange(exchange, credential, approval, at);
+        if (result !== "CodePairCommitted") return result;
+        await tx`update oauth.codes set used_at=${ts(at)} where hash=${exchange.code.hash}`;
+        for (const token of exchange.tokens) await insertToken(tx, token);
+        await insertAudit(tx, { ...exchange.audit, at });
+        if (checkCodeExchange(exchange, credential, approval, exchange.now()) !== "CodePairCommitted") throw expiredCodeExchange;
+        return result;
+      });
+    } catch (error) {
+      if (error === expiredCodeExchange) return "CodeNotCommitted" as const;
+      throw error;
+    }
   }
 
   async putToken(t: Token) {
-    await this.sql`insert into oauth.tokens (hash, kind, grant_id, client_id, app_id, resource, scopes, created_at, expires_at, revoked_at, rotated_at)
-      values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${this.sql.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
+    await insertToken(this.sql, t);
   }
   async getToken(hash: string) {
     const [r] = await this.sql`select * from oauth.tokens where hash = ${hash}`;
@@ -257,9 +275,8 @@ export class PgOAuthStore implements OAuthStore {
         || pair.some(t=>t.expiresAt>ms(owner.expires_at)!))return false;
       const r = await tx`update oauth.tokens set rotated_at = ${ts(at)} where hash = ${hash} and kind = 'refresh' and rotated_at is null and revoked_at is null returning hash`;
       if (!r.length) return false;
-      for (const t of pair) await tx`insert into oauth.tokens (hash, kind, grant_id, client_id, app_id, resource, scopes, created_at, expires_at, revoked_at, rotated_at)
-        values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${tx.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
-      await tx`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(audit.at)}, ${audit.kind}, ${audit.clientId}, ${audit.grantId}, ${audit.app}, ${audit.detail})`;
+      for (const t of pair) await insertToken(tx, t);
+      await insertAudit(tx, audit);
       if(ms(owner.expires_at)!<=liveAt())throw new Error("Cloud OAuth refresh authority expired during transaction");
       return true;
     }); } catch(error) {

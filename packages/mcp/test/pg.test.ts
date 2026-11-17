@@ -306,6 +306,63 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     expect((await store.auditRows()).map((a: { kind: string }) => a.kind)).toEqual(expect.arrayContaining(["client_registered", "consent_granted", "token_issued", "token_refreshed", "refresh_replay"]));
   });
 
+  test("an authorization code cannot issue tokens after its grant is revoked in flight", async () => {
+    const env = setup({ store });
+    const domain = "peon.biz";
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const client = await register(env, domain);
+    const flow = await browserFlow(env, domain, client.body.client_id, PHONE_A);
+    const exchangeCode = new URL(flow.location!).searchParams.get("code")!;
+    const pending = await store.getCode(sha256hex(exchangeCode));
+    if (!pending) throw new Error("missing authorization code");
+    const getGrant = store.getGrant.bind(store);
+    let revokedInFlight = false;
+    store.getGrant = async id => {
+      const observed = await getGrant(id);
+      if (!revokedInFlight && id === pending.grantId) revokedInFlight = await store.revokeGrant(id, env.clock.t);
+      return observed;
+    };
+    try {
+      const exchanged = await tokenRequest(env, domain, { grant_type: "authorization_code", code: exchangeCode,
+        redirect_uri: "https://client.example/callback", client_id: client.body.client_id, code_verifier: VERIFIER });
+      expect(revokedInFlight).toBe(true);
+      expect(exchanged.res.status).toBe(400);
+      expect(exchanged.body).toEqual({error: "invalid_grant"});
+    } finally {
+      store.getGrant = getGrant;
+    }
+    expect(await store.getCode(pending.hash)).toMatchObject({usedAt: null});
+    expect(await store.sql`select 1 from oauth.tokens where grant_id=${pending.grantId}`).toHaveLength(0);
+    expect(await store.sql`select 1 from oauth.audit where grant_id=${pending.grantId} and kind='token_issued'`).toHaveLength(0);
+  });
+
+  test("an issuance audit failure rolls back the code exchange and both tokens", async () => {
+    const env = setup({ store });
+    const domain = "peon.biz";
+    const client = await register(env, domain);
+    const flow = await browserFlow(env, domain, client.body.client_id, PHONE_A);
+    const exchangeCode = new URL(flow.location!).searchParams.get("code")!;
+    const pending = (await store.getCode(sha256hex(exchangeCode)))!;
+    const exchange = () => tokenRequest(env, domain, { grant_type: "authorization_code", code: exchangeCode,
+      redirect_uri: "https://client.example/callback", client_id: client.body.client_id, code_verifier: VERIFIER });
+    await store.sql.unsafe(`create function oauth.test_code_audit_fault() returns trigger language plpgsql as $$
+      begin
+        if NEW.kind = 'token_issued' then raise exception 'synthetic code issuance audit failure'; end if;
+        return NEW;
+      end $$;
+      create trigger test_code_audit_fault before insert on oauth.audit for each row execute function oauth.test_code_audit_fault();`);
+    try {
+      expect((await exchange()).res.status).toBe(500);
+      expect(await store.getCode(pending.hash)).toMatchObject({usedAt: null});
+      expect(await store.sql`select 1 from oauth.tokens where grant_id=${pending.grantId}`).toHaveLength(0);
+      expect(await store.sql`select 1 from oauth.audit where grant_id=${pending.grantId} and kind='token_issued'`).toHaveLength(0);
+    } finally {
+      await store.sql.unsafe("drop trigger test_code_audit_fault on oauth.audit; drop function oauth.test_code_audit_fault()");
+    }
+    expect((await exchange()).res.status).toBe(200);
+    expect(await store.sql`select 1 from oauth.tokens where grant_id=${pending.grantId}`).toHaveLength(2);
+  });
+
   test("a person ban ends issued access and refresh tokens and unused authorization codes; another person keeps access", async () => {
     await migrate(testUrl.toString(), { lockTimeout: "5s" });
     const people = new PgPeopleStore(testUrl.toString()), harness = setup({ store });
@@ -438,13 +495,20 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     expect((await canCheck("friends.help", newFriends)).res.status).toBe(200);
   });
 
-  test("a code is taken once under a race; rate windows count and reset", async () => {
+  test("a code commits one token pair under a race; rate windows count and reset", async () => {
     const env = setup({ store });
-    const c = await connect(env, "slop.date", PHONE_A);
-    const g = (await store.grantsFor(env.accounts.phoneHash(PHONE_A), "slop", env.clock.t))[0]!;
-    await store.putCode({ hash: "race", grantId: g.id, clientId: c.client.client_id, redirectUri: "https://client.example/callback", codeChallenge: "x".repeat(43), resource: "https://slop.date/mcp", scopes: ["apps:read"], createdAt: env.clock.t, expiresAt: env.clock.t + 60_000, usedAt: null });
-    const taken = await Promise.all([1, 2, 3, 4].map(() => store.takeCode("race", env.clock.t)));
-    expect(taken.filter(t => t!.usedAt === null)).toHaveLength(1);
+    const domain = "slop.date";
+    const client = await register(env, domain);
+    const flow = await browserFlow(env, domain, client.body.client_id, PHONE_A);
+    const exchangeCode = new URL(flow.location!).searchParams.get("code")!;
+    const pending = (await store.getCode(sha256hex(exchangeCode)))!;
+    const exchange = () => tokenRequest(env, domain, { grant_type: "authorization_code", code: exchangeCode,
+      redirect_uri: "https://client.example/callback", client_id: client.body.client_id, code_verifier: VERIFIER });
+    const responses = await Promise.all(Array.from({length: 4}, exchange));
+    expect(responses.map(response => response.res.status).sort()).toEqual([200, 400, 400, 400]);
+    expect(await store.sql`select 1 from oauth.tokens where grant_id=${pending.grantId}`).toHaveLength(2);
+    expect(await store.sql`select 1 from oauth.tokens where grant_id=${pending.grantId} and revoked_at is null`).toHaveLength(0);
+    expect(await store.sql`select 1 from oauth.audit where grant_id=${pending.grantId} and kind='token_issued'`).toHaveLength(1);
     const t0 = 3_600_000 * 1000;
     expect(await store.hit("b", 60_000, t0)).toBe(1);
     expect(await store.hit("b", 60_000, t0 + 1)).toBe(2);

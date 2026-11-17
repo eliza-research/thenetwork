@@ -3,10 +3,12 @@
 // Tokens and codes are stored only as sha256 hashes (they are 32 random bytes, so a plain hash is
 // enough). A client secret is stored the same way. The phone number of a grant stays on the server,
 // as platform.sessions keeps it; no tool and no response carries it.
+import { isDeepStrictEqual } from "node:util";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
+import { codeExchangeMayCommit, type CodeExchangeResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -123,6 +125,23 @@ export interface ConsentGrantWrites {
   audit: readonly [AuditRow, AuditRow];
 }
 
+export interface CodeExchange {
+  code: AuthCode;
+  grant: Grant;
+  tokens: readonly [Token, Token];
+  audit: Omit<AuditRow, "at">;
+  now: () => number;
+}
+
+/** Recheck the exact authorized rows under the store's write boundary. */
+export function checkCodeExchange(exchange: CodeExchange, code: AuthCode | undefined, grant: Grant | undefined, at: number): CodeExchangeResult {
+  const exactCode = !!code && isDeepStrictEqual({ ...code, usedAt: null }, { ...exchange.code, usedAt: null });
+  if (exactCode && code.usedAt !== null) return "CodeAlreadyUsed";
+  const exactUnrevokedGrant = !!grant && grant.revokedAt === null && isDeepStrictEqual(grant, exchange.grant);
+  if (!codeExchangeMayCommit(exactUnrevokedGrant, exactCode, code?.usedAt === null, at, grant?.expiresAt ?? 0, code?.expiresAt ?? 0)) return "CodeNotCommitted";
+  return exchange.tokens.every(token => token.expiresAt > at && token.expiresAt <= exchange.grant.expiresAt) ? "CodePairCommitted" : "CodeNotCommitted";
+}
+
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
@@ -169,8 +188,8 @@ export interface OAuthStore {
   putCode(c: AuthCode): Promise<void>;
   /** Read without consuming; transient authority outages must leave a code retryable. */
   getCode(hash: string): Promise<AuthCode | undefined>;
-  /** Mark the code used and return it as it was before (usedAt shows an earlier use: a replay). */
-  takeCode(hash: string, at: number): Promise<AuthCode | undefined>;
+  /** Consume the checked code and write the complete token pair and audit in one commit. */
+  commitCodeExchange(exchange: CodeExchange): Promise<CodeExchangeResult>;
 
   putToken(t: Token): Promise<void>;
   getToken(hash: string): Promise<Token | undefined>;
@@ -341,12 +360,18 @@ export class MemoryOAuthStore implements OAuthStore {
 
   async putCode(c: AuthCode) { this.codes.set(c.hash, structuredClone(c)); }
   async getCode(hash: string) { return copy(this.codes.get(hash)); }
-  async takeCode(hash: string, at: number) {
-    const c = this.codes.get(hash);
-    if (!c) return undefined;
-    const before = structuredClone(c);
-    if (c.usedAt === null) c.usedAt = at;
-    return before;
+  async commitCodeExchange(exchange: CodeExchange) {
+    const code = this.codes.get(exchange.code.hash);
+    const grant = this.grants.get(exchange.grant.id);
+    const at = exchange.now();
+    const result = checkCodeExchange(exchange, code, grant, at);
+    if (result !== "CodePairCommitted" || !code) return result;
+    const prepared = structuredClone({ tokens: exchange.tokens, audit: { ...exchange.audit, at } });
+    if (prepared.tokens[0].hash === prepared.tokens[1].hash || prepared.tokens.some(token => this.tokens.has(token.hash))) throw new Error("OAuth token already exists");
+    code.usedAt = at;
+    for (const token of prepared.tokens) this.tokens.set(token.hash, token);
+    this.rows.push(prepared.audit);
+    return result;
   }
 
   async putToken(t: Token) { this.tokens.set(t.hash, structuredClone(t)); }

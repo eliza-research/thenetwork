@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
-export type TokenPhase = "Beginning" | "CheckingCodeBinding" | "CheckingGrant" | "CheckingAuthority" | "CheckingRefreshBinding" | "AwaitingConsumption" | "AwaitingTokenWrite" | "AwaitingRotation" | "TokensReady" | "RevokeGrant" | "Refused" | "RetryAuthority";
+export type TokenPhase = "Beginning" | "CheckingCodeBinding" | "CheckingGrant" | "CheckingAuthority" | "CheckingRefreshBinding" | "AwaitingConsumption" | "AwaitingRotation" | "TokensReady" | "RevokeGrant" | "Refused" | "RetryAuthority";
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
 export type TokenReason = "NoReason" | "InvalidGrant" | "CodeExpired" | "RedirectMismatch" | "VerifierMismatch" | "InvalidScope" | "InvalidTarget";
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
@@ -10,7 +10,7 @@ export interface TokenFlow { phase: TokenPhase; reason: TokenReason; refresh: bo
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
 export type TokenAuthority = "Current" | "Invalid" | "Unavailable";
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-export type CodeConsumption = "NoCode" | "PreviousUse" | "CodeConsumed";
+export type CodeExchangeResult = "CodeNotCommitted" | "CodeAlreadyUsed" | "CodePairCommitted";
 /** Story: Use and renew an approved connector grant / Revocation affects credentials owned by the authenticated client (spec/oauthTokenLifecycle.md) */
 export type Revocation = "NoChange" | "EndAccess" | "EndGrant";
 
@@ -22,9 +22,8 @@ export type Event =
   | { type: "readGrant"; grantLive: boolean; eligible: boolean }
   | { type: "readAuthority"; credentialLive: boolean; authority: TokenAuthority }
   | { type: "readRefreshBinding"; scopeAllowed: boolean; resourceMatches: boolean; bothLive: boolean }
-  | { type: "recordTokens" }
   | { type: "recordRotation"; succeeded: boolean }
-  | { type: "readConsumption"; consumption: CodeConsumption; bothLive: boolean };
+  | { type: "readCodeExchange"; result: CodeExchangeResult };
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
 export const initial: TokenFlow = { phase: "Beginning", reason: "NoReason", refresh: false };
@@ -127,21 +126,21 @@ export function readRefreshBinding(flow: TokenFlow, scopeAllowed: boolean, resou
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
 //@ pure
-export function canReadConsumption(flow: TokenFlow): boolean {
+export function codeExchangeMayCommit(grantExactAndUnrevoked: boolean, codeExact: boolean, codeUnused: boolean, at: number, grantEndsAt: number, codeEndsAt: number): boolean {
+  return grantExactAndUnrevoked && codeExact && codeUnused && at < grantEndsAt && at < codeEndsAt;
+}
+
+/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function lawEndedGrantCannotCommitCode(codeExact: boolean, codeUnused: boolean, at: number, grantEndsAt: number, codeEndsAt: number): boolean {
+  //@ ensures \result === true
+  return !codeExchangeMayCommit(false, codeExact, codeUnused, at, grantEndsAt, codeEndsAt);
+}
+
+/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function canReadCodeExchange(flow: TokenFlow): boolean {
   return flow.phase === "AwaitingConsumption";
-}
-
-/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function canRecordTokens(flow: TokenFlow): boolean {
-  return flow.phase === "AwaitingTokenWrite";
-}
-
-/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function recordTokens(flow: TokenFlow): TokenFlow {
-  //@ ensures (inv(flow) && canRecordTokens(flow)) ==> stepTokensRequireStorage(flow, "recordTokens", \result)
-  return { ...flow, phase: "TokensReady" };
 }
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
@@ -160,7 +159,7 @@ export function recordRotation(flow: TokenFlow, succeeded: boolean): TokenFlow {
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
 //@ pure
 export function stepTokensRequireStorage(before: TokenFlow, via: string, after: TokenFlow): boolean {
-  return !(after.phase === "TokensReady") || ((via === "recordTokens" && before.phase === "AwaitingTokenWrite") || (via === "recordRotation" && before.phase === "AwaitingRotation"));
+  return !(after.phase === "TokensReady") || ((via === "readCodeExchange" && before.phase === "AwaitingConsumption") || (via === "recordRotation" && before.phase === "AwaitingRotation"));
 }
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
@@ -177,9 +176,9 @@ export function sometimesCanRefresh(flow: TokenFlow): boolean {
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
 //@ pure
-export function readConsumption(flow: TokenFlow, consumption: CodeConsumption, bothLive: boolean): TokenFlow {
-  //@ ensures (inv(flow) && canReadConsumption(flow)) ==> stepTokensRequireStorage(flow, "readConsumption", \result)
-  return consumption === "PreviousUse" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (consumption !== "CodeConsumed" || !bothLive ? refuse("InvalidGrant", flow) : ({ ...flow, phase: "AwaitingTokenWrite" } as TokenFlow));
+export function readCodeExchange(flow: TokenFlow, result: CodeExchangeResult): TokenFlow {
+  //@ ensures (inv(flow) && canReadCodeExchange(flow)) ==> stepTokensRequireStorage(flow, "readCodeExchange", \result)
+  return result === "CodeAlreadyUsed" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (result === "CodePairCommitted" ? ({ ...flow, phase: "TokensReady" } as TokenFlow) : refuse("InvalidGrant", flow));
 }
 
 /** Story: Use and renew an approved connector grant / Revocation affects credentials owned by the authenticated client (spec/oauthTokenLifecycle.md) */
@@ -197,9 +196,8 @@ export function enabled(current: TokenFlow, event: Event): boolean {
   if (event.type === "readGrant") return canReadGrant(current);
   if (event.type === "readAuthority") return canReadAuthority(current);
   if (event.type === "readRefreshBinding") return canReadRefreshBinding(current);
-  if (event.type === "recordTokens") return canRecordTokens(current);
   if (event.type === "recordRotation") return canRecordRotation(current);
-  if (event.type === "readConsumption") return canReadConsumption(current);
+  if (event.type === "readCodeExchange") return canReadCodeExchange(current);
   return false;
 }
 
@@ -214,9 +212,8 @@ export function step(current: TokenFlow, event: Event): TokenFlow {
   if (event.type === "readGrant") return canReadGrant(current) ? readGrant(current, event.grantLive, event.eligible) : current;
   if (event.type === "readAuthority") return canReadAuthority(current) ? readAuthority(current, event.credentialLive, event.authority) : current;
   if (event.type === "readRefreshBinding") return canReadRefreshBinding(current) ? readRefreshBinding(current, event.scopeAllowed, event.resourceMatches, event.bothLive) : current;
-  if (event.type === "recordTokens") return canRecordTokens(current) ? recordTokens(current) : current;
   if (event.type === "recordRotation") return canRecordRotation(current) ? recordRotation(current, event.succeeded) : current;
-  if (event.type === "readConsumption") return canReadConsumption(current) ? readConsumption(current, event.consumption, event.bothLive) : current;
+  if (event.type === "readCodeExchange") return canReadCodeExchange(current) ? readCodeExchange(current, event.result) : current;
   return current;
 }
 
@@ -240,9 +237,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readGrant" && typeof raw.grantLive === "boolean" && typeof raw.eligible === "boolean") return { type: "readGrant", grantLive: raw.grantLive, eligible: raw.eligible };
   if (raw.type === "readAuthority" && typeof raw.credentialLive === "boolean" && (raw.authority === "Current" || raw.authority === "Invalid" || raw.authority === "Unavailable")) return { type: "readAuthority", credentialLive: raw.credentialLive, authority: raw.authority };
   if (raw.type === "readRefreshBinding" && typeof raw.scopeAllowed === "boolean" && typeof raw.resourceMatches === "boolean" && typeof raw.bothLive === "boolean") return { type: "readRefreshBinding", scopeAllowed: raw.scopeAllowed, resourceMatches: raw.resourceMatches, bothLive: raw.bothLive };
-  if (raw.type === "recordTokens") return { type: "recordTokens" };
   if (raw.type === "recordRotation" && typeof raw.succeeded === "boolean") return { type: "recordRotation", succeeded: raw.succeeded };
-  if (raw.type === "readConsumption" && (raw.consumption === "NoCode" || raw.consumption === "PreviousUse" || raw.consumption === "CodeConsumed") && typeof raw.bothLive === "boolean") return { type: "readConsumption", consumption: raw.consumption, bothLive: raw.bothLive };
+  if (raw.type === "readCodeExchange" && (raw.result === "CodeNotCommitted" || raw.result === "CodeAlreadyUsed" || raw.result === "CodePairCommitted")) return { type: "readCodeExchange", result: raw.result };
   return undefined;
 }
 
@@ -260,7 +256,7 @@ export function parseState(x: unknown): TokenFlow | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Beginning" || raw.phase === "CheckingCodeBinding" || raw.phase === "CheckingGrant" || raw.phase === "CheckingAuthority" || raw.phase === "CheckingRefreshBinding" || raw.phase === "AwaitingConsumption" || raw.phase === "AwaitingTokenWrite" || raw.phase === "AwaitingRotation" || raw.phase === "TokensReady" || raw.phase === "RevokeGrant" || raw.phase === "Refused" || raw.phase === "RetryAuthority") && (raw.reason === "NoReason" || raw.reason === "InvalidGrant" || raw.reason === "CodeExpired" || raw.reason === "RedirectMismatch" || raw.reason === "VerifierMismatch" || raw.reason === "InvalidScope" || raw.reason === "InvalidTarget") && typeof raw.refresh === "boolean" && Object.keys(raw).length === 3)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Beginning" || raw.phase === "CheckingCodeBinding" || raw.phase === "CheckingGrant" || raw.phase === "CheckingAuthority" || raw.phase === "CheckingRefreshBinding" || raw.phase === "AwaitingConsumption" || raw.phase === "AwaitingRotation" || raw.phase === "TokensReady" || raw.phase === "RevokeGrant" || raw.phase === "Refused" || raw.phase === "RetryAuthority") && (raw.reason === "NoReason" || raw.reason === "InvalidGrant" || raw.reason === "CodeExpired" || raw.reason === "RedirectMismatch" || raw.reason === "VerifierMismatch" || raw.reason === "InvalidScope" || raw.reason === "InvalidTarget") && typeof raw.refresh === "boolean" && Object.keys(raw).length === 3)) return undefined;
   const parsed: TokenFlow = ({ phase: raw.phase, reason: raw.reason, refresh: raw.refresh });
   return inv(parsed) ? parsed : undefined;
 }

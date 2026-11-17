@@ -24,7 +24,7 @@ import {
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
-  canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
+  canRecordRotation, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import { browserOwnsLiveGrant, browserRemovalProofMatches, removalFormMayRevoke, removeConfirmationMs, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
@@ -882,21 +882,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!grant || authorized.phase !== "AwaitingConsumption") return refused(authorized);
       // The Cloud check may be slow: recheck expiry and atomically consume only after it succeeds.
       if (!codeCanBeConsumed(authorized, !(ac.expiresAt <= now()) && !(grant.expiresAt <= now()))) return refused(authorized);
-      const consumed = await store.takeCode(ac.hash, now());
-      const consumption = stepToken(authorized, {
-        type: "readConsumption", consumption: !consumed ? "NoCode" : consumed.usedAt !== null ? "PreviousUse" : "CodeConsumed",
-        bothLive: !!consumed && consumed.usedAt === null && !(consumed.expiresAt <= now()) && !(grant.expiresAt <= now()),
-      });
-      if (consumption.phase === "RevokeGrant") {
+      const pair = tokenPair(client, grant, ac.scopes, ac.resource);
+      const result = await store.commitCodeExchange({ code: ac, grant, tokens: pair.tokens, now, audit: {
+        kind: "token_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" "),
+      } });
+      const ready = stepToken(authorized, { type: "readCodeExchange", result });
+      if (ready.phase === "RevokeGrant") {
         await revokeGrant(ac.grantId, now());
         await store.audit({ at: now(), kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
-        return refused(consumption);
       }
-      if (!canRecordTokens(consumption)) return refused(consumption);
-      const pair = tokenPair(client, grant, ac.scopes, ac.resource);
-      for (const token of pair.tokens) await store.putToken(token);
-      await store.audit({ at, kind: "token_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" ") });
-      const ready = stepToken(consumption, { type: "recordTokens" });
       return ready.phase === "TokensReady" ? json(200, pair.response) : refused(ready);
     }
 
