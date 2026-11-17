@@ -3,6 +3,7 @@ import {
   maxSoloEventOptions, soloEventAgeAllowed, soloEventCityAllowed, soloEventEligible, soloEventPrecedes,
 } from "../../core/src/generated/soloConcierge.ts";
 import { presenceWindowCovers, presenceWindowsOverlap, type PresenceWindow } from "../../core/src/generated/travelPresence.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { NEIGHBORHOOD, travelMinutes } from "../src/geo.ts";
@@ -37,15 +38,6 @@ function requestedWindow(period: Period, now: number): PresenceWindow {
   if (period === "tomorrow") return { from: midnight(1), to: midnight(2) };
   const end = period === "today" ? 1 : period === "this week" ? 7 - parts.weekday : 7;
   return { from: now, to: midnight(end) };
-}
-
-function eventAge(event: NetworkEvent): { allAges: boolean; minimum: number } {
-  const words = [event.title, ...event.tags].join(" ");
-  const explicit = [...words.matchAll(/\b(\d{1,3})\s*(?:\+|and (?:older|up|over)|or (?:older|over))/gi)].map(m => Number(m[1]));
-  return {
-    minimum: Math.max(/\b(?:adults?[ -]only|for adults)\b/i.test(words) ? 18 : 0, ...explicit),
-    allAges: event.tags.some(tag => like(tag) === "all ages"),
-  };
 }
 
 const precedes = (a: Option, b: Option) => soloEventPrecedes(a.fit, a.minutes ?? Number.MAX_SAFE_INTEGER, a.event.start, b.fit, b.minutes ?? Number.MAX_SAFE_INTEGER, b.event.start);
@@ -86,8 +78,8 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
     const scheduled = available?.some(s => presenceWindowCovers({ from: s.start, to: s.end }, eventWindow)) ?? false;
     const area = event.area ? NEIGHBORHOOD.get(event.area) : undefined;
     const minutes = home && area ? travelMinutes(home, area) : undefined;
-    const { allAges, minimum } = eventAge(event);
-    if (!soloEventAgeAllowed(age, minimum, allAges)
+    const allAges = event.tags.some(tag => like(tag) === "all ages");
+    if (!soloEventAgeAllowed(age, listedEventMinimumAge(event), allAges)
       || !soloEventEligible(true, presenceWindowCovers(requested, eventWindow), present, !!available, scheduled, minutes !== undefined && limit !== undefined, minutes ?? 0, limit ?? 0)) continue;
     const fit = new Set(event.tags.map(like).filter(tag => interest.has(tag))).size;
     options.push({ event: { ...event, listing: event.listing }, fit, minutes, scheduled });

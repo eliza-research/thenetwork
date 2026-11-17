@@ -380,7 +380,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   }, T);
 
   // spec/publicEventCatalog.md, "A successful complete scan replaces the previous source and expires if refresh stops"
-  test.each(["current", "moved after queuing"] as const)("publishes public Parks events and checks matching through dispatch (%s)", async listingState => {
+  test.each(["current", "moved after queuing", "age lowered after queuing"] as const)("publishes public Parks events and checks matching through dispatch (%s)", async listingState => {
     await reset();
     await sql`update network.members set account_status = 'invited' where id <> 'a'`;
     const clock = new SimClock(START);
@@ -404,7 +404,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await s.tick()).toBe(true);
     expect(await runCount()).toBe(1);
     const fixture = {
-      guid: "2257118", title: "Outdoor climbing", categories: "Fitness | Climbing", location: "McCarren Park",
+      guid: "2257118", title: "Outdoor climbing 21+", categories: "Fitness | Climbing", location: "McCarren Park",
       starttime: "2026-10-07T18:00:00.000", endtime: "2026-10-07T19:00:00.000", coordinates: "40.7206,-73.9518",
       link: { url: "http://www.nycgovparks.org/events/2026/10/07/fitness" }, contact_phone: "unneeded value", description: "unneeded copy",
     };
@@ -420,7 +420,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const publishedAt = clock.now();
     const snapshot = await s.runtimeFor("ntwrk")!.scoped(tx => loadSnapshot(tx, clock.now(), { app: "ntwrk", city: "nyc" }));
     expect(snapshot.events).toEqual([{
-      id: "nyc-parks:2257118", title: "Outdoor climbing", city: "nyc", area: "Williamsburg",
+      id: "nyc-parks:2257118", title: "Outdoor climbing 21+", city: "nyc", area: "Williamsburg",
       start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23), tags: ["climbing", "fitness"], category: "hobby",
       listing: { venue: "McCarren Park", lat: 40.7206, lng: -73.9518, url: "https://www.nycgovparks.org/events/2026/10/07/fitness" },
     }]);
@@ -518,20 +518,26 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await messages()).toHaveLength(0);
     const runtime = s.runtimeFor("ntwrk")!;
     const adapter = runtime.adapter as BlooioAdapter;
-    if (listingState === "moved after queuing") await adapter.lineSafety("review", "fixture");
+    if (listingState !== "current") await adapter.lineSafety("review", "fixture");
     expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve", revision: replacement.revision })).status).toBe(200);
     expect(await s.tick()).toBe(true);
     const first = (await messages()).filter(m => m.type === "probe");
     expect(first).toHaveLength(1);
     expect(first[0]!.body).toContain("Outdoor climbing");
     expect(first[0]!.body).not.toMatch(/\b(Ana|Ben)\b/);
-    if (listingState === "moved after queuing") {
+    if (listingState !== "current") {
       const queued = async () => (await sql<{ id: string; status: string; attempts: number; next_attempt_at: Date }[]>`
         select id,status,attempts,next_attempt_at from platform.outbound where opportunity_id=${replacement.oppId}`)[0];
       const held = await queued();
       expect(held).toMatchObject({ status: "retry_scheduled", attempts: 0 });
       clock.advance(MINUTE);
-      expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, starttime: "2026-10-07T19:00:00", endtime: "2026-10-07T20:00:00" }]))).toEqual({ published: true, events: 1 });
+      if (listingState === "moved after queuing") {
+        expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, starttime: "2026-10-07T19:00:00", endtime: "2026-10-07T20:00:00" }]))).toEqual({ published: true, events: 1 });
+      } else {
+        // spec/publicEventCatalog.md, "A queued event contact still needs the reviewed listing at final claim"
+        const otherParticipant = first[0]!.member_id === "a" ? "b" : "a";
+        await sql`update network.members set age = 20 where id = ${otherParticipant}`;
+      }
       await adapter.lineSafety(undefined);
       clock.set(held!.next_attempt_at.getTime() + MINUTE);
       await runtime.deliver();

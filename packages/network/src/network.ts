@@ -97,6 +97,7 @@ import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../.
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { publicEventRevision } from "./public-event-revision.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
@@ -5571,12 +5572,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   private publicEventRefusal(o: Opp, event = this.currentPublishedEvent(o)): string | undefined {
     if (!o.publicEventRevision) return undefined;
     if (!event) return "public_event_changed";
+    const minimumAge = listedEventMinimumAge(event);
     for (const id of o.participants) {
       const current = this.record(id), member = this.members.get(id);
       const age = validAge(current?.age) ? current.age : member?.statedAge;
       const adult = !!member && !member.minor && !member.minorSignal && !member.ageConflict && canBeMatched(age);
       const categories = current?.prefs?.categoriesOptIn, formats = current?.prefs?.formats;
-      if (!publicEventMemberAllowsMatch(adult, Array.isArray(categories) && categories.includes(o.category), Array.isArray(formats) && formats.includes("event"))) {
+      if (!publicEventMemberAllowsMatch(adult, (age ?? -1) >= minimumAge,
+        Array.isArray(categories) && categories.includes(o.category), Array.isArray(formats) && formats.includes("event"))) {
         return "public_event_participant_ineligible";
       }
     }

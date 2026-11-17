@@ -36,9 +36,9 @@ export type { MemberCheck };
 export const ADULT_AGE = CORE_ADULT_AGE;
 export const isMinorAge = (age: unknown): boolean => !canBeMatched(age);
 /** Scope the shared catalog's event format separately from each member's matching category. */
-export function publicEventPreferencesAllow(member: Member | undefined, category: Category): boolean {
+export function publicEventPreferencesAllow(member: Member | undefined, category: Category, minimumAge: number): boolean {
   const categories = member?.prefs?.categoriesOptIn, formats = member?.prefs?.formats;
-  return publicEventMemberAllowsMatch(canBeMatched(member?.age),
+  return publicEventMemberAllowsMatch(canBeMatched(member?.age), (member?.age ?? -1) >= minimumAge,
     Array.isArray(categories) && categories.includes(category), Array.isArray(formats) && formats.includes("event"));
 }
 /** True if `id` is a known member under 18 (or with an unknown/invalid age). Unknown ids are not minors here. */

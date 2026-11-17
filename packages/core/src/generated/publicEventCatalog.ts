@@ -82,8 +82,15 @@ export function publicEventRevisionMatches(bound: string, available: string): bo
 
 /** Story: Find a current public event / A contact or booking uses the same current listing that entered review (spec/publicEventCatalog.md) */
 //@ pure
-export function publicEventMemberAllowsMatch(adult: boolean, categoryAllowed: boolean, eventFormatAllowed: boolean): boolean {
-  return adult && categoryAllowed && eventFormatAllowed;
+export function publicEventMemberAllowsMatch(adult: boolean, minimumAgeMet: boolean, categoryAllowed: boolean, eventFormatAllowed: boolean): boolean {
+  return adult && minimumAgeMet && categoryAllowed && eventFormatAllowed;
+}
+
+/** Story: Find a current public event / A contact or booking uses the same current listing that entered review (spec/publicEventCatalog.md) */
+//@ pure
+export function lawEventMinimumAgeAppliesToAdults(categoryAllowed: boolean, eventFormatAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !publicEventMemberAllowsMatch(true, false, categoryAllowed, eventFormatAllowed);
 }
 
 /** Story: Find a current public event / A queued event contact still needs the reviewed listing at final claim (spec/publicEventCatalog.md) */

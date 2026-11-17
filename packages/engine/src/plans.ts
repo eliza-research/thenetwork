@@ -33,6 +33,7 @@ import { privateVocabulary } from "./explain.ts";
 import { isMinor, memberReason, publicEventPreferencesAllow, requiredPairValues } from "./filters.ts";
 import { initial as initialFormation, step as stepFormation } from "../../core/src/generated/groupFormation.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
+import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { chooseCircle, circleKey, formsGroups, groupLane, leastMiseryUtility, pairCircle, poolCircles, poolGraph, type GroupCircle } from "./group.ts";
 import { compareText, type MatchProfile } from "./match/profile.ts";
 import { eligiblePair } from "./match/pair.ts";
@@ -322,6 +323,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
   for (const wh of whens) {
     const start = wh.slot.start;
     const availableByEnd = new Map<number, Map<MemberId, number>>();
+    const minimumAge = wh.event?.listing ? listedEventMinimumAge(wh.event) : undefined;
     for (const a of wh.acts) {
       const slot = wh.event ? wh.slot : { start, end: planActivityWindowEnd(start, a.durationMin) };
       let avail = availableByEnd.get(slot.end);
@@ -336,7 +338,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       }
       if (avail.size < 2) continue;
       const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin)
-        && (!wh.event?.listing || publicEventPreferencesAllow(w.get(id)?.m, a.category)))
+        && (minimumAge === undefined || publicEventPreferencesAllow(w.get(id)?.m, a.category, minimumAge)))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
       if (pool.length < 2) continue;
       const minG = Math.max(pcfg.size.min, a.groupSize[0]);

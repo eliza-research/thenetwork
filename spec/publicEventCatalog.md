@@ -65,18 +65,21 @@ pure def lawConflictingPublicEventRowsCannotPublish(sameListing: bool): bool =
 
 ### A contact or booking uses the same current listing that entered review
 
-A change to the listed event, venue or time invalidates a pending opportunity. Recheck the bound listing and each participant's adult eligibility, category choice and event format before reviewer approval, while sending invitations, and before booking. Use that listing's venue, time and official link when confirming a co-attendance. A solo event suggestion can include the same public link. Independent consent and the usual review and dispatch rules still apply.
+A change to the listed event, venue or time invalidates a pending opportunity. Require every participant to be an adult and meet any higher minimum age given in the listing, such as 21+. Recheck the bound listing, age, category choice and event format before reviewer approval, while sending invitations, and before booking. Use that listing's venue, time and official link when confirming a co-attendance. A solo event suggestion can include the same public link. Independent consent and the usual review and dispatch rules still apply.
 
 ```quint
 pure def publicEventRevisionMatches(bound: str, available: str): bool = bound != "" and bound == available
 
-pure def publicEventMemberAllowsMatch(adult: bool, categoryAllowed: bool, eventFormatAllowed: bool): bool =
-  adult and categoryAllowed and eventFormatAllowed
+pure def publicEventMemberAllowsMatch(adult: bool, minimumAgeMet: bool, categoryAllowed: bool, eventFormatAllowed: bool): bool =
+  adult and minimumAgeMet and categoryAllowed and eventFormatAllowed
+
+pure def lawEventMinimumAgeAppliesToAdults(categoryAllowed: bool, eventFormatAllowed: bool): bool =
+  not(publicEventMemberAllowsMatch(true, false, categoryAllowed, eventFormatAllowed))
 ```
 
 ### A queued event contact still needs the reviewed listing at final claim
 
-Recheck the exact published listing and each active participant's adult eligibility, category choice and event format when claiming a queued invitation, booking confirmation or reminder. Use the persisted opportunity and message to bind this check. Read the current catalog under the lock that serializes publication with the outbound claim. A moved, expired or removed listing cannot authorize the old contact. A cancellation or unrelated message follows its own claim rules.
+Recheck the exact published listing and each active participant's adult eligibility, listing minimum age, category choice and event format when claiming a queued invitation, booking confirmation or reminder. Use the persisted opportunity and message to bind this check. Read the current catalog under the lock that serializes publication with the outbound claim. A moved, expired or removed listing cannot authorize the old contact. A cancellation or unrelated message follows its own claim rules.
 
 ```quint
 pure def publicEventClaimAllowed(sameListing: bool, exactContact: bool, participantsEligible: bool): bool =
