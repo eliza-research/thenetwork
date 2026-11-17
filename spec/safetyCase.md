@@ -101,6 +101,24 @@ pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: 
   reportAfterDecision(ReportDismissed, decision, sameMember, reportMatches) == ReportDismissed
 ```
 
+### The exact open report follows its subject through ordinary app leave
+
+An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. When the runtime forgets the member, the shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
+
+```quint
+pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
+  ordinaryLeave and reportRestrictsMatching(reportPhase, metBefore, urgent)
+
+pure def archivedReportHoldAllowed(exactSubject: bool, matchingRestriction: bool): bool =
+  exactSubject and matchingRestriction
+
+pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
+  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) implies reportPhase == ReportOpen
+
+pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
+  not(archivedReportHoldAllowed(false, matchingRestriction))
+```
+
 ### A ban allows only carrier commands and app leave
 
 A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.

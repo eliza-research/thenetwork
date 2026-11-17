@@ -854,6 +854,129 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await sql`select staff_held from platform.matching_ages where app_id='peon' and member_id=${current}`).toEqual([{ staff_held: false }]);
   }, T);
 
+  test.each(["staff review", "account erasure"] as const)("an open report follows ordinary app leave until %s", async disposition => {
+    // spec/safetyCase.md, "The exact open report follows its subject through ordinary app leave"
+    await fresh();
+    const clock = new SimClock(START);
+    const tokens = "safety:saf-tok,safety@friends:friends-safety-tok";
+    const delivered: SendRequest[] = [];
+    const options: Partial<ServiceOptions> = { tokens,
+      adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
+        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `report-carryover:${request.idempotencyKey}`, status: "sent" };
+        } },
+      }),
+    };
+    const { s, otp } = service(clock, options);
+    const web = site(s, clock, otp);
+    const subjectPhone = newPhone(), reporterPhone = newPhone(), peerPhone = newPhone();
+    for (const [app, phone, name] of [["friends", subjectPhone, "Ari"], ["slop", subjectPhone, "Ari"],
+      ["friends", reporterPhone, "Blair"], ["friends", peerPhone, "Casey"]] as const) {
+      await web.login(app, phone);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const person = (await s.accounts.personFor(subjectPhone))!;
+    const former = (await memberOf("friends", subjectPhone))!.id;
+    const reporter = (await memberOf("friends", reporterPhone))!.id;
+    const otherApp = (await memberOf("slop", subjectPhone))!.id;
+    const rt = s.runtimeFor("friends")!;
+    const bookedPair = async (first: string, second: string, otherName: string) => {
+      const world = new Mini([{ id: first, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
+        { id: second, name: otherName, age: 30, area: "Greenpoint", interests: ["hiking"] }],
+        { app: "friends", review: "auto", plans: false, growth: false });
+      world.clock.set(clock.now());
+      await world.onboard(first, second);
+      const opportunityId = world.propose([first, second]);
+      await world.answerProbes([first, second]);
+      const state = world.net.exportState();
+      const opportunity = state.opps.find(candidate => candidate.id === opportunityId)!;
+      expect(opportunity.stage).toBe("scheduled");
+      return { state, opportunity };
+    };
+    const booked = await bookedPair(former, reporter, "Blair");
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: booked.state.members, opps: booked.state.opps }));
+    expect(await text(s, clock, reporterPhone, "report Ari, he was rude and kept texting me")).toBe("handled");
+    expect(await text(s, clock, reporterPhone, "report Ari, he never showed up")).toBe("handled");
+    expect(await rt.readState(net => net.trust.level(former))).toBe("ok");
+    const beginLeave = s.people.beginAppLeave.bind(s.people);
+    s.people.beginAppLeave = async input => {
+      const admission = await beginLeave(input);
+      if (admission.ok && admission.membership?.memberId === former) {
+        expect(await text(s, clock, reporterPhone, "report Ari, he asked me for money")).toBe("handled");
+      }
+      return admission;
+    };
+    try {
+      expect(await text(s, clock, subjectPhone, "leave friends.help")).toBe("left");
+    } finally { s.people.beginAppLeave = beginLeave; }
+    const reports = (await rt.pg.load())!.reports!.filter(report => report.subjectId === former);
+    expect(reports.map(report => [report.kind, report.met])).toEqual([["harassment", true], ["no_show", true], ["scam", true]]);
+    const harassment = reports[0]!.id, scam = reports[2]!.id;
+    const carryovers = () => sql`select app_id,origin_runtime_id,report_id from platform.report_safety_carryovers
+      where person_id=${person.id} order by report_id`;
+    expect(await carryovers()).toEqual([harassment, scam].map(report_id => ({ app_id: "friends", origin_runtime_id: "friends:nyc", report_id })));
+    expect(await sql`select origin from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+    expect(await memberOf("friends", subjectPhone)).toBeUndefined();
+    await s.close();
+
+    const restarted = service(clock, options);
+    await restarted.s.start();
+    if (disposition === "account erasure") {
+      expect(await restarted.s.accounts.deleteAll({ e164: subjectPhone, personId: person.id })).toBe(true);
+      expect(await carryovers()).toEqual([]);
+      return;
+    }
+    const browser = site(restarted.s, clock, restarted.otp);
+    await browser.login("friends", subjectPhone);
+    expect((await browser.join("friends", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("friends", subjectPhone))!.id;
+    expect(current).not.toBe(former);
+    const status = () => sql`select app_id,staff_held,report_held from platform.matching_ages
+      where member_id in (${current},${otherApp}) order by app_id`;
+    const other = { app_id: "slop", staff_held: false, report_held: false };
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
+    const active = restarted.s.runtimeFor("friends")!, adapter = active.adapter as BlooioAdapter;
+    const peer = (await memberOf("friends", peerPhone))!.id;
+    const next = await bookedPair(current, peer, "Casey");
+    clock.set(next.opportunity.meetingAt! - 2 * HOUR);
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
+    await adapter.engaged(peerPhone);
+    await adapter.lineSafety("review");
+    const messageId = "report-carryover-booking-fixture";
+    await active.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: next.state.members, opps: next.state.opps });
+      // A queued causal booking reply can pass the recipient-only preflight. The locked claim checks the entire roster.
+      active.unit.sends.push({ id: messageId, memberId: peer, to: peerPhone, kind: "reply", type: "proposal",
+        oppId: next.opportunity.id, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+    });
+    expect(await adapter.queue.statusOf(messageId)).toBe("retry_scheduled");
+    await adapter.lineSafety(undefined);
+    clock.advance(HOUR);
+    await adapter.engaged(peerPhone);
+    await active.deliver();
+    expect(await sql`select status,note,attempts from platform.outbound where id=${messageId}`)
+      .toEqual([{ status: "suppressed_ineligible", note: null, attempts: 0 }]);
+    expect(delivered.some(request => request.idempotencyKey === `tn:${messageId}`)).toBe(false);
+
+    const decide = async (action: string, body: object, app: AppId = "friends", token = "friends-safety-tok") =>
+      (await staff(restarted.s, token, "POST", `/apps/${app}/safety/${action}`, { ...body, note: "staff reviewed the report" })).json();
+    expect(await decide("dismiss", { reportId: harassment }, "slop", "saf-tok")).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await decide("hold", { memberId: former })).toEqual({ ok: false, reason: "unknown_member" });
+    expect(await decide("ban", { memberId: former, reportId: harassment, by: "person" }, "friends", "saf-tok"))
+      .toEqual({ ok: false, reason: "no_person" });
+    expect(await decide("hold", { memberId: current, reportId: harassment })).toEqual({ ok: false, reason: "unknown_report" });
+    expect(await decide("hold", { memberId: former, reportId: scam })).toEqual({ ok: true });
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: true, report_held: true }, other]);
+    expect(await decide("lift", { memberId: current })).toEqual({ ok: true });
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
+    expect(await decide("dismiss", { reportId: harassment })).toEqual({ ok: true });
+    expect(await decide("dismiss", { reportId: harassment })).toEqual({ ok: false, reason: "already_dismissed" });
+    expect(await carryovers()).toEqual([]);
+    expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: false }, other]);
+  }, T);
+
   test.each(["hold", "ban"] as const)("a committed global %s stops queued peer delivery while a related runtime is still waiting", async decision => {
     // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
     await fresh();

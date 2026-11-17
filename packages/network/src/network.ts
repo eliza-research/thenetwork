@@ -116,7 +116,7 @@ import type { MemberStandingRow } from "@thenetwork/engine/src/types.ts";
 import { presenceWindowCovers, presenceWindowsOverlap, presenceWindowValid } from "../../core/src/generated/travelPresence.ts";
 import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
-  caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
+  archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
   reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
@@ -2022,6 +2022,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     return pendingReportHold(this.reports, id);
   }
 
+  reportRestrictionsForLeave(id: MemberId, ordinaryLeave: boolean): string[] {
+    return this.reports.filter(r => r.subjectId === id
+      && carryReportOnAppLeave(ordinaryLeave, REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind))).map(r => r.id);
+  }
+
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
   safetyReports(): (SafetyReport & { priorReports: number })[] {
     return this.reports.map(r => {
@@ -2034,7 +2039,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * Staff hold a member (pending review), from a report or not. Everything open with them stops and
    * they hear the hold notice once. Their open reports read "held".
    */
-  holdMember(memberId: MemberId, actor: string, note?: string, reportId?: string): ActionResult {
+  holdMember(memberId: MemberId, actor: string, note?: string, reportId?: string, authority?: "archived" | "projection"): ActionResult {
     const actorPresent = !!actor.trim();
     const reportMatches = reportId === undefined || this.reports.some(r => r.id === reportId && r.subjectId === memberId);
     const beforeLoad = holdAuthority(actorPresent, reportMatches);
@@ -2042,12 +2047,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A member this Network has not loaded yet (no message since the state began) is loaded from the snapshot.
     if (!this.members.has(memberId) && this.record(memberId) && !this.declinedIds.has(memberId)) this.member(memberId);
     const known = this.members.has(memberId);
-    if (!holdSubjectKnown(known, !known && this.reports.some(r => r.subjectId === memberId))) return { ok: false, reason: "unknown_member" };
+    if (authority === "archived" && !archivedReportHoldAllowed(reportMatches,
+      reportId !== undefined && this.reportRestrictionsForLeave(memberId, true).includes(reportId))) return { ok: false, reason: "unknown_report" };
+    if (!holdSubjectKnown(known, authority === "archived")) return { ok: false, reason: "unknown_member" };
     if (known && this.trust.level(memberId) !== "hold") {
       const score = this.trust.get(memberId).score;
       this.trust.add(memberId, this.now(), "staff_hold", Math.max(HOLD - score, 0) || 1);
     }
-    this.decideReports(memberId, "held", actor, reportId);
+    if (authority !== "projection") this.decideReports(memberId, "held", actor, reportId);
     this.ctx.log("safety_action", { action: "hold", memberId, actor, note: note ?? null, reportId: reportId ?? null });
     return { ok: true };
   }
@@ -2074,7 +2081,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const next = REPORT_STATUS[reportAfterDecision(REPORT_PHASE[r.status], "DismissReport", true, true)];
     if (next === r.status) return { ok: false, reason: `already_${r.status}` };
     r.status = next; r.decidedBy = actor; r.decidedAt = this.now();
-    this.caseEvent(r.subjectId, { at: this.now(), kind: "report_dismissed", points: 0 });
+    if (this.members.has(r.subjectId) || this.record(r.subjectId)) {
+      this.caseEvent(r.subjectId, { at: this.now(), kind: "report_dismissed", points: 0 });
+    }
     this.ctx.log("safety_action", { action: "dismiss_report", reportId, memberId: r.subjectId, actor, note: note ?? null });
     this.dirty = true;
     return { ok: true };

@@ -154,6 +154,32 @@ export function lawDismissedReportStaysDismissed(decision: ReportDecision, sameM
   return reportAfterDecision("ReportDismissed", decision, sameMember, reportMatches) === "ReportDismissed";
 }
 
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function archivedReportHoldAllowed(exactSubject: boolean, matchingRestriction: boolean): boolean {
+  return exactSubject && matchingRestriction;
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawArchivedHoldRequiresExactSubject(matchingRestriction: boolean): boolean {
+  //@ ensures \result === true
+  return !archivedReportHoldAllowed(false, matchingRestriction);
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
+  return ordinaryLeave && reportRestrictsMatching(reportPhase, metBefore, urgent);
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
+  //@ ensures \result === true
+  return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) || reportPhase === "ReportOpen";
+}
+
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
 //@ pure
 export function inboundAllowedAfterBan(banned: boolean, compliance: boolean): boolean {

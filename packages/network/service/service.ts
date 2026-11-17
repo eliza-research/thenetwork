@@ -41,6 +41,7 @@ import {
   step as stepStaffSafety,
 } from "../../core/src/generated/staffSafetyService.ts";
 import { checkStaffHoldProjection, currentStaffHold, liftStaffHold, recordCarriedTrustHold, recordStaffHold, StaffHoldStateChanged } from "./staff-safety-holds.ts";
+import { archivedReportSubject, carryReportRestrictions, dismissReportRestriction, holdFromArchivedReport } from "./report-safety-carryover.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
@@ -195,7 +196,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -1500,9 +1501,13 @@ export class NetworkService implements RuntimeHost {
     if (!rt) return;
     await rt.unitOfWork(n => {
       const carriesHold = carryTrustHoldOnAppLeave(ordinaryLeavePersonId !== undefined, n.trust.level(memberId));
-      if (carriesHold && ordinaryLeavePersonId) {
+      const reports = n.reportRestrictionsForLeave(memberId, ordinaryLeavePersonId !== undefined);
+      if (ordinaryLeavePersonId && (carriesHold || reports.length)) {
         const at = this.clock.now();
-        rt.unit.memberCommand = tx => recordCarriedTrustHold(tx, app.id, memberId, ordinaryLeavePersonId, at);
+        rt.unit.memberCommand = async tx => {
+          if (carriesHold) await recordCarriedTrustHold(tx, app.id, memberId, ordinaryLeavePersonId, at);
+          if (reports.length) await carryReportRestrictions(tx, { app: app.id, runtime: rt.id }, memberId, ordinaryLeavePersonId, reports);
+        };
       }
       n.forgetMember(memberId);
       rt.unit.forget.add(memberId);
@@ -2932,9 +2937,13 @@ export class NetworkService implements RuntimeHost {
   async hold(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, note: string, reportId?: string): Promise<ActionResult> {
     // Staff with safety on this app only hold here; the hold on every other app needs safety@* (or admin@*),
     // and the audit row never says how many apps the person uses (a slop membership never shows across apps).
-    const all = await this.membersOfPerson(rt, memberId);
+    const origin = { app: rt.app.id, runtime: rt.id };
+    const currentPerson = await this.personOfMember(rt, memberId);
+    const archivedPerson = !currentPerson && reportId !== undefined
+      ? await rt.scoped(tx => archivedReportSubject(tx, origin, reportId)) : undefined;
+    const all = await this.membersOfPerson(rt, memberId, currentPerson ?? archivedPerson);
     const everywhere = crossAppSafety(user);
-    const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, x.rt === rt));
+    const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, archivedPerson ? x.rt.app.id === rt.app.id : x.rt === rt));
     const { personId } = all;
     const scope = durableStaffHoldScope(!!personId && everywhere, rt.app.id);
     const decisionId = randomUUID();
@@ -2943,10 +2952,12 @@ export class NetworkService implements RuntimeHost {
       let r: ActionResult;
       try {
         r = await rt.unitOfWork(n => {
-          const result = n.holdMember(memberId, user.id, note, reportId);
-          if (personId && result.ok) {
+          const result = n.holdMember(memberId, user.id, note, reportId, archivedPerson ? "archived" : undefined);
+          if (result.ok && personId) {
             const at = this.clock.now();
-            rt.unit.memberCommand = tx => recordStaffHold(tx, rt.app.id, memberId, personId, scope, decisionId, at);
+            rt.unit.memberCommand = archivedPerson && reportId !== undefined
+              ? tx => holdFromArchivedReport(tx, origin, reportId, archivedPerson, scope, decisionId, at)
+              : tx => recordStaffHold(tx, rt.app.id, memberId, personId, scope, decisionId, at);
           }
           return result;
         });
@@ -2962,8 +2973,8 @@ export class NetworkService implements RuntimeHost {
         if (!personId || (x.rt === rt && x.memberId === memberId)) continue;
         try {
           await x.rt.unitOfWork(n => {
-            const result = n.holdMember(x.memberId, user.id, note, relatedReport);
-            if (result.ok) x.rt.unit.memberCommand = tx => checkStaffHoldProjection(tx, x.rt.app.id, x.memberId, personId, decisionId);
+            const result = n.holdMember(x.memberId, user.id, note, relatedReport, archivedPerson ? "projection" : undefined);
+            if (result.ok) x.rt.unit.memberCommand = tx => checkStaffHoldProjection(tx, x.rt.app.id, x.memberId, personId, decisionId, scope === "*");
             return result;
           });
         } catch (error) {
@@ -3013,7 +3024,11 @@ export class NetworkService implements RuntimeHost {
   /** Dismiss a report: it no longer keeps the member out of matching. */
   dismissReport(user: StaffUser, rt: NetworkRuntime, reportId: string, note: string) {
     return this.audited(rt, user, { type: "case", id: reportId }, { safety: "dismiss_report" },
-      () => rt.unitOfWork(n => n.dismissReport(reportId, user.id, note)));
+      () => rt.unitOfWork(n => {
+        const result = n.dismissReport(reportId, user.id, note);
+        if (result.ok) rt.unit.memberCommand = tx => dismissReportRestriction(tx, { app: rt.app.id, runtime: rt.id }, reportId);
+        return result;
+      }));
   }
 
   /**

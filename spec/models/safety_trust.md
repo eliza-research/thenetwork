@@ -12,7 +12,7 @@ Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md
 
 Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
 
-The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. Report-only carryover in these traces describes the intended behavior and still needs production work.
+The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. The older independent minor-signal trace remains an abstraction of the age path.
 
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
@@ -93,6 +93,7 @@ module safety_trust {
     reporter: Mid, reporterP: str, origReporter: Mid, subject: Mid, kind: str, met: bool, source: str, status: str,
     credible: bool, intended: bool, at: int, meantP: str
   }
+  type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
   type Inter = { parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
   // A staff lift in flight (service.ts:1797): read the "*" row, then the person_holds transaction, then the unit.
@@ -114,6 +115,7 @@ module safety_trust {
     personHolds: Set[(str, str)],
     opps: str -> Opp,
     reports: Set[Report],
+    carriedReports: Set[ReportIdentity],
     inters: Set[Inter],
     banned: Set[str],
     restricted: Set[Mid],
@@ -218,8 +220,9 @@ module safety_trust {
   // network.ts:1300 reportHeld: open, met, urgent, and the reporter is not on hold (SD-072)
   pure def reportHeld(st: State, m: Mid): bool =
     st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind) and repLvl(st, r.reporter) != "hold")
-  // SD-021 desired hold coverage: the historical runtime carried these reasons across an app leave.
-  pure def safetyHeld(st: State, m: Mid): bool = lvl(st, m) == "hold" or reportHeld(st, m) or st.minorF.get(m)
+  pure def reportIdentity(r: Report): ReportIdentity = (r.subject, r.origReporter, r.kind, r.source, r.at)
+  pure def carriedReportHeld(st: State, m: Mid): bool = st.reports.exists(r =>
+    r.subject.p == m.p and r.subject.app == m.app and urgentOpen(r) and st.carriedReports.contains(reportIdentity(r)))
   // Durable coverage for this app or every app. Production preserves global authority on the other apps after a lift.
   pure def covered(st: State, m: Mid): bool = st.personHolds.exists(h => h._1 == m.p and (h._2 == m.app or h._2 == "*"))
   // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
@@ -234,7 +237,7 @@ module safety_trust {
   // runtime restriction projection. The retained person hold relation expresses desired coverage.
   pure def matchable(st: State, m: Mid): bool =
     st.live.get(m) and not(st.banned.contains(m.p)) and lvl(st, m) == "ok" and not(st.minorF.get(m))
-      and not(reportHeld(st, m)) and not(st.restricted.contains(m)) and not(covered(st, m))
+      and not(reportHeld(st, m)) and not(carriedReportHeld(st, m)) and not(st.restricted.contains(m)) and not(covered(st, m))
   // blocked(): this Network's block or a person block from the snapshot
   pure def blockedPair(st: State, a: Mid, b: Mid): bool =
     st.blocks.contains(Set(a, b)) or st.personBlocks.contains((a.p, b.p)) or st.personBlocks.contains((b.p, a.p))
@@ -497,6 +500,7 @@ module safety_trust {
     personHolds: Set(),
     opps: OPP_IDS.mapBy(_ => FREE_OPP),
     reports: Set(),
+    carriedReports: Set(),
     inters: Set(),
     banned: Set(),
     restricted: Set(),
@@ -833,8 +837,9 @@ module safety_trust {
   // Staff dismiss a report (network.ts:1409).
   action dismiss(r: Report): bool = all {
     s.reports.contains(r), r.status == "open",
-    s' = { ...caseEv({ ...s, reports: s.reports.exclude(Set(r)).union(Set({ ...r, status: "dismissed" })) }, r.subject, "report_dismissed"),
-           lastAction: "dismiss" },
+    val resolved = { ...s, reports: s.reports.exclude(Set(r)).union(Set({ ...r, status: "dismissed" })),
+      carriedReports: s.carriedReports.exclude(Set(reportIdentity(r))), lastAction: "dismiss" }
+    s' = if (s.live.get(r.subject)) caseEv(resolved, r.subject, "report_dismissed") else resolved,
   }
 
   // Staff clear a minor signal (service.ts:1977 clearMinor): one unit per app of the person ("*" staff) or this
@@ -896,27 +901,29 @@ module safety_trust {
     s' = { ...s, pendingTexts: s.pendingTexts.exclude(Set(p)), shareGrants: s.shareGrants.union(Set(p)), lastAction: "shareYes" },
   }
 
-  // App leave begins with consent. The report-only and minor branches retain the historical
-  // modeled intent. Committed hard holds use the current state at the atomic forget.
+  // App leave begins with consent. Keep the historical standalone minor-signal abstraction.
+  // Committed hard holds and exact open reports use current state at the atomic forget.
   action leaveStart(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val rows = if (lvl(s, m) != "hold" and safetyHeld(s, m)) s.personHolds.union(Set((p, app))) else s.personHolds
+    val rows = if (lvl(s, m) != "hold" and s.minorF.get(m)) s.personHolds.union(Set((p, app))) else s.personHolds
     all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...s, personHolds: rows, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
   }
   pure def retainHardHold(st: State, m: Mid): State =
     if (lvl(st, m) == "hold" and not(covered(st, m) or st.banned.contains(m.p)))
       { ...st, personHolds: st.personHolds.union(Set((m.p, m.app))) }
     else st
+  pure def retainOpenReports(st: State, m: Mid): State = { ...st,
+    carriedReports: st.carriedReports.union(st.reports.filter(r => r.subject == m and urgentOpen(r)).map(reportIdentity)) }
 
   action leaveFinish(m: Mid): bool = all {
     s.leaving.contains(m), s.live.get(m),
-    s' = { ...forget(retainHardHold(s, m), m), lastAction: "leaveFinish" },
+    s' = { ...forget(retainOpenReports(retainHardHold(s, m), m), m), lastAction: "leaveFinish" },
   }
   // The leave with nothing between the two steps (run tests only).
   action leave(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val rows = if (lvl(s, m) != "hold" and safetyHeld(s, m)) s.personHolds.union(Set((p, app))) else s.personHolds
-    all { s.live.get(m), s' = { ...forget(retainHardHold({ ...s, personHolds: rows }, m), m), lastAction: "leave" } }
+    val rows = if (lvl(s, m) != "hold" and s.minorF.get(m)) s.personHolds.union(Set((p, app))) else s.personHolds
+    all { s.live.get(m), s' = { ...forget(retainOpenReports(retainHardHold({ ...s, personHolds: rows }, m), m), m), lastAction: "leave" } }
   }
 
   // A join by text: a banned person is refused; a hold does not refuse a join (PRD 40.3). A former member gets
@@ -1069,12 +1076,11 @@ module safety_trust {
   })
 
   // PRD 36.3 / 1446 "an automatic safety hold on the reported member's opportunities until reviewed". An open
-  // urgent report by someone in good standing who met them keeps the person's member on that app out of
-  // matching until staff decide (a dismiss, or a lift of the rejoined member), whatever member id the person
-  // has now. SD-021 (fixed).
-  val urgentMetReportBlocksMatchingInApp = s.reports.forall(r => (urgentOpen(r) and standing(s, r)) implies {
+  // urgent report keeps the person's member on that app out of matching until its exact disposition.
+  // The historical live-member branch abstracts reporter standing. The carried branch uses the committed report.
+  val urgentMetReportBlocksMatchingInApp = s.reports.forall(r => urgentOpen(r) implies {
     val x = midOf(s, r.subject.app, r.subject.p)
-    (s.live.get(x) and (x == r.subject or not(s.liftedMids.contains(x)))) implies not(matchable(s, x))
+    (s.live.get(x) and ((x == r.subject and standing(s, r)) or s.carriedReports.contains(reportIdentity(r)))) implies not(matchable(s, x))
   })
 
   // trust.ts:6-7 "Holds never decay; only a person lifts them."
@@ -1650,8 +1656,7 @@ module safety_trust {
       .expect(not(everyMetReportFiled) and s.reports == Set())
       .then(answerWho(ANA_S).fail())
 
-  // W3-221 (confirmed): ben's leave reads safetyHeld = false; ana's urgent report commits; the forget runs. No
-  // carry-over row is written, and ben's rejoin is matchable while the report waits for staff.
+  // W3-221: ana’s urgent report commits after leave consent. Forget keeps the exact report restriction.
   run w3_221LeaveRaceTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
@@ -1659,7 +1664,12 @@ module safety_trust {
       .then(report("ana", "slop", "ben", "report", "harassment", false))
       .then(leaveFinish(BEN_S))
       .then(join("slop", "ben"))
-      .expect(not(urgentMetReportBlocksMatchingInApp) and matchable(s, BEN_S1) and not(covered(s, BEN_S1)))
+      .expect(urgentMetReportBlocksMatchingInApp and not(matchable(s, BEN_S1)) and not(covered(s, BEN_S1)))
+      .then(staffHoldBy(BEN_S1, "slop", ""))
+      .then(liftHoldBy(BEN_S1, "slop"))
+      .expect(not(matchable(s, BEN_S1)) and not(covered(s, BEN_S1)))
+      .then(all { nondet r = s.reports.oneOf() dismiss(r) })
+      .expect(matchable(s, BEN_S1) and s.carriedReports == Set())
 
   // W3-223: the ban stops after the slop unit. The canonical ban excludes ben@peon until staff resume projection.
   run w3_223BanStoppedTest =

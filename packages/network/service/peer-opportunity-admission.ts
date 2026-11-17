@@ -39,6 +39,7 @@ export async function peerOpportunityContactRestricted(tx: SQL, app: string, rec
       or exists (select 1 from platform.person_blocks block
         where (block.from_person=a.person_id and block.to_person=b.person_id) or (block.from_person=b.person_id and block.to_person=a.person_id))
     ) as blocked, exists (select 1 from roster join platform.matching_ages authority
-      on authority.app_id=${app} and authority.member_id=roster.member_id where authority.banned or authority.staff_held) as restricted`;
+      on authority.app_id=${app} and authority.member_id=roster.member_id
+      where authority.banned or authority.staff_held or authority.report_held) as restricted`;
   return queuedPeerContactPolicy(row?.blocked === true, row?.restricted === true) !== "Proceed";
 }
