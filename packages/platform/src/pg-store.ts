@@ -1,6 +1,7 @@
 // PeopleStore on Postgres (the platform schema, migration 0003). The login needs the
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { confirmedUnderage, minMemberAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
@@ -20,6 +21,14 @@ async function lockPhoneBinding(tx: SQL, e164: string): Promise<void> {
 
 async function lockPersonPhone(tx: SQL, personId: string): Promise<void> {
   await tx`select pg_advisory_xact_lock(hashtextextended(${`person-phone-binding:${personId}`}, 0))`;
+}
+
+async function upsertAgeFloor(tx: SQL, phoneHash: string, age: number, at: number): Promise<number> {
+  const [row] = await tx<{ lowest_age: number }[]>`insert into platform.age_floor (phone_hash, lowest_age, at) values (${phoneHash}, ${age}, ${ts(at)})
+    on conflict (phone_hash) do update set lowest_age=least(platform.age_floor.lowest_age, excluded.lowest_age),
+      at=case when excluded.lowest_age<platform.age_floor.lowest_age then excluded.at else platform.age_floor.at end
+    returning lowest_age`;
+  return row!.lowest_age;
 }
 
 const person = (r: Row): Person => ({ id: r.id, lowestAge: r.lowest_age ?? null, createdAt: ms(r.created_at)!, deletedAt: ms(r.deleted_at) });
@@ -106,11 +115,7 @@ export class PgPeopleStore implements PeopleStore {
   }
   async noteAgeFloor(phoneHash: string, age: number, at: number) {
     return this.withPhoneAgeGuard(phoneHash, async () => {
-      const [r] = await this.sql`insert into platform.age_floor (phone_hash, lowest_age, at) values (${phoneHash}, ${age}, ${ts(at)})
-        on conflict (phone_hash) do update set lowest_age = least(platform.age_floor.lowest_age, excluded.lowest_age),
-          at = case when excluded.lowest_age < platform.age_floor.lowest_age then excluded.at else platform.age_floor.at end
-        returning lowest_age`;
-      const lowest = r!.lowest_age as number;
+      const lowest = await upsertAgeFloor(this.sql, phoneHash, age, at);
       await this.ageCleanup?.(phoneHash, lowest);
       return lowest;
     });
@@ -122,6 +127,61 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`update platform.people set lowest_age = least(coalesce(lowest_age, ${age}), ${age}) where id = ${personId} returning lowest_age`;
     if (!r) throw new Error("no person");
     return r.lowest_age as number;
+  }
+
+  /** Persist the observation inside the app unit that read it, before its member row can be erased. */
+  async recordMemberAge(app: AppId, memberId: string, e164: string, phoneHash: string, age: number, at: number): Promise<boolean> {
+    const tx = this.sql;
+    const [member] = await tx<{ person_id: string | null }[]>`select person_id from network.members
+      where app_id=${app} and id=${memberId} and account_status<>'removed'`;
+    if (!member) return false;
+    if (member.person_id) {
+      await lockPersonPhone(tx, member.person_id);
+      const [saved] = await tx<{ lowest_age: number }[]>`update platform.people p set lowest_age=least(p.lowest_age, ${age})
+        from platform.phone_identities ph, network.members m
+        where p.id=${member.person_id}::uuid and p.deleted_at is null and ph.person_id=p.id and ph.e164=${e164} and ph.hold is null
+          and m.app_id=${app} and m.id=${memberId} and m.person_id=p.id and m.account_status<>'removed'
+        returning p.lowest_age`;
+      if (!saved) return false;
+      await upsertAgeFloor(tx, phoneHash, saved.lowest_age, at);
+    } else {
+      await lockPhoneBinding(tx, e164);
+      const [legacy] = await tx`select 1 from network.members m join network.channel_identities c on c.app_id=m.app_id and c.member_id=m.id
+        where m.app_id=${app} and m.id=${memberId} and m.person_id is null and m.account_status<>'removed'
+          and c.address=${e164} and c.channel in ('imessage','sms')
+          and not exists (select 1 from platform.phone_identities where e164=${e164})`;
+      if (!legacy) return false;
+      await upsertAgeFloor(tx, phoneHash, age, at);
+    }
+    return true;
+  }
+
+  async pendingUnderageCleanup(limit: number): Promise<string[]> {
+    const rows = await this.sql<{ id: string }[]>`select p.id::text as id from platform.people p
+      where p.lowest_age<${minMemberAge} and p.deleted_at is null
+        and exists (select 1 from platform.memberships m where m.person_id=p.id and m.state<>'removed')
+      order by p.id limit ${limit}`;
+    return rows.map(row => row.id);
+  }
+
+  /** Record consent on the exact current binding. Live memberships remain the durable cleanup work. */
+  async beginUnderageCleanup(personId: string, at: number): Promise<Membership[]> {
+    return this.sql.begin(async tx => {
+      await lockPersonPhone(tx, personId);
+      const [owner] = await tx<{ lowest_age: number | null; phone_hash: string | null; e164: string | null }[]>`select p.lowest_age,p.phone_hash,phone.e164
+        from platform.people p left join lateral (select e164 from platform.phone_identities
+          where person_id=p.id and hold is null order by verified_at desc,e164 limit 1) phone on true
+        where p.id=${personId}::uuid and p.deleted_at is null`;
+      const age = owner?.lowest_age ?? -1;
+      if (!owner || !confirmedUnderage(age)) return [];
+      const store = new PgPeopleStore(tx);
+      const live = (await store.memberships(personId)).filter(member => underageCleanupRequired(age, member.state !== "removed"));
+      if (owner.phone_hash) await store.deletePending(owner.phone_hash);
+      const e164 = owner.e164;
+      if (e164) for (const member of live) await store.addConsent({ app: member.app, e164, state: "opted_out", source: "join_declined", at,
+        ref: `underage:${personId}:${member.app}` });
+      return live;
+    });
   }
 
   async memberships(personId: string) {
@@ -144,12 +204,12 @@ export class PgPeopleStore implements PeopleStore {
 
   async enrollmentOwnerAllowed(tx: SQL, personId: string, e164?: string, phoneHash?: string): Promise<boolean> {
     await lockPersonPhone(tx, personId);
-    const [owner] = await tx<{ phone_hash: string | null; verified: boolean }[]>`select p.phone_hash,
+    const [owner] = await tx<{ phone_hash: string | null; lowest_age: number | null; verified: boolean }[]>`select p.phone_hash,least(p.lowest_age,f.lowest_age) as lowest_age,
         exists (select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is null
           ${e164 === undefined ? tx`` : tx`and ph.e164=${e164}`}) as verified
-      from platform.people p where p.id=${personId}::uuid and p.deleted_at is null`;
+      from platform.people p left join platform.age_floor f on f.phone_hash=p.phone_hash where p.id=${personId}::uuid and p.deleted_at is null`;
     const banned = !!owner && await this.isBanned(phoneHash ?? owner.phone_hash ?? "", personId, tx);
-    return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned);
+    return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned) && !confirmedUnderage(owner?.lowest_age ?? -1);
   }
 
   async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {

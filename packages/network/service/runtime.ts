@@ -65,6 +65,9 @@ import { currentGatheringRepeatSources, gatheringMatchSourceCurrent, lockGatheri
 import { gatheringRepeatContactAllowed } from "../../core/src/generated/gatheringRepeatDelivery.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
+import { recordedChatAge } from "../../core/src/generated/memberAge.ts";
+import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
+import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -130,8 +133,10 @@ export interface Unit {
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
+  ages: StatedAge[];
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [] });
+type StatedAge = { memberId: MemberId; age: number };
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -212,8 +217,8 @@ export class NetworkRuntime {
   /** Sends committed with their state, waiting to be delivered (in commit order). */
   private committed: Outbound[] = [];
   /** Ages members stated in the units since the service last took them (takeAges). */
-  private statedAges: { memberId: MemberId; age: number; explicit: boolean; declined: boolean }[] = [];
-  /** The ages this member stated (and whether the Network declined them), taken once. */
+  private statedAges: StatedAge[] = [];
+  /** The ages saved for this member, taken once for the follow-up projection. */
   takeAges(memberId: MemberId) {
     const mine = this.statedAges.filter(a => a.memberId === memberId);
     this.statedAges = this.statedAges.filter(a => a.memberId !== memberId);
@@ -246,8 +251,11 @@ export class NetworkRuntime {
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
-      // An age a member stated (network-consent-12): the service writes it to the person after the unit.
-      onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
+      onAgeStated: (memberId, age, o) => {
+        if (profileAgeCounts(o.explicit, o.declined, canBeMatched(age))) {
+          this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined) });
+        }
+      },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
       memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
@@ -741,6 +749,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
+        this.statedAges.push(...u.ages);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
@@ -1018,6 +1027,17 @@ export class NetworkRuntime {
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
     await u.memberCommand?.(tx);
+    if (u.ages.length) {
+      const store = new PgPeopleStore(tx);
+      const accounts = this.host.accounts;
+      const recorded: StatedAge[] = [];
+      for (const observation of u.ages) {
+        const e164 = this.addressOf(observation.memberId);
+        if (accounts && e164 && await store.recordMemberAge(app, observation.memberId, e164,
+          accounts.phoneHash(e164), observation.age, this.clock.now())) recorded.push(observation);
+      }
+      u.ages = recorded;
+    }
     const personIds = new Map<string, string>();
     if (u.forget.size) {
       const rows = await tx`select person.id,member.id as member_id from platform.people person

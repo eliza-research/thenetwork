@@ -500,16 +500,27 @@ module join_age {
       g' = if (declined and not(db.personExists)) g.with("declineOpen", false) else g,
     }
   }
-  // S:1302-1309: declined: every membership is forgotten and opted out.
+  // One model action represents the idempotent writes to the opted-out memberships and pending text.
+  pure def cleanedAfterDecline(d: Db): Db =
+    d.with("net", APPS.mapBy(a => if (d.mstate.get(a) != "removed" and d.mstate.get(a) != "none") NO_NET else d.net.get(a)))
+      .with("mstate", APPS.mapBy(a => if (d.mstate.get(a) == "none") "none" else "removed"))
+      .with("pendJoin", NO_PEND).with("pendLF", false)
+
   action flushForgetStep = {
-    val a = turn.app
     all {
       turn.pc == "flushForget",
-      db' = db.with("net", APPS.mapBy(x => if (x != a and db.mstate.get(x) != "removed" and db.mstate.get(x) != "none") NO_NET else db.net.get(x)))
-        .with("mstate", APPS.mapBy(x => if (db.mstate.get(x) == "none") "none" else "removed")),
+      db' = cleanedAfterDecline(db),
       turn' = turn.with("pc", if (turn.kind == "enroll") "e_start" else "done"),
       vol' = vol, g' = g.with("declineOpen", false),
     }
+  }
+
+  action recoverDecline = all {
+    turn.pc == "idle",
+    db.personExists and effLowest(db) >= 0 and effLowest(db) < 13,
+    APPS.exists(a => db.mstate.get(a) != "none" and db.mstate.get(a) != "removed"),
+    db' = cleanedAfterDecline(db),
+    turn' = turn, vol' = vol, g' = g.with("declineOpen", false),
   }
 
   // ------------------------------------------------------------------ looking-for enroll
@@ -755,7 +766,7 @@ module join_age {
     { nondet m = oneOf(MSGS) nondet p = oneOf(APPS) receive(m, p) },
     { nondet a = oneOf(APPS) nondet age = oneOf(WEB_AGES) webJoin(a, age) },
     { nondet a = oneOf(OTHER_APPS) staffInvite(a) },
-    crash, stepThrows, pendingExpire, deleteAll,
+    crash, stepThrows, pendingExpire, deleteAll, recoverDecline,
   }
 
   // ------------------------------------------------------------------ invariants
@@ -777,12 +788,9 @@ module join_age {
   // no live membership, no network member and no pending join row for a phone whose lowest age is under 13.
   pure def under13Clean(d: Db): bool = effLowest(d) >= 0 and effLowest(d) < 13 implies
     (APPS.forall(a => not(live(d, a)) and not(d.net.get(a).exists)) and not(d.pendJoin.has))
-  // Q-join_age-4 (new, not fixed): a unit that declines a member for a stated age under 13 commits the age
-  // and forgets that app's member (SD-011 fix), but the other memberships are forgotten only by the later
-  // statedAge step (S:1302-1309). A crash or a throw between them leaves the other apps' memberships, members
-  // and opt-ins of an under-13 person, and no later step repairs it. The fix needs a design decision (the
-  // forget of every app's member in the unit's own transaction, or a repair on a later turn), so it is not
-  // in this round. This strict form stays out of `safety`; the simulator finds it in 15 steps (seed 0x5eed).
+  // Q-join_age-4: the observing unit commits the canonical age before projecting cleanup across apps.
+  // Other memberships may retain data until the synchronous projection or durable-age recovery finishes.
+  // The canonical age already excludes matching during this window.
   val under13StoresNothingStrict = idle implies under13Clean(db)
   // In `safety`: the same rule outside the Q-join_age-4 window. Failed at ad67275: SD-014, SD-315 (fixed);
   // Q-join_age-3 (fixed on this branch: a web under-13 decline kept the phone's pending text join).
@@ -1107,14 +1115,14 @@ module join_age {
       .expect(g.last.outcome == "declined" and not(db.pendJoin.has) and db.mstate.get("friends") == "removed"
         and not(g.declineOpen) and under13StoresNothingStrict and safety)
 
-  // Q-join_age-4 (new, not fixed): members of friends and slop at 15; "I am 12 years old" on friends; the unit
-  // commits the decline (the friends member goes, the age 12 is stored); statedAge throws before it forgets
-  // the slop membership. The slop membership, member and opt-in of an under-13 person stay.
+  // Q-join_age-4: the saved age survives the crash and the next recovery finishes both apps.
   run q4DeclineStepFailsTest =
     init.then(webJoinOk("friends", 15)).then(webJoinOk("slop", 15))
       .then(receive(M_AM12, "friends")).then(unitStep).then(stepThrows)
       .expect(db.floor == 12 and not(db.net.get("friends").exists) and live(db, "slop") and db.net.get("slop").exists
         and g.declineOpen and not(under13StoresNothingStrict) and under13StoresNothing)
+      .then(recoverDecline)
+      .expect(db.floor == 12 and under13StoresNothingStrict and not(g.declineOpen) and safety)
 
   // need_home (decisions.ts joinStep): "Sam 25, Boston" keeps the age and asks for the home city; no pending
   // join and no membership. The next "Sam 25" (a valid home) joins at 25.

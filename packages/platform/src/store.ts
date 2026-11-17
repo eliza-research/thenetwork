@@ -2,6 +2,7 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
+import { confirmedUnderage } from "../../core/src/generated/memberAge.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -281,6 +282,8 @@ export class MemoryPeopleStore implements PeopleStore {
       const owner = this.people.get(m.personId);
       const phone = this.phones.get(consent.e164);
       const owned = phone?.personId === m.personId && phone.hold === null;
+      const age = Math.min(owner?.lowestAge ?? Infinity, this.ageFloors.get(phoneHash)?.age ?? Infinity);
+      if (confirmedUnderage(age)) return false;
       if (!staffBanEnrollmentAllowed(!!owner && owner.deletedAt === null, owned, await this.isBanned(phoneHash, m.personId))) return false;
       await this.unsuppress(phoneHash);
       await this.putMembership(m);

@@ -637,6 +637,51 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       "content-type": "application/json", ...await svcSign(signedInvitationSecret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) }),
     } }));
   };
+  test.each([{ before: 25, after: 15 }, { before: 15, after: 12 }])("a signed age correction from $before to $after survives interrupted projection", async ({ before, after }) => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const opts = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } };
+    const { s } = service(clock, opts);
+    await s.start();
+    const e164 = newPhone();
+    for (const appId of [FR, "slop"] as const) {
+      const app = APPS[appId];
+      expect(await s.accounts.join(app, { e164, personId: null }, {
+        firstName: "Ari", age: before, consent: { sms: true, wording: app.consent.text },
+      })).toMatchObject({ ok: true });
+    }
+    const person = (await s.accounts.personFor(e164))!;
+    const phoneHash = s.accounts.phoneHash(e164);
+    const friends = (await memberOf(FR, e164))!;
+    const slop = (await memberOf("slop", e164))!;
+    let interrupted = false;
+    s.accounts.recordAge = async () => { interrupted = true; throw new Error("fixture: interruption before age projection"); };
+    const response = await invitationTurn(s, clock)({
+      messageId: `age-crash-${after}`, text: `I am ${after} years old.`, from: e164, app: FR,
+      to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(),
+    });
+    expect(response.status).toBe(409);
+    expect(interrupted).toBe(true);
+    expect(await sql`select lowest_age from platform.people where id=${person.id}::uuid`).toEqual([{ lowest_age: after }]);
+    expect(await sql`select lowest_age from platform.age_floor where phone_hash=${phoneHash}`).toEqual([{ lowest_age: after }]);
+    expect(await sql`select age from platform.matching_ages_slop where member_id=${slop.id}`).toEqual([{ age: after }]);
+    if (after === 15) return;
+    expect(await s.people.getMembership(person.id, "slop")).toMatchObject({ state: "active" });
+    expect(await sql`select account_status from network.members where id=${friends.id}`).toEqual([{ account_status: "removed" }]);
+
+    await s.close();
+    const { s: resumed } = service(clock, opts);
+    await resumed.start();
+    await resumed.inboxTick();
+    await resumed.inboxTick();
+    expect(await sql`select app_id,state,first_name,profile from platform.memberships where person_id=${person.id}::uuid order by app_id`)
+      .toEqual([{ app_id: "friends", state: "removed", first_name: null, profile: {} }, { app_id: "slop", state: "removed", first_name: null, profile: {} }]);
+    expect(await sql`select app_id,account_status,name from network.members where id in (${friends.id},${slop.id}) order by app_id`)
+      .toEqual([{ app_id: "friends", account_status: "removed", name: null }, { app_id: "slop", account_status: "removed", name: null }]);
+    expect(await sql`select app_id,state from platform.consent_events where e164=${e164} and source='join_declined' order by app_id`)
+      .toEqual([{ app_id: "friends", state: "opted_out" }, { app_id: "slop", state: "opted_out" }]);
+  }, T);
+
   const confirmInvitationVouch = async (send: ReturnType<typeof invitationTurn>, request: TurnRequest, evidence: string) => {
     const asked = await send(request);
     expect(asked.status).toBe(200);

@@ -125,6 +125,7 @@ import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveCon
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { confirmedUnderage } from "../../core/src/generated/memberAge.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
 import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
@@ -890,6 +891,13 @@ export class NetworkService implements RuntimeHost {
 
   /** Inbound messages a crash or an error left waiting (platform.inbound): handled once, in order per sender. */
   async inboxTick(): Promise<void> {
+    const people = new PgPeopleStore(this.sql);
+    const pending = await people.pendingUnderageCleanup(16).catch(() => {
+      this.log("[age] underage cleanup scan waits for retry");
+      return [];
+    });
+    for (const personId of pending) await this.finishUnderageCleanup(personId)
+      .catch(() => this.log("[age] underage cleanup waits for retry"));
     const n = await this.inbox.drain().catch(e => { this.log(`[inbound] inbox drain failed: ${(e as Error).message}`); return 0; });
     if (n) this.log(`[inbound] ${n} waiting inbound message(s) handled`);
   }
@@ -1262,6 +1270,7 @@ export class NetworkService implements RuntimeHost {
    * member follows, so a minor anywhere is single-player everywhere (founder decision 1).
    */
   private async ageLowered(personId: string, age: number) {
+    if (confirmedUnderage(age)) return this.finishUnderageCleanup(personId);
     // Photos and any rating of looks are for adults only: a person who is now under 18 on any app loses
     // every photo and every rating, on every app (also ratings whose photo is already gone).
     if (age < 18) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
@@ -1269,6 +1278,20 @@ export class NetworkService implements RuntimeHost {
       const rt = this.runtimeFor(m.app);
       if (!rt || m.state === "removed") continue;
       await rt.scoped(tx => tx`update network.members set age = least(coalesce(age, ${age}), ${age}) where app_id = ${m.app} and id = ${m.memberId}`);
+    }
+  }
+
+  private async finishUnderageCleanup(personId: string): Promise<void> {
+    const at = this.clock.now();
+    const memberships = await new PgPeopleStore(this.sql).beginUnderageCleanup(personId, at);
+    if (!memberships.length) return;
+    await this.photos.deleteFor(personId);
+    await this.dropRatings(personId);
+    for (const erase of this.accountEraseListeners) await erase(personId);
+    for (const membership of memberships) {
+      if (!this.runtimeFor(membership.app)) continue;
+      await this.forget(this.apps[membership.app], membership.memberId as MemberId);
+      await this.people.forgetMembership(personId, membership.app, at, membership.memberId);
     }
   }
 
@@ -1884,7 +1907,7 @@ export class NetworkService implements RuntimeHost {
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
       if (!kw && e164 && !controls && !calendar && !surveyAnswer && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
-      if (e164) await this.statedAge(app, rt, memberId, e164);
+      if (e164) await this.statedAge(rt, memberId, e164);
       return out;
     }
 
@@ -1976,7 +1999,7 @@ export class NetworkService implements RuntimeHost {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
     await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
-    await this.statedAge(this.apps[appId], rt, m.memberId as MemberId, e164);
+    await this.statedAge(rt, m.memberId as MemberId, e164);
     return "accepted";
   }
 
@@ -2412,24 +2435,11 @@ export class NetworkService implements RuntimeHost {
    * age floor too, so a member from before the platform (no person) cannot join again older. When the
    * Network declined them (under 13), every membership goes: under 13 cannot use any app.
    */
-  private async statedAge(app: AppInfo, rt: NetworkRuntime, memberId: MemberId, e164: string) {
-    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
-    const ages = rt.takeAges(memberId).filter(a => profileAgeCounts(a.explicit, a.declined, canBeMatched(a.age)));
+  private async statedAge(rt: NetworkRuntime, memberId: MemberId, e164: string) {
+    const ages = rt.takeAges(memberId);
     if (!ages.length) return;
     const person = await this.accounts.personFor(e164);
-    // An under-13 statement the Network did not decline for (an attested adult: it holds them for
-    // staff, audit network-service-1) is recorded as 13: a minor on every app, never matched, but no
-    // other app deletes the person's data before staff decide.
-    const recorded = ages.map(a => (a.declined ? a.age : Math.max(a.age, app.minJoinAge)));
-    await this.accounts.recordAge(e164, person, Math.min(...recorded));
-    if (!person || !ages.some(a => a.declined)) return;
-    const at = this.clock.now();
-    for (const m of await this.people.memberships(person.id)) {
-      if (m.state === "removed") continue;
-      if (m.app !== app.id) await this.forget(this.apps[m.app], m.memberId as MemberId);
-      await this.people.forgetMembership(person.id, m.app, at);
-      await this.accounts.recordConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
-    }
+    await this.accounts.recordAge(e164, person, Math.min(...ages.map(observation => observation.age)));
   }
 
   /**
