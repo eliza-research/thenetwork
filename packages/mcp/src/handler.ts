@@ -36,7 +36,7 @@ import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/g
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage } from "./pages.ts";
-import { MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
+import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
@@ -210,7 +210,7 @@ function decodeHeaderValue(v: string | null): string | null {
 }
 
 function parseScopes(s: string | null | undefined): Scope[] | undefined {
-  if (s === null || s === undefined || s.trim() === "") return [...SCOPES];
+  if (s === null || s === undefined || s.trim() === "") return [...DEFAULT_SCOPES];
   const parts = [...new Set(s.trim().split(/\s+/))];
   return parts.every(p => (SCOPES as readonly string[]).includes(p)) ? (parts as Scope[]) : undefined;
 }
@@ -450,7 +450,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(grants) || !grants.every(g => g === "authorization_code" || g === "refresh_token")) return bad("grant_types may be authorization_code and refresh_token only.");
     const responses = (b.response_types ?? ["code"]) as unknown[];
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
-    if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope))) return bad("scope may be apps:read, membership:read and profile:write only.");
+    if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope))) return bad(`Supported scopes: ${SCOPES.join(", ")}.`);
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
     const custom = customSlopPeople !== null && c.app.id === "slop" && chatGptRedirects(uris as string[]);
     const surface: Surface = !custom && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
@@ -462,7 +462,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return json(201, {
       client_id: client.id, ...(secret ? { client_secret: secret, client_secret_expires_at: 0 } : {}),
       client_id_issued_at: Math.floor(client.createdAt / 1000), client_name: name ?? undefined, redirect_uris: client.redirectUris,
-      token_endpoint_auth_method: method, grant_types: grants, response_types: ["code"], scope: (parseScopes(b.scope as string | undefined) ?? SCOPES).join(" "),
+      token_endpoint_auth_method: method, grant_types: grants, response_types: ["code"], scope: (parseScopes(b.scope as string | undefined) ?? DEFAULT_SCOPES).join(" "),
     });
   }
 
@@ -519,7 +519,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const challengeIn = q.get("code_challenge");
     if (q.get("code_challenge_method") !== "S256" || !validChallenge(challengeIn)) return fail("invalid_request", "PKCE with code_challenge_method=S256 is required");
     const scopes = parseScopes(q.get("scope"));
-    if (!scopes) return fail("invalid_scope", "scope may be apps:read, membership:read and profile:write only");
+    if (!scopes) return fail("invalid_scope", `Supported scopes: ${SCOPES.join(", ")}.`);
     const rawResource = q.get("resource");
     const resource = rawResource ? canonicalResource(rawResource, c.issuer) : resourceFor(c.issuer, client.surface);
     if (!resource) return fail("invalid_target", "resource must be this site's MCP endpoint");
@@ -1314,15 +1314,18 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "ping":
         return result({});
       case "tools/list":
-        return result({ tools: toolDefs(apps, surface, host).filter(t => !onboardingOnly || t.name !== "get_updates") });
+        return result({ tools: toolDefs(apps, surface, host).filter(t => !onboardingOnly || (t.name !== "get_updates" && t.name !== "read_profile")) });
       case "tools/call": {
         const name = params.name;
         if (!(TOOL_NAMES as readonly string[]).includes(name)) return out(200, { jsonrpc: "2.0", id, result: { ...(modern ? { resultType: "complete" } : {}), content: [{ type: "text", text: "Unknown tool." }], isError: true } });
         const tool = name as ToolName;
-        if (onboardingOnly && tool === "get_updates") return result({ content: [{ type: "text", text: "This connection supports onboarding only." }], isError: true });
+        if (onboardingOnly && (tool === "get_updates" || tool === "read_profile")) return result({ content: [{ type: "text", text: "This connection supports onboarding only." }], isError: true });
         const need = TOOL_SCOPE[tool];
         if (need) {
-          const scopeChallenge = challenge(resource, auth ? { error: "insufficient_scope", error_description: `This tool needs ${need}` } : {});
+          const scopeChallenge = challenge(resource, {
+            ...(tool === "read_profile" ? { scope: need } : {}),
+            ...(auth ? { error: "insufficient_scope", error_description: `This tool needs ${need}` } : {}),
+          });
           // spec/connectorTools.md, "Public tools need no sign-in": a member tool needs a grant that covers its scope.
           if (!auth || !tokenCovers(tool, auth.token.scopes)) {
             // ChatGPT reads the challenge from the tool result; other clients get the HTTP status (MCP authorization, step-up).
@@ -1348,6 +1351,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           }
         }
         const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
+        if (tool === "read_profile" && r.kind === "ok" && auth) {
+          const live = await bearer(c, resource);
+          if (live === "unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
+          if (!live || live === "invalid" || live.grant.id !== auth.grant.id || !tokenCovers(tool, live.token.scopes))
+            return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
+        }
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
         if (r.kind === "invalid_grant" || r.kind === "grant_held") {

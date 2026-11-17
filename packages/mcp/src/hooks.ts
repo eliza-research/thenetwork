@@ -36,6 +36,14 @@ export type AssistantKind = "chatgpt" | "claude" | "grok" | "web";
 /** One update for the person's assistant: a member-safe line from the inbox (packages/notify). */
 export interface PublicUpdate { summary: string; at: string; kind: string }
 
+export interface SavedProfileFields {
+  firstName: string | null;
+  about: unknown;
+  interests: unknown;
+  neighborhood: unknown;
+  homeCity: unknown;
+}
+
 export interface PlatformHooks {
   cloudAuthorityRequired?(app: McpAppId): boolean;
   /** Only an OAuth-owner-generated live request ID, never a caller redirect URL. */
@@ -68,6 +76,8 @@ export interface PlatformHooks {
   setSignupAgeCleanup?(fn: (phoneKey: string, app: McpAppId) => Promise<void>): void;
   /** The person's own state in one app. */
   status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
+  /** Fields the active member saved in this app. The connector applies its output gate before disclosure. */
+  readProfile?(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
   /** Current adult Slop member and phone owner, with no safety hold or ban. Never enrolls anyone. */
   customChatGptSlopEligible?(personId: string, phoneKey: string): Promise<boolean>;
   /**
@@ -229,6 +239,15 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const m = await p.store.getMembership(personId, app.id);
       const optedOut = resolveConsent(await p.store.lastConsent(who.e164, app.id)) === "opted_out";
       return publicStatus(m?.state, m?.review, optedOut);
+    },
+    async readProfile(personId, id, key) {
+      const app = p.app(id);
+      const who = await p.accounts.byPhoneHash(key);
+      if (!app || !who || who.person.id !== personId) return;
+      const own = await p.accounts.activeMembership(app, { e164: who.e164, personId });
+      if (!own) return;
+      const { firstName, profile } = own.membership;
+      return { firstName, about: profile.about, interests: profile.interests, neighborhood: profile.neighborhood, homeCity: profile.homeCity };
     },
     async signupEnrollment(id, who) {
       const app = p.app(id);

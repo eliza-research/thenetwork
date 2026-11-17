@@ -260,19 +260,24 @@ pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
 
 ### Each scope shows as one short sentence, never as its scope name
 
-The connector server knows three scopes. The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. The page never shows the scope name of the server.
+The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server.
 
 ```quint
-type Scope = AppsRead | MembershipRead | ProfileWrite
+type Scope = AppsRead | MembershipRead | ProfileWrite | ProfileRead
 
-pure val scopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite)
+pure val defaultScopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite)
+pure val scopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite, ProfileRead)
 
 pure def scopeName(scope: Scope): str =
-  if (scope == AppsRead) "apps:read" else if (scope == MembershipRead) "membership:read" else "profile:write"
+  if (scope == AppsRead) "apps:read"
+  else if (scope == MembershipRead) "membership:read"
+  else if (scope == ProfileRead) "profile:read"
+  else "profile:write"
 
 pure def scopeText(scope: Scope): str =
   if (scope == AppsRead) "See which Network apps are available"
   else if (scope == MembershipRead) "Read your membership status and new updates"
+  else if (scope == ProfileRead) "Read the profile you saved for this app"
   else "Save your profile and prepare signup details"
 
 pure def lawScopeTextIsNotTheScopeName(scope: Scope): bool = scopeText(scope) != scopeName(scope)

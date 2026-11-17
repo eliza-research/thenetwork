@@ -132,6 +132,29 @@ test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits t
       expect((await save()).body?.result.structuredContent).toMatchObject({ app: "friends", submitted: true });
       expect(intake).toHaveBeenCalledExactlyOnceWith(person.id, "friends", phone, about);
       expect((await check()).body?.result.structuredContent).toMatchObject({ app: "friends", status: expect.stringMatching(/^(active|onboarding)$/) });
+
+      // spec/connectorTools.md, "Read saved profile fields only for this app's active member"
+      const read = (token: string) => call(env, `${origin}/mcp`, "read_profile", { app: "friends" }, { token });
+      expect((await read(auth.token)).res.status).toBe(403);
+      params.set("scope", "profile:read");
+      const readConsent = await browser(`/oauth/authorize?${params}`);
+      expect(readConsent.status).toBe(200);
+      const readForm = await readConsent.text();
+      expect(readForm).toContain("Read the profile you saved for this app");
+      const readApproval = await browser("/oauth/authorize/consent", {
+        rid: hiddenField(readForm, "rid"), decision: "approve",
+      });
+      expect(readApproval.status).toBe(303);
+      const readCode = new URL(readApproval.headers.get("location")!).searchParams.get("code")!;
+      const readToken = await tokenRequest(env, domain, {
+        grant_type: "authorization_code", code: readCode, redirect_uri: clientReturn,
+        client_id: clientId, code_verifier: VERIFIER,
+      });
+      expect(readToken.body.scope).toBe("profile:read");
+      const savedProfile = await read(readToken.body.access_token);
+      expect(savedProfile.body?.result.structuredContent).toMatchObject({ app: "friends", profile: { first_name: "Ari", home_region: "nyc" } });
+      expect(savedProfile.text).not.toContain(phone);
+      expect(intake).toHaveBeenCalledTimes(1);
     } finally {
       await server.stop(true);
       await connector.store.close();

@@ -15,7 +15,7 @@ describe("metadata", () => {
     expect(as.issuer).toBe("https://peon.biz");
     expect(as.code_challenge_methods_supported).toEqual(["S256"]);
     expect(as.authorization_response_iss_parameter_supported).toBe(true);
-    expect(as.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write"]);
+    expect(as.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write", "profile:read"]);
     expect(as.registration_endpoint).toBe("https://peon.biz/oauth/register");
     const prm = await (await env.fetch(new Request(`${origin(PEON)}/.well-known/oauth-protected-resource/mcp`))).json() as Record<string, any>;
     expect(prm).toMatchObject({ resource: "https://peon.biz/mcp", authorization_servers: ["https://peon.biz"], bearer_methods_supported: ["header"] });

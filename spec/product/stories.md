@@ -56,7 +56,9 @@ Return the person's own app profile, with source and scope as applicable. Ask fo
 
 In the signed text conversation, `SHOW MY FACTS` shows saved facts for the current app. The member can use a fact reference to request a correction, removal, or scope change. The member confirms the exact edit using a short-lived code. A stale fact or a different app or member cannot use that code.
 
-Models: [generated saved-profile read](../savedProfileRead.md), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+In an authorized assistant, `read_profile` shows safe fields saved in the requesting member's current app. The person grants profile read access separately in their browser. Reading a profile makes no profile edits and starts no new onboarding.
+
+Models: [generated saved-profile read](../savedProfileRead.md), [connector tools](../connectorTools.md#read-saved-profile-fields-only-for-this-apps-active-member), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 
@@ -598,6 +600,7 @@ Acceptance:
 
 - The full surface at `https://<site>/mcp` offers each app. The OpenAI surface at `https://<site>/mcp/openai` never lists slop.date, and the slop.date site has no OpenAI surface.
 - `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
+- `read_profile` needs explicit profile read permission and a current active membership for the same app. It returns only safe saved fields and makes no profile change.
 - `check_status` shows one of six statuses (not joined, invited, onboarding, active, stopped, on hold) for the host app only, with one next step.
 - `submit_profile` sends an approved profile once, and only for an onboarding or active member. For another status it sends nothing and gives the next step. A grant can make at most five profile or draft calls in one day, and a refused call counts.
 - `prepare_signup` shows only on friends.help and ntwrk.party. It saves only an approved first name and an optional home city, at most once per grant. It creates no person, membership or text consent. Those sites have no Join page now, so the person cannot use the draft yet.

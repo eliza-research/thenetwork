@@ -1031,7 +1031,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
       // get_updates takes an update reference (T-XXXXXX), never a verification code.
       for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : ["app"]);
-      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "start_signup", "submit_profile"]);
+      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "read_profile", "start_signup", "submit_profile"]);
     });
   });
 
