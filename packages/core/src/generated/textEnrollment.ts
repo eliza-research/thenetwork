@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; appKeyword: boolean }
+export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ExplicitRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
@@ -43,7 +43,7 @@ export function inv(current: TextJoin): boolean {
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
 export function checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute {
-  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp || explicitFacts.appKeyword ? ({ phase: "ExplicitRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)));
+  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp || explicitFacts.surveyApp || explicitFacts.appKeyword ? ({ phase: "ExplicitRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)));
 }
 
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */

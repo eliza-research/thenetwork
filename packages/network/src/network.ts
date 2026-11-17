@@ -116,7 +116,7 @@ import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
-  directInviteVouch, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
+  directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
   type InviteReviewReason, type MemberInviteEvidence, type MemberInviteRequest, type MemberInviteResult,
 } from "./invitation.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
@@ -609,6 +609,8 @@ interface SendOpts {
   relayContact?: string;
   /** One server-issued invitation URL on its own line in a direct reply to its requester. */
   memberInviteLink?: string;
+  /** One server-issued review reference in a direct reply to its requester. */
+  memberInviteReviewReference?: string;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
@@ -3572,8 +3574,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     return true;
   }
 
-  private inviteVouchReply(m: MemberState, body: string): SendResult {
-    return this.send(m, body, { type: "info", privateInviteVouch: true }, "reply");
+  private inviteVouchReply(m: MemberState, body: string, memberInviteReviewReference?: string): SendResult {
+    return this.send(m, body, { type: "info", privateInviteVouch: true }, "reply", { memberInviteReviewReference });
   }
 
   private handleInviteVouchTurn(m: MemberState, messageId: string, body: string) {
@@ -3632,7 +3634,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.inviteVouchReply(m, this.copy.inviteUnavailable);
       return;
     }
-    if (result.status === "review") this.inviteVouchReply(m, this.copy.inviteInReview(inviteReviewReference(result.reviewId)));
+    if (result.status === "review") {
+      const reference = inviteReviewReference(result.reviewId);
+      this.inviteVouchReply(m, this.copy.inviteInReview(reference), reference);
+    }
     else {
       const sent = this.send(m, this.copy.forwardInvite(result.url), { type: "info" }, "reply", { memberInviteLink: result.url });
       if (sent !== "sent") return;
@@ -4611,15 +4616,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (survey.sentAt !== undefined || !interruptionFeedbackAskDue(now - survey.answeredAt, eligible,
         !!m.awaiting || !!m.pendingSafety || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
       const code = interruptionFeedbackCode(this.app.id, m.id, survey.opportunityId);
-      const body = `Was that invitation worth a text? Reply WORTH YES ${code} or WORTH NO ${code}.`;
+      const responseKey = `${this.app.id.toUpperCase()} ${code}`;
+      const body = `Was that invitation worth a text? Reply WORTH YES ${responseKey} or WORTH NO ${responseKey}.`;
       const key = interruptionFeedbackKey(this.app.id, m.id, survey.opportunityId);
       if (this.send(m, body, { type: "question" }, "worthwhile", { key, noDefer: true }) === "sent") survey.sentAt = now;
     }
   }
 
-  private recordInterruptionFeedback(m: MemberState, answer: { worthwhile: boolean; code: string }, now: number, receivedAt: number) {
+  private recordInterruptionFeedback(m: MemberState, answer: { worthwhile: boolean; app: string; code: string }, now: number, receivedAt: number) {
     const survey = m.interruptionSurvey;
-    if (!survey || survey.sentAt === undefined) return;
+    if (!survey || survey.sentAt === undefined || answer.app !== this.app.id) return;
     const current = interruptionFeedbackCurrent(now - survey.sentAt,
       this.checkRecipient(m.id, "worthwhile", { reply: false }).ok && m.state !== "paused" && this.opps.has(survey.opportunityId));
     const receipt = this.ctx.initialInviteReceipt?.(interruptionFeedbackKey(this.app.id, m.id, survey.opportunityId));
@@ -5598,10 +5604,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       const presentOnce = value.endsWith(`\n${link}`) && value.indexOf(link) === value.lastIndexOf(link);
       return memberInviteLinkCanBeShared(this.memberReply && this.replyTo === m.id && reply, true, isMemberInvitationLink(this.app, link), presentOnce) ? link : undefined;
     };
-    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom, approvedLink(text));
+    const reviewReference = this.memberReply && this.replyTo === m.id && reply ? o.memberInviteReviewReference : undefined;
+    const approvedContact = (value: string) => approvedLink(value) ?? inviteReviewContactToken(value, reviewReference);
+    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom, approvedContact(text));
     if (leaks.length) {
       const fallback = [deliveredInviteJoins.length ? baseBody : undefined, o.fallback].find(value =>
-        value !== undefined && !this.guardCheck(value, m.id, o.relayFrom, approvedLink(value)).length);
+        value !== undefined && !this.guardCheck(value, m.id, o.relayFrom, approvedContact(value)).length);
       this.counters.guardBlocked++;
       this.ctx.log("guard_blocked", { memberId: m.id, kind, reasons: leaks, fallback: fallback !== undefined });
       if (fallback === undefined) { fns.onRefused?.(); return "refused"; }
@@ -5978,7 +5986,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Leak guard: other members' private facts and every canary, compiled once per change in private facets. */
   private guardCache?: { snap: WorldSnapshot; key: string; guard: LeakGuard };
-  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId, approvedLink?: string): string[] {
+  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId, approvedContact?: string): string[] {
     const snap = this.snapshotCached();
     if (!this.guardCache || this.guardCache.snap !== snap) {
       const priv = snap.facets.filter(f => f.scope === "agent_private");
@@ -5991,7 +5999,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       this.guardCache = { snap, key, guard };
     }
-    const contactAllow = approvedLink ? [approvedLink] : undefined;
+    const contactAllow = approvedContact ? [approvedContact] : undefined;
     const leaks = this.guardCache.guard.check(text, { exceptOwner: recipient, contactAllow });
     // A relayed text: what the sender wrote about themselves may go to the person they wrote to.
     if (alsoOwner === undefined || !leaks.length) return leaks;

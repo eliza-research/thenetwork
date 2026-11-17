@@ -8,7 +8,7 @@ import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { RealSource } from "../../observatory/src/sources/real.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
-import { BlooioAdapter } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { interruptionFeedbackKey, interruptionSampleBucket } from "../src/interruption-feedback.ts";
 import { Mini } from "./mini.ts";
@@ -35,13 +35,13 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     },
   } });
   const service = new NetworkService({
-    url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }],
+    url, clock, log: () => {}, photoStorage: null, adapter: (_network, runtime) => runtime.app.id === app.id ? adapter : new DryRunAdapter(() => {}),
+    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }, { id: "peon:nyc" }],
     devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 }, tokens: "reviewer@friends:plan-reviewer",
   });
   const observatory = new RealSource({ app: app.id, url });
-  const turn = async (messageId: string, text: string, receivedAt = clock.now()) => {
-    const input: TurnRequest = { app: app.id, channel: "blooio", from: recipients[0]!.e164, messageId, text,
+  const turn = async (messageId: string, text: string, receivedAt = clock.now(), shared = false) => {
+    const input: TurnRequest = { ...(shared ? {} : { app: app.id }), channel: "blooio", from: recipients[0]!.e164, messageId, text,
       transport: "imessage", receivedAt, to: null };
     const body = JSON.stringify(input);
     const signed = await svcSign(secret, { id: messageId, path: TURN_PATH, method: "POST", body, nowS: Math.floor(clock.now() / 1000) });
@@ -133,11 +133,23 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     }
     const samples = calls.filter(call => call.idempotencyKey === `tn:${key}`);
     expect(samples).toHaveLength(1);
-    const reply = /WORTH NO [a-p]{16}/.exec(samples[0]!.text)![0];
+    const reply = /WORTH NO FRIENDS [a-p]{16}/.exec(samples[0]!.text)![0];
     expect((await rt.pg.load())?.members.find(member => member.id === invited[0])?.pendingAsks).toEqual([]);
     expect((await turn("early-survey-answer", reply, clock.now() - 1)).status).toBe(200);
     expect(await sql`select 1 from network.events where app_id='friends' and type='interruption_feedback'`).toEqual([]);
-    expect((await turn("survey-answer", reply)).status).toBe(200);
+    const otherApp = APPS.peon;
+    const phone = recipients[0]!.e164;
+    const other = await service.accounts.join(otherApp, { e164: phone, personId: (await service.accounts.personFor(phone))!.id },
+      { firstName: recipients[0]!.name, age: 30, consent: { sms: true, wording: otherApp.consent.text } });
+    if (!other.ok) throw new Error(`Fixture join refused: ${other.error}`);
+    clock.set(clock.now() + 1);
+    const otherRuntime = service.runtimes.get("peon:nyc")!;
+    await otherRuntime.unitOfWork(() => otherRuntime.system(other.membership.memberId, "fixture-other-app", "Welcome to peon.biz."));
+    const lastContact = (await service.memberApps(phone)).sort((a, b) => (b.lastOut ?? 0) - (a.lastOut ?? 0))[0];
+    expect(lastContact?.app).toBe(otherApp.id);
+    const sharedAnswer = await turn("survey-answer", reply, clock.now(), true);
+    expect(sharedAnswer.status).toBe(200);
+    expect(await sharedAnswer.json()).toMatchObject({ app: app.id });
     expect((await turn("duplicate-survey-answer", reply)).status).toBe(200);
     expect(await sql`select payload,actor_id,object_id from network.events where app_id='friends' and type='interruption_feedback'`)
       .toEqual([{ payload: { worthwhile: false }, actor_id: null, object_id: null }]);

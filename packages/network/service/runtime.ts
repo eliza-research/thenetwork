@@ -59,7 +59,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { HeldMemberInvitation, ReferralJoin } from "../../platform/src/invite-links.ts";
-import type { InviteRelationship, MemberInviteEvidence, MemberInviteRequest } from "../src/invitation.ts";
+import { inviteReviewContactToken, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
@@ -814,7 +814,11 @@ export class NetworkRuntime {
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
       const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedPublicEventLink(s.oppId, s.memberId, s.body) : undefined;
-      const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (bookedLink ? [bookedLink] : undefined);
+      const staged = u.memberInvitation;
+      const reviewToken = s.type === "member_invitation_review" && staged?.status === "review" && staged.review.inviterMemberId === s.memberId
+        ? inviteReviewContactToken(s.body, staged.review.id) : undefined;
+      const approvedContact = bookedLink ?? reviewToken;
+      const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (approvedContact ? [approvedContact] : undefined);
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);

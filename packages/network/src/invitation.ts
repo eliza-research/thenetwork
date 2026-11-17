@@ -78,6 +78,14 @@ export function inviteReviewReference(value: string | undefined): string | undef
   return value?.length === 36 && /^mir_[a-f0-9]{32}$/.test(value) ? value : undefined;
 }
 
+/** The one exact review token the contact scan may omit from the issuer's private reply. */
+export function inviteReviewContactToken(body: string, stagedReference: string | undefined): string | undefined {
+  const reference = inviteReviewReference(stagedReference);
+  if (!reference) return;
+  const token = `${reference}.`;
+  if (body.endsWith(` CHECK INVITE ${token}`) && body.indexOf(reference) === body.lastIndexOf(reference)) return token;
+}
+
 function invitationLinkPrefix(app: { id: AppId; domain: string }): string {
   const path = publicSignupUsesBrowser(app.id) ? "/join" : "/SKILL.md";
   return `https://${app.domain}${path}#invite=`;

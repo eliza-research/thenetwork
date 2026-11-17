@@ -20,7 +20,7 @@ export function interruptionFeedbackKey(app: string, memberId: string, opportuni
   return `${interruptionFeedbackPrefix}${interruptionFeedbackCode(app, memberId, opportunityId)}:${memberId}`;
 }
 
-export function interruptionFeedbackAnswer(line: string): { worthwhile: boolean; code: string } | undefined {
-  const match = /^WORTH (YES|NO) ([a-p]{16})[.!]?$/i.exec(line.trim().replace(/\s+/g, " "));
-  if (match) return { worthwhile: match[1]!.toLowerCase() === "yes", code: match[2]!.toLowerCase() };
+export function interruptionFeedbackAnswer(line: string): { worthwhile: boolean; app: string; code: string } | undefined {
+  const match = /^WORTH (YES|NO) ([a-z]+) ([a-p]{16})[.!]?$/i.exec(line.trim().replace(/\s+/g, " "));
+  if (match) return { worthwhile: match[1]!.toLowerCase() === "yes", app: match[2]!.toLowerCase(), code: match[3]!.toLowerCase() };
 }

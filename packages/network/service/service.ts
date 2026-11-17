@@ -1416,10 +1416,12 @@ export class NetworkService implements RuntimeHost {
       if (r && isAppId(r.app_id)) dedicated = r.app_id;
     }
     const profileApp = dedicated ? undefined : profileReadRequest(ev.text, this.apps)?.app;
-    const keywordApp = dedicated || profileApp ? undefined : this.namedApp(ev.text);
-    const explicit = checkExplicitRoute(initialRoute, { dedicated: !!dedicated, profileApp: !!profileApp, appKeyword: !!keywordApp });
+    const survey = dedicated ? undefined : interruptionFeedbackAnswer(ev.text);
+    const surveyApp = survey && isAppId(survey.app) ? survey.app : undefined;
+    const keywordApp = dedicated || profileApp || surveyApp ? undefined : this.namedApp(ev.text);
+    const explicit = checkExplicitRoute(initialRoute, { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp });
     if (explicit.phase === "DedicatedRoute" && dedicated) return { app: dedicated, shared: false };
-    const named = profileApp ?? keywordApp;
+    const named = profileApp ?? surveyApp ?? keywordApp;
     if (explicit.phase === "ExplicitRoute" && named) return { app: named, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
@@ -3081,7 +3083,15 @@ export class NetworkService implements RuntimeHost {
       if (handled.replyIds?.some(id => id.startsWith("invite-vouch:"))) {
         const memberId = handled.memberId;
         const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
-        if (!rt || !memberId || !await rt.scoped(tx => this.invitationOwner(tx, rt.app, memberId, input.from))) {
+        const current = rt && memberId && await rt.scoped(async tx => {
+          if (!await this.invitationOwner(tx, rt.app, memberId, input.from)) return false;
+          if (handled.reason !== "member_invitation_review") return true;
+          const body = handled.replies[0];
+          const reference = body?.match(/ CHECK INVITE (mir_[0-9a-f]{32})\.$/)?.[1];
+          return handled.replies.length === 1 && !!reference && body === this.copyOf(rt.app).inviteInReview(reference)
+            && await memberInvitationReviewStatus(tx, rt.app.id, reference, memberId, this.clock.now()) === "pending";
+        });
+        if (!current) {
           return json({error: "turn_invitation_changed", retryable: false}, 409);
         }
       }

@@ -26,7 +26,7 @@ pure def lawSurveyNeedsDelivery(sampleBucket: int, directReply: bool, pendingSur
 
 ### A direct answer measures the interruption once
 
-Bind the survey code to the same member and invitation. Accept a direct affirmative or negative code received after the provider accepts the exact survey and while the survey is current. STOP and a hold invalidate it. A valid answer consumes the survey. Save only its yes or no value for the app scorecard. Count one response per answered survey. Keep the response out of matching and the other participants' messages.
+Bind the survey code to the same app, member and invitation. Include the app in the reply command so it reaches the correct app on the shared line. Accept a direct affirmative or negative code received after the provider accepts the exact survey and while the survey is current. STOP and a hold invalidate it. A valid answer consumes the survey. Save only its yes or no value for the app scorecard. Count one response per answered survey. Keep the response out of matching and the other participants' messages.
 
 ```quint
 pure def interruptionFeedbackCurrent(ageMs: int, eligible: bool): bool =
