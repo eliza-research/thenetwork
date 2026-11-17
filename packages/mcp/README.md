@@ -6,7 +6,7 @@ This package is the MCP server (Model Context Protocol) for the four apps, and t
 
 ## 1. What it serves
 
-Each site's Worker forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend. So each site is its own issuer and its own MCP resource.
+Each site's Pages router forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend. So each site is its own issuer and its own MCP resource.
 
 | Path (on each site, for example `https://slop.date`) | What it does |
 |---|---|
@@ -29,7 +29,7 @@ Each site's Worker forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the
 | `check_status` | `membership:read` | The signed-in person's own state in the client's one app: `not_joined`, `invited`, `onboarding`, `active`, `stopped` or `on_hold`. No age, no member id, no other app. |
 | `read_profile` | `profile:read` | The active member's own saved first name, about text, interests and general location in the connected app. The browser requires explicit approval for this permission. This call leaves the profile and conversation unchanged. |
 | `get_updates` | `membership:read` | The member's unseen updates for the connected app. Reading them marks them seen. |
-| `submit_profile` | `profile:write` | Founder decision 10 (agent-first sign-up): the profile the person told their own agent, in their words (`about`, 10-1200 characters), delivered to their own member on the client's one app as if they had texted it (the Network reads it with the same rules: wants, availability, an age that can only lower, minors, abuse). Only for a live member (`active` or `onboarding`); it never creates a member. A phone number (a run of 10 or more digits however it is grouped, or 7 or more outside 5-digit groups, even touching letters), an email address or a code written as one 4- or 6-10 digit number is refused and stored nowhere. A standalone 5-digit zip is accepted, so a 5-digit code or a code split into short groups ("12 34 56") is not told apart and passes; street addresses are not filtered here. At most 5 accepted profiles per grant a day. The service side is `NetworkService.submitProfile`. |
+| `submit_profile` | `profile:write` | Sends the person's approved `about` text of 10–1200 characters to their active or onboarding membership in the connected app. The service treats it as profile intake. Keep phone numbers, email addresses and codes out of the text. The server limits profile and draft calls to five per grant in a 24-hour window. |
 
 Every input schema has `additionalProperties: false`. Public tools still take `app` only; `prepare_signup` alone also accepts `firstName` and optional `homeCity`, `submit_profile` accepts `about`, and `get_updates` accepts `update_token`. A call with any other field (for example `phone` or `code`) is refused. It is not ignored.
 
@@ -49,7 +49,7 @@ Draft reads/writes and canonical phone-age recording share an independent keyed-
 - **One app per client.** A token is valid only at the resource it was issued for (RFC 8707). A peon token is refused at slop.date and at `/mcp/openai`.
 - **New owner.** If the phone now belongs to another person than when access was granted, the grant is revoked.
 - **OpenAI surface.** `/mcp/openai`, and every client whose redirect URI is on chatgpt.com or openai.com, never lists or offers slop. Such a client cannot register on slop.date.
-- **Abuse.** Rate limits per IP for registration, authorize, token and MCP calls, and per grant for `check_status` and `submit_profile`. The platform OTP limits apply to the sign-in. The "text me a code" answer is the same for every number and takes at least 700 ms.
+- **Abuse.** Rate limits per IP for registration, authorize, token and MCP calls, and per grant for authenticated tools. The platform OTP limits apply to the sign-in. The "text me a code" answer is the same for every number and takes at least 700 ms.
 - **Audit.** `oauth.audit` keeps one row for each registration, consent, denial, code, token, refresh, revocation and replay. It never holds a token, a code, a secret or a phone number.
 
 ## 4. How the backend mounts it
