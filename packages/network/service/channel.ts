@@ -28,6 +28,7 @@ import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { effectiveParticipation } from "./snapshot.ts";
+import { lockGatheringInvitationAdmission, monthlyGatheringInvitePrefix } from "./monthly-gathering-delivery.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -346,6 +347,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
+        if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringInvitationAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix) || row.id.startsWith(replacementProbePrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
@@ -362,6 +364,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
+        if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
         if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());

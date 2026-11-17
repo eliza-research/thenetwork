@@ -1,6 +1,7 @@
 import { gatheringRsvpWindow } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
+import type { AppInfo } from "../../platform/src/apps.ts";
 import { currentGatheringMember, rankGatheringInvitees, type GatheringRsvpKey } from "./monthly-gathering-rsvp.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
@@ -16,6 +17,31 @@ interface GatheringRow {
 }
 
 interface MemberPhones { id: string; phones: string[] }
+
+/** Recheck the ordered engine shortlist against current app membership and RSVP records. */
+export async function eligibleGatheringInvitees(tx: SQL, accounts: Pick<Accounts, "activeMembership" | "lowestAge">,
+  app: AppInfo, key: GatheringRsvpKey, ranked: readonly string[], capacity: number, now: number): Promise<string[]> {
+  if (app.id !== "ntwrk" || !ranked.length) return [];
+  const city = "nyc";
+  const members = await tx<MemberPhones[]>`select m.id,array_agg(p.e164 order by p.e164) as phones
+    from network.members m join platform.phone_identities p on p.person_id=m.person_id and p.hold is null
+    where m.app_id=${app.id} and m.home_city=${city} and m.account_status='active' and not m.opted_out
+      and m.id=any(${tx.array([...ranked], "TEXT")})
+      and not exists (select 1 from network.monthly_gathering_rsvps r
+        where r.app_id=m.app_id and r.member_id=m.id and r.gathering_id=${key.id} and r.revision=${key.revision})
+    group by m.id`;
+  const phones = new Map(members.map(member => [member.id, member.phones]));
+  const result: string[] = [];
+  for (const memberId of ranked) {
+    if (result.length >= capacity) break;
+    for (const e164 of phones.get(memberId) ?? []) {
+      if (!await currentGatheringMember(tx, accounts, { app, e164, memberId }, city, now)) continue;
+      result.push(memberId);
+      break;
+    }
+  }
+  return result;
+}
 
 /** Authorized by the staff caller. The approved gathering is immutable and this read never sends. */
 export async function readGatheringInvitees(rt: NetworkRuntime, accountsFor: (tx: SQL) => Pick<Accounts, "activeMembership" | "lowestAge">,
@@ -36,25 +62,7 @@ export async function readGatheringInvitees(rt: NetworkRuntime, accountsFor: (tx
     const checkedAt = now();
     const event = await currentEvent(tx, checkedAt);
     if (!event) return;
-    if (!ranked.length) return [];
-    const accounts = accountsFor(tx);
-    const members = await tx<MemberPhones[]>`select m.id,array_agg(p.e164 order by p.e164) as phones
-      from network.members m join platform.phone_identities p on p.person_id=m.person_id and p.hold is null
-      where m.app_id=${app.id} and m.home_city=${city} and m.account_status='active' and not m.opted_out
-        and m.id=any(${tx.array(ranked, "TEXT")})
-        and not exists (select 1 from network.monthly_gathering_rsvps r
-          where r.app_id=m.app_id and r.member_id=m.id and r.gathering_id=${key.id} and r.revision=${key.revision})
-      group by m.id`;
-    const phones = new Map(members.map(member => [member.id, member.phones]));
-    const result: string[] = [];
-    for (const memberId of ranked) {
-      if (result.length >= event.capacity) break;
-      for (const e164 of phones.get(memberId) ?? []) {
-        if (!await currentGatheringMember(tx, accounts, { app, e164, memberId }, city, checkedAt)) continue;
-        result.push(memberId);
-        break;
-      }
-    }
+    const result = await eligibleGatheringInvitees(tx, accountsFor(tx), app, key, ranked, event.capacity, checkedAt);
     return now() < event.starts_at.getTime() ? result : undefined;
   });
 }

@@ -82,9 +82,11 @@ import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
-import { readGatheringInvitees } from "./monthly-gathering-priority.ts";
+import { queueReviewedGatheringInvitations } from "./monthly-gathering-delivery.ts";
+import { handleMonthlyGatheringInvitationReview } from "./monthly-gathering-invitation-review.ts";
+import { eligibleGatheringInvitees, readGatheringInvitees } from "./monthly-gathering-priority.ts";
 import { handleMonthlyGatherings } from "./monthly-gatherings.ts";
-import { gatheringRsvpCommand, gatheringRsvpReplyCurrent, gatheringRsvpRoster, saveGatheringRsvp } from "./monthly-gathering-rsvp.ts";
+import { gatheringRsvpCommand, gatheringRsvpReplyCurrent, gatheringRsvpRoster, rankGatheringInvitees, saveGatheringRsvp } from "./monthly-gathering-rsvp.ts";
 import { calendarPreferenceCommand } from "../../core/src/calendar-free-busy.ts";
 import { calendarOwnerPath } from "../../core/src/generated/calendarFreeBusy.ts";
 import type { CalendarOwnerRequest, CalendarSchedulingOwner } from "../../core/src/svc/calendar-scheduling.ts";
@@ -179,7 +181,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 }
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
-  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps"].map(t => `network.${t}`),
+  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees"].map(t => `network.${t}`),
   ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
@@ -827,6 +829,10 @@ export class NetworkService implements RuntimeHost {
       await this.homeHelpVenue().purgeExpired(tx, app);
     }).catch(() => this.log(`[purge] home-help plans failed (${rt.id})`));
     if (rt.net.allowedCategories.has("help")) await this.projectHomeHelpConsent(rt).catch(() => this.log(`[home-help] consent projection waits (${rt.id})`));
+    if (rt.app.id === "ntwrk" && rt.city === "nyc") {
+      await queueReviewedGatheringInvitations(rt, tx => this.accountsFor(tx), () => this.clock.now())
+        .catch(() => this.log(`[gathering] invitation projection waits (${rt.id})`));
+    }
     for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
   }
@@ -3402,6 +3408,15 @@ export class NetworkService implements RuntimeHost {
         const gatherings = await handleMonthlyGatherings(req, path, { app: rt.app.id, city: rt.city, staff: user,
           now: () => this.clock.now(), scoped: run => rt.scoped(run) });
         if (gatherings) return gatherings;
+        const invitationReview = await handleMonthlyGatheringInvitationReview(req, path, {
+          app: rt.app, city: rt.city, staff: user, now: () => this.clock.now(), scoped: run => rt.scoped(run),
+          withRecommendation: async run => await rt.readState(net => run((tx, key, capacity) => {
+            const now = this.clock.now();
+            const ranked = rankGatheringInvitees(net.gatheringPriorityEvidence(now));
+            return eligibleGatheringInvitees(tx, this.accountsFor(tx), rt.app, key, ranked, capacity, now);
+          })),
+        });
+        if (invitationReview) return invitationReview;
       }
       if (req.method === "GET" && path === "/health") {
         const no = need(["admin", "reviewer", "safety", "analyst"]); if (no) return no;

@@ -56,6 +56,7 @@ import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
 import { homeHelpNoticeId, lockHomeHelpNoticeRoster } from "./bounded-home-help-delivery.ts";
+import { gatheringInvitationAdmission } from "./monthly-gathering-delivery.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
@@ -68,7 +69,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { NOT_SENT, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -448,6 +449,12 @@ export class NetworkRuntime {
   async homeHelpConsentAdmission(tx: SQL, row: { id: string; memberId?: MemberId | null; to: string; text: string }): Promise<boolean> {
     const noticeId = homeHelpNoticeId(row.id);
     return !!noticeId && !!row.memberId && !!await this.host.homeHelpNoticeCurrent?.(tx, this.app, noticeId, row.memberId, row.to, row.text);
+  }
+
+  async gatheringInvitationAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck> {
+    const accounts = this.host.accountsFor?.(tx);
+    if (!accounts || !this.matchingAllowed) return { ok: false, reason: "gathering_invitation_changed" };
+    return gatheringInvitationAdmission(tx, this.app, this.pg.id, accounts, row, this.clock.now());
   }
 
   async expectedInvitationAdmission(tx: SQL, row: { id: string; to: string; text: string }): Promise<boolean> {

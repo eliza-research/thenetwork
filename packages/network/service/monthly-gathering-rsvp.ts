@@ -17,16 +17,30 @@ interface RsvpTurn { id: string; at: number }
 type RsvpAccounts = Pick<Accounts, "activeMembership" | "lowestAge">;
 
 const ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const RSVP = new RegExp(`^RSVP GATHERING (${ID}) ([1-9][0-9]{0,8}) YES( WITH GROUPING)?[.!]?$`, "i");
-const WITHDRAW = new RegExp(`^WITHDRAW GATHERING (${ID}) ([1-9][0-9]{0,8})[.!]?$`, "i");
+const RSVP_REFERENCE = `${ID}|[a-p]{32}`;
+const RSVP = new RegExp(`^RSVP GATHERING (${RSVP_REFERENCE}) ([1-9][0-9]{0,8}) YES( WITH GROUPING)?[.!]?$`, "i");
+const WITHDRAW = new RegExp(`^WITHDRAW GATHERING (${RSVP_REFERENCE}) ([1-9][0-9]{0,8})[.!]?$`, "i");
 const UUID = new RegExp(`^${ID}$`, "i");
+const REFERENCE_LETTERS = "abcdefghijklmnop";
+
+/** Spell the public event ID without phone-shaped digits in automated outreach. */
+export function gatheringRsvpReference(id: string): string {
+  return id.replace(/-/g, "").replace(/[0-9a-f]/g, hex => REFERENCE_LETTERS[Number.parseInt(hex, 16)]!);
+}
+
+function gatheringIdFromReference(reference: string): string {
+  const lower = reference.toLowerCase();
+  if (UUID.test(lower)) return lower;
+  const hex = lower.replace(/[a-p]/g, letter => REFERENCE_LETTERS.indexOf(letter).toString(16));
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+}
 
 export function gatheringRsvpCommand(text: string): GatheringRsvpCommand | undefined {
   const normalized = text.trim();
   const affirmative = RSVP.exec(normalized);
-  if (affirmative) return { id: affirmative[1]!.toLowerCase(), revision: Number(affirmative[2]), choice: affirmative[3] ? "grouping" : "attending" };
+  if (affirmative) return { id: gatheringIdFromReference(affirmative[1]!), revision: Number(affirmative[2]), choice: affirmative[3] ? "grouping" : "attending" };
   const withdrawal = WITHDRAW.exec(normalized);
-  if (withdrawal) return { id: withdrawal[1]!.toLowerCase(), revision: Number(withdrawal[2]), choice: "withdrawn" };
+  if (withdrawal) return { id: gatheringIdFromReference(withdrawal[1]!), revision: Number(withdrawal[2]), choice: "withdrawn" };
 }
 
 interface GatheringRow {

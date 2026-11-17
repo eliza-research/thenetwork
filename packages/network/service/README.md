@@ -345,6 +345,15 @@ staff actor and rechecks the selected public venue and time.
 Before the gathering starts, `GET /apps/ntwrk/gatherings/<id>/priority?revision=<revision>`
 returns eligible member IDs in suggested invitation order. The order uses
 newcomer, recent participation and pending second encounter evidence.
+Submit `revision` and an ordered `memberIds` selection to
+`POST /apps/ntwrk/gatherings/<id>/invitations/review`. You can omit members
+and preserve the order of the members you select. The first decision fixes
+that revision's list. An identical request returns the saved review.
+
+During the NYC rollout, ordinary service ticks pass each reviewed invitation
+through the proactive outreach and outbound queue checks. A current public
+venue, an available RSVP place and the recipient's current event preference
+are required. The invitation includes a reply command for that gathering.
 
 Eligible adults use the signed text conversation to send
 `RSVP GATHERING <id> <revision> YES`. They can add `WITH GROUPING` to let
@@ -355,6 +364,8 @@ withdraws the RSVP. An admin can read the current roster at
 member IDs and the current grouping choice.
 
 [Staff review rules](../../../spec/monthlyGathering.md) ·
+[Invitation approval](../../../spec/monthlyGatheringInvitationReview.md) ·
+[Invitation delivery](../../../spec/monthlyGatheringDelivery.md) ·
 [RSVP and privacy rules](../../../spec/monthlyGatheringRsvp.md)
 
 ## Limits

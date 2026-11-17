@@ -28,7 +28,7 @@
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
   ADULT_AGE, canBeMatched, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
-  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
+  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
   attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
@@ -594,6 +594,8 @@ interface SendOpts {
   fallback?: string;
   /** Do not queue it when it may not go out now: the caller retries (probes compose their time options at send time). */
   noDefer?: boolean;
+  /** A reviewed event card must retain its exact body through the outbound claim. */
+  immutableBody?: boolean;
   /**
    * What the send does, as data: whether a deferred send is still worth sending when the window
    * opens, what runs when it goes out, and what runs when it is refused (hookFns). Data, not
@@ -1528,6 +1530,18 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.dirty = true;
     return this.send(member, body, { type: "info", proactive: role === "helper", homeHelpConsentFor: role },
       "home_help_consent", { key: deliveryId, noDefer: true }) === "sent";
+  }
+
+  /** Stage an exact reviewed gathering invitation using ordinary proactive outreach budgets. */
+  askReviewedGatheringInvitation(recipientId: MemberId, deliveryId: string, body: string): boolean {
+    if (this.app.id !== "ntwrk" || !this.matchingEnabled() || this.declinedIds.has(recipientId)) return false;
+    const member = this.members.get(recipientId);
+    const record = this.record(recipientId);
+    if (!member || !record || record.homeCity !== "nyc" || !canBeMatched(record.age) ||
+      !gatheringMemberStateCurrent(member, !this.trust.ok(recipientId) || this.reportHeld(recipientId)) ||
+      !gatheringEventPreference(record.prefs)) return false;
+    this.dirty = true;
+    return this.send(member, body, { type: "info", proactive: true }, "info", { key: deliveryId, noDefer: true, immutableBody: true }) === "sent";
   }
 
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
@@ -5631,13 +5645,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Fold a pending acknowledgement in only now, at the real send (never into a deferred body, which
     // would fold it twice), and only its first short sentence ("Got it, thanks."). Never into a relayed
     // text: that body is the other member's words, rendered by the relay policy, and goes as it is.
-    if (m.pendingAck && kind !== "safety" && kind !== "relay" && kind !== "home_help_consent" && !/^(thanks|great|no problem|got it)/i.test(body)) {
+    if (m.pendingAck && !o.immutableBody && kind !== "safety" && kind !== "relay" && kind !== "home_help_consent" && !/^(thanks|great|no problem|got it)/i.test(body)) {
       const ack = m.pendingAck.text.split(/(?<=[.!?])\s/)[0]!;
       body = `${ack} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay"
+    const note = m.note && !o.immutableBody && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay"
       && kind !== "home_help_consent" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
@@ -5733,7 +5747,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         acceptedAt: this.ctx.initialInviteReceipt ? undefined : delivery.ts });
     }
     if (deliveredInviteJoins.length) m.pendingInviteJoins = m.pendingInviteJoins?.filter(notice => !deliveredInviteJoins.includes(notice));
-    if (kind !== "home_help_consent") m.pendingAck = undefined;
+    if (kind !== "home_help_consent" && !o.immutableBody) m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
     const storedText = o.memberInviteLink ? text.replace(o.memberInviteLink, "").trimEnd()
       : meta.privateInviteVouch ? "Private invitation reply"
@@ -6808,6 +6822,23 @@ export function storedInviteNoticePartyCurrent(state: NetworkState, id: MemberId
   const held = state.trust?.some(record => record.id === id && record.level === "hold") || pendingReportHold(state.reports, id);
   const view = relayMemberOf(member, held);
   return canBeMatched(view.age) && !view.optedOut && !view.held;
+}
+
+export function gatheringEventPreference(prefs: Partial<Preferences> | null | undefined): boolean {
+  return !!prefs && !prefs.onlyWhenAsked && Array.isArray(prefs.categoriesOptIn) && prefs.categoriesOptIn.includes("events") &&
+    Array.isArray(prefs.formats) && prefs.formats.includes("event");
+}
+
+function gatheringMemberStateCurrent(member: MemberState | MemberJSON, trustHold: boolean): boolean {
+  const view = relayMemberOf(member, trustHold);
+  return member.stage === "active" && !member.onlyWhenAsked && member.state !== "paused" && !view.optedOut && !view.held && canBeMatched(view.age);
+}
+
+export function storedGatheringInviteRecipientCurrent(state: NetworkState, id: MemberId): boolean {
+  const member = state.members.find(candidate => candidate.id === id);
+  if (!member || state.declinedIds.includes(id)) return false;
+  const hold = !!state.trust?.some(record => record.id === id && record.level !== "ok") || pendingReportHold(state.reports, id);
+  return gatheringMemberStateCurrent(member, hold);
 }
 
 export function storedInterruptionSurveyCurrent(state: NetworkState, app: string, memberId: MemberId, id: string, now: number): boolean {

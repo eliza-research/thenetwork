@@ -69,7 +69,9 @@ function parseDraft(value: unknown): GatheringInput | undefined {
   return { month: draft.month, venue: { kind: venue.kind, id: venue.id }, startsAt: draft.startsAt, endsAt: draft.endsAt, capacity: draft.capacity };
 }
 
-function gatheringInput(row: GatheringRow): GatheringInput {
+type StoredGatheringVenue = Pick<GatheringRow, "month" | "venue_kind" | "venue_ref" | "venue_name" | "starts_at" | "ends_at" | "capacity">;
+
+function gatheringInput(row: StoredGatheringVenue): GatheringInput {
   return { month: row.month, venue: { kind: row.venue_kind, id: row.venue_ref }, startsAt: row.starts_at.getTime(), endsAt: row.ends_at.getTime(), capacity: row.capacity };
 }
 
@@ -110,6 +112,11 @@ async function gatheringVenue(tx: SQL, input: GatheringInput, now: number): Prom
 function response(body: object, status = 200) {
   return Response.json(body, { status, headers: { "cache-control": "no-store" } });
 }
+
+/** The approved venue still has the exact public name and time window. */
+export async function gatheringVenueStillCurrent(tx: SQL, row: StoredGatheringVenue, now: number): Promise<boolean> {
+  return await gatheringVenue(tx, gatheringInput(row), now) === row.venue_name;
+}
 const failure = (error: string, status: number) => response({ ok: false, error }, status);
 
 async function auditGathering(tx: SQL, ctx: GatheringContext, at: number, id: string, action: "create_monthly_gathering" | "approve_monthly_gathering" | "reject_monthly_gathering", revision: number, ok: boolean) {
@@ -138,7 +145,7 @@ async function reviewGathering(tx: SQL, id: string, expectedRevision: number, de
   if (!row) return failure("not_found", 404);
   const now = ctx.now();
   const currentWindow = decision === "approve" && row.status === "draft" && row.revision === expectedRevision
-    && await gatheringVenue(tx, gatheringInput(row), now) === row.venue_name;
+    && await gatheringVenueStillCurrent(tx, row, now);
   const result = monthlyGatheringReview(phase[row.status], row.revision, expectedRevision,
     decision === "approve" ? "ApproveGathering" : "RejectGathering", currentWindow);
   const action = decision === "approve" ? "approve_monthly_gathering" : "reject_monthly_gathering";
