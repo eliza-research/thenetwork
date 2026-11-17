@@ -19,6 +19,12 @@ export const unansweredInviteWaitMs: number = exact_outreachPolicy(72 * 3600000)
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
 //@ pure
+export function unansweredInviteCountAfterInbound(count: number, inbound: boolean): number {
+  return inbound ? 0 : count;
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
 export function unansweredInviteCounts(accepted: boolean, acceptedAt: number, expired: boolean, expiredAt: number, now: number): boolean {
   return accepted && acceptedAt <= now && ((expired && acceptedAt <= expiredAt && expiredAt <= now) || exact_outreachPolicy(now - acceptedAt) >= unansweredInviteWaitMs);
 }
@@ -41,6 +47,13 @@ export function lawInvitationCountsAtWait(acceptedAt: number): boolean {
 export function lawTooFewInvitationsDoNotPause(count: number): boolean {
   //@ ensures \result === true
   return !(count < unansweredInviteLimit) || !unansweredInvitePause(count);
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
+export function lawInboundMessageEndsThePause(count: number): boolean {
+  //@ ensures \result === true
+  return !unansweredInvitePause(unansweredInviteCountAfterInbound(count, true));
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */

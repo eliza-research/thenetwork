@@ -41,6 +41,12 @@ pure def lawInvitationCountsAtWait(acceptedAt: int): bool =
 
 pure def lawTooFewInvitationsDoNotPause(count: int): bool =
   count < unansweredInviteLimit implies not(unansweredInvitePause(count))
+
+pure def unansweredInviteCountAfterInbound(count: int, inbound: bool): int =
+  if (inbound) 0 else count
+
+pure def lawInboundMessageEndsThePause(count: int): bool =
+  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, true)))
 ```
 
 ### Re-engagement requires current evidence of silence

@@ -52,6 +52,7 @@ test.skipIf(!pgAvailable)("signed participation controls commit with the reply a
 
     // Quiet hours use the member's local clock, with no write for an ambiguous range.
     expect(await (await say("friends", "Quiet hours 10 to 8")).json()).toMatchObject({ replies: [expect.stringContaining("Use whole local hours")] });
+    expect(await (await say("friends", "Quiet hours from 22:00 to 8")).json()).toMatchObject({ replies: [expect.stringContaining("Use whole local hours")] });
     expect((await member("friends")).prefs.quietHours).toEqual([21, 9]);
     const quiet = turn("friends", "Set quiet hours from 10 pm to 8 am");
     const confirmed = await (await send(quiet)).json();
@@ -75,13 +76,15 @@ test.skipIf(!pgAvailable)("signed participation controls commit with the reply a
     expect(await (await send(quiet)).json()).toEqual(confirmed);
     expect(await (await say("friends", "Resume matching")).json()).toMatchObject({ replies: [expect.stringContaining("Matching is no longer paused")] });
     expect((await member("friends")).participation_state).toBe("normal");
+    expect(await (await say("friends", "Quiet hours off")).json()).toMatchObject({ replies: ["Quiet hours are off for this app."] });
+    expect((await member("friends")).prefs.quietHours).toEqual([0, 0]);
     expect((await say("friends", "STOP")).status).toBe(200);
     expect((await send(quiet)).status).toBe(409);
     const stopped = await say("friends", "Resume matching");
     expect(stopped.status).toBe(200);
     expect(await stopped.json()).toMatchObject({ outcome: "handled", accountEligible: false, replies: [] });
     expect((await member("friends")).opted_out).toBe(true);
-    expect((await member("friends")).prefs.quietHours).toEqual([22, 8]);
+    expect((await member("friends")).prefs.quietHours).toEqual([0, 0]);
   } finally {
     await service?.close();
     await sql.close();

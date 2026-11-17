@@ -24,6 +24,7 @@
 import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
 import { unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { stricterInviteBudget } from "../../core/src/generated/participationBudgets.ts";
 import { planStandingWindowCoversSlot } from "../../core/src/generated/planFormation.ts";
 import { calendarAvailability, type CalendarAvailabilityEvidence } from "../../core/src/calendar-free-busy.ts";
 export { calendarAvailability };
@@ -115,7 +116,7 @@ export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENT
   // Minors take the stricter of the minors cap and their state's cap (a Quiet minor keeps Quiet's
   // 1 per 30 days, engine-attention-plans-5).
   const st = cfg.caps[m.state];
-  const base = isMinor(m.age) && cfg.minors.cap.limit / cfg.minors.cap.periodDays < st.limit / st.periodDays ? cfg.minors.cap : cfg.caps[m.state];
+  const base = isMinor(m.age) ? stricterInviteBudget(cfg.minors.cap, st) : st;
   if (m.state === "paused" || m.onlyWhenAsked || m.prefs.mode === "only_when_asked") return { limit: 0, periodDays: base.periodDays };
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
   const limit = m.prefs.capOverride === undefined ? base.limit : Math.min(base.limit, Math.max(0, Math.floor(m.prefs.capOverride)));

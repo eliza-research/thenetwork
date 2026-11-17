@@ -6,7 +6,7 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
-import { participationOverride, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
+import { participationOverride, participationWindowModeKnown, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
 import { staffBanSnapshotStatus } from "../../core/src/generated/staffSafetyService.ts";
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
@@ -29,7 +29,7 @@ export function effectiveParticipation(row: {participation_state: ParticipationS
   const parseBound = (v: unknown) => v === null ? null : typeof v === "string" ? Date.parse(v) : NaN;
   const from = parseBound(value?.from);
   const until = parseBound(value?.until);
-  const valid = value && ["open", "busy", "traveling", "paused"].includes(value.state as string)
+  const valid = value && typeof value.state === "string" && participationWindowModeKnown(value.state)
     && (from === null || Number.isFinite(from)) && (until === null || Number.isFinite(until))
     && (value.note === null || typeof value.note === "string")
     && validWindow(from !== null, until !== null, from ?? 0, until ?? 0);

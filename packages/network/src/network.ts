@@ -74,9 +74,10 @@ import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
-import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
+import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
+import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
 import {
   alternateAllowed, canRecordReply, groupMayRemainWithoutAlternate, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
@@ -84,7 +85,7 @@ import {
   probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
-import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import {
   interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
 } from "../../core/src/generated/interruptionFeedback.ts";
@@ -966,7 +967,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** An inbound message answers everything pending and is the only thing that resets the unanswered rules. */
   private heardFrom(m: MemberState) {
-    m.pendingAsks = []; m.unanswered = 0; m.outbound = 0; m.openAskAt = undefined; m.reengaged = false;
+    m.pendingAsks = []; m.unanswered = unansweredInviteCountAfterInbound(m.unanswered, true); m.outbound = 0; m.openAskAt = undefined; m.reengaged = false;
     if (m.onlyWhenAsked) { m.onlyWhenAsked = false; this.ctx.log("outreach_resumed", { memberId: m.id }); }
   }
 
@@ -4707,7 +4708,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // spec/capitalLevers.md, "Earned organizing reach reserves the extra slots for low exposure"
     for (const { id } of ranked) {
       if (add.length >= extra) break;
-      if (!friends || this.planFriendSeatFits(w, id, [...invited, ...add], "discovery")) add.push(id);
+      const seatFits = !friends || this.planFriendSeatFits(w, id, [...invited, ...add], "discovery");
+      if (organizingReachSeatTaken(add.length, extra, seatFits)) add.push(id);
     }
     this.plansCounters.reachExtra += add.length;
     this.ctx.log("organizing_reach", { planId: plan.id, host, max: reach.max, reserved: reach.reservedForLowExposure, added: add.length });
@@ -6640,7 +6642,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(x.contributors ? { contributors: view(x.id, x.contributors) } : {}), ...(x.noResponse ? { noResponse: view(x.id, x.noResponse) } : {}),
     }));
     for (const o of this.opps.values()) {
-      if (!o.seat || !bookedOccupies(o.meetingAt !== undefined, o.stage === "closed") || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
+      if (!o.seat) continue;
+      const hasMeeting = o.meetingAt !== undefined, closed = o.stage === "closed";
+      const hasFeedback = bookedOccupies(hasMeeting, closed) && interactions.some(x => x.id.startsWith(`${o.id}:fb:`));
+      if (!bookedNeedsSyntheticAcceptance(hasMeeting, closed, hasFeedback)) continue;
       interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt!, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
     }
     return {
@@ -6660,10 +6665,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const snap = this.snapshotCached();
     for (const seatId of new Set(open.map(o => o.seat!.id))) {
       const active = snap.intents.some(i => i.memberId === seatId && i.status === "active");
-      if (!active) { this.endSeat(seatId, "posting closed"); continue; }
-      const posted = Number(snap.facets.find(f => f.id === `${seatId}:openings`)?.tags.find(t => t.startsWith("peon:openings:"))?.slice("peon:openings:".length) ?? 0);
-      const filled = new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && bookedOccupies(o.meetingAt !== undefined, o.stage === "closed")).map(o => o.participants.find(p => p !== o.seat!.manager)));
-      if (bookedCapacityReached(posted, filled.size)) this.endSeat(seatId, "posting filled");
+      const posted = active ? Number(snap.facets.find(f => f.id === `${seatId}:openings`)?.tags.find(t => t.startsWith("peon:openings:"))?.slice("peon:openings:".length) ?? 0) : 0;
+      const filled = active ? new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && bookedOccupies(o.meetingAt !== undefined, o.stage === "closed")).map(o => o.participants.find(p => p !== o.seat!.manager))).size : 0;
+      if (closeUnbookedItems(!active, posted, filled)) this.endSeat(seatId, active ? "posting filled" : "posting closed");
     }
   }
 
