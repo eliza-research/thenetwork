@@ -11,6 +11,8 @@ import { Mini } from "./mini.ts";
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
   // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+  // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
+  // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
   const url = await migratedDb("participation_outbound");
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
@@ -108,6 +110,52 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     await rt.deliver();
     expect(await adapter.queue.statusOf(delayedReminder)).toBe("suppressed_ineligible");
     expect(calls.some(call => call.idempotencyKey === `tn:${delayedReminder}`)).toBe(false);
+
+    // The live queue suppresses a delayed check-in for a superseded schedule of the same booking.
+    clock.set(booked.meetingAt! - 3 * HOUR);
+    for (const phone of phones) await adapter.engaged(phone);
+    await adapter.queue.setLineSafety("review");
+    const pairedMembers = pair.net.exportState().members;
+    await rt.unitOfWork(async net => {
+      net.importState({ ...net.exportState(), members: pairedMembers, opps: [booked] });
+      await net.tick(clock.now());
+    });
+    const firstCheckIn = `day-of-checkin:${planId}:r0:${first}`;
+    expect(await adapter.queue.statusOf(firstCheckIn)).toBe("retry_scheduled");
+    const revised = { ...booked, scheduleRevision: 1, meetingAt: booked.meetingAt! + HOUR };
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised] }));
+    clock.advance(HOUR);
+    await adapter.queue.setLineSafety(undefined);
+    await rt.deliver();
+    expect(await adapter.queue.statusOf(firstCheckIn)).toBe("suppressed_ineligible");
+    await rt.unitOfWork(net => net.tick(clock.now()));
+    const revisedCheckIn = `day-of-checkin:${planId}:r1:${first}`;
+    expect(await adapter.queue.statusOf(revisedCheckIn)).toBe("sent");
+    await rt.deliver();
+    expect(calls.filter(call => call.idempotencyKey === `tn:${revisedCheckIn}`)).toHaveLength(1);
+    expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
+
+    for (const [suffix, text] of [["drop", "I can't make it."], ["block", "Block Blair"]] as const) {
+      const cancelledId = `${planId}-${suffix}`;
+      await adapter.engaged(phones[0]!);
+      await adapter.engaged(phones[1]!);
+      await rt.unitOfWork(async net => {
+        net.importState({ ...net.exportState(), members: pairedMembers, opps: [{ ...booked, id: cancelledId }] });
+        await net.onInbound({ id: `cancel-${suffix}`, memberId: first!, body: text, ts: clock.now(), channel: "sms" });
+        rt.unit.sends.push({ id: `stale-${suffix}`, memberId: second!, to: phones[1], kind: "transactional",
+          body: "The previous meeting reminder.", type: "reminder", oppId: cancelledId, proactive: false, system: false, ts: clock.now() });
+      });
+      const cancellation = `booked-cancellation:${cancelledId}:${second}`;
+      expect(await sql`select state from network.opportunities where id=${cancelledId}`).toEqual([{ state: "CANCELLED" }]);
+      expect((await rt.pg.load())?.opps.find(o => o.id === cancelledId)).toMatchObject({ stage: "closed", closedFrom: "scheduled", bookedTold: expect.arrayContaining([second]) });
+      expect(await adapter.queue.statusOf(cancellation), suffix).toBe("sent");
+      expect(await adapter.queue.statusOf(`stale-${suffix}`)).toBe("expired");
+      await rt.deliver();
+      const delivered = calls.filter(call => call.idempotencyKey === `tn:${cancellation}`);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]?.to).toBe(phones[1]);
+      expect(delivered[0]?.text).not.toMatch(/ari|blair|blocked|declined/i);
+    }
   } finally {
     await service.close();
     await sql.close();

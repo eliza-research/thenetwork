@@ -31,8 +31,8 @@ export type Event =
   | { type: "callAfterOwnerChange" }
   | { type: "callCheckStatus" }
   | { type: "changeMemberStatus"; newStatus: MemberStatus }
-  | { type: "startNewDay" }
   | { type: "approveProfile" }
+  | { type: "startNewDay" }
   | { type: "callSubmitProfile"; accepted: boolean }
   | { type: "callPrepareSignup"; joinAgeAllowed: boolean }
   | { type: "receiveUpdate"; forReference: boolean }
@@ -70,8 +70,21 @@ export function hostServes(surface: Surface, host: AppId): boolean {
 
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
 //@ pure
+export function configuredHostServes(surface: Surface, host: AppId, openAiEnabled: boolean): boolean {
+  return hostServes(surface, host) && (surface !== "OpenAiSurface" || openAiEnabled);
+}
+
+/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+//@ pure
 export function toolListed(host: AppId, surface: Surface, tool: ToolName): boolean {
   return hostServes(surface, host) && (tool !== "PrepareSignupTool" || host === "Friends" || host === "Ntwrk");
+}
+
+/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+//@ pure
+export function lawConfiguredOptOutBlocksOpenAiHost(host: AppId): boolean {
+  //@ ensures \result === true
+  return !configuredHostServes("OpenAiSurface", host, false);
 }
 
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
@@ -99,6 +112,19 @@ export function scopeFor(tool: ToolName): Scope {
 export function lawPublicToolsNeedNoSignIn(tool: ToolName): boolean {
   //@ ensures \result === true
   return (scopeFor(tool) === "NoScope") === (tool === "AppInfoTool" || tool === "StartSignupTool");
+}
+
+/** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
+//@ pure
+export function grantCovers(tool: ToolName, hasRead: boolean, hasWrite: boolean): boolean {
+  return scopeFor(tool) === "NoScope" || (scopeFor(tool) === "MembershipRead" && hasRead) || (scopeFor(tool) === "ProfileWrite" && hasWrite);
+}
+
+/** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
+//@ pure
+export function lawGrantCoversPublicTools(tool: ToolName, hasRead: boolean, hasWrite: boolean): boolean {
+  //@ ensures \result === true
+  return !(scopeFor(tool) === "NoScope") || grantCovers(tool, hasRead, hasWrite);
 }
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -339,6 +365,41 @@ export function canChangeMemberStatus(c: Connection, newStatus: MemberStatus): b
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
+export function profileLimitReached(sentToday: number): boolean {
+  return sentToday >= profileDailyCap;
+}
+
+/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function canApproveProfile(c: Connection): boolean {
+  return !c.profileApproved || c.profileSent;
+}
+
+/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function approveProfile(c: Connection): Connection {
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepNothingSentAtTheLimit(c, "approveProfile", \result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "approveProfile", \result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepReadingNeverAddsUnseen(c, "approveProfile", \result)
+  return { ...c, profileApproved: true, profileSent: false };
+}
+
+/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function canCallSubmitProfile(c: Connection): boolean {
+  return c.phase === "Connected" && c.hasWrite && c.profileApproved && !c.profileSent;
+}
+
+/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
+//@ pure
 export function canStartNewDay(c: Connection): boolean {
   return c.sentToday > 0;
 }
@@ -380,35 +441,6 @@ export function stepNothingSentAtTheLimit(before: Connection, via: string, after
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
-export function canApproveProfile(c: Connection): boolean {
-  return !c.profileApproved || c.profileSent;
-}
-
-/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
-//@ pure
-export function approveProfile(c: Connection): Connection {
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysSentProfileWasApproved(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysShownCountIsSmall(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepNothingSentAtTheLimit(c, "approveProfile", \result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "approveProfile", \result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepReadingNeverAddsUnseen(c, "approveProfile", \result)
-  return { ...c, profileApproved: true, profileSent: false };
-}
-
-/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
-//@ pure
-export function canCallSubmitProfile(c: Connection): boolean {
-  return c.phase === "Connected" && c.hasWrite && c.profileApproved && !c.profileSent;
-}
-
-/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
-//@ pure
 export function callSubmitProfile(c: Connection, accepted: boolean): Connection {
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
@@ -421,7 +453,7 @@ export function callSubmitProfile(c: Connection, accepted: boolean): Connection 
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepNothingSentAtTheLimit(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepReadingNeverAddsUnseen(c, "callSubmitProfile", \result)
-  return c.sentToday >= profileDailyCap ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (liveMember(c.status) && accepted ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), profileSent: true, lastResult: "ProfileAccepted" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "ProfileNotForStatus" } as Connection));
+  return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (liveMember(c.status) && accepted ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), profileSent: true, lastResult: "ProfileAccepted" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "ProfileNotForStatus" } as Connection));
 }
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
@@ -456,7 +488,7 @@ export function callPrepareSignup(c: Connection, joinAgeAllowed: boolean): Conne
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepNothingSentAtTheLimit(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepSubmitOnlyForLiveMember(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepReadingNeverAddsUnseen(c, "callPrepareSignup", \result)
-  return c.sentToday >= profileDailyCap ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (joinAgeAllowed && toolAllowedFor("PrepareSignupTool", c.status) && !c.draftPrepared ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), draftPrepared: true, lastResult: "DraftSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "DraftRefused" } as Connection));
+  return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (joinAgeAllowed && toolAllowedFor("PrepareSignupTool", c.status) && !c.draftPrepared ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), draftPrepared: true, lastResult: "DraftSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "DraftRefused" } as Connection));
 }
 
 /** Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen (spec/connectorTools.md) */
@@ -616,8 +648,8 @@ export function enabled(current: Connection, event: Event): boolean {
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current);
   if (event.type === "callCheckStatus") return canCallCheckStatus(current);
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus);
-  if (event.type === "startNewDay") return canStartNewDay(current);
   if (event.type === "approveProfile") return canApproveProfile(current);
+  if (event.type === "startNewDay") return canStartNewDay(current);
   if (event.type === "callSubmitProfile") return canCallSubmitProfile(current);
   if (event.type === "callPrepareSignup") return canCallPrepareSignup(current);
   if (event.type === "receiveUpdate") return canReceiveUpdate(current);
@@ -637,8 +669,8 @@ export function step(current: Connection, event: Event): Connection {
   if (event.type === "callAfterOwnerChange" && canCallAfterOwnerChange(current)) return callAfterOwnerChange(current);
   if (event.type === "callCheckStatus" && canCallCheckStatus(current)) return callCheckStatus(current);
   if (event.type === "changeMemberStatus" && canChangeMemberStatus(current, event.newStatus)) return changeMemberStatus(current, event.newStatus);
-  if (event.type === "startNewDay" && canStartNewDay(current)) return startNewDay(current);
   if (event.type === "approveProfile" && canApproveProfile(current)) return approveProfile(current);
+  if (event.type === "startNewDay" && canStartNewDay(current)) return startNewDay(current);
   if (event.type === "callSubmitProfile" && canCallSubmitProfile(current)) return callSubmitProfile(current, event.accepted);
   if (event.type === "callPrepareSignup" && canCallPrepareSignup(current)) return callPrepareSignup(current, event.joinAgeAllowed);
   if (event.type === "receiveUpdate" && canReceiveUpdate(current)) return receiveUpdate(current, event.forReference);
@@ -667,8 +699,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };
   if (raw.type === "changeMemberStatus" && (raw.newStatus === "NotJoined" || raw.newStatus === "Invited" || raw.newStatus === "Onboarding" || raw.newStatus === "Active" || raw.newStatus === "Stopped" || raw.newStatus === "OnHold")) return { type: "changeMemberStatus", newStatus: raw.newStatus };
-  if (raw.type === "startNewDay") return { type: "startNewDay" };
   if (raw.type === "approveProfile") return { type: "approveProfile" };
+  if (raw.type === "startNewDay") return { type: "startNewDay" };
   if (raw.type === "callSubmitProfile" && typeof raw.accepted === "boolean") return { type: "callSubmitProfile", accepted: raw.accepted };
   if (raw.type === "callPrepareSignup" && typeof raw.joinAgeAllowed === "boolean") return { type: "callPrepareSignup", joinAgeAllowed: raw.joinAgeAllowed };
   if (raw.type === "receiveUpdate" && typeof raw.forReference === "boolean") return { type: "receiveUpdate", forReference: raw.forReference };

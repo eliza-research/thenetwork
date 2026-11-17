@@ -8,7 +8,7 @@ The [queue model](models/outbound_queue.md) includes workers, leases, retry and 
 
 ### A current row needs live approval and the recipient's eligibility
 
-A stale or expired row ends first. The exact neutral release notice to a member who accepted a now-closed opportunity remains deliverable through the ordinary cancellation checks. Every message needs live approval. Except for compliance messages, a current opt-out or recipient restriction stops the row.
+A stale or expired row ends first. An exact neutral outcome notice for an accepting member may still pass admission after its opportunity closes. Every message needs live approval. Except for compliance messages, a current opt-out or recipient restriction stops the row.
 
 ```quint
 type Admission = Proceed | Expired | ApprovalMissing | OptedOut | RecipientIneligible | ReplyTooOld |
@@ -16,7 +16,7 @@ type Admission = Proceed | Expired | ApprovalMissing | OptedOut | RecipientIneli
   PersonCap | LeakReview | Admit
 
 pure def duePolicy(stale: bool): Admission = if (stale) Expired else Proceed
-pure def closedOpportunityRowStale(closed: bool, acceptanceRelease: bool): bool = closed and not(acceptanceRelease)
+pure def closedOpportunityRowStale(closed: bool, terminalNotice: bool): bool = closed and not(terminalNotice)
 pure def livePolicy(live: bool): Admission = if (live) Proceed else ApprovalMissing
 pure def consentPolicy(compliance: bool, optedOut: bool): Admission =
   if (not(compliance) and optedOut) OptedOut else Proceed
@@ -25,6 +25,20 @@ pure def recipientPolicy(compliance: bool, eligible: bool): Admission =
 
 pure def lawOptedOutOnlyGetsCompliance(compliance: bool): bool =
   consentPolicy(compliance, true) == Proceed implies compliance
+```
+
+### A cancelled booking can notify a participant who received the booked plan
+
+Give a terminal booking cancellation one ID per opportunity and recipient. Before delivery, verify the exact stored cancellation, a cancelled booked plan, and an accepted seat that received its booking. A cancellation must arrive before the original meeting start. The text does not identify other participants or the reason. Verify consent, quiet hours, and text safety as for other cancellation messages.
+
+```quint
+pure val bookedCancellationPrefix = "booked-cancellation:"
+
+pure def bookedCancellationAllowed(cancelled: bool, acceptedSeat: bool, told: bool, remainingMs: int): bool =
+  cancelled and acceptedSeat and told and remainingMs > 0
+
+pure def lawBookedCancellationNeedsPriorBooking(cancelled: bool, acceptedSeat: bool, told: bool, remainingMs: int): bool =
+  bookedCancellationAllowed(cancelled, acceptedSeat, told, remainingMs) implies (cancelled and acceptedSeat and told)
 ```
 
 ### A queued match invitation still needs the member's current settings

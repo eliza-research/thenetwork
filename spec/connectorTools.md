@@ -2,6 +2,13 @@
 
 Each app site has its own MCP connector. A connection covers that one app (the host). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
 
+The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and each bound connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
+
+- The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
+- The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval, and it does not keep the profiles that it sent. Thus the shell makes each connection with an approved profile that is not sent yet, and the agent does not send the same profile again.
+- The day. The store counts the profile and draft calls of one grant in a fixed window of 24 hours. The count of the earlier calls in the window is `sentToday`. A new window starts the count at zero, which is `startNewDay`. The store also counts a call that the limit refuses, but that call is in a window that is already at the limit, so the limit does not change.
+- The member status, the owner change and the updates. The platform reads the status on each call (`changeMemberStatus`). The tools end a grant whose phone has a new owner (`callAfterOwnerChange`). The platform inbox keeps the unseen updates, reads them and marks them seen (`receiveUpdate`, `readUpdates`, `callGetUpdates`).
+
 ## Story: Use my app's connector from my agent
 
 > As a person who connected my agent to an app, I want the agent to see only the tools that fit my app and my status, so that it can check my status, send my approved profile once and read my own updates without seeing my phone number or code.
@@ -9,6 +16,8 @@ Each app site has its own MCP connector. A connection covers that one app (the h
 ### Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date
 
 There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
+
+The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. The full surface applies the ordinary host rule.
 
 ```quint
 type AppId = Ntwrk | Slop | Peon | Friends
@@ -18,6 +27,12 @@ type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusT
 pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
 
 pure def hostServes(surface: Surface, host: AppId): bool = appOffered(surface, host)
+
+pure def configuredHostServes(surface: Surface, host: AppId, openAiEnabled: bool): bool =
+  hostServes(surface, host) and (surface != OpenAiSurface or openAiEnabled)
+
+pure def lawConfiguredOptOutBlocksOpenAiHost(host: AppId): bool =
+  not(configuredHostServes(OpenAiSurface, host, false))
 
 pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
   hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk)
@@ -33,7 +48,7 @@ pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
 
 ### Public tools need no sign-in, and member tools need the person's own grant
 
-`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
 
 ```quint
 type Scope = NoScope | MembershipRead | ProfileWrite
@@ -45,6 +60,13 @@ pure def scopeFor(tool: ToolName): Scope =
 
 pure def lawPublicToolsNeedNoSignIn(tool: ToolName): bool =
   (scopeFor(tool) == NoScope) iff (tool == AppInfoTool or tool == StartSignupTool)
+
+pure def grantCovers(tool: ToolName, hasRead: bool, hasWrite: bool): bool =
+  scopeFor(tool) == NoScope or (scopeFor(tool) == MembershipRead and hasRead) or
+  (scopeFor(tool) == ProfileWrite and hasWrite)
+
+pure def lawGrantCoversPublicTools(tool: ToolName, hasRead: bool, hasWrite: bool): bool =
+  scopeFor(tool) == NoScope implies grantCovers(tool, hasRead, hasWrite)
 ```
 
 ### The member status decides which member tool can act
@@ -186,12 +208,14 @@ pure def changeMemberStatus(c: Connection, newStatus: MemberStatus): Connection 
 
 ### The agent sends an approved profile once, only for a live member, within the daily limit
 
-The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once; the agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
+The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once; the agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
 
 ```quint
 pure val profileDailyCap = 5
 pure val weight_callSubmitProfile = 20
 pure val weight_approveProfile = 10
+
+pure def profileLimitReached(sentToday: int): bool = sentToday >= profileDailyCap
 
 pure def canApproveProfile(c: Connection): bool = not(c.profileApproved) or c.profileSent
 
@@ -201,7 +225,7 @@ pure def canCallSubmitProfile(c: Connection): bool =
   c.phase == Connected and c.hasWrite and c.profileApproved and not(c.profileSent)
 
 pure def callSubmitProfile(c: Connection, accepted: bool): Connection =
-  if (c.sentToday >= profileDailyCap) { ...c, lastResult: TooManyToday }
+  if (profileLimitReached(c.sentToday)) { ...c, lastResult: TooManyToday }
   else if (liveMember(c.status) and accepted)
     { ...c, sentToday: c.sentToday + 1, profileSent: true, lastResult: ProfileAccepted }
   else { ...c, sentToday: c.sentToday + 1, lastResult: ProfileNotForStatus }
@@ -234,7 +258,7 @@ pure def canCallPrepareSignup(c: Connection): bool =
   c.phase == Connected and c.hasWrite and (c.host == Friends or c.host == Ntwrk)
 
 pure def callPrepareSignup(c: Connection, joinAgeAllowed: bool): Connection =
-  if (c.sentToday >= profileDailyCap) { ...c, lastResult: TooManyToday }
+  if (profileLimitReached(c.sentToday)) { ...c, lastResult: TooManyToday }
   else if (joinAgeAllowed and toolAllowedFor(PrepareSignupTool, c.status) and not(c.draftPrepared))
     { ...c, sentToday: c.sentToday + 1, draftPrepared: true, lastResult: DraftSaved }
   else { ...c, sentToday: c.sentToday + 1, lastResult: DraftRefused }

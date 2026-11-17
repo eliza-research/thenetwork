@@ -59,6 +59,32 @@ pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, ac
   bookedReplyCurrent(proposal, accepted) implies (proposal.phase == Scheduled and accepted)
 ```
 
+### An explicit cancellation without a reply slot selects one upcoming meeting
+
+Read the member's own explicit cancellation in the current app. When no booked reply slot applies, consider only accepted bookings on the member's current roster with a known start later than now. A request can name the exact date and time in New York local time. If it does, consider only bookings with that local start. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. Keep the normal routing for an active booked reply slot and for a probe answer.
+
+```quint
+type UnlinkedCancellation = NoCancellation | NoMatchingBooking | AskWhichBooking | CancelMatchingBooking
+
+pure def upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: bool, accepted: bool,
+    startKnown: bool, startAt: int, now: int): bool =
+  onRoster and bookedReplyCurrent(proposal, accepted) and startKnown and startAt > now
+
+pure def unlinkedCancellation(ownText: bool, explicit: bool, activeBookedSlot: bool, matching: int): UnlinkedCancellation =
+  if (not(ownText) or not(explicit) or activeBookedSlot) NoCancellation
+  else if (matching == 1) CancelMatchingBooking
+  else if (matching > 1) AskWhichBooking
+  else NoMatchingBooking
+
+pure def lawUnlinkedCancellationNeedsOneMatch(ownText: bool, explicit: bool, activeBookedSlot: bool, matching: int): bool =
+  unlinkedCancellation(ownText, explicit, activeBookedSlot, matching) == CancelMatchingBooking
+    implies (ownText and explicit and not(activeBookedSlot) and matching == 1)
+
+pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRoster: bool, accepted: bool,
+    startKnown: bool, startAt: int, now: int): bool =
+  startAt <= now implies not(upcomingCancellationEligible(proposal, onRoster, accepted, startKnown, startAt, now))
+```
+
 ### A new minor signal closes an unbooked opportunity involving that person
 
 Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster.

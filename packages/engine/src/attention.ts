@@ -24,6 +24,8 @@
 import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
 import { unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { calendarAvailability, type CalendarAvailabilityEvidence } from "../../core/src/calendar-free-busy.ts";
+export { calendarAvailability };
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
@@ -985,8 +987,8 @@ export interface StandingAvailability extends WeeklyWindow {
 export interface AvailabilityEvidence {
   memberId: MemberId; tz: string;
   quietHours?: [number, number];
-  /** Connected calendar, free/busy only (4c): busy blocks, never titles. Absent = not connected. */
-  calendar?: { busy: TimeSlot[] };
+  /** The current purpose-authorized free/busy observation. Coverage and freshness are checked per slot. */
+  calendar?: CalendarAvailabilityEvidence;
   standing?: StandingAvailability[];
   /** Times the member accepted (picked) or attended, and times they turned down as "can't then" (4e). */
   history?: { at: number; outcome: "accepted" | "attended" | "declined_time" }[];
@@ -1003,6 +1005,8 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   const weekend = cfg.sendTime.weekendDays.includes(day);
   if (ev.quietHours && withinQuietHours(lp.hour, ...ev.quietHours)) return 0;
   if (ev.away?.some(a => a.start < slot.end && a.end > slot.start)) return 0;
+  const calendar = calendarAvailability(ev.calendar, slot, now);
+  if (calendar === "busy") return 0;
   const part = daypart(lp.hour);
   let p = weekend ? (part === "day" ? A.prior.weekendDay : A.prior.weekendEvening) : (part === "day" ? A.prior.weekdayDay : A.prior.weekdayEvening);
   // (b) standing availability: a decaying prior.
@@ -1027,11 +1031,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   }
   if (pos > 0) p += Math.min(A.learned.maxWeight, pos / (pos + A.learned.k)) * (A.learned.target - p);
   if (neg > 0) p *= 1 - A.learned.declinePenalty * (neg / (neg + A.learned.k));
-  // (c) calendar free/busy: a hard-ish filter.
-  if (ev.calendar) {
-    if (ev.calendar.busy.some(b => b.start < slot.end && b.end > slot.start)) p *= A.calendar.busyFactor;
-    else p += A.calendar.freeWeight * (A.calendar.freeTarget - p);
-  }
+  if (calendar === "free") p += A.calendar.freeWeight * (A.calendar.freeTarget - p);
   return Math.max(0, Math.min(1, p));
 }
 
@@ -1071,11 +1071,14 @@ export function chooseTimeOptions(members: readonly AvailabilityEvidence[], now:
     for (const m of members) { const p = availabilityProb(m, slot, now, cfg); each[m.memberId] = p; joint *= p; }
     return { slot, joint, each };
   };
+  const calendarAllows = (slot: TimeSlot) => members.every(m => calendarAvailability(m.calendar, slot, now) !== "busy");
   if (o.fixed && o.window) {
-    const one = score({ start: o.window.start, end: Math.max(o.window.end, o.window.start + A.slotHours * HOUR) });
+    const slot = { start: o.window.start, end: Math.max(o.window.end, o.window.start + A.slotHours * HOUR) };
+    if (!calendarAllows(slot)) return { slots: [], pAny: 0 };
+    const one = score(slot);
     return { slots: [one], pAny: one.joint };
   }
-  const cands = (o.candidates ?? candidateSlots(o.tz, now, { window: o.window }, cfg)).map(score)
+  const cands = (o.candidates ?? candidateSlots(o.tz, now, { window: o.window }, cfg)).filter(calendarAllows).map(score)
     .filter(c => c.joint >= A.minJoint).sort((a, b) => (b.joint - a.joint) || (a.slot.start - b.slot.start));
   const chosen: TimeOptions["slots"] = [];
   const dayOf = (t: number) => { const p = localParts(t, o.tz); return `${p.year}-${p.month}-${p.day}`; };

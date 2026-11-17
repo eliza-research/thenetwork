@@ -86,7 +86,7 @@ pure def lawUnusualMemberInviteRequiresReview(weak: bool, burst: bool, riskLangu
 
 ### The link goes to the inviter as a reply
 
-Show the link only to the member who requested it. The member can forward it themselves. The invitee receives no message from this operation. A flagged request waits for staff before it returns a link. Grant an exception to the contact-link check only for the exact, app-owned link provided by the trusted issuer, once in that reply. Keep the bearer out of matching state and internal message logs. The signed delivery record keeps the exact private reply for replay while the invitation is current.
+Show the link only to the member who requested it. The member can forward it themselves. The invitee receives no message from this operation. A flagged request waits for staff before it returns a link. The pending reply can show its exact server-generated review reference once. Contact checks can omit only that staged reference or the exact app-owned link from that direct reply. Keep the bearer out of matching state and internal message logs. The signed delivery record keeps the exact private reply for replay while the invitation is current. A pending reply also requires that the referenced request still be pending for its owner and app.
 
 ```quint
 pure def memberInviteLinkCanBeShared(directMemberReply: bool, issuedLink: bool, appOwnedLink: bool, presentOnce: bool): bool =

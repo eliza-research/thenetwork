@@ -26,7 +26,7 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "probe_started", "probe_sent", "probe_answer", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
   "request", "request_result", "request_withdrawn_want", "trust", "abuse", "safety_action", "guard_blocked", "send_refused", "send_skipped",
   "age_unknown", "age_resolved", "age_conflict", "minor_signal", "join_declined", "invite", "growth_ask", "reengagement",
-  "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered", "empty_intent_followup",
+  "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered", "empty_intent_followup", "interruption_feedback",
   // The send path and the booked plan (attention v1.2, network.md 4 and 6.4): what waited and why, what
   // the engine proposed and the gates stopped, the times offered and picked, cancellations, and the
   // availability opt-ins. Codes, keys and tags only, never the member's words.

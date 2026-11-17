@@ -241,7 +241,7 @@ export interface PlannerInput {
   hints?: ReadonlyMap<MemberId, string[]>;
 }
 
-const openAt = (v: Venue, slot: TimeSlot, durMin: number, tz: string, att: AttentionConfig) => {
+export const venueOpenForSlot = (v: Venue, slot: TimeSlot, durMin: number, tz: string, att: AttentionConfig = DEFAULT_ATTENTION) => {
   const lp = localParts(slot.start, tz);
   const [o, c] = att.sendTime.weekendDays.includes((lp.weekday + 1) % 7) ? v.hours.weekend : v.hours.weekday;
   const end = lp.hour + lp.minute / 60 + durMin / 60;
@@ -326,7 +326,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       if (wh.event) place = { name: wh.event.listing?.venue ?? wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
         const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id), v.capacity === undefined ? Infinity : v.capacity)
-          && openAt(v, wh.slot, a.durationMin, tz, att));
+          && venueOpenForSlot(v, wh.slot, a.durationMin, tz, att));
         if (!vs.length) continue;
         const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
         const groupFits = (v: Venue) => venueCanHoldGroup(v.capacity ?? Infinity, pool.filter(id => ageOk(id, v.ageMin)).length, minG);

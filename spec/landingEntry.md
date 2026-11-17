@@ -123,7 +123,7 @@ pure def sometimesSelectedForHandCopy(s: Landing): bool = s.copy == CopySelected
 
 ### The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link
 
-The row shows logos only. The hover label is the name of the agent. The accessible name tells what the tile does: "Open in <name>" for a tile with a link, and "Copy the prompt for <name>" for a copy-only tile. A tile that opens with the prompt fills the prompt in the agent. A tile that opens for paste opens the agent, but the person pastes the prompt. A tile that opens an installed app uses the app's own link, and nothing opens when the app is not installed. A copy-only tile has no link: it copies the prompt and tells the person where to paste it. In a link, `{q}` is the encoded prompt and `{skill}` is the encoded skill URL.
+The row shows logos only. The hover label is the name of the agent. The accessible name tells what the tile does: "Open in <name>" for a tile with a link, and "Copy the prompt for <name>" for a copy-only tile. A tile that opens with the prompt fills the prompt in the agent. A tile that opens for paste opens the agent, but the person pastes the prompt. A tile that opens an installed app uses the app's own link, and nothing opens when the app is not installed. A copy-only tile has no link: it copies the prompt and tells the person where to paste it. In a link, `{q}` is the encoded prompt and `{skill}` is the encoded skill URL. The row has no Codex tile. A person who uses Codex gets the app skills through the OpenAI plugin ([agent entry](./agentEntry.md)), or copies the prompt into Codex.
 
 ```quint
 type TileKind = OpensWithPrompt | OpensForPaste | OpensInstalledApp | CopyOnly

@@ -142,7 +142,7 @@ jobs:
       - name: Component stories (ui:test)
         run: pnpm run ui:test
         timeout-minutes: 10
-      - name: ESLint for packages/ui and apps (lint:ui)
+      - name: ESLint for packages/ui, apps and the console and connector pages (lint:ui)
         run: pnpm run lint:ui
 
   integration:

@@ -11,11 +11,12 @@ import {
   KpiGrid as KpiGridView, MemberLink as MemberLinkView, MeterBars, OpportunityLink, Popover, PopoverContent, PopoverTrigger, RevealControl, StatusMark, StatusRow,
   type KpiTone, type StatusTone,
 } from "@thenetwork/ui";
+import { peonBrand, slopBrand } from "../../core/src/generated/brandIdentity.ts";
 import { canTogglePick, type Subject } from "../../core/src/generated/consoleNavigation.ts";
 import { initial as initialDetail, staffPhotoAllowed, staffPhotoReasonReady, staffPhotoView, step as stepDetail } from "../../core/src/generated/consoleMemberView.ts";
 import {
-  canSendWorldEvent, canSubmitReveal, canStartReveal, initial as initialWorkspace, panelView, receiveViewer, revealOffered,
-  step as stepWorkspace, worldMenuShown, type Event as WorkspaceEvent, type PanelAnswer, type PanelView, type RevealForm, type WorkMode, type WorkPanel,
+  canCloseWorldMenu, canOpenWorldMenu, canSendWorldEvent, canSubmitReveal, canStartReveal, closeWorldMenu, initial as initialWorkspace, openWorldMenu, panelView,
+  receiveViewer, revealOffered, sendWorldEvent, step as stepWorkspace, worldMenuShown, type Event as WorkspaceEvent, type PanelAnswer, type PanelView, type RevealForm, type WorkMode, type WorkPanel,
   type Workspace, type WorldEvent,
 } from "../../core/src/generated/consoleWorkspace.ts";
 import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
@@ -459,13 +460,17 @@ function WorldMenu({ id }: { id: string }) {
   const open = s.ui.popover === key;
   const w: Workspace = { ...staff, worldMenuOpen: open };
   if (!worldMenuShown(w.staff)) return null;
+  const keep = (next: Workspace) => store.setUI({ popover: next.worldMenuOpen ? key : null });
   const act = (event: WorldEvent, action: "go_silent" | "force_flake" | "opt_out") => {
     if (!canSendWorldEvent(w, event)) return;
     store.control({ type: "god", action, memberId: id });
-    store.setUI({ popover: null });
+    keep(sendWorldEvent(w, event));
+  };
+  const toggle = (wantOpen: boolean) => {
+    if (wantOpen ? canOpenWorldMenu(w) : canCloseWorldMenu(w)) keep(wantOpen ? openWorldMenu(w) : closeWorldMenu(w));
   };
   return (
-    <Popover open={open} onOpenChange={o => store.setUI({ popover: o ? key : null })}>
+    <Popover open={open} onOpenChange={toggle}>
       <PopoverTrigger asChild><Button variant="outline" size="sm">World ▾</Button></PopoverTrigger>
       <PopoverContent align="start" aria-label="World" className="w-auto gap-1 p-1">
         {WORLD_EVENTS.map(x => <Button key={x.event} variant="ghost" size="sm" className="justify-start" onClick={() => act(x.event, x.action)}>{x.label}</Button>)}
@@ -731,16 +736,28 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
   );
 }
 
-/** The app's own panel: slop (dating preferences behind a reveal, the photo rule) or peon (roles, applications). */
+/** The member panel of one app: the summary line of its disclosure and its body. */
+interface AppSectionView { summary: (p: SlopProfile360 | PeonProfile360) => string; body: (id: string, p: SlopProfile360 | PeonProfile360) => ReactNode }
+
+/** The apps that have their own member panel, keyed by the app id of their brand record. An app without a row has no panel. */
+const APP_SECTIONS: Record<string, AppSectionView> = {
+  [slopBrand.keyword]: { summary: () => `Dating (${slopBrand.keyword})`, body: (id, p) => <SlopPanel id={id} p={p as SlopProfile360} /> },
+  [peonBrand.keyword]: {
+    summary: p => `Hiring (${peonBrand.keyword}) · ${(p as PeonProfile360).applications.length} introductions`,
+    body: (_id, p) => <PeonPanel p={p as PeonProfile360} />,
+  },
+};
+
+/** The app's own panel from `APP_SECTIONS`: slop (dating preferences behind a reveal, the photo rule) or peon (roles, applications). */
 function AppSection({ id }: { id: string }) {
   const s = useStore();
-  const has = s.app === "slop" || s.app === "peon";
+  const has = Object.hasOwn(APP_SECTIONS, s.app);
   const r = useLive<AppProfile360>(() => (has ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })), memberKey(id), () => detailScope(id, store.revealFor(id)?.until));
   const p = r?.data;
   if (!has || !p || "none" in p) return null;
-  return p.app === "slop"
-    ? <Disclosure name="app-slop" summary="Dating (slop)"><SlopPanel id={id} p={p} /></Disclosure>
-    : <Disclosure name="app-peon" summary={`Hiring (peon) · ${(p as PeonProfile360).applications.length} introductions`}><PeonPanel p={p as PeonProfile360} /></Disclosure>;
+  const section = Object.hasOwn(APP_SECTIONS, p.app) ? APP_SECTIONS[p.app] : undefined;
+  if (!section) return null;
+  return <Disclosure name={`app-${p.app}`} summary={section.summary(p)}>{section.body(id, p)}</Disclosure>;
 }
 
 const PHOTO_TEXT: Record<SlopProfile360["photos"], string> = {

@@ -90,6 +90,8 @@ export type Event =
   | { type: "endReveal" }
   | { type: "expireReveal" };
 
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
+export const minProposalPicks: number = 2;
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export const minReasonChars: number = 5;
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
@@ -1094,14 +1096,40 @@ export function sometimesAuditShown(w: Workspace): boolean {
 
 /** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
+export function proposalFormShown(pickCount: number): boolean {
+  return pickCount >= minProposalPicks;
+}
+
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
+//@ pure
+export function groupProposal(pickCount: number): boolean {
+  return pickCount > minProposalPicks;
+}
+
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
+//@ pure
 export function proposeAllowed(pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): boolean {
-  return pickCount >= 2 && pickCount <= 6 && !minorPicked && sparksLeft > 0 && !gameOver;
+  return proposalFormShown(pickCount) && pickCount <= 6 && !minorPicked && sparksLeft > 0 && !gameOver;
+}
+
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
+//@ pure
+export function lawAGroupShowsTheForm(pickCount: number): boolean {
+  //@ ensures \result === true
+  return !groupProposal(pickCount) || proposalFormShown(pickCount);
 }
 
 /** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function trayShown(staff: StaffView, pickCount: number): boolean {
   return staff.mode === "SimulatedWorld" && staff.simRole && pickCount > 0;
+}
+
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
+//@ pure
+export function lawProposalNeedsTheForm(pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): boolean {
+  //@ ensures \result === true
+  return !proposeAllowed(pickCount, minorPicked, sparksLeft, gameOver) || proposalFormShown(pickCount);
 }
 
 /** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */

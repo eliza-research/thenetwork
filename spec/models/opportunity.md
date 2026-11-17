@@ -12,6 +12,8 @@ Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md
 
 The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers the pair path. Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
 
+The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
+
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -1108,9 +1110,9 @@ module opportunity {
   // decline, but close() records "declined" only for reason "declined".
   val declineRecorded = OPPS.forall(o => op(s, o).outcomeRec == "expired" implies op(s, o).saidNo == Set())
 
-  // SD-259 (skipped: reschedule and a cancel outside the booked slot are a new flow and need a founder or
-  // maintainer decision on wording and window). The booked text says "Reply if your plans change"; after
-  // the 48-hour slot a plain "no" is not read as a cancel.
+  // SD-259. A plain "no" after the 48-hour booked slot carries no cancellation authority. The explicit
+  // fallback in spec/opportunityLifecycle.md selects a unique upcoming booking in the member's app.
+  // The exact local-time qualifier and multiple-booking selection are outside this pair model.
   val bookedNoHonored = OPPS.forall(o => {
     val x = op(s, o)
     x.stage == "scheduled" implies x.cancelAsked.forall(m => x.status.get(m) != "yes")
@@ -1279,7 +1281,7 @@ module opportunity {
       .then(answer("b", "fb_self_noshow", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").noShowCount.get("b") == 1 and op(s, "o1").feedbackFrom.contains("b") and noShowOnce and safety)
 
-  // SD-259 (skipped): the booked slot ends after 48 hours; a plain "no, sorry" to the booked plan is then ignored.
+  // SD-259. After the 48-hour booked slot, a plain "no, sorry" leaves the plan as it was.
   run lateNoTest =
     bookO1(72).then(tick(49, ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.kind == "none")

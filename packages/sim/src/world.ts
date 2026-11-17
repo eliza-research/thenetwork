@@ -209,6 +209,10 @@ export class World {
   }
 
   private scheduleMeeting(m: MeetingReport): string {
+    if (m.previousAt !== undefined) {
+      const old = [...this.meetings.values()].find(x => x.proposalId === m.proposalId && x.at === m.previousAt);
+      if (old) this.meetings.delete(old.id);
+    }
     // Re-reporting a proposal's meeting (e.g. a late joiner) updates it in place.
     const existing = [...this.meetings.values()].find(x => x.proposalId === m.proposalId && x.at === m.at);
     if (existing) {
@@ -469,7 +473,8 @@ export class World {
   }
 
   private onMeeting(meetingId: string) {
-    const m = this.meetings.get(meetingId)!;
+    const m = this.meetings.get(meetingId);
+    if (!m) return;
     const prop = this.proposals.get(m.proposalId);
     const attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> = {};
     const showed: MemberId[] = [];

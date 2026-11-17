@@ -1,6 +1,7 @@
 // MCP over Streamable HTTP: 2026-07-28 (per-request _meta and headers) and the legacy initialize
 // handshake, the OpenAI surface that hides slop, and tool inputs that never take a phone or a code.
 import { describe, expect, test } from "vitest";
+import { defaultApps } from "../src/apps.ts";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
 const NTWRK = `${origin("ntwrk.party")}/mcp`;
@@ -117,6 +118,17 @@ describe("Streamable HTTP, 2026-07-28", () => {
 });
 
 describe("surface=openai hides slop", () => {
+  test("the OpenAI surface respects an app's registry opt-out on both connector paths", async () => {
+    // spec/connectorTools.md, "A connection binds to one host on one surface"
+    const apps = defaultApps();
+    apps.friends.openai = false;
+    const host = origin("friends.help");
+    const openAi = setup({ apps, surface: "openai" });
+    expect((await rpc(openAi, `${host}/mcp/openai`, "tools/list")).res.status).toBe(404);
+    expect((await rpc(openAi, `${host}/mcp`, "tools/list")).res.status).toBe(404);
+    expect((await rpc(setup({ apps }), `${host}/mcp`, "tools/list")).res.status).toBe(200);
+  });
+
   test("no slop in tools/list, app_info or start_signup; slop.date has no OpenAI endpoint", async () => {
     const env = setup();
     const l = await rpc(env, OPENAI, "tools/list");

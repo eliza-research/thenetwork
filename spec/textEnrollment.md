@@ -8,18 +8,18 @@ The service parses the sender's text, reads the app and pending records and appl
 
 ### Dedicated lines and explicit app choices take priority
 
-An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read for an app takes priority over an app keyword. Otherwise inspect pending join and current memberships.
+An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read or invitation feedback reply for an app takes priority over an app keyword. Otherwise inspect pending join and current memberships.
 
 ```quint
 type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ExplicitRoute | PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
 type TextRoute = { phase: RoutePhase }
-type ExplicitFacts = { dedicated: bool, profileApp: bool, appKeyword: bool }
+type ExplicitFacts = { dedicated: bool, profileApp: bool, surveyApp: bool, appKeyword: bool }
 pure val initialRoute: TextRoute = { phase: AwaitingExplicitRoute }
 
 pure def checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute =
   if (routing.phase != AwaitingExplicitRoute) routing
   else if (explicitFacts.dedicated) { phase: DedicatedRoute }
-  else if (explicitFacts.profileApp or explicitFacts.appKeyword) { phase: ExplicitRoute }
+  else if (explicitFacts.profileApp or explicitFacts.surveyApp or explicitFacts.appKeyword) { phase: ExplicitRoute }
   else { phase: AwaitingFallbackRoute }
 ```
 

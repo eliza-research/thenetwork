@@ -106,6 +106,10 @@ test.each([
     expect(w.net.review(id, "approve")).toBe(true);
     await w.answerProbes(pair);
     expect(w.meetings).toHaveLength(meetings + 1);
+    const booked = w.mark();
+    expect(await w.runUntil(() => pair.every(member => w.to(member, booked).some(message =>
+      message.meta.proposalId === id && message.meta.type === "reminder")), 7 * DAY)).toBe(true);
+    for (const member of pair) await w.say(member, "Yes, I'll be there.");
     expect(await w.runUntil(() => pair.every(member =>
       w.net.memberList().find(m => m.id === member)?.awaiting?.kind === "feedback"), 7 * DAY)).toBe(true);
   };

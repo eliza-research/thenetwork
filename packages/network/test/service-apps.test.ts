@@ -7,12 +7,12 @@ import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
-import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
@@ -621,8 +621,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect((await readback.json()).replies.join("\n")).toContain("CONFIRM INVITE");
     const confirmation = { ...request, messageId: `${request.messageId}:confirm`, text: "CONFIRM INVITE" };
     const result = await send(confirmation);
-    expect(result.status).toBe(200);
-    return { confirmation, response: await result.json() };
+    const response = await result.json();
+    expect(result.status, JSON.stringify(response)).toBe(200);
+    return { confirmation, response };
   };
 
   // spec/cofounderIntent.md, "Story: Keep looking for a cofounder"
@@ -780,7 +781,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await admit("probe")).toEqual(denied);
 
     const mutual: Partial<NetworkState["opps"][number]> = { review, stage: "scheduled",
-      status: participants.map(id => [id, "yes"]), contacted: participants };
+      status: participants.map(id => [id, "yes"]), contacted: participants, bookedTold: participants, meetingAt: clock.now() + DAY };
     await setOpportunity({ ...mutual, review: undefined });
     expect(await admit("reveal")).toEqual(denied);
     await setOpportunity({ ...mutual, status: [[first.memberId, "yes"], [second.memberId, "no"]] });
@@ -1060,11 +1061,19 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   test("a signed vouch issues a private single-use invitation for a verified app join", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
-    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } });
+    const hashKey = "synthetic-vouch-review-fixture-hash";
+    const { s, otp } = service(clock, {
+      env: { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: hashKey, SERVICE_TURN_SECRET: signedInvitationSecret },
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => false, log: () => {}, provider: {
+        kind: "sim", send: async () => { throw new Error("This fixture must collect private replies without delivery"); },
+      } }),
+    });
     await s.start();
     const inviterPhone = newPhone();
-    const invited = await s.accounts.invite(APPS.ntwrk, inviterPhone);
-    if (!invited) throw new Error("The fixture's staff invitation is missing");
+    const staffInvite = await s.accounts.invite(APPS.ntwrk, inviterPhone);
+    if (!staffInvite) throw new Error("The fixture's staff invitation is missing");
+    const invited = { ...staffInvite, memberId: "ntwrk_00000000-0000-4000-8000-000000000001" };
+    await sql`update platform.memberships set member_id=${invited.memberId} where app_id='ntwrk' and person_id=${invited.personId}`;
     const bodyFor = (firstName: string, app: AppId = "ntwrk") => ({ firstName, age: 31, consent: { sms: true as const, wording: APPS[app].consent.text } });
     expect(await s.accounts.join(APPS.ntwrk, { e164: inviterPhone, personId: invited.personId }, bodyFor("Ari"))).toMatchObject({ ok: true });
     const send = invitationTurn(s, clock);
@@ -1139,11 +1148,26 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(tokenReplay.status).toBe(409);
     expect(await tokenReplay.json()).toMatchObject({ error: "turn_invitation_changed" });
 
-    const pending = await confirmInvitationVouch(send, { ...request, messageId: "invite-weak", text: "Can you invite my coworker Theo?" }, "I met them once, three days ago.");
+    // This owner and message generate a valid review ID with a phone-like run of digits.
+    const pending = await confirmInvitationVouch(send, { ...request, messageId: "invite-weak-18", text: "Can you invite my coworker Theo?" }, "I met them once, three days ago.");
     expect(pending.response).toMatchObject({ reason: "member_invitation_review" });
     expect(pending.response.replies.join("\n")).not.toContain("#invite=");
     const [reviewId] = pending.response.replies.join("\n").match(/mir_[0-9a-f]{32}/) ?? [];
-    expect(reviewId).toHaveLength(36);
+    expect(reviewId).toBe("mir_0295122192be77fedc0639ebf7137b2e");
+    expect(await (await send(pending.confirmation)).json()).toEqual(pending.response);
+    const reviewReceipt = async (replyIds: string[]) => {
+      const { channel, messageId } = pending.confirmation;
+      const body = JSON.stringify({ channel, messageId, replyIds, outcome: "accepted", providerMessageIds: ["review-confirmation"], historyRecorded: true } satisfies TurnReceiptRequest);
+      const auth = await svcSign(signedInvitationSecret, { method: "POST", path: TURN_RECEIPT_PATH, id: `${messageId}:receipt`, body, nowS: Math.floor(clock.now() / 1000) });
+      return s.fetch(new Request(`http://127.0.0.1${TURN_RECEIPT_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...auth }, body }));
+    };
+    expect((await reviewReceipt(response.replyIds)).status).toBe(409);
+    const receipt = await reviewReceipt(pending.response.replyIds);
+    expect(receipt.status).toBe(200);
+    expect(await receipt.json()).toEqual({ ok: true, replayed: false });
+    expect(await sql`select body,status from network.messages where id in ${sql(pending.response.replyIds)}`)
+      .toEqual([{ body: "Private invitation reply.", status: "sent" }]);
+    expect(await sql`select id from platform.outbound where id in ${sql(pending.response.replyIds)}`).toEqual([]);
     const staff = async (method: string, token: string, payload?: Record<string, unknown>) => s.fetch(new Request("http://127.0.0.1/apps/ntwrk/review/member-invitations", {
       method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(payload ? { body: JSON.stringify(payload) } : {}),
     }));
@@ -1158,6 +1182,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const waiting = await send({ ...claim, messageId: "invite-review-pending" });
     expect((await waiting.json()).replies.join("\n")).toContain("still waiting for review");
     expect((await staff("POST", "rev-tok", { id: reviewId, decision: "approve" })).status).toBe(200);
+    const obsoletePending = await send(pending.confirmation);
+    expect(obsoletePending.status).toBe(409);
+    expect(await obsoletePending.json()).toMatchObject({ error: "turn_invitation_changed" });
     expect(await count(sql`select count(*)::int as n from platform.member_invitations where redeemed_at is null`)).toBe(0);
     const fresh = await send(claim);
     expect(fresh.status).toBe(200);

@@ -13,7 +13,7 @@ import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 import { siteApp } from "../apps/site/prerender.ts";
 import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
-import { type SitePage, siteHasPage, sitePageList } from "../packages/core/src/generated/sitePages.ts";
+import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType } from "../packages/core/src/generated/sitePages.ts";
 import { brandFor } from "../packages/core/src/generated/brandIdentity.ts";
 import {
   type AgentSignup,
@@ -266,12 +266,12 @@ function write(path: string, body: string | Buffer): void {
 /** dist/_headers: the security headers on every path, plus types, CORS and caching for the skill files. */
 export function headersFile(): string {
   const all = Object.entries(SECURITY_HEADERS).map(([k, v]) => `  ${k}: ${v}`).join("\n");
-  const skill = "  Access-Control-Allow-Origin: *\n  Cache-Control: public, max-age=300";
+  const skill = `  Access-Control-Allow-Origin: ${skillAllowOrigin}\n  Cache-Control: public, max-age=${skillCacheSeconds}`;
   return [
     `/*\n${all}`,
-    `/SKILL.md\n  Content-Type: text/plain; charset=utf-8\n${skill}`,
-    `/.well-known/agent-skills/index.json\n  Content-Type: application/json\n${skill}`,
-    `/.well-known/agent-skills/*/SKILL.md\n  Content-Type: text/plain; charset=utf-8\n${skill}`,
+    `/SKILL.md\n  Content-Type: ${skillContentType("RootSkill")}\n${skill}`,
+    `/.well-known/agent-skills/index.json\n  Content-Type: ${skillContentType("CatalogIndex")}\n${skill}`,
+    `/.well-known/agent-skills/*/SKILL.md\n  Content-Type: ${skillContentType("CatalogSkill")}\n${skill}`,
   ].join("\n\n") + "\n";
 }
 

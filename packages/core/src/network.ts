@@ -132,6 +132,7 @@ export interface InboundMessage {
 
 export interface MeetingReport {
   proposalId: string; participants: MemberId[]; at: number; city: City; kind?: string;
+  previousAt?: number;
 }
 
 export type InitialInviteReceipt = { kind: "accepted"; at: number } | { kind: "not_sent" };

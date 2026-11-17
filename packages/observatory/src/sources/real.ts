@@ -477,7 +477,7 @@ export class RealSource implements DataSource {
     const s = this.store;
     const app = this.app;
     const now = this.store.clock.now, since = new Date(now - ALERT_WINDOW);
-    const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service] = await Promise.all([
+    const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service, survey] = await Promise.all([
       this.stateRow("saved_at, matching_enabled as matching, deferred, trust, counters, gate_reasons as gate"),
       sql`select id, member_id, kind, category, desire_id, outcome, tries, opportunity_id, created_at, fulfilled_at from network.requests where app_id = ${app} order by created_at desc`.catch(() => []),
       sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
@@ -492,6 +492,8 @@ export class RealSource implements DataSource {
       sql`select max(at) as at from network.matching_runs where app_id = ${app}`,
       sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`.catch(() => [{ n: 0 }]),
       this.service?.health(),
+      sql<{ yes: number; total: number }[]>`select count(*) filter(where payload->>'worthwhile'='true')::int as yes,count(*)::int as total
+        from network.events where app_id=${app} and type='interruption_feedback' and payload->>'worthwhile' in ('true','false')`,
     ]);
     // Network state (stored by the Network's PgStore).
     const row = (st as any[])[0];
@@ -556,7 +558,7 @@ export class RealSource implements DataSource {
     const card = scorecard({
       now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
-      inviters, minorContacts, leaks,
+      inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });
     const growth = growthStats({ members, opps, requests, invitees, invitesSent: inviteRows.length, growthAsks: all.filter(e => e.type === "growth_ask").length, inviters });
     s.setHealth({ alerts, scorecard: card, growth });
@@ -645,10 +647,13 @@ export class RealSource implements DataSource {
     const sql = this.sql;
     const rv = this.reveal || !!opts.reveal;
     const theirs = new Set([...this.store.opps.values()].filter(o => o.source !== "shadow" && o.participants.includes(id)).map(o => o.id));
+    // Include every member reference that onTimeline may use, including members replaced in earlier rosters.
     const [msgs, events, fallbacks, pending] = await Promise.all([
       this.messages(id, rv),
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
-          where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id} or payload->>'memberId' = ${id} or payload->'participants' ? ${id} or payload->'members' ? ${id}
+          where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id}
+             or ${id} in (payload->>'memberId', payload->>'from', payload->>'newMemberId', payload->>'out', payload->>'in', payload->>'target', payload->>'by')
+             or payload->'participants' ? ${id} or payload->'members' ? ${id} or payload->'attendance' ? ${id}
              or (object_type = 'opportunity' and object_id = any(${`{${[...theirs].map(x => `"${x.replace(/"/g, "")}"`).join(",")}}`}::text[])))
           order by at, id limit 5000`,
       this.guardFallbacks(id),

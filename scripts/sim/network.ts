@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, MINUTE, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -106,6 +106,47 @@ export async function scenarioRepetitionGate(b: Block): Promise<void> {
       expect(result.stdout.toString()).toContain("pass^1: PASS (1/1)");
       expect(result.stdout.toString()).toMatch(/\n\s+pass\s+metric:/);
     }
+  });
+}
+
+export async function humanReviewGate(b: Block): Promise<void> {
+  await b.run("human review (PRD 32.8): nothing probed until approved; reject and SLA expiry send nothing", async () => {
+    const { w, net, records, start } = await world(3, 3, { review: "human" });
+    await w.advanceTo(start + 19 * HOUR);
+    const free = net.memberList().filter(m => net.eligible(m.id)).map(m => m.id);
+    (["player", "scenario"] as const).forEach((source, i) => w.act({ do: "propose", source, proposal: {
+      id: `${source}-1`, kind: "intro", participants: [free[2 * i]!, free[2 * i + 1]!], alternates: [], objective: "one-to-one intro", category: "social", city: "nyc",
+      window: { start: start + 2 * DAY, end: start + 6 * DAY }, score: 0, components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
+      exploration: false, explanations: {}, generator: source, createdAt: start + 19 * HOUR,
+    } }));
+    await w.advanceTo(start + 21 * HOUR);
+    const queue = net.reviewQueue();
+    expect(queue.filter(q => q.origin === "player").map(q => q.oppId).sort()).toEqual(["player-1", "scenario-1"]);
+    expect(queue.length).toBeGreaterThan(5);
+    expect(logs(records, "probe_sent")).toEqual([]);
+    expect(outbound(records).filter(m => m.msg.meta?.type === "probe" || m.msg.meta?.type === "proposal")).toEqual([]);
+    for (const l of logs(records, "review_queued").filter(l => l.detail.origin === "request")) {
+      const requester = (l.detail.proposal as { participants: MemberId[] }).participants[0]!;
+      expect(outbound(records).some(m => m.msg.memberId === requester && m.msg.ts === l.t && /^On it/.test(m.msg.body))).toBe(true);
+    }
+    const [a, bb] = queue.filter(q => q.origin === "engine").length >= 2 ? queue.filter(q => q.origin === "engine") : queue;
+    const decidedAt = w.clock.now();
+    expect(net.review(a!.oppId, "approve", { reviewer: "sim" })).toBe(true);
+    expect(net.review(bb!.oppId, "reject", { reason: "weak_reason", reviewer: "sim" })).toBe(true);
+    expect(net.review(bb!.oppId, "approve")).toBe(false);
+    const left = net.reviewQueue().map(q => q.oppId);
+    // Approval opens the probe turn. Delivery can wait for an existing question or the member's send window.
+    const probeDeadline = decidedAt + DEFAULT_ATTENTION.expiry.partnerProbeDays * DAY;
+    await w.advanceTo(probeDeadline);
+    const probes = logs(records, "probe_sent");
+    expect(probes.filter(l => l.detail.oppId === a!.oppId).length).toBeGreaterThan(0);
+    expect(probes.filter(l => l.t < decidedAt)).toEqual([]);
+    const about = (id: string) => outbound(records).filter(m => m.msg.meta?.proposalId === id || (m.msg.meta?.probe as { key?: string } | undefined)?.key === id);
+    expect(about(bb!.oppId)).toEqual([]);
+    const expired = new Set(logs(records, "review_expired").map(l => String(l.detail.oppId)));
+    for (const id of left) { expect([id, expired.has(id) || net.opps.get(id)?.closedFrom === "review"]).toEqual([id, true]); expect([id, about(id)]).toEqual([id, []]); }
+    const approved = new Set(logs(records, "review_decision").filter(l => l.detail.decision === "approve").map(l => String(l.detail.oppId)));
+    for (const l of probes) expect(approved.has(String(l.detail.oppId))).toBe(true);
   });
 }
 
@@ -334,42 +375,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   });
 
   // ---- human review gate and recipient policy --------------------------------------------------------
-  await b.run("human review (PRD 32.8): nothing probed until approved; reject and SLA expiry send nothing", async () => {
-    const { w, net, records, start } = await world(3, 3, { review: "human" });
-    await w.advanceTo(start + 19 * HOUR);
-    const free = net.memberList().filter(m => net.eligible(m.id)).map(m => m.id);
-    (["player", "scenario"] as const).forEach((source, i) => w.act({ do: "propose", source, proposal: {
-      id: `${source}-1`, kind: "intro", participants: [free[2 * i]!, free[2 * i + 1]!], alternates: [], objective: "one-to-one intro", category: "social", city: "nyc",
-      window: { start: start + 2 * DAY, end: start + 6 * DAY }, score: 0, components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
-      exploration: false, explanations: {}, generator: source, createdAt: start + 19 * HOUR,
-    } }));
-    await w.advanceTo(start + 21 * HOUR);
-    const queue = net.reviewQueue();
-    expect(queue.filter(q => q.origin === "player").map(q => q.oppId).sort()).toEqual(["player-1", "scenario-1"]);
-    expect(queue.length).toBeGreaterThan(5);
-    expect(logs(records, "probe_sent")).toEqual([]);
-    expect(outbound(records).filter(m => m.msg.meta?.type === "probe" || m.msg.meta?.type === "proposal")).toEqual([]);
-    for (const l of logs(records, "review_queued").filter(l => l.detail.origin === "request")) {
-      const requester = (l.detail.proposal as { participants: MemberId[] }).participants[0]!;
-      expect(outbound(records).some(m => m.msg.memberId === requester && m.msg.ts === l.t && /^On it/.test(m.msg.body))).toBe(true);
-    }
-    const [a, bb] = queue.filter(q => q.origin === "engine").length >= 2 ? queue.filter(q => q.origin === "engine") : queue;
-    const decidedAt = w.clock.now();
-    expect(net.review(a!.oppId, "approve", { reviewer: "sim" })).toBe(true);
-    expect(net.review(bb!.oppId, "reject", { reason: "weak_reason", reviewer: "sim" })).toBe(true);
-    expect(net.review(bb!.oppId, "approve")).toBe(false);
-    const left = net.reviewQueue().map(q => q.oppId);
-    await w.advanceTo(start + 2 * DAY + 30 * MINUTE);
-    const probes = logs(records, "probe_sent");
-    expect(probes.filter(l => l.detail.oppId === a!.oppId).length).toBeGreaterThan(0);
-    expect(probes.filter(l => l.t < decidedAt)).toEqual([]);
-    const about = (id: string) => outbound(records).filter(m => m.msg.meta?.proposalId === id || (m.msg.meta?.probe as { key?: string } | undefined)?.key === id);
-    expect(about(bb!.oppId)).toEqual([]);
-    const expired = new Set(logs(records, "review_expired").map(l => String(l.detail.oppId)));
-    for (const id of left) { expect([id, expired.has(id) || net.opps.get(id)?.closedFrom === "review"]).toEqual([id, true]); expect([id, about(id)]).toEqual([id, []]); }
-    const approved = new Set(logs(records, "review_decision").filter(l => l.detail.decision === "approve").map(l => String(l.detail.oppId)));
-    for (const l of probes) expect(approved.has(String(l.detail.oppId))).toBe(true);
-  });
+  await humanReviewGate(b);
 
   await b.run("send-time recipient policy: minors, declined pairs and replies; stated ages fail closed", async () => {
     const { w, net, records, start, personas } = await world(1, 3, { review: "human" });

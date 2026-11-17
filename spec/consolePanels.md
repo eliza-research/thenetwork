@@ -2,6 +2,8 @@
 
 The staff console (`packages/observatory/web`) has drawer panels that show numbers and let staff run the simulated world. This spec owns what these panels show in each data state and which controls they offer: the lab, the runs tab and its run comparison, the metrics tab with the bias monitor, the cost and the growth sections, the feed, the pipeline, and the game tab with its levels. The [workspace spec](consoleWorkspace.md) owns the loading, refused, unavailable, failed and empty rows of a panel, and the roles that open the lab and the bias monitor. The [navigation spec](consoleNavigation.md) owns which tab shows and the filters of each tab. The shell owns the fetches, the timers, the number formats and the server data. The server checks every role again and refuses the lab and the game on a real-only server.
 
+The shell builds the panel viewer through `canReceiveViewer` and `receiveViewer`, and it shows the limits of the lab, the run picks, the proactive rate and the inviter share from the generated constants. These definitions are model-only helpers that the generated guards call: `panelWritesOffered`, `labRequestValid`, `workStaff`, `maxLabArms` and `joinsHiddenFrom`. The lab offers only three arms, so the shell has no arm limit to show.
+
 ## Story: Use the analysis panels only where my mode and role allow
 
 > As a staff member, I want the analysis panels to offer a control only in the mode and to the role that can use it, so that I never start a simulation or change the world from real data.

@@ -291,8 +291,8 @@ export interface AttentionConfig {
     prior: { weekdayDay: number; weekdayEvening: number; weekendDay: number; weekendEvening: number };
     /** Standing availability (4b): a decaying prior, re-confirmed after `reconfirmDays`. */
     standing: { inside: number; outsideFactor: number; halfLifeDays: number; statedConfidence: number; inferredConfidence: number; reconfirmDays: number };
-    /** Calendar free/busy (4c): a busy block multiplies P by `busyFactor`; a free calendar pulls P toward `freeTarget` by `freeWeight`. */
-    calendar: { busyFactor: number; freeTarget: number; freeWeight: number; offerAfterAcceptedPlans: number };
+    /** Calendar free/busy (4c): busy excludes a slot. Confirmed free time pulls P toward `freeTarget` by `freeWeight`. */
+    calendar: { freeTarget: number; freeWeight: number; offerAfterAcceptedPlans: number };
     /** Learned from accepted and attended times (4e): weight n / (n + k), capped at `maxWeight` (unconfirmed). */
     learned: { target: number; k: number; maxWeight: number; halfLifeDays: number; declinePenalty: number };
     /** Opt-in weekly "what's your week like?" check-in (4d): JS weekday and local hour. */
@@ -355,7 +355,7 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
     targetAny: 0.9, minGain: 0.03, minJoint: 0.02,
     prior: { weekdayDay: 0.1, weekdayEvening: 0.35, weekendDay: 0.45, weekendEvening: 0.4 },
     standing: { inside: 0.85, outsideFactor: 0.5, halfLifeDays: 45, statedConfidence: 0.8, inferredConfidence: 0.5, reconfirmDays: 30 },
-    calendar: { busyFactor: 0.05, freeTarget: 0.8, freeWeight: 0.3, offerAfterAcceptedPlans: 1 },
+    calendar: { freeTarget: 0.8, freeWeight: 0.3, offerAfterAcceptedPlans: 1 },
     learned: { target: 0.8, k: 2, maxWeight: 0.5, halfLifeDays: 60, declinePenalty: 0.5 },
     weeklyCheckIn: { day: 0, hour: 17 },
   },
