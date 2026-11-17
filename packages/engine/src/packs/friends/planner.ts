@@ -16,7 +16,7 @@
 //      off) are offered the same activity at the same time next week;
 //   4. new plans: open tables of neighbours. Each pass pools the members near a planning zone (then a
 //      borough) who fit one activity and are free at its time, and grows one table from the priority
-//      seed, trying others if every neighbour is blocked from that seed. It adds a member someone at the table
+//      seed, trying others if that seed cannot complete a table. It adds a member someone at the table
 //      would see again first, then the member who keeps the lowest pair value at the table highest.
 //      Every pair at the table (alternates too) reaches the Friend circle pair floor through the one
 //      pair gate, and the seated invitees pass circle admission (spec/groupFormation.md). Dinner and coffee
@@ -33,7 +33,7 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import {
-  canReservePartner, type Event as WeekEvent, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
+  canReservePartner, type Event as WeekEvent, friendTableHasMinimumCandidates, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
   recurringAvailable, step as stepWeek,
 } from "../../../../core/src/generated/friendsWeek.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
@@ -47,7 +47,7 @@ import { sha256 } from "../../hash.ts";
 import { circleEvidence, type Circle } from "../../match/circles.ts";
 import { compareText } from "../../match/profile.ts";
 import { activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, venueOpenForSlot as venueOpen, type Crew, type Plan, type PlanEvidence, type PlanOutcomeRecord } from "../../plans.ts";
-import { pairKey, World } from "../../world.ts";
+import { World } from "../../world.ts";
 import { activityById, type ActivityType, type Venue } from "../network/activities.ts";
 import { familiarCircle } from "./generators.ts";
 import { chooseVenue, FRIENDS_CITY, hood, NEIGHBORHOODS, transitMinutes, type Neighborhood } from "./geo.ts";
@@ -484,13 +484,10 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (free.length < minInvite) continue;
       const priority = (id: MemberId) => fitOf(id, a, universal) * timeFit(id);
       const order = [...free].sort((x, y) => (priority(y) - priority(x)) || compareText(x, y)).slice(0, FRIENDS_TABLE_POOL);
-      const prioritySeed = order[0]!;
-      const neighbours = order.slice(1);
-      // A block applies to the pair, so a seed blocked from everyone cannot prevent a table for the others.
-      const seeds = neighbours.every(id => w.blocked.has(pairKey(prioritySeed, id))) ? neighbours : [prioritySeed];
-      for (const seed of seeds) {
+      // spec/friendsWeek.md, "An unsuccessful starting member leaves the rest of the table candidates available"
+      for (const seed of order) {
         const table = growTable(order, seed);
-        if (table.members.length < minInvite) continue;
+        if (!friendTableHasMinimumCandidates(table.members.length, minInvite)) continue;
         const first = chosen.map(i => ({ i, n: table.members.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (x.i - y.i))[0]!;
         const window = slots[first.i]!;
         const { start } = window;

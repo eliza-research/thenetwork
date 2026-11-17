@@ -104,6 +104,18 @@ pure val alternatesValues = Set(List(), List("three"), List("one"))
 pure def sometimesPublishesAPlan(s: FriendsRun): bool = s.phase == WeekComplete and not(newPlanAlternateCanRemain(s, "one"))
 ```
 
+### An unsuccessful starting member leaves the rest of the table candidates available
+
+Try the bounded candidate pool in its existing priority order. A table must reach the minimum number of mutually compatible candidates, pass the venue, travel, and circle checks, and reserve its seats. If the table fails any of these checks, try the next starting member in the same pool. Stop when one table reserves its seats or the pool has no starting member left.
+
+```quint
+pure def friendTableHasMinimumCandidates(compatibleCandidates: int, minimumInvitees: int): bool =
+  compatibleCandidates >= minimumInvitees
+
+pure def lawFriendTableNeedsMoreThanOneCompatiblePeer(compatibleCandidates: int, minimumInvitees: int): bool =
+  (compatibleCandidates <= 2 and minimumInvitees >= 3) implies not(friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees))
+```
+
 ### Activity partner reservations use a separate per-member allowance
 
 An activity partner reservation pairs two different members and uses one allowance for each. Only finished candidates use the allowance. A new plan or recurring reservation does not affect the partner allowance.

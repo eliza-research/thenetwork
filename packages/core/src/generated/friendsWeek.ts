@@ -183,6 +183,19 @@ export function canReserveNewPlan(s: FriendsRun, invited: string[], alternates: 
   return s.phase === "NewPlans" && !invited.some((memberId: string) => !newPlanAvailable(s, memberId)) && (!reserveAlternates || !alternates.some((memberId: string) => !newPlanAvailable(s, memberId)));
 }
 
+/** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
+//@ pure
+export function friendTableHasMinimumCandidates(compatibleCandidates: number, minimumInvitees: number): boolean {
+  return compatibleCandidates >= minimumInvitees;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendTableNeedsMoreThanOneCompatiblePeer(compatibleCandidates: number, minimumInvitees: number): boolean {
+  //@ ensures \result === true
+  return !(compatibleCandidates <= 2 && minimumInvitees >= 3) || !friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees);
+}
+
 /** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 //@ pure
 export function partnerCount(s: FriendsRun, memberId: string): number {

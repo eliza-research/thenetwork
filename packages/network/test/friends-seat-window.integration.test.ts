@@ -38,15 +38,17 @@ test("friends: a fitting triangle survives an unavailable or isolated seat candi
   expect(week.plans.some(p => ["a", "b", "c"].every(id => p.invited.includes(id)))).toBe(true);
   expect([...week.plans, ...week.partners].some(p => p.invited.includes("d") || p.alternates.includes("d"))).toBe(false);
 
-  // With the strongest window, d would seed the first table, but cannot pair with anyone else.
+  // With the strongest window, d seeds the first table but can have at most one compatible partner.
   // The search must still try a different seed among the available members.
   const available = new Map(evidence);
   available.set("d", { memberId: "d", tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY, confidence: 1 } });
-  const isolated = new World({ ...input, edges: ["a", "b", "c"].map(to => ({ from: "d", to, type: "blocked", strength: 1, explicit: true, createdAt: START - DAY })) },
-    resolveConfig({ seed: 1, cities: ["nyc"] }), localEmbed, friendsPack);
-  const retried = planFriendsWeek(isolated, { now: START, tz: TZ, evidence: available, venues: [venue], crews: [], outcomes: [], offered: [] },
-    { ...DEFAULT_FRIENDS_POLICY, openTable: false }, FRIENDS_PLANS);
-  expect(retried.plans).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
+  for (const blocked of [["a", "b", "c"], ["a", "c"]]) {
+    const isolated = new World({ ...input, edges: blocked.map(to => ({ from: "d", to, type: "blocked", strength: 1, explicit: true, createdAt: START - DAY })) },
+      resolveConfig({ seed: 1, cities: ["nyc"] }), localEmbed, friendsPack);
+    const retried = planFriendsWeek(isolated, { now: START, tz: TZ, evidence: available, venues: [venue], crews: [], outcomes: [], offered: [] },
+      { ...DEFAULT_FRIENDS_POLICY, openTable: false }, FRIENDS_PLANS);
+    expect(retried.plans).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
+  }
 });
 
 // spec/planFormation.md, "Alternates must fit the entire offered group"
