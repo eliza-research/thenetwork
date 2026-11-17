@@ -3,9 +3,9 @@
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
-import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
+import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
-import { staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
+import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -74,7 +74,7 @@ export interface PhoneChange {
 }
 /** What movePhone moves: the person's phone from one number to another, and everything keyed to the number. */
 export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; now: () => number }
-export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "stale_request";
+export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "stale_request" | "banned";
 
 /**
  * Rate counters that look back further than the retention purge (2 days): the bucket kind (the text
@@ -323,7 +323,10 @@ export class MemoryPeopleStore implements PeopleStore {
   async ban(b: Ban, options?: { deduplicateScope?: boolean }) {
     const recordBan = async () => {
       if (options?.deduplicateScope && b.personId && (await this.staffBans(b.personId, b.scope, b.phoneHash ? [b.phoneHash] : [])).length) return;
-      if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b });
+      const currentHash = b.personId && this.people.get(b.personId)?.deletedAt === null ? this.personHash.get(b.personId) ?? "" : "";
+      const rows = includeLockedBanPhone(b.phoneHash ?? "", currentHash)
+        ? [b, { ...b, id: `${b.id}:moved`, phoneHash: currentHash }] : [b];
+      for (const row of rows) if (!this.bans.some(x => x.id === row.id)) this.bans.push({ ...row });
       for (const g of this.grants.values()) if (b.personId && g.personId === b.personId && g.revokedAt === null) g.revokedAt = b.at;
       const hashes = [...(b.phoneHash ? [b.phoneHash] : []), ...(b.personId ? await this.phoneHashesOf(b.personId) : [])];
       for (const h of hashes) await this.deletePending(h);
@@ -332,7 +335,10 @@ export class MemoryPeopleStore implements PeopleStore {
     else await recordBan();
   }
   async staffBans(personId: string, scope: Ban["scope"], phoneHashes: readonly string[]): Promise<StaffBanProjection[]> {
-    return this.bans.filter(b => scope === "person" ? b.scope === "person" && b.personId === personId : b.phoneHash !== null && phoneHashes.includes(b.phoneHash))
+    const decisionId = (b: Ban) => b.id.replace(/:moved$/, "");
+    const matching = this.bans.filter(b => scope === "person" ? b.scope === "person" && b.personId === personId : b.phoneHash !== null && phoneHashes.includes(b.phoneHash));
+    const decisions = new Set(matching.map(decisionId));
+    return this.bans.filter(b => decisions.has(decisionId(b)))
       .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)).map(b => ({ ...b, projectedAt: this.banProjectionAt.get(b.id) ?? null }));
   }
   async completeStaffBans(ids: readonly string[], at: number): Promise<void> {
@@ -422,25 +428,28 @@ export class MemoryPeopleStore implements PeopleStore {
     return best && { ...best };
   }
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
-    const old = this.phones.get(m.oldE164);
-    if (!old || old.personId !== m.personId || old.hold !== null) return "no_phone";
-    const change = this.phoneChanges.get(m.changeId);
-    const at = m.now();
-    if (!change || change.confirmedAt !== null || change.personId !== m.personId || change.newE164 !== m.newE164
-      || change.requestedAt > at || !pendingWindowOpen(at - change.requestedAt)) return "stale_request";
-    if (this.phones.has(m.newE164)) return "number_in_use";
-    this.phones.delete(m.oldE164);
-    this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
-    for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
-    this.personHash.set(m.personId, m.newHash);
-    this.suppression.delete(m.newHash);
-    const floor = this.ageFloors.get(m.oldHash);
-    if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
-    for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
-    for (const [k, c] of this.challenges) if (c.e164 === m.oldE164) this.challenges.delete(k);
-    for (const [k, p] of this.pending) if (p.phoneHash === m.oldHash) this.pending.delete(k);
-    Object.assign(change, { confirmedAt: at, newE164: null, oldHash: m.oldHash, newHash: m.newHash });
-    return "ok";
+    return this.withLock(`person-phone-binding:${m.personId}`, async () => {
+      const old = this.phones.get(m.oldE164);
+      if (!old || old.personId !== m.personId || old.hold !== null) return "no_phone";
+      const change = this.phoneChanges.get(m.changeId);
+      const at = m.now();
+      if (!change || change.confirmedAt !== null || change.personId !== m.personId || change.newE164 !== m.newE164
+        || change.requestedAt > at || !pendingWindowOpen(at - change.requestedAt)) return "stale_request";
+      if (!lockedPhoneMoveAllowed(await this.isBanned(m.oldHash, m.personId), await this.isBanned(m.newHash))) return "banned";
+      if (this.phones.has(m.newE164)) return "number_in_use";
+      this.phones.delete(m.oldE164);
+      this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
+      for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
+      this.personHash.set(m.personId, m.newHash);
+      this.suppression.delete(m.newHash);
+      const floor = this.ageFloors.get(m.oldHash);
+      if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
+      for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
+      for (const [k, c] of this.challenges) if (c.e164 === m.oldE164) this.challenges.delete(k);
+      for (const [k, p] of this.pending) if (p.phoneHash === m.oldHash) this.pending.delete(k);
+      Object.assign(change, { confirmedAt: at, newE164: null, oldHash: m.oldHash, newHash: m.newHash });
+      return "ok";
+    });
   }
 
   async forgetMembership(personId: string, app: AppId, at: number, expectedMemberId?: string) {

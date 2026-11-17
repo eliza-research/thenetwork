@@ -2806,7 +2806,9 @@ export class NetworkService implements RuntimeHost {
       const pending = (await this.people.staffBans(personId, by, hashes)).filter(ban => ban.projectedAt === null);
       const saved = pending[0];
       if (!saved) return { ok: true };
-      for (const h of hashes) await this.people.suppress(h, "banned", at);
+      for (const h of new Set([...hashes, ...pending.flatMap(ban => ban.phoneHash ? [ban.phoneHash] : [])])) {
+        await this.people.suppress(h, "banned", at);
+      }
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       await this.people.restrictBannedMemberships(personId);

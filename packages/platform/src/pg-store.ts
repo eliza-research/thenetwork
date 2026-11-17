@@ -1,9 +1,9 @@
 // PeopleStore on Postgres (the platform schema, migration 0003). The login needs the
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
+import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
-import { staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
+import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
@@ -230,8 +230,13 @@ export class PgPeopleStore implements PeopleStore {
         await lockPersonPhone(tx, b.personId);
       }
       if (options?.deduplicateScope && b.personId && (await this.staffBans(b.personId, b.scope, b.phoneHash ? [b.phoneHash] : [], tx)).length) return;
-      await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
-        values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+      const [owner] = b.personId ? await tx<{ phone_hash: string | null }[]>`select phone_hash from platform.people
+        where id=${b.personId}::uuid and deleted_at is null` : [];
+      const currentHash = owner?.phone_hash ?? "";
+      const rows = includeLockedBanPhone(b.phoneHash ?? "", currentHash)
+        ? [b, { ...b, id: `${b.id}:moved`, phoneHash: currentHash }] : [b];
+      for (const row of rows) await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+        values (${row.id}, ${row.scope}, ${row.personId}, ${row.phoneHash}, ${row.reason}, ${row.reportId}, ${row.bannedBy}, ${ts(row.at)}) on conflict (id) do nothing`;
       if (b.personId) await tx`update platform.share_grants set revoked_at = ${ts(b.at)} where person_id = ${b.personId} and revoked_at is null`;
       await tx`delete from platform.pending_texts where phone_hash = ${b.phoneHash}
         or phone_hash in (select phone_hash from platform.people where id = ${b.personId}::uuid and phone_hash is not null)`;
@@ -239,8 +244,10 @@ export class PgPeopleStore implements PeopleStore {
   }
   async staffBans(personId: string, scope: Ban["scope"], phoneHashes: readonly string[], db = this.sql): Promise<StaffBanProjection[]> {
     const filter = scope === "person" ? db`scope='person' and person_id=${personId}::uuid` : db`phone_hash=any(${phoneHashes}::text[])`;
-    const rows = await db`select id,scope,person_id,phone_hash,reason,report_id,banned_by,at,projection_completed_at
-      from platform.bans where ${filter} order by at,id`;
+    // Either recorded phone can identify the same interrupted staff decision.
+    const rows = await db`with decisions as (select regexp_replace(id, ':moved$', '') as id from platform.bans where ${filter})
+      select id,scope,person_id,phone_hash,reason,report_id,banned_by,at,projection_completed_at from platform.bans
+      where id in (select id from decisions union all select id || ':moved' from decisions) order by at,id`;
     return rows.map(r => ({ id: r.id, scope: r.scope, personId: r.person_id, phoneHash: r.phone_hash, reason: r.reason,
       reportId: r.report_id, bannedBy: r.banned_by, at: ms(r.at)!, projectedAt: ms(r.projection_completed_at) }));
   }
@@ -460,6 +467,7 @@ export class PgPeopleStore implements PeopleStore {
         where id=${m.changeId}::uuid and person_id=${m.personId}::uuid and new_e164=${m.newE164} and confirmed_at is null for update`;
       const at = m.now();
       if (!pending || pending.requested_at.getTime() > at || !pendingWindowOpen(at - pending.requested_at.getTime())) return "stale_request";
+      if (!lockedPhoneMoveAllowed(await this.isBanned(m.oldHash, m.personId, tx), await this.isBanned(m.newHash, null, tx))) return "banned";
       // The new number is checked again inside the transaction (a join or another change may have taken it).
       const [taken] = await tx`select 1 from platform.phone_identities where e164 = ${m.newE164}`;
       if (taken) return "number_in_use";

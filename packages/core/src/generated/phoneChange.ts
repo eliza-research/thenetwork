@@ -8,7 +8,7 @@ export type MovePolicy = "MoveAllowed" | "MoveBlocked" | "NumberTaken";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type PhoneChangePhase = "Beginning" | "CheckingStartOwner" | "CheckingConfirmOwner" | "CheckingStartPolicy" | "AwaitingRateLimit" | "AwaitingCodeSend" | "AwaitingPendingWrite" | "PendingRecorded" | "AwaitingPendingRead" | "AwaitingVerification" | "AwaitingMovePolicy" | "AwaitingMove" | "Moved" | "Refused";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
-export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone";
+export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone" | "MoveBanned";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type PhoneChangeFailure = "NoFailure" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
@@ -173,6 +173,12 @@ export function recordVerification(change: PhoneChange, otpVerified: boolean): P
 
 /** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
 //@ pure
+export function lockedPhoneMoveAllowed(currentBanned: boolean, targetBanned: boolean): boolean {
+  return !(currentBanned || targetBanned);
+}
+
+/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
+//@ pure
 export function canCheckMovePolicy(change: PhoneChange): boolean {
   return change.phase === "AwaitingMovePolicy" && change.codeVerified;
 }
@@ -182,6 +188,13 @@ export function canCheckMovePolicy(change: PhoneChange): boolean {
 export function checkMovePolicy(change: PhoneChange, policy: MovePolicy): PhoneChange {
   //@ ensures (inv(change) && canCheckMovePolicy(change)) ==> alwaysMoveRequiresProof(\result)
   return policy === "MoveBlocked" ? ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange) : (policy === "NumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : ({ ...change, phase: "AwaitingMove", moveAllowed: true } as PhoneChange));
+}
+
+/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
+//@ pure
+export function lawBannedPhoneCannotMove(currentBanned: boolean, targetBanned: boolean): boolean {
+  //@ ensures \result === true
+  return !(currentBanned || targetBanned) || !lockedPhoneMoveAllowed(currentBanned, targetBanned);
 }
 
 /** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
@@ -287,7 +300,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readPending" && typeof raw.hasTarget === "boolean" && Number.isSafeInteger(raw.elapsedMs)) return { type: "readPending", hasTarget: raw.hasTarget, elapsedMs: raw.elapsedMs };
   if (raw.type === "recordVerification" && typeof raw.otpVerified === "boolean") return { type: "recordVerification", otpVerified: raw.otpVerified };
   if (raw.type === "checkMovePolicy" && (raw.policy === "MoveAllowed" || raw.policy === "MoveBlocked" || raw.policy === "NumberTaken")) return { type: "checkMovePolicy", policy: raw.policy };
-  if (raw.type === "recordMove" && (raw.moveResult === "MoveApplied" || raw.moveResult === "MoveNumberTaken" || raw.moveResult === "MoveMissingPhone")) return { type: "recordMove", moveResult: raw.moveResult };
+  if (raw.type === "recordMove" && (raw.moveResult === "MoveApplied" || raw.moveResult === "MoveNumberTaken" || raw.moveResult === "MoveMissingPhone" || raw.moveResult === "MoveBanned")) return { type: "recordMove", moveResult: raw.moveResult };
   return undefined;
 }
 

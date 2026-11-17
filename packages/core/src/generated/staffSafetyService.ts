@@ -177,6 +177,19 @@ export function sometimesAppliesPersonBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ApplyingPersonBan";
 }
 
+/** Story: Apply a confirmed phone or person ban / A ban covers the reported number and the number current at the decision (spec/staffSafetyService.md) */
+//@ pure
+export function includeLockedBanPhone(observedHash: string, currentHash: string): boolean {
+  return observedHash !== "" && currentHash !== "" && currentHash !== observedHash;
+}
+
+/** Story: Apply a confirmed phone or person ban / A ban covers the reported number and the number current at the decision (spec/staffSafetyService.md) */
+//@ pure
+export function lawNoDuplicateLockedBanPhone(hash: string): boolean {
+  //@ ensures \result === true
+  return !includeLockedBanPhone(hash, hash);
+}
+
 /** Story: Apply a confirmed phone or person ban / An interrupted ban resumes from its saved authority (spec/staffSafetyService.md) */
 //@ pure
 export function lawIncompleteRecordedBanCanResume(flow: ServiceSafetyFlow): boolean {

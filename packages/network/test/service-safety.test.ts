@@ -243,6 +243,72 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await duplicate.json()).toEqual({ ok: false, reason: "already_banned" });
   });
 
+  test("a staff phone ban covers a move committed after staff read the number, including projection retry", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const { s: other, otp } = service(clock);
+    const web = site(other, clock, otp);
+    const previous = newPhone(), current = newPhone();
+    expect(await text(s, clock, previous, "slop")).toBe("join_asked");
+    expect(await text(s, clock, previous, "Ari, 32")).toBe("joined");
+    const member = (await memberOf("slop", previous))!;
+    const previousHash = s.accounts.phoneHash(previous), currentHash = s.accounts.phoneHash(current);
+    await web.login("slop", previous);
+    expect((await web.json("slop", "POST", "/api/me/phone/start", { phone: current })).body).toEqual({ ok: true });
+
+    const persistBan = s.people.ban.bind(s.people);
+    s.people.ban = async (ban, options) => {
+      const move = await web.json("slop", "POST", "/api/me/phone/confirm", { code: otp.codes.get(current) });
+      expect(move.body).toMatchObject({ ok: true });
+      await persistBan(ban, options);
+    };
+    s.people.suppress = async () => { throw new Error("fixture: process ended after saving the ban"); };
+    const path = "/apps/slop/safety/ban";
+    const body = { memberId: member.id, by: "phone", note: "confirmed by staff" };
+    expect((await staff(s, "saf-tok", "POST", path, body)).status).toBe(503);
+    expect(await memberOf("slop", current)).toMatchObject({ id: member.id });
+    expect(await other.people.isBanned(previousHash)).toBe(true);
+    expect(await other.people.isBanned(currentHash)).toBe(true);
+
+    expect(await (await staff(other, "saf-tok", "POST", path, { ...body, note: "retried by staff" })).json()).toEqual({ ok: true });
+    expect(await memberOf("slop", current)).toMatchObject({ id: member.id, account_status: "restricted" });
+    expect(await other.people.isSuppressed(previousHash)).toBe(true);
+    expect(await other.people.isSuppressed(currentHash)).toBe(true);
+    const rows = await sql`select phone_hash, reason, projection_completed_at from platform.bans`;
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(row => row.phone_hash))).toEqual(new Set([previousHash, currentHash]));
+    expect(rows.every(row => row.reason === body.note && row.projection_completed_at !== null)).toBe(true);
+  });
+
+  test("a number move refuses a staff ban committed after verification and before the move", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const { s: other, otp } = service(clock);
+    const web = site(other, clock, otp);
+    const current = newPhone(), proposed = newPhone();
+    expect(await text(s, clock, current, "slop")).toBe("join_asked");
+    expect(await text(s, clock, current, "Ari, 32")).toBe("joined");
+    const member = (await memberOf("slop", current))!;
+    await web.login("slop", current);
+    expect((await web.json("slop", "POST", "/api/me/phone/start", { phone: proposed })).body).toEqual({ ok: true });
+
+    const movePhone = other.people.movePhone.bind(other.people);
+    other.people.movePhone = async move => {
+      const response = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", {
+        memberId: member.id, by: "phone", note: "confirmed by staff",
+      });
+      expect(await response.json()).toEqual({ ok: true });
+      return movePhone(move);
+    };
+    const confirmation = await web.json("slop", "POST", "/api/me/phone/confirm", { code: otp.codes.get(proposed) });
+    expect(confirmation.body).toMatchObject({ ok: false, error: "review" });
+    expect(await memberOf("slop", current)).toMatchObject({ id: member.id, account_status: "restricted" });
+    expect(await other.people.findPhone(proposed)).toBeUndefined();
+    expect(await other.people.isBanned(other.accounts.phoneHash(proposed))).toBe(false);
+  });
+
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {
     await fresh();
     const clock = new SimClock(START);

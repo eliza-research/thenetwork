@@ -324,9 +324,8 @@ export class Accounts {
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
       const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), now: () => this.now() });
       if (moved === "stale_request") return numberChangeRefused("NoPendingChange");
-      const result = stepPhoneChange(allowed, {
-        type: "recordMove", moveResult: moved === "ok" ? "MoveApplied" : moved === "number_in_use" ? "MoveNumberTaken" : "MoveMissingPhone",
-      });
+      const moveResult = { ok: "MoveApplied", number_in_use: "MoveNumberTaken", no_phone: "MoveMissingPhone", banned: "MoveBanned" } as const;
+      const result = stepPhoneChange(allowed, { type: "recordMove", moveResult: moveResult[moved] });
       if (result.phase !== "Moved") return numberChangeRefused(result.failure);
       return { ok: true };
     });

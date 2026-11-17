@@ -107,6 +107,17 @@ pure def sometimesAppliesPhoneBan(flow: ServiceSafetyFlow): bool = flow.phase ==
 pure def sometimesAppliesPersonBan(flow: ServiceSafetyFlow): bool = flow.phase == ApplyingPersonBan
 ```
 
+### A ban covers the reported number and the number current at the decision
+
+Persist the recorded number and any different verified number of the same person under the lock used by a number move. Both records carry the same decision, reason and audit authority. Projection and any later retry cover both records. A move that acquires the lock after the ban must read the ban before writing a binding.
+
+```quint
+pure def includeLockedBanPhone(observedHash: str, currentHash: str): bool =
+  observedHash != "" and currentHash != "" and currentHash != observedHash
+
+pure def lawNoDuplicateLockedBanPhone(hash: str): bool = not(includeLockedBanPhone(hash, hash))
+```
+
 ### An interrupted ban resumes from its saved authority
 
 Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, and all current app restrictions finish. An authorized retry uses the original decision and finishes pending work without writing another ban. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.

@@ -17,7 +17,7 @@ type PhoneChangePhase = Beginning | CheckingStartOwner | CheckingConfirmOwner | 
 type PhoneChangeFailure = NoFailure | SameNumber | ReviewNeeded | NoPerson | RateLimited | NoPendingChange | InvalidCode | NumberInUse
 type CurrentPhone = OwnedPhone | UnavailablePhone | WrongPerson
 type MovePolicy = MoveAllowed | MoveBlocked | NumberTaken
-type MoveOutcome = MoveApplied | MoveNumberTaken | MoveMissingPhone
+type MoveOutcome = MoveApplied | MoveNumberTaken | MoveMissingPhone | MoveBanned
 type PhoneChange = { phase: PhoneChangePhase, failure: PhoneChangeFailure, codeVerified: bool, moveAllowed: bool }
 
 pure val initial: PhoneChange = { phase: Beginning, failure: NoFailure, codeVerified: false, moveAllowed: false }
@@ -93,7 +93,7 @@ pure def recordVerification(change: PhoneChange, otpVerified: bool): PhoneChange
 
 ### The verified request can move only when both numbers allow it
 
-Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target and the request's lifetime again after verification. A missing, superseded or expired request cannot move. A missing or held current identity returns review and a number claimed before the move returns the in-use outcome. Only a completed store move permits success.
+Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target, the request's lifetime and both ban decisions again after verification. A missing, superseded or expired request cannot move. A ban or missing or held current identity returns review. A number claimed before the move returns the in-use outcome. Only a completed store move permits success.
 
 ```quint
 pure def canCheckMovePolicy(change: PhoneChange): bool = change.phase == AwaitingMovePolicy and change.codeVerified
@@ -101,6 +101,12 @@ pure def checkMovePolicy(change: PhoneChange, policy: MovePolicy): PhoneChange =
   if (policy == MoveBlocked) { ...change, phase: Refused, failure: ReviewNeeded }
   else if (policy == NumberTaken) { ...change, phase: Refused, failure: NumberInUse }
   else { ...change, phase: AwaitingMove, moveAllowed: true }
+
+pure def lockedPhoneMoveAllowed(currentBanned: bool, targetBanned: bool): bool =
+  not(currentBanned or targetBanned)
+
+pure def lawBannedPhoneCannotMove(currentBanned: bool, targetBanned: bool): bool =
+  (currentBanned or targetBanned) implies not(lockedPhoneMoveAllowed(currentBanned, targetBanned))
 
 pure def canRecordMove(change: PhoneChange): bool =
   change.phase == AwaitingMove and change.codeVerified and change.moveAllowed

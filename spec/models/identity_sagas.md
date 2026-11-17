@@ -69,7 +69,8 @@ module identity_sagas {
   type PersonRow = { exists: bool, live: bool, hash: str }
   // app "*" is a global event (app_id null). seq orders events with the same time (order by at, id).
   type Ev = { ph: str, app: str, out: bool, at: int, seq: int }
-  type BanRow = { scope: str, person: int, hash: str }
+  // Model the identifier of a staff decision by the person, scope and initially observed hash.
+  type BanRow = { scope: str, person: int, hash: str, observed: str }
   // A STOP the gateway received; it is written to the ledger by a later action (stopCommit).
   type StopMsg = { ph: str, at: int, owner: int, h: str }
 
@@ -290,9 +291,11 @@ module identity_sagas {
   pure def banUnfinishedIn(w0: World, p: int): bool = APPS.exists(a =>
     Set("active", "paused", "onboarding").contains(w0.mem.get((p, a))) or w0.net.get((p, a)) == "active")
 
-  pure def banScopeRows(w0: World, p: int, scope: str): Set[BanRow] =
-    w0.bans.filter(b => if (scope == "person") b.scope == "person" and b.person == p
+  pure def banScopeRows(w0: World, p: int, scope: str): Set[BanRow] = {
+    val matching = w0.bans.filter(b => if (scope == "person") b.scope == "person" and b.person == p
       else w0.people.get(p).hash != "" and b.hash == w0.people.get(p).hash)
+    w0.bans.filter(b => matching.exists(m => m.scope == b.scope and m.person == b.person and m.observed == b.observed))
+  }
 
   // A recorded ban can resume until the runtime projection receipt commits.
   pure def banGuard(w0: World, p: int, scope: str): str = {
@@ -820,16 +823,18 @@ module identity_sagas {
     all {
       b.pc > 0,
       if (b.pc == 1) {
-        // The ban rows with the hashes read at the start. Since 20f421e (SD-056) ban() locks the person row
-        // and also bans the person's number now when it differs from the hash the caller read.
-        val rows = if (b.scope == "person") Set({ scope: "person", person: p, hash: firstOf(b.hashes) })
-                   else b.hashes.map(h => { scope: "phone", person: p, hash: h })
+        // The number move and ban persistence share a person-phone lock (SD-056).
+        val observed = firstOf(b.hashes)
+        val rows = if (b.scope == "person") Set({ scope: "person", person: p, hash: observed, observed: observed })
+                   else b.hashes.map(h => { scope: "phone", person: p, hash: h, observed: h })
         val nowHash = w.people.get(p).hash
-        val moved = if (nowHash != "" and rows.exists(x => x.hash != "" and x.hash != nowHash)) Set({ scope: b.scope, person: p, hash: nowHash }) else Set()
+        val moved = if (nowHash != "" and observed != "" and observed != nowHash)
+          Set({ scope: b.scope, person: p, hash: nowHash, observed: observed }) else Set()
         set3({ ...w, bans: w.bans.union(rows).union(moved) }, { ...s, ban: { ...b, pc: 2 } },
           { ...g, banDecided: g.banDecided.union(Set(p)), photosAtBan: g.photosAtBan.union(w.photos.filter(k => k._1 == p)), last: "ban: rows inserted", args: [] })
       } else if (b.pc == 2) {
-        set3({ ...w, suppression: w.suppression.union(b.hashes) }, { ...s, ban: { ...b, pc: 3 } }, { ...g, last: "ban: hashes suppressed", args: [] })
+        val hashes = banScopeRows(w, p, b.scope).map(row => row.hash).exclude(Set(""))
+        set3({ ...w, suppression: w.suppression.union(b.hashes).union(hashes) }, { ...s, ban: { ...b, pc: 3 } }, { ...g, last: "ban: hashes suppressed", args: [] })
       } else if (b.pc == 3) {
         set3({ ...w, ratings: w.ratings.exclude(Set(p)) }, { ...s, ban: { ...b, pc: 4 } }, { ...g, last: "ban: ratings dropped", args: [] })
       } else if (b.pc == 4) {
