@@ -31,6 +31,8 @@ import { serveHttp, type HttpServer as Server, type ServerWebSocket } from "../.
 import { buildWebRoutes } from "./web-assets.ts";
 import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } from "../../core/src/generated/staffPermissions.ts";
 import { staffRevealMayDisclose } from "../../core/src/generated/consoleMemberView.ts";
+import { monthlyGatheringConsoleAllowed } from "../../core/src/generated/monthlyGathering.ts";
+import { readCappedText } from "../../platform/src/body.ts";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
@@ -40,6 +42,7 @@ import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewCl
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
 import { CostView } from "./ops.ts";
+import { gatheringId, type GatheringRequest } from "./gatherings.ts";
 import {
   AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, globalRolesFor, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
@@ -471,6 +474,36 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     return people;
   }
 
+  const gatheringRoute = (action: GatheringRequest["action"]) => guard(async (req, user, app) => {
+    const realNetworkAdmin = monthlyGatheringConsoleAllowed(mode === "real", app === "ntwrk", allowed(user, ["admin"], app, mode), true);
+    if (!realNetworkAdmin) return forbidden("monthly gatherings need a Network administrator in real mode");
+    const revision = modeRevision;
+    const network = await source("real", app);
+    if (!(network instanceof RealSource) || !network.gatheringServiceAvailable) return json({ ok: false, error: "gatherings_unavailable" }, 503);
+
+    const id = action === "review" ? req.params.id : undefined;
+    if (action === "review" && (!id || !gatheringId.test(id))) return json({ ok: false, error: "invalid_request" }, 400);
+    let request: GatheringRequest = { action: "list" };
+    if (action !== "list") {
+      try {
+        const raw = await readCappedText(req, 2048);
+        if (raw === "too_large") return json({ ok: false, error: "invalid_request" }, 413);
+        const body: unknown = JSON.parse(raw);
+        request = action === "review" && id ? { action, id, body } : { action: "draft", body };
+      } catch { return json({ ok: false, error: "invalid_request" }, 400); }
+    }
+    const audit = { action: action === "list" ? "read_monthly_gatherings" : action === "draft" ? "create_monthly_gathering" : "review_monthly_gathering",
+      ...(id ? { targetId: id } : {}) };
+    const refusal = await record(user, app, { ...audit, ok: true, ...(action !== "list" ? { detail: { phase: "requested" } } : {}) });
+    if (refusal) return refusal;
+    if (revision !== modeRevision) return modeChanged();
+    const answer = await network.monthlyGatherings(user.id, request);
+    if (!answer) return json({ ok: false, error: "gatherings_unavailable" }, 503);
+    if (action === "list" && revision !== modeRevision) return modeChanged();
+    if (action !== "list") await record(user, app, { ...audit, ok: answer.body.ok, detail: { phase: "result" } });
+    return json(answer.body, answer.status);
+  }, ["admin"]);
+
   await source(mode, DEFAULT_APP);
   server = await serveHttp<WsData>({
     port: opts.port ?? 4747,
@@ -755,6 +788,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         return r ? json({ ok: true, ...r }) : json({ ok: false, error: "no database configured", code: "not_configured" }, 503);
       }, ["analyst"]),
       "/api/config": guard(async (_r, _u, app) => json(await (await source(mode, app)).config()), ["analyst"]),
+      "/api/gatherings": { GET: gatheringRoute("list"), POST: gatheringRoute("draft") },
+      "/api/gatherings/:id/review": { POST: gatheringRoute("review") },
       "/api/audit": guard(async (req, u, app) => {
         const q = new URL(req.url).searchParams;
         const no = await record(u, app, { action: "read_audit", ok: true });

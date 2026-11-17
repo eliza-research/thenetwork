@@ -26,9 +26,12 @@ pure val startsAtValues = Set(0, 1, gatheringMinDurationMs, gatheringMaxDuration
 pure val endsAtValues = Set(0, 1, gatheringMinDurationMs, gatheringMinDurationMs + 1, gatheringMaxDurationMs + 1)
 pure val capacityValues = Set(2, 3, 150, 151)
 
-pure def monthlyGatheringWindowAllowed(now: int, startsAt: int, endsAt: int, inMonth: bool, publicWindow: bool, capacity: int): bool =
+pure def gatheringDraftWindowAllowed(now: int, startsAt: int, endsAt: int, inMonth: bool, capacity: int): bool =
   now < startsAt and gatheringMinDurationMs <= endsAt - startsAt and endsAt - startsAt <= gatheringMaxDurationMs and
-    inMonth and publicWindow and gatheringMinCapacity <= capacity and capacity <= gatheringMaxCapacity
+    inMonth and gatheringMinCapacity <= capacity and capacity <= gatheringMaxCapacity
+
+pure def monthlyGatheringWindowAllowed(now: int, startsAt: int, endsAt: int, inMonth: bool, publicWindow: bool, capacity: int): bool =
+  publicWindow and gatheringDraftWindowAllowed(now, startsAt, endsAt, inMonth, capacity)
 ```
 
 ### Review decides the exact draft once and does not contact members
@@ -51,4 +54,18 @@ pure def monthlyGatheringReview(phase: GatheringPhase, revision: int, expectedRe
 pure def lawGatheringReviewRequiresDraft(phase: GatheringPhase, revision: int, expectedRevision: int, decision: GatheringReviewDecision, currentWindow: bool): bool =
   monthlyGatheringReview(phase, revision, expectedRevision, decision, currentWindow) != GatheringReviewRefused implies
     (phase == GatheringDraft and revision == expectedRevision)
+```
+
+### The real staff console authors and reviews the exact gathering
+
+The real Network workspace offers monthly New York gatherings only to an administrator with the Network service available. Staff can enter a city-local start and end, select a curated public venue or supply a published event reference, set capacity, and create a draft. The console lists the server's drafts and prior decisions. Review shows only for a draft, confirms the selected decision and submits the exact revision. The server's response controls the row. Authoring and review never approve or deliver an invitation.
+
+```quint
+pure def monthlyGatheringConsoleAllowed(realMode: bool, networkApp: bool, appAdmin: bool, serviceAvailable: bool): bool =
+  realMode and serviceAvailable and monthlyGatheringStaffAllowed(networkApp, true, appAdmin)
+
+pure def monthlyGatheringReviewOffered(phase: GatheringPhase): bool = phase == GatheringDraft
+
+pure def lawMonthlyGatheringConsoleNeedsReal(networkApp: bool, appAdmin: bool, serviceAvailable: bool): bool =
+  not(monthlyGatheringConsoleAllowed(false, networkApp, appAdmin, serviceAvailable))
 ```

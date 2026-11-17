@@ -43,6 +43,7 @@ import {
   startLab,
 } from "../../core/src/generated/consolePanels.ts";
 import { panelStaffOf } from "./ops.tsx";
+import { GatheringConsole } from "./gatherings.tsx";
 import {
   type AuditPhase,
   type ConfigEditor,
@@ -625,6 +626,7 @@ export function Config() {
           <Disclosure summary="Outreach numbers"><pre className="font-mono text-sm whitespace-pre-wrap">{JSON.stringify(c.outreach, null, 1)}</pre></Disclosure>
         </InspectorSection>
       </div>
+      <GatheringConsole />
       {panelAllowed("AuditPanel", viewer.staff) && <AuditLog />}
     </div>
   );

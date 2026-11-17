@@ -1,4 +1,5 @@
 import { readCapped } from "../../../platform/src/body.ts";
+import { gatheringFromService, type GatheringRequest, type GatheringResponse } from "../gatherings.ts";
 import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 // Real mode's write path: the Network service's staff API (packages/network/service, runbook-real
 // 6.5). The Observatory's own database login stays read-only; review decisions, safety actions and
@@ -108,6 +109,31 @@ export class ServiceClient {
     // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
     const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
     return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut, revision }, REVIEW_BLOCK_ERRORS);
+  }
+
+  /** The staff API owns authoring and review; only its accepted result reaches the workspace. */
+  async monthlyGatherings(staff: string, request: GatheringRequest): Promise<{ status: number; body: GatheringResponse }> {
+    const base = "/apps/ntwrk/gatherings";
+    const path = request.action === "review" ? `${base}/${encodeURIComponent(request.id)}/review` : base;
+    const unavailable = { status: 503, body: { ok: false as const, error: "gatherings_unavailable" } };
+    try {
+      const { status, json } = await (request.action === "list" ? this.call("GET", path, staff) : this.call("POST", path, staff, request.body));
+      if (status === 403) return { status, body: { ok: false, error: "forbidden" } };
+      if (status === 400 || status === 409 || (status === 404 && request.action === "review")) {
+        const error = ["invalid_gathering", "month_unavailable", "gathering_not_reviewable", "not_found"].find(code => code === json.error) ?? "invalid_request";
+        return { status, body: { ok: false, error } };
+      }
+      if (!json.ok) return unavailable;
+      if (status === 200 && request.action === "list" && Array.isArray(json.gatherings) && json.gatherings.length <= 120) {
+        const gatherings = (json.gatherings as unknown[]).map(gatheringFromService);
+        if (gatherings.every(row => row !== undefined)) return { status, body: { ok: true, gatherings } };
+      }
+      if ((status === 200 || status === 201) && request.action !== "list") {
+        const gathering = gatheringFromService(json.gathering);
+        if (gathering) return { status, body: { ok: true, gathering } };
+      }
+    } catch { return unavailable; }
+    return unavailable;
   }
 
   safety(staff: string, a: SafetyAction): Promise<ControlResult> {

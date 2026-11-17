@@ -28,6 +28,7 @@ import type {
 } from "../types.ts";
 import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
+import type { GatheringRequest } from "../gatherings.ts";
 import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
 
 export interface RealOptions {
@@ -801,6 +802,13 @@ export class RealSource implements DataSource {
   async safetyAction(a: SafetyAction, actor: string): Promise<ControlResult> {
     if (!this.service) return { ok: false, error: "real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to act through the Network service", code: "read_only" };
     return this.afterAction(await this.service.safety(actor, a));
+  }
+
+  get gatheringServiceAvailable() { return this.service !== undefined; }
+
+  /** Authoring remains exclusively on the Network service. */
+  monthlyGatherings(actor: string, request: GatheringRequest) {
+    return this.service?.monthlyGatherings(actor, request);
   }
 
   /** A staff action the service applied: read the database again so every viewer sees it. */
