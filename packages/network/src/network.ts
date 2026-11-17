@@ -98,7 +98,7 @@ import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMem
 import { publicEventRevision } from "./public-event-revision.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
-  standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue,
+  standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue, standingPresencePhase,
 } from "../../core/src/generated/standingIntent.ts";
 import {
   effectiveStandingControl, initial as initialIntentManagement, intentManagementAllowed,
@@ -5087,10 +5087,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     ));
     // The projection time on a learned facet changes on every tick. Its usable content does not.
     const facetEvidence = facets.map(({ validFrom, validTo, observedAt, ...facet }) => facet);
+    const presence = input.presence.flatMap(p => {
+      const eligible = ids.has(p.memberId) && (p.type !== "temporary" || temporaryPresenceWindow(p) !== undefined);
+      const phase = standingPresencePhase(eligible, p.from !== undefined, p.from ?? 0, p.to !== undefined, p.to ?? 0, input.now);
+      return phase === "IgnorePresence" ? [] : [stableStringify({ ...p, phase })];
+    }).sort();
     const evidence = {
       members: members.map(({ id, age, state, homeCity, prefs }) => ({ id, age, state, homeCity, prefs })).map(stableStringify).sort(),
       facets: facetEvidence.map(stableStringify).sort(),
       intents: intents.map(stableStringify).sort(),
+      presence,
       events: (input.events ?? []).filter(event => markets.has(event.city) && event.end > input.now).map(stableStringify).sort(),
     };
     return { fingerprint: sha256(stableStringify(evidence)), intentIds: intents.map(i => i.id).sort() };

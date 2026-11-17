@@ -43,11 +43,26 @@ pure def lawBlockingRecordPreventsLearnedProjection(phase: StandingIntentPhase):
 
 ### Changed matching evidence starts another standing intent search
 
-After the daily run, recheck live standing intents on the next normal matching tick when usable evidence or supply changes. A new eligible member, a changed usable facet, a fresh intent, or a current event in the matching input can change that evidence. Use the same app and city, and keep the last searched evidence with the matching state so a retry or restart does not repeat a completed search. A private facet cannot start a search. The daily run and any rechecks share the same daily proposal limit.
+After the daily run, recheck live standing intents on the next normal matching tick when usable evidence or supply changes. A new eligible member, a changed usable facet, a fresh intent, or a current event in the matching input can change that evidence. Include current and future presence of those members. A trip that changes, begins, or ends changes the evidence for the existing market, even when the trip is to a different city. Exclude invalid and ended windows. Use the same app and city, and keep the last searched evidence with the matching state so a retry or restart does not repeat a completed search. A private facet cannot start a search. The daily run and any rechecks share the same daily proposal limit.
 
 ```quint
 pure def standingIntentFacetEvidence(scope: str, fresh: bool): bool =
   fresh and (scope == "matchable" or scope == "shareable")
+
+type StandingPresencePhase = IgnorePresence | FuturePresence | CurrentPresence
+
+pure def standingPresencePhase(eligibleMember: bool, hasStart: bool, startsAt: int, hasEnd: bool, endsAt: int, asOf: int): StandingPresencePhase =
+  if (not(eligibleMember) or (hasStart and hasEnd and startsAt >= endsAt) or (hasEnd and endsAt <= asOf)) IgnorePresence
+  else if (hasStart and asOf < startsAt) FuturePresence
+  else CurrentPresence
+
+pure def lawEndedPresenceDoesNotContribute(eligibleMember: bool, hasStart: bool, startsAt: int, endsAt: int): bool =
+  standingPresencePhase(eligibleMember, hasStart, startsAt, true, endsAt, endsAt) == IgnorePresence
+
+pure def lawStartingTripChangesEvidence(startsAt: int, endsAt: int): bool =
+  startsAt < endsAt implies
+    (standingPresencePhase(true, true, startsAt, true, endsAt, startsAt - 1) == FuturePresence and
+      standingPresencePhase(true, true, startsAt, true, endsAt, startsAt) == CurrentPresence)
 
 pure def canQueueEngineOpportunity(queuedToday: int, dailyCap: int): bool =
   queuedToday < dailyCap

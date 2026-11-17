@@ -275,6 +275,43 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await runCount()).toBe(3);
   }, T);
 
+  // spec/standingIntent.md, "Changed matching evidence starts another standing intent search"
+  test("an earlier return to the matching market rechecks standing intents before the next day", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id not in ('a', 'b')`;
+    await sql`insert into network.presence (member_id, city, type, areas, from_at, to_at)
+      values ('b', 'sf', 'temporary', '{}', ${new Date(START - DAY)}, ${new Date(START + 30 * DAY)})`;
+    const clock = new SimClock(START);
+    const options: Partial<ServiceOptions> = { network: { seed: 1, maxNewPerDay: 1, plans: false, growth: false } };
+    const first = service(clock, "intent-presence", options);
+    expect((await staff(first, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const id of ["a", "b"]) {
+      for (const message of [ONBOARD[0]!, "I enjoy hiking, climbing, and cycling.", ...ONBOARD.slice(2)]) await say(first, clock, id, message);
+    }
+    const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
+    expect(await first.tick()).toBe(true);
+    expect(await runCount()).toBe(1);
+    expect((await (await staff(first, "rev-tok", "GET", "/review")).json()).items).toEqual([]);
+    await first.close();
+
+    const restarted = service(clock, "intent-presence-restarted", options);
+    await restarted.start();
+    const returnedAt = clock.now() + MINUTE;
+    await sql`update network.presence set to_at = ${new Date(returnedAt)} where member_id = 'b' and type = 'temporary'`;
+    clock.set(returnedAt);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    const queue = await (await staff(restarted, "rev-tok", "GET", "/review")).json();
+    const item = queue.items.find((row: { origin: string }) => row.origin === "engine");
+    expect(item).toBeDefined();
+    expect([...item.proposal.participants].sort()).toEqual(["a", "b"]);
+    expect((await sql`select id from network.messages where opportunity_id = ${item.oppId}`)).toHaveLength(0);
+
+    clock.advance(MINUTE);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+  }, T);
+
   // spec/emptyIntentFollowup.md, "A pending follow-up uses current permission and the same live statement"
   test("an aged intent without a match gets one eligible solo next step across restart", async () => {
     await reset();
