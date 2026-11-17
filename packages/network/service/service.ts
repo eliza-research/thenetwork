@@ -2441,8 +2441,7 @@ export class NetworkService implements RuntimeHost {
 
   /** Apply the saved age to matching, photos, and memberships owned by the same person. */
   private async projectStatedAge(rt: NetworkRuntime, memberId: MemberId) {
-    const recorded = rt.takeRecordedAge(memberId);
-    if (recorded) await this.accounts.projectRecordedAge(recorded);
+    for (const recorded of rt.takeRecordedAges(memberId)) await this.accounts.projectRecordedAge(recorded);
   }
 
   /**

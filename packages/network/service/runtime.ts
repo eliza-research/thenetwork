@@ -220,8 +220,8 @@ export class NetworkRuntime {
   private committed: Outbound[] = [];
   /** Committed observations waiting for their follow-up projection. */
   private recordedAges: (RecordedMemberAge & { memberId: MemberId })[] = [];
-  takeRecordedAge(memberId: MemberId): RecordedMemberAge | undefined {
-    const mine = this.recordedAges.find(a => a.memberId === memberId);
+  takeRecordedAges(memberId: MemberId): RecordedMemberAge[] {
+    const mine = this.recordedAges.filter(a => a.memberId === memberId);
     this.recordedAges = this.recordedAges.filter(a => a.memberId !== memberId);
     return mine;
   }
