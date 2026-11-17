@@ -939,18 +939,21 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
     const active = restarted.s.runtimeFor("friends")!, adapter = active.adapter as BlooioAdapter;
     const peer = (await memberOf("friends", peerPhone))!.id;
-    const next = await bookedPair(current, peer, "Casey");
-    clock.set(next.opportunity.meetingAt! - 2 * HOUR);
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
-    await adapter.engaged(peerPhone);
+    const queueBookingReply = async (id: string) => {
+      const next = await bookedPair(current, peer, "Casey");
+      clock.set(next.opportunity.meetingAt! - 2 * HOUR);
+      await adapter.engaged(peerPhone);
+      await active.unitOfWork(net => {
+        net.importState({ ...net.exportState(), members: next.state.members, opps: next.state.opps });
+        // A causal reply can pass the recipient preflight. The locked claim also checks the roster.
+        active.unit.sends.push({ id, memberId: peer, to: peerPhone, kind: "reply", type: "proposal", oppId: next.opportunity.id,
+          bookingRoster: next.opportunity.participants, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+      });
+    };
     await adapter.lineSafety("review");
     const messageId = "report-carryover-booking-fixture";
-    await active.unitOfWork(net => {
-      net.importState({ ...net.exportState(), members: next.state.members, opps: next.state.opps });
-      // A queued causal booking reply can pass the recipient-only preflight. The locked claim checks the entire roster.
-      active.unit.sends.push({ id: messageId, memberId: peer, to: peerPhone, kind: "reply", type: "proposal",
-        oppId: next.opportunity.id, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
-    });
+    await queueBookingReply(messageId);
     expect(await adapter.queue.statusOf(messageId)).toBe("retry_scheduled");
     await adapter.lineSafety(undefined);
     clock.advance(HOUR);
@@ -975,6 +978,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await decide("dismiss", { reportId: harassment })).toEqual({ ok: false, reason: "already_dismissed" });
     expect(await carryovers()).toEqual([]);
     expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: false }, other]);
+    const clearedId = "report-carryover-cleared-booking-fixture";
+    await queueBookingReply(clearedId);
+    expect(await adapter.queue.statusOf(clearedId)).toBe("sent");
+    expect(delivered.some(request => request.idempotencyKey === `tn:${clearedId}`)).toBe(true);
   }, T);
 
   test.each(["hold", "ban"] as const)("a committed global %s stops queued peer delivery while a related runtime is still waiting", async decision => {
