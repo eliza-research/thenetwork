@@ -251,7 +251,7 @@ pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connecti
 
 ### A Join draft holds only an approved first name and home city, once per grant
 
-On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. The draft opens on the app's Join page; ntwrk.party and friends.help have no Join page now ([site pages](sitePages.md)), so the person cannot use the draft there yet.
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply uses the same live app signup link as `start_signup`, selected by [site enrollment](siteEnrollment.md), and asks the person to continue in their agent. The saved draft does not prefill that flow.
 
 ```quint
 pure def canCallPrepareSignup(c: Connection): bool =

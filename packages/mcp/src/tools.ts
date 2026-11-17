@@ -113,11 +113,11 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       ...schemes("start_signup"),
     },
     {
-      name: "prepare_signup", title: "Prepare my Join form",
-      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. They must open Join, review or edit every field and consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
+      name: "prepare_signup", title: "Save my signup draft",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The person continues signup in their agent and approves their details and text consent there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
-      annotations: { title: "Prepare my Join form", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("prepare_signup"),
     },
     {
@@ -257,7 +257,7 @@ function publicInfo(a: McpApp, surface: Surface) {
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: a.adultsOnly,
-    stop: "Texting STOP on the shared line stops every app. \"leave " + a.domain + "\" (or the leave button on the site) stops this app only.",
+    stop: `Texting STOP on the shared line stops every app. To stop this app only, text "leave ${a.domain}".`,
     consent_rules: [
       "Nobody is introduced unless both people say yes.",
       "Nothing crosses from one app to another unless the person shares it.",
@@ -334,11 +334,11 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         type: "observeConnection", grantReady: !!(g && store), guardReady: !!(c.hooks.withSignupAgePolicy && c.hooks.setSignupAgeCleanup),
       });
       if (preparedConnection.phase === "GrantRefused" || !g || !store) return { kind: "invalid_grant" };
-      if (preparedConnection.phase !== "CheckAge" || !c.hooks.withSignupAgePolicy) return { kind: "error", message: "Use the normal Join form to enter your details." };
+      if (preparedConnection.phase !== "CheckAge" || !c.hooks.withSignupAgePolicy) return { kind: "error", message: "Follow this app's signup instructions in your agent." };
       const started = performance.now(), requestedAt = c.now ?? Date.now();
       return c.hooks.withSignupAgePolicy(g.phoneKey, g.app, async allowed => {
         const preparedAge = stepDraftPreparation(preparedConnection, { type: "observeAge", allowed });
-        if (preparedAge.phase !== "CheckOwner") return { kind: "error", message: "We cannot prepare this Join form. Check the joining requirements on the site." };
+        if (preparedAge.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
         const person = await c.hooks.personForKey(g.phoneKey);
         const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: grantStillTheirs(g.personId, person) });
         if (preparedOwner.phase !== "CheckMembership") return { kind: "invalid_grant" };
@@ -349,8 +349,9 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         const expiresAt = signupDraftDeadline(requestedAt + signupDraftLifetimeMs, g.expiresAt);
         const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt, consumedAt: null }, at);
         const finished = stepDraftPreparation(preparedMembership, { type: "observeWrite", saved });
-        return finished.phase === "Prepared" ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "Open Join to review or edit your name and home city. Your age and text consent are still yours to enter." } }
-          : { kind: "error", message: "This connection already prepared a draft or is no longer valid. Open Join to enter or edit your details." };
+        return finished.phase === "Prepared" ? { kind: "ok", data: { prepared: true, app: g.app, url: publicSignupUrl(c.apps[g.app]),
+          next_step: "Your draft is saved. Follow the signup instructions in your agent and approve your details and text consent there." } }
+          : { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
       });
     }
     case "check_status": {

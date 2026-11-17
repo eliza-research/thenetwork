@@ -35,10 +35,17 @@ test("settled draft cannot Join a different signed-in account or record its age 
 test("verified-phone OAuth draft is app-bound, recoverable until deliberate use, editable before normal Join and never opts in", async () => {
   const e=setup(), c=await connect(e,"friends.help",PHONE_A), token=c.token.access_token;
   const saved=await call(e,"https://friends.help/mcp","prepare_signup",{firstName:"Ari",homeCity:"sf"},{token});
-  expect(saved.body!.result.structuredContent).toMatchObject({prepared:true,url:"https://friends.help/join?via=agent"});
+  expect(saved.body!.result.structuredContent).toMatchObject({
+    prepared: true, url: "https://friends.help/SKILL.md", next_step: expect.stringContaining("in your agent"),
+  });
   expect(saved.text).not.toContain(PHONE_A);
   expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
-  expect((await call(e,"https://friends.help/mcp","prepare_signup",{firstName:"Overwrite"},{token})).body!.result.isError).toBe(true);
+  const retry = await call(e,"https://friends.help/mcp","prepare_signup",{firstName:"Overwrite"},{token});
+  expect(retry.body!.result.isError).toBe(true);
+  expect(retry.text).toContain("signup instructions in your agent");
+  const appInfo = await call(e, "https://friends.help/mcp", "app_info", { app: "friends" });
+  expect(appInfo.body!.result.structuredContent.stop).toContain('text "leave friends.help"');
+  expect(appInfo.body!.result.structuredContent.stop).not.toContain("button");
   expect(await (await claim(e,await browser(e,PHONE_B))).json()).toMatchObject({draft:null});
   const nt=await e.sessions.create("ntwrk",PHONE_A,null);
   expect(await (await claim(e,`sid_ntwrk=${nt.token}`,"ntwrk.party")).json()).toMatchObject({draft:null});
