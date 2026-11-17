@@ -51,18 +51,19 @@ pure def chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequired: bo
 Phone submission starts or restarts verification until the request reaches consent. Only a code page with a stored phone can verify a code. Only a consent page with a phone accepts a consent decision. A dedicated cancel form can end any bound request. A delayed phone proof, browser retry or Cloud response can advance only the same live stored page and phone binding it began with.
 
 ```quint
-type StoredPage = PhonePage | CodePage | ConsentPage
+type StoredPage = PhonePage | CodePage | ConsentPage | SignupEnrollmentPending | EnrolledConsentPage
 type BrowserForm = PhoneForm | CodeForm | ConsentForm | CancelForm | CloudReturn
 pure def canReadBrowserForm(flow: BrowserFlow): bool = flow.phase == BrowserBound
 pure def browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: bool): bool =
   flow.phase == BrowserBound and page == PhonePage and not(hasPhone)
 pure def readBrowserForm(flow: BrowserFlow, page: StoredPage, hasPhone: bool,
   form: BrowserForm, approve: bool): BrowserFlow =
-  if (form == PhoneForm) { ...flow, phase: if (page == ConsentPage) AlreadyVerified else StartingOtp }
+  if (page == SignupEnrollmentPending) { ...flow, phase: BrowserExpired }
+  else if (form == PhoneForm) { ...flow, phase: if (page == ConsentPage or page == EnrolledConsentPage) AlreadyVerified else StartingOtp }
   else if (form == CodeForm) { ...flow, phase: if (page == CodePage and hasPhone) VerifyingOtp else BrowserExpired }
   else if (form == CloudReturn) { ...flow, phase: if (browserEntryMayResume(flow, page, hasPhone)) CheckingIdentity else BrowserExpired }
   else if (form == CancelForm) { ...flow, phase: ConsentDeclined }
-  else if (page != ConsentPage or not(hasPhone)) { ...flow, phase: BrowserExpired }
+  else if ((page != ConsentPage and page != EnrolledConsentPage) or not(hasPhone)) { ...flow, phase: BrowserExpired }
   else if (approve) { phase: CheckingConsentOwner, explicitlyApproved: true }
   else { ...flow, phase: ConsentDeclined }
 
@@ -88,6 +89,39 @@ pure def canRecordBrowserIdentity(flow: BrowserFlow): bool = flow.phase == Check
 pure def recordBrowserIdentity(flow: BrowserFlow, identity: IdentityStatus): BrowserFlow =
   { ...flow, phase: if (identity == IdentityPermitted) ShowingConsent
     else if (identity == IdentityUnavailable) SessionRetry else IdentityDenied }
+```
+
+### Optional signup stays inside the verified authorization request
+
+The owner can connect without joining. For a client that supports profile submission and read-back, the verified browser can also open a private signup form in The Network, slop.date or friends.help. The normal consent route stays available when the signup form is unavailable. The form is bound to the exact request and canonical phone owner. A separate checkbox accepts the app's current text consent. The only source of invitation data is the browser form. The member must complete the app's existing eligibility and invitation checks.
+
+The store first reserves the exact pending request for the enrollment attempt. The enrollment operation may bind the request only to the exact eligible same-app member it just created, with a fresh canonical phone-owner check. An interrupted attempt cannot infer success from a later account lookup. The next page requires distinct connector consent tied to the newly bound request, so a previously displayed consent form cannot authorize the new membership. Before saving that approval, the server checks that the canonical owner and that app's active or onboarding membership still qualify.
+
+```quint
+pure def browserSignupAppAllowed(app: str, surfaceOffered: bool, canReadMembership: bool, canWriteProfile: bool): bool =
+  (app == "ntwrk" or app == "slop" or app == "friends") and surfaceOffered and canReadMembership and canWriteProfile
+
+pure def browserSignupOpenAllowed(flow: BrowserFlow, page: StoredPage, hasPhone: bool, sameSession: bool, appAllowed: bool): bool =
+  flow.phase == BrowserBound and page == ConsentPage and hasPhone and sameSession and appAllowed
+
+pure def browserSignupJoinAllowed(openAllowed: bool, exactForm: bool, smsAccepted: bool, currentConsent: bool): bool =
+  openAllowed and exactForm and smsAccepted and currentConsent
+
+pure def browserSignupOwnerBindingAllowed(page: StoredPage, createdMember: bool, sameApp: bool,
+  sameOrNewOwner: bool, currentVerifiedOwner: bool, eligibleMembership: bool): bool =
+  page == SignupEnrollmentPending and createdMember and sameApp and sameOrNewOwner and currentVerifiedOwner and eligibleMembership
+
+pure def browserSignupConsentAllowed(page: StoredPage, exactApproval: bool): bool =
+  page != SignupEnrollmentPending and (page != EnrolledConsentPage or exactApproval)
+
+pure def browserSignupMemberAllowed(memberState: str): bool =
+  memberState == "active" or memberState == "onboarding"
+
+pure def lawBrowserSignupNeedsTextConsent(openAllowed: bool, exactForm: bool, smsAccepted: bool, currentConsent: bool): bool =
+  browserSignupJoinAllowed(openAllowed, exactForm, smsAccepted, currentConsent) implies (smsAccepted and currentConsent)
+
+pure def lawBrowserSignupNeedsFreshApproval(exactApproval: bool): bool =
+  browserSignupConsentAllowed(EnrolledConsentPage, exactApproval) implies exactApproval
 ```
 
 ### Explicit approval rechecks the owner and the app's required Cloud authority

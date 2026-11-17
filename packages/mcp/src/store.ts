@@ -44,7 +44,7 @@ export interface AuthRequest {
   /** Set by the person on our page (never by the client). */
   e164: string | null;
   personId: string | null;
-  step: "phone" | "code" | "consent";
+  step: "phone" | "code" | "consent" | "enrolling" | "enrolled";
   createdAt: number;
   expiresAt: number;
 }
@@ -317,7 +317,7 @@ export class MemoryOAuthStore implements OAuthStore {
   }
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
     const pending = this.requests.get(id);
-    if (!pending || pending.step !== "consent" || !pending.e164 || pending.expiresAt <= at) return false;
+    if (!pending || (pending.step !== "consent" && pending.step !== "enrolled") || !pending.e164 || pending.expiresAt <= at) return false;
     if (!await confirm(structuredClone(pending)) || this.requests.get(id) !== pending) return false;
 
     const prepared = structuredClone(writes);

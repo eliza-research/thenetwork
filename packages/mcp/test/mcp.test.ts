@@ -31,7 +31,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(info.body!.result.structuredContent).toMatchObject({ id: "peon", site: "https://peon.biz", ages: { join: 13, matching: 18 } });
     const signup = await call(env, NTWRK, "start_signup", { app: "friends" });
     expect(signup.body!.result.structuredContent).toMatchObject({ app: "friends", url: "https://friends.help/SKILL.md", keyword: "friends" });
-    expect(signup.body!.result.structuredContent.instructions_for_person).toContain("Keep the verification code in that signup session");
+    expect(signup.body!.result.structuredContent.instructions_for_person).toContain("Keep the verification code on that page");
     expect((await rpc(env, NTWRK, "ping")).body!.result).toMatchObject({ resultType: "complete" });
   });
 

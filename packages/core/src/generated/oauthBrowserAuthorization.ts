@@ -8,7 +8,7 @@ export interface BrowserFlow { phase: BrowserPhase; explicitlyApproved: boolean 
 /** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md) */
 export type EntrySession = "SignedIn" | "SignedOut" | "SessionUnavailable";
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
-export type StoredPage = "PhonePage" | "CodePage" | "ConsentPage";
+export type StoredPage = "PhonePage" | "CodePage" | "ConsentPage" | "SignupEnrollmentPending" | "EnrolledConsentPage";
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 export type BrowserForm = "PhoneForm" | "CodeForm" | "ConsentForm" | "CancelForm" | "CloudReturn";
 /** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
@@ -102,7 +102,7 @@ export function browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPh
 export function readBrowserForm(flow: BrowserFlow, page: StoredPage, hasPhone: boolean, form: BrowserForm, approve: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canReadBrowserForm(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
   //@ ensures (inv(flow) && canReadBrowserForm(flow)) ==> stepReadyFollowsAuthority(flow, "readBrowserForm", \result)
-  return form === "PhoneForm" ? ({ ...flow, phase: page === "ConsentPage" ? "AlreadyVerified" : "StartingOtp" } as BrowserFlow) : (form === "CodeForm" ? ({ ...flow, phase: page === "CodePage" && hasPhone ? "VerifyingOtp" : "BrowserExpired" } as BrowserFlow) : (form === "CloudReturn" ? ({ ...flow, phase: browserEntryMayResume(flow, page, hasPhone) ? "CheckingIdentity" : "BrowserExpired" } as BrowserFlow) : (form === "CancelForm" ? ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow) : (page !== "ConsentPage" || !hasPhone ? ({ ...flow, phase: "BrowserExpired" } as BrowserFlow) : (approve ? ({ phase: "CheckingConsentOwner", explicitlyApproved: true } as BrowserFlow) : ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow))))));
+  return page === "SignupEnrollmentPending" ? ({ ...flow, phase: "BrowserExpired" } as BrowserFlow) : (form === "PhoneForm" ? ({ ...flow, phase: page === "ConsentPage" || page === "EnrolledConsentPage" ? "AlreadyVerified" : "StartingOtp" } as BrowserFlow) : (form === "CodeForm" ? ({ ...flow, phase: page === "CodePage" && hasPhone ? "VerifyingOtp" : "BrowserExpired" } as BrowserFlow) : (form === "CloudReturn" ? ({ ...flow, phase: browserEntryMayResume(flow, page, hasPhone) ? "CheckingIdentity" : "BrowserExpired" } as BrowserFlow) : (form === "CancelForm" ? ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow) : ((page !== "ConsentPage" && page !== "EnrolledConsentPage") || !hasPhone ? ({ ...flow, phase: "BrowserExpired" } as BrowserFlow) : (approve ? ({ phase: "CheckingConsentOwner", explicitlyApproved: true } as BrowserFlow) : ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow)))))));
 }
 
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
@@ -152,6 +152,56 @@ export function recordBrowserIdentity(flow: BrowserFlow, identity: IdentityStatu
   //@ ensures (inv(flow) && canRecordBrowserIdentity(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
   //@ ensures (inv(flow) && canRecordBrowserIdentity(flow)) ==> stepReadyFollowsAuthority(flow, "recordBrowserIdentity", \result)
   return { ...flow, phase: identity === "IdentityPermitted" ? "ShowingConsent" : (identity === "IdentityUnavailable" ? "SessionRetry" : "IdentityDenied") };
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupAppAllowed(app: string, surfaceOffered: boolean, canReadMembership: boolean, canWriteProfile: boolean): boolean {
+  return (app === "ntwrk" || app === "slop" || app === "friends") && surfaceOffered && canReadMembership && canWriteProfile;
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupJoinAllowed(openAllowed: boolean, exactForm: boolean, smsAccepted: boolean, currentConsent: boolean): boolean {
+  return openAllowed && exactForm && smsAccepted && currentConsent;
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupMemberAllowed(memberState: string): boolean {
+  return memberState === "active" || memberState === "onboarding";
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupOpenAllowed(flow: BrowserFlow, page: StoredPage, hasPhone: boolean, sameSession: boolean, appAllowed: boolean): boolean {
+  return flow.phase === "BrowserBound" && page === "ConsentPage" && hasPhone && sameSession && appAllowed;
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupOwnerBindingAllowed(page: StoredPage, createdMember: boolean, sameApp: boolean, sameOrNewOwner: boolean, currentVerifiedOwner: boolean, eligibleMembership: boolean): boolean {
+  return page === "SignupEnrollmentPending" && createdMember && sameApp && sameOrNewOwner && currentVerifiedOwner && eligibleMembership;
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupConsentAllowed(page: StoredPage, exactApproval: boolean): boolean {
+  return page !== "SignupEnrollmentPending" && (page !== "EnrolledConsentPage" || exactApproval);
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawBrowserSignupNeedsTextConsent(openAllowed: boolean, exactForm: boolean, smsAccepted: boolean, currentConsent: boolean): boolean {
+  //@ ensures \result === true
+  return !browserSignupJoinAllowed(openAllowed, exactForm, smsAccepted, currentConsent) || (smsAccepted && currentConsent);
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function lawBrowserSignupNeedsFreshApproval(exactApproval: boolean): boolean {
+  //@ ensures \result === true
+  return !browserSignupConsentAllowed("EnrolledConsentPage", exactApproval) || exactApproval;
 }
 
 /** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
@@ -267,7 +317,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "bindBrowser" && typeof raw.matchesDigest === "boolean") return { type: "bindBrowser", matchesDigest: raw.matchesDigest };
   if (raw.type === "readBrowserClient" && typeof raw.clientExists === "boolean") return { type: "readBrowserClient", clientExists: raw.clientExists };
   if (raw.type === "chooseEntry" && (raw.session === "SignedIn" || raw.session === "SignedOut" || raw.session === "SessionUnavailable") && typeof raw.cloudRequired === "boolean") return { type: "chooseEntry", session: raw.session, cloudRequired: raw.cloudRequired };
-  if (raw.type === "readBrowserForm" && (raw.page === "PhonePage" || raw.page === "CodePage" || raw.page === "ConsentPage") && typeof raw.hasPhone === "boolean" && (raw.form === "PhoneForm" || raw.form === "CodeForm" || raw.form === "ConsentForm" || raw.form === "CancelForm" || raw.form === "CloudReturn") && typeof raw.approve === "boolean") return { type: "readBrowserForm", page: raw.page, hasPhone: raw.hasPhone, form: raw.form, approve: raw.approve };
+  if (raw.type === "readBrowserForm" && (raw.page === "PhonePage" || raw.page === "CodePage" || raw.page === "ConsentPage" || raw.page === "SignupEnrollmentPending" || raw.page === "EnrolledConsentPage") && typeof raw.hasPhone === "boolean" && (raw.form === "PhoneForm" || raw.form === "CodeForm" || raw.form === "ConsentForm" || raw.form === "CancelForm" || raw.form === "CloudReturn") && typeof raw.approve === "boolean") return { type: "readBrowserForm", page: raw.page, hasPhone: raw.hasPhone, form: raw.form, approve: raw.approve };
   if (raw.type === "recordOtpSend" && typeof raw.sent === "boolean") return { type: "recordOtpSend", sent: raw.sent };
   if (raw.type === "recordOtpVerification" && typeof raw.verified === "boolean") return { type: "recordOtpVerification", verified: raw.verified };
   if (raw.type === "recordBrowserIdentity" && (raw.identity === "IdentityPermitted" || raw.identity === "IdentityRejected" || raw.identity === "IdentityUnavailable")) return { type: "recordBrowserIdentity", identity: raw.identity };

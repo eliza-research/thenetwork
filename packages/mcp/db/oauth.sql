@@ -27,10 +27,19 @@ create table if not exists oauth.auth_requests (
   resource text not null,
   e164 text,
   person_id text,
-  step text not null check (step in ('phone', 'code', 'consent')),
+  step text not null check (step in ('phone', 'code', 'consent', 'enrolling', 'enrolled')),
   created_at timestamptz not null,
   expires_at timestamptz not null
 );
+-- The OAuth schema is applied to both new and existing databases by the service.
+do $$ begin
+  if exists (select 1 from pg_constraint where conrelid = 'oauth.auth_requests'::regclass
+    and conname = 'auth_requests_step_check' and pg_get_constraintdef(oid) not like '%enrolled%') then
+    alter table oauth.auth_requests drop constraint auth_requests_step_check;
+    alter table oauth.auth_requests add constraint auth_requests_step_check
+      check (step in ('phone', 'code', 'consent', 'enrolling', 'enrolled'));
+  end if;
+end $$;
 create index if not exists auth_requests_expires on oauth.auth_requests (expires_at);
 create index if not exists auth_requests_by_person on oauth.auth_requests (person_id, app_id) where person_id is not null;
 

@@ -159,7 +159,7 @@ export class PgOAuthStore implements OAuthStore {
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
     return this.sql.begin(async tx => {
       const [pending] = await tx`select * from oauth.auth_requests
-        where id = ${id} and step = 'consent' and e164 is not null and expires_at > ${ts(at)} for update`;
+        where id = ${id} and step in ('consent', 'enrolled') and e164 is not null and expires_at > ${ts(at)} for update`;
       if (!pending || !await confirm(request(pending))) return false;
 
       await tx`delete from oauth.auth_requests where id = ${id}`;

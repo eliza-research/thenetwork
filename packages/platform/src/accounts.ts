@@ -440,7 +440,7 @@ export class Accounts {
     return m;
   }
 
-  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     if (enrollment.phase !== "AwaitingConsent") return { ok: false, error: "invalid" };
     const consent = stepEnrollment(enrollment, { type: "confirmConsent", consentMatches: consentMatches(app, input.consent) });
     if (consent.phase !== "AwaitingEligibility") return { ok: false, error: "consent_wording" };
@@ -448,7 +448,7 @@ export class Accounts {
     return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent, inviteToken, signupView));
   }
 
-  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     const at = this.now();
     const held = (await this.seen(who.e164)) === "held";
     let person = held ? undefined : await this.personFor(who.e164);
@@ -481,7 +481,7 @@ export class Accounts {
       if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
       return { ok: false, error: "under_age" };
     }
-    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing };
+    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing, created: false };
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge);
@@ -521,7 +521,7 @@ export class Accounts {
       throw hook.error;
     }
     if (result.phase !== "Created") return { ok: false, error: "invalid" };
-    return { ok: true, membership };
+    return { ok: true, membership, created: true };
   }
 
   /** The site's stop button: every app on this number (PRD 40.3), unless PLATFORM_STOP_SCOPE=app. */

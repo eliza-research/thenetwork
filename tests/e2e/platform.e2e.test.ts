@@ -65,16 +65,12 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(md.headers.get("content-type")).toBe("text/plain; charset=utf-8");
       const text = await md.text();
       expect(text).toContain(`name: ${s.skill}`);
-      // Each guide names its app-bound transport: direct phone/session HTTP for Friends,
-      // the existing site MCP endpoint for the other apps.
-      if (["friends", "slop", "ntwrk"].includes(app)) {
-        expect(text).toContain(`https://${s.domain}/`);
-        expect(text).toContain("/api/auth/otp/start");
-        expect(text).toContain("/api/auth/otp/verify");
-        expect(text).toContain("/api/me/export");
-        expect(text).toContain("session.cookies");
-        expect(text).not.toContain("In ChatGPT, add ");
-      } else expect(text).toContain(`https://${s.domain}/mcp`);
+      expect(text).toContain(`https://${s.domain}/mcp`);
+      if (app !== "peon") {
+        expect(text).toContain("native connector authorization");
+        expect(text).toContain("Call `submit_profile` once");
+        expect(text).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
+      }
       expect(text).not.toContain("https://api.ntwrk.party/mcp");
       const idx = await st.site(app, "/.well-known/agent-skills/index.json");
       expect(idx.status).toBe(200);
@@ -528,24 +524,20 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const app = await (await st.site("ntwrk", "/api/app")).json() as { joinMode: string };
       expect(app.joinMode).toBe("invite");
       const skill = await (await st.site("ntwrk", "/SKILL.md")).text();
-      expect(skill).toContain("`canJoin:false`");
-      expect(skill).toContain('`reason:"invite_only"`');
-      expect(skill).toContain("provided and approved an invitation for this exact app");
-      expect(skill).toContain("`inviteToken`");
+      expect(skill).toContain("The Network is invitation-only.");
+      expect(skill).toContain("enter the invitation in the app's browser");
+      expect(skill).toContain("native connector authorization");
       expect(skill).not.toContain("https://ntwrk.party/settings");
-      expect(skill).toContain("/api/auth/otp/verify");
-      expect(skill).toContain("/api/me/export");
-      expect(skill).toContain("session.cookies");
-      expect(skill).not.toContain("In ChatGPT, add ");
+      expect(skill).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
       const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
       expect(info.join.mode).toBe("invite");
-      expect(info.join.how).toContain("Use a forwarded invitation link in your own agent");
+      expect(info.join.how).toContain("Use a forwarded invitation in the app's browser");
       expect(info.join.how).toContain("connector authorization");
       expect(info.join.how).not.toContain("The agent asks what they are looking for");
       const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
       const invite = toolData(await signup("ntwrk"));
       expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/SKILL.md" });
-      expect(invite.instructions_for_person).toContain("Use a forwarded invitation link in your own agent");
+      expect(invite.instructions_for_person).toContain("Use a forwarded invitation in the app's browser");
       expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
       for (const app of ["peon", "friends"] as const) {
@@ -556,7 +548,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const path = new URL(open.url).pathname;
         expect(path).toBe(app === "peon" ? "/join" : "/SKILL.md");
         expect((await st.site(app, path)).status).toBe(200);
-        expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code in that signup session");
+        expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code on that page");
       }
       expect((await signup("slop")).body!.result.isError).toBe(true);
       expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
@@ -578,7 +570,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (name === "submit_profile") expect(data.submitted).toBe(false);
           if (app === "ntwrk") {
             expect(data.next_step).toContain("invite-only");
-            expect(data.next_step).toContain("Use a forwarded invitation link in your own agent");
+            expect(data.next_step).toContain("Use a forwarded invitation in the app's browser");
             expect(data.next_step).not.toContain("sign up there");
           } else expect(data.next_step).toContain("https://friends.help/SKILL.md");
         }

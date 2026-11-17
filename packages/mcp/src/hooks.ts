@@ -2,8 +2,8 @@
 // packages/platform (the same OTP service, sessions and people store as the sites' /api/*).
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
-import type { Accounts, AppInfo, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent } from "@thenetwork/platform";
+import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
+import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
@@ -22,6 +22,13 @@ export interface SignedIn {
   /** A rotated site session: send this Set-Cookie with the page so the person stays signed in. */
   setCookie?: string;
 }
+
+export interface BrowserSignup {
+  consent: Pick<AppInfo["consent"], "text" | "version">;
+  requiresInvitation: boolean;
+}
+
+type BrowserSignupResult = { ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError };
 
 /** The assistant behind an OAuth client, by its redirect hosts (handler.ts assistantOf). */
 export type AssistantKind = "chatgpt" | "claude" | "grok" | "web";
@@ -81,6 +88,9 @@ export interface PlatformHooks {
   session?(app: McpAppId, req: Request): Promise<SignedIn | "unavailable" | undefined>;
   /** Start a site session after a verified code, so the person is signed in on the site too. Returns a Set-Cookie value. */
   createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
+  /** The server's current eligibility and wording for this same-app verified browser. */
+  signupEnrollment?(app: McpAppId, who: SignedIn): Promise<BrowserSignup | undefined>;
+  joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string): Promise<BrowserSignupResult>;
 }
 
 const PUBLIC_STATUS: Record<MemberStatus, PublicStatus> = {
@@ -219,6 +229,19 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const m = await p.store.getMembership(personId, app.id);
       const optedOut = resolveConsent(await p.store.lastConsent(who.e164, app.id)) === "opted_out";
       return publicStatus(m?.state, m?.review, optedOut);
+    },
+    async signupEnrollment(id, who) {
+      const app = p.app(id);
+      if (!app || app.joinMode === "waitlist") return undefined;
+      const eligibility = await p.accounts.canJoin(app, who);
+      if ((eligibility.person?.id ?? null) !== who.personId || (!eligibility.canJoin && eligibility.reason !== "invite_only")) return undefined;
+      return { consent: app.consent, requiresInvitation: eligibility.reason === "invite_only" };
+    },
+    async joinSignup(id, who, input, invitation) {
+      const app = p.app(id);
+      if (!app || app.joinMode === "waitlist") return { ok: false, error: "invalid" };
+      const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
+      return p.accounts.join(app, who, input, undefined, invitation, view);
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

@@ -211,15 +211,18 @@ describe.each(SITES)("$domain", (s) => {
       const skill = read(s, f);
       expect(skill).not.toContain("\r");
       expect(skill).toContain(`confirm its app is ${s.app}`);
-      expect(skill).toContain("never submit across apps");
+      expect(skill).toMatch(/never submit across apps/i);
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
-        expect(skill).toContain("/api/auth/otp/verify");
-        expect(skill).toContain("/api/me/export");
-        expect(skill).toContain("session.cookies");
-        expect(skill).not.toContain("In ChatGPT, add ");
+        expect(skill).toContain(`https://${s.domain}/mcp`);
+        expect(skill).toContain("native connector authorization");
+        expect(skill).toContain("the one link");
+        expect(skill).toContain("**Finish signup**");
+        expect(skill).toContain("**Allow**");
+        expect(skill).toContain("Call `submit_profile` once");
+        expect(skill).toContain("`submitted: true` for this app and this call");
+        expect(skill).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
         expect(skill).not.toContain(`https://${s.domain}/join`);
-        expect(skill).toContain("Signup and sign-in happen only in the person's current agent conversation");
-        expect(skill).toContain("they must never have to send a text to receive a code");
+        if (s.app === "slop") expect(skill).not.toContain(`https://${s.domain}/mcp/openai`);
       } else if (s.app === "peon") {
         expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
         expect(skill).toContain(`\`sms:${TEXT_LINE}?&body=\``);
@@ -326,7 +329,9 @@ test("staging builds keep the served entry, skills and signed router on configur
     const base = `http://127.0.0.1:${server.port}`;
     const skill = await (await fetch(`${base}/SKILL.md`)).text();
     expect(skill).toContain(`${origins.slop}/`);
-    expect(skill).toContain("/api/auth/otp/verify");
+    expect(skill).toContain(`${origins.slop}/mcp`);
+    expect(skill).toContain("native connector authorization");
+    expect(skill).not.toContain("/api/auth/otp/");
     for (const path of ["privacy", "terms"]) expect(skill).toContain(`${origins.slop}/${path}`);
     expect(skill).toContain("Email: help@ntwrk.party");
     expect(skill).not.toContain("https://slop.date");
@@ -513,27 +518,38 @@ test("no 'buddies' identifier remains in sites, scripts, deploy or CI (renamed f
   expect(existsSync(join(REPO, "sites/buddies.nyc"))).toBe(false);
 });
 
-test("a skill that asks for the number before the sign-in mode check fails the build (spec/agentSignup.md:154)", async () => {
-  const slop = SITES.find((s) => s.app === "slop")!;
+test("a skill cannot hand off signup before explicit draft approval", async () => {
+  const slop = SITES.find(s => s.app === "slop")!;
   const skills = join(tmp, "reordered-skills");
   cpSync(SKILLS_DIR, skills, { recursive: true });
   const file = join(skills, slop.skill, "SKILL.md");
   const source = readFileSync(file, "utf8");
-  const authMode = source.match(/^4\. [\s\S]*?(?=^5\. )/m)![0];
-  const codeStart = source.match(/^5\. [\s\S]*?(?=^6\. )/m)![0];
-  writeFileSync(file, source.replace(authMode + codeStart, codeStart + authMode));
+  const reordered = source.replace(
+    /<!-- agentSignup: (decideApproval|offerHandoff) -->/g,
+    (_, event) => `<!-- agentSignup: ${event === "decideApproval" ? "offerHandoff" : "decideApproval"} -->`,
+  );
+  writeFileSync(file, reordered);
   const built = await buildSite(slop, join(tmp, "reordered-build"), process.env, skills);
   expect(built.ok).toBe(false);
-  expect(built.logs.join("\n")).toContain('the agentSignup model does not allow "startCode" in phase CheckingSession (InAgentCode)');
-  const unchanged = await buildSite(slop, join(tmp, "unchanged-build"), process.env, SKILLS_DIR);
-  expect(unchanged.ok).toBe(true);
+  expect(built.logs.join("\n")).toContain('the agentSignup model does not allow "offerHandoff" in phase AwaitingApproval (NativeConnectorHandoff)');
+});
+
+test("a skill cannot reintroduce the direct phone API", async () => {
+  const friends = SITES.find(s => s.app === "friends")!;
+  const skills = join(tmp, "direct-phone-skills");
+  cpSync(SKILLS_DIR, skills, { recursive: true });
+  const file = join(skills, friends.skill, "SKILL.md");
+  writeFileSync(file, readFileSync(file, "utf8") + "\nSend a phone to /api/auth/otp/start.\n");
+  const built = await buildSite(friends, join(tmp, "direct-phone-build"), process.env, skills);
+  expect(built.ok).toBe(false);
+  expect(built.logs.join("\n")).toContain("describes a direct phone sign-in outside the browser");
 });
 
 test("ntwrk.party join page says joining is by invitation", () => {
   const ntwrk = SITES.find((s) => s.app === "ntwrk")!;
   expect(htmlFiles(ntwrk)).not.toContain("join.html");
   expect(read(ntwrk, "SKILL.md")).toContain("invitation");
-  expect(read(ntwrk, "SKILL.md")).toContain("`canJoin:false`");
+  expect(read(ntwrk, "SKILL.md")).toContain("The Network is invitation-only.");
 });
 
 test("toE164 accepts US numbers only (the join page client)", () => {

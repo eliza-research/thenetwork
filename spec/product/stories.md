@@ -572,7 +572,7 @@ Spec: [connected assistants page](../connectedAssistants.md).
 
 ### Nothing leaves the conversation without approval, and only a confirmed save is reported as saved
 
-The agent follows the app's SKILL.md. The site API, the app's page and the MCP server own the facts, the code, the account, the join and the read-back.
+The agent follows the app's SKILL.md. The site supplies app facts, the person's browser handles phone verification and signup, and the MCP server confirms the submitted profile and membership status.
 
 Acceptance:
 
@@ -583,10 +583,10 @@ Acceptance:
 - The agent shows a short draft and the current text consent: recurring texts, variable frequency, message and data rates, STOP and HELP, and links to the text terms, the terms and the privacy policy. Only an explicit approval of this profile and this wording continues. A code, a draft or silence is not approval.
 - The site's authorized signup flow may reuse its live verified browser session. The person enters the number and code on the app's site and controls retries. The agent collects neither credential.
 - An account of another app stops the flow. An existing member is read back, and the agent does not send Join again. An invite-only app without an invitation and an account on hold stop the flow.
-- The site's signup flow checks the approved fields, home region and current consent. After the app-bound grant becomes active, the agent submits the approved profile once through MCP.
-- The agent reports "saved" only after the service confirms the approved profile. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
+- The site's signup flow checks the enrollment fields, home region and current consent. The person confirms those details match the approved draft and separately authorizes the connector. After the app-bound grant becomes active, the agent submits the approved profile once through MCP.
+- The agent reports "saved" only after the service confirms the approved profile submission and the same connector confirms an eligible membership. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
 
-Spec: [browser phone confirmation and connector handoff](../agentPhoneHandoff.md). The [current published skill model](../agentSignup.md) still records the earlier in-agent code path for ntwrk.party, slop.date and friends.help. Replacing that serving path is part of this migration.
+See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.md) and [signup conversation](../agentSignup.md).
 
 ## Story F46 — Use my app's connector from my agent
 

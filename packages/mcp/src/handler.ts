@@ -8,13 +8,14 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
 // (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
 import { createHmac } from "node:crypto";
-import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
+import { devShortcutsAllowed, ipBucket, parseJoin, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
 import { signupDraftAppEnabled, signupDraftBrowserAction, signupDraftBrowserSource, signupDraftClaimRoute, signupDraftDiscardAllowed } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
-  type BrowserForm, type StoredPage, browserEntryMayResume, initial as browserInitial, mayCompareBrowserDigest,
-  sessionMatchesConsent, step as stepBrowser,
+  type BrowserForm, type StoredPage, browserEntryMayResume, browserSignupAppAllowed, browserSignupConsentAllowed,
+  browserSignupJoinAllowed, browserSignupMemberAllowed, browserSignupOpenAllowed, browserSignupOwnerBindingAllowed,
+  initial as browserInitial, mayCompareBrowserDigest, sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
@@ -33,8 +34,8 @@ import {
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
-import type { AssistantKind, PlatformHooks } from "./hooks.ts";
-import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
+import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
+import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage } from "./pages.ts";
 import { MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
@@ -123,11 +124,15 @@ export interface McpHandler {
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
 interface Authed { token: Token; grant: Grant; client: OAuthClient }
 
-const browserPages: Record<AuthRequest["step"], StoredPage> = { phone: "PhonePage", code: "CodePage", consent: "ConsentPage" };
+const browserPages: Record<AuthRequest["step"], StoredPage> = {
+  phone: "PhonePage", code: "CodePage", consent: "ConsentPage", enrolling: "SignupEnrollmentPending", enrolled: "EnrolledConsentPage",
+};
 const browserForms = { phone: "PhoneForm", code: "CodeForm", consent: "ConsentForm", cancel: "CancelForm" } satisfies Record<string, BrowserForm>;
 
 /** The page view of each stored step (spec/authorizationPages.md, "The server reply selects the page view"). */
-const storedViews: Record<AuthRequest["step"], AuthView> = { phone: "PhoneView", code: "CodeView", consent: "ConsentView" };
+const storedViews: Record<AuthRequest["step"], AuthView> = {
+  phone: "PhoneView", code: "CodeView", consent: "ConsentView", enrolling: "ConsentView", enrolled: "ConsentView",
+};
 
 type PageForm = "phone" | "code" | "consent" | "cancel";
 
@@ -141,7 +146,7 @@ function sentFrom(r: AuthRequest, form: PageForm, turnstileOn: boolean): AuthPag
   const view = form === "cancel" ? storedViews[r.step] : storedViews[form];
   const page: AuthPage = {
     ...pageInitial, view, turnstileOn, securityCheck: checkFor(view, turnstileOn),
-    codeSent: r.e164 !== null, consentSeen: r.step === "consent",
+    codeSent: r.e164 !== null, consentSeen: r.step === "consent" || r.step === "enrolled",
   };
   return canSolveCheck(page) ? solveCheck(page) : page;
 }
@@ -160,6 +165,18 @@ const askedReply = (form: PageForm, approving: boolean): PageReply =>
 
 const cloudReturnAllows = (reply: PageReply, turnstileOn: boolean): boolean =>
   canReturnFromCloud({ ...pageInitial, view: "CloudView", turnstileOn }, reply);
+
+/** Bind the displayed form to this request, browser, owner and action without exposing their identity. */
+const signupFormProof = (r: AuthRequest, action: "signup" | "approval") =>
+  createHmac("sha256", r.browserHash).update(JSON.stringify(["oauth-browser-signup/v1", r.id, r.app, r.personId, action])).digest("hex");
+
+function signupInvitation(app: McpApp, value: string | null): string | undefined {
+  const typed = value?.trim() ?? "";
+  if (!typed) return;
+  const prefix = `https://${app.domain}/SKILL.md#invite=`;
+  const token = typed.startsWith(prefix) ? typed.slice(prefix.length) : typed;
+  return /^[A-Za-z0-9_-]{43}$/.test(token) && Buffer.from(token, "base64url").toString("base64url") === token ? token : undefined;
+}
 
 const tokenErrors: Record<TokenReason, [error: string, description?: string]> = {
   NoReason: ["invalid_grant"],
@@ -526,6 +543,33 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     catch { return "unavailable" as const; }
   }
 
+  function signupClientAllowed(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
+    const surfaceOffered = c.app.openai || (client.surface === "full" && r.resource === resourceFor(c.issuer, "full")
+      && assistantOf(client) !== "chatgpt" && !customSlopClient(c, client));
+    return browserSignupAppAllowed(c.app.id, surfaceOffered, tokenCovers("check_status", r.scopes), tokenCovers("submit_profile", r.scopes))
+      && !!o.platform.session && !!o.platform.signupEnrollment && !!o.platform.joinSignup;
+  }
+
+  async function availableSignup(c: Ctx, who: SignedIn): Promise<BrowserSignup | undefined> {
+    try { return await o.platform.signupEnrollment?.(c.app.id, who); }
+    catch { return undefined; }
+  }
+
+  function currentConsentPage(c: Ctx, r: AuthRequest, client: OAuthClient, options: { unavailable?: boolean; canSignup?: boolean } = {}) {
+    const redirect = new URL(r.redirectUri);
+    return consentPage(c.app, r.id, client.name, redirect.host, redirect.origin, r.scopes, {
+      ...options,
+      ...(r.step === "enrolled" ? { signupSaved: true, signupApproval: signupFormProof(r, "approval") } : {}),
+    });
+  }
+
+  async function verifiedConsentPage(c: Ctx, r: AuthRequest, client: OAuthClient, who: SignedIn): Promise<Response> {
+    const canSignup = r.step === "consent" && signupClientAllowed(c, r, client) && !!await availableSignup(c, who);
+    const response = currentConsentPage(c, r, client, { canSignup });
+    if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
+    return response;
+  }
+
   /** Retry the initial session check on this unadvanced request without making a new browser binding. */
   async function authorizeEntry(c: Ctx, r: AuthRequest, client: OAuthClient, retry: boolean): Promise<Response> {
     const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.", 400);
@@ -558,13 +602,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         if (!retry) await store.deleteAuthRequest(r.id);
         return answer("ReplyNotAvailable", () => messagePage(c.app, "Not available", "This account cannot use this assistant connection.", 403));
       }
-      if (!await store.advanceAuthRequest(r, { e164: signedIn.e164, personId: signedIn.personId, step: "consent" }, now)) return expired();
-      return answer("ReplyConsent", () => {
-        const redirect = new URL(r.redirectUri);
-        const response = consentPage(c.app, r.id, client.name, redirect.host, redirect.origin, r.scopes);
-        if (signedIn.setCookie) response.headers.append("set-cookie", signedIn.setCookie);
-        return response;
-      });
+      const verified = { ...r, e164: signedIn.e164, personId: signedIn.personId, step: "consent" as const };
+      if (!await store.advanceAuthRequest(r, verified, now)) return expired();
+      return answer("ReplyConsent", () => verifiedConsentPage(c, verified, client, signedIn));
     }
     if (entry.phase === "HandingOffToCloud") {
       const handoff = await o.platform.beginCloudOAuth?.(c.app.id, r.id);
@@ -638,11 +678,78 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (identity.phase === "SessionRetry") return answer("ReplyRetryLater",()=>browserUnavailable(c,c.url.pathname+c.url.search));
     if (identity.phase !== "ShowingConsent" || !who || who === "unavailable") return answer("ReplyConnectAgain",()=>messagePage(c.app,"Connect again","Return to your agent or text conversation and connect again.",403));
     return answer("ReplyConsent", async () => {
-      if (!await store.advanceAuthRequest(r, { e164: who.e164, personId: who.personId, step: "consent" }, now)) return expired();
-      const response=consentPage(c.app,r.id,client.name,new URL(r.redirectUri).host,new URL(r.redirectUri).origin,r.scopes);
-      if(who.setCookie)response.headers.append("set-cookie",who.setCookie);
-      return response;
+      const verified = { ...r, e164: who.e164, personId: who.personId, step: "consent" as const };
+      if (!await store.advanceAuthRequest(r, verified, now)) return expired();
+      return verifiedConsentPage(c, verified, client, who);
     });
+  }
+
+  async function authorizeSignup(c: Ctx): Promise<Response> {
+    if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
+    if (!originOk(c)) return messagePage(c.app, "Not allowed", "This form must be sent from this site.", 403);
+    const expired = () => messagePage(c.app, "This page has expired", "Go back to your assistant and connect again.", 400);
+    const form = await readForm(c.req);
+    const live = form && await liveRequest(c, form);
+    if (!form || !live) return expired();
+    const { r, client, flow } = live;
+    if (!validBrowserEntry(c, r, client) || !signupClientAllowed(c, r, client) || !o.platform.joinSignup) return expired();
+    const who = await readAuthorizationSession(c);
+    if (who === "unavailable") return browserUnavailable(c);
+    if (!who || !browserSignupOpenAllowed(flow, browserPages[r.step], !!r.e164,
+      who.e164 === r.e164 && who.personId === r.personId, true)) return expired();
+    const signupView = signupFormProof(r, "signup");
+    const decision = form.get("decision");
+    const exactForm = safeEqual(form.get("signupView") ?? "", signupView);
+    if (decision === "skip" && exactForm) return verifiedConsentPage(c, r, client, who);
+    if (decision !== "open" && !(decision === "join" && exactForm)) return expired();
+    const enrollment = await availableSignup(c, who);
+    if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
+    const showSignup = (error?: string) => {
+      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error });
+      if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
+      return response;
+    };
+    if (decision === "open") return showSignup();
+
+    const version = form.get("consentVersion");
+    if (!browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version))
+      return showSignup("Review and accept the current text message terms to continue.");
+    const age = form.get("age") ?? "";
+    const input = parseJoin({
+      firstName: form.get("firstName"), age: /^[0-9]{1,3}$/.test(age) ? Number(age) : undefined,
+      homeCity: form.get("homeCity"), consent: { sms: true, version },
+    });
+    if (!input) return showSignup("Enter your first name, age and home city.");
+    const typedInvitation = form.get("invitation");
+    const invitation = signupInvitation(c.app, typedInvitation);
+    if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.");
+
+    const pending = { ...r, step: "enrolling" as const };
+    if (!await store.advanceAuthRequest(r, pending, now)) return expired();
+    try {
+      const joined = await o.platform.joinSignup(c.app.id, who, input, invitation);
+      if (!joined.ok) {
+        const owner = await o.platform.login(who.e164);
+        if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
+        const error = joined.error === "under_age" ? "You can’t join this app at the age entered."
+          : joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
+          : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
+          : "We couldn’t finish signup. Return to the connection page or try again later.";
+        return showSignup(error);
+      }
+      const member = joined.membership;
+      const owner = await o.platform.login(who.e164);
+      const current = await o.platform.status(member.personId, c.app.id, o.platform.phoneKey(who.e164));
+      if (!browserSignupOwnerBindingAllowed(browserPages[pending.step], joined.created, member.app === c.app.id,
+        r.personId === null || r.personId === member.personId, owner !== "held" && owner.personId === member.personId,
+        member.review === null && browserSignupMemberAllowed(current))) return expired();
+      const enrolled = { ...r, personId: member.personId, step: "enrolled" as const };
+      if (!await store.advanceAuthRequest(pending, enrolled, now)) return expired();
+      return verifiedConsentPage(c, enrolled, client, who);
+    } catch {
+      // Ambiguous membership completion cannot approve this connection or infer ownership on retry.
+      return messagePage(c.app, "Connect again", "We couldn’t confirm signup. Check your membership before starting a new connection.", 503);
+    }
   }
 
   async function authorizeStep(c: Ctx, step: PageForm): Promise<Response> {
@@ -653,11 +760,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
     const { r, client, flow } = live;
     if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
-    const redirectHost = new URL(r.redirectUri).host;
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
 
     const approving = step === "consent" && form.get("decision") === "approve";
     const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    if (!browserSignupConsentAllowed(browserPages[r.step], safeEqual(form.get("signupApproval") ?? "", signupFormProof(r, "approval")))) return expired();
     // spec/authorizationPages.md: the page that sent this form, and the generated guard of the form in front of the route
     // and of each reply. A refused form or reply gets "This page has expired", the answer to a form that does not belong
     // to the stored request.
@@ -715,8 +822,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
       const e164 = r.e164;
       return answer("ReplyConsent", async () => {
-        if (!await store.advanceAuthRequest(r, { e164, personId: who.personId, step: "consent" }, now)) return expired();
-        const res = consentPage(c.app, r.id, client.name, redirectHost, new URL(r.redirectUri).origin, r.scopes);
+        const verified = { ...r, e164, personId: who.personId, step: "consent" as const };
+        if (!await store.advanceAuthRequest(r, verified, now)) return expired();
+        const res = await verifiedConsentPage(c, verified, client, { e164, personId: who.personId });
         const site = o.platform.createSession ? await o.platform.createSession(c.app.id, { e164, personId: who.personId }) : undefined;
         if (site) res.headers.append("set-cookie", site);
         return res;
@@ -797,7 +905,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const audit = { at, clientId: client.id, grantId: grant.id, app: c.app.id };
         return {
           code,
-          commit: (approvalAt, confirm) => store.commitConsentGrant(r.id, approvalAt, confirm, {
+          commit: (approvalAt, confirm) => store.commitConsentGrant(r.id, approvalAt, async approval => {
+            if (!samePendingAuthPage(approval, r, now())) return false;
+            if (r.step === "enrolled") {
+              const owner = await o.platform.login(r.e164);
+              if (r.personId === null || owner === "held" || owner.personId !== r.personId) return false;
+              if (!browserSignupMemberAllowed(await o.platform.status(r.personId, c.app.id, grant.phoneKey))) return false;
+            }
+            return confirm(approval);
+          }, {
             grant, code: record,
             audit: [
               { ...audit, kind: "consent_granted", detail: r.scopes.join(" ") },
@@ -1118,7 +1234,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   function consentUnavailable(c:Ctx,r:AuthRequest,client:OAuthClient):Response {
-    const response=consentPage(c.app,r.id,client.name,new URL(r.redirectUri).host,new URL(r.redirectUri).origin,r.scopes,{unavailable:true});
+    const response = currentConsentPage(c, r, client, { unavailable: true });
     response.headers.set("retry-after","5");return response;
   }
 
@@ -1315,6 +1431,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         return authorizeStep(c, "phone");
       case "/oauth/authorize/code":
         return authorizeStep(c, "code");
+      case "/oauth/authorize/signup":
+        return authorizeSignup(c);
       case "/oauth/authorize/consent":
         return authorizeStep(c, "consent");
       case "/oauth/authorize/cancel":

@@ -65,8 +65,8 @@ export const PROFILE_MAX_CHARS = 1200;
 /** Server instructions. The rules are in the first 512 characters (OpenAI shows only those). */
 export const INSTRUCTIONS =
   "Helps a person learn about apps powered by The Network and sign themselves up. Never ask for, accept or relay a phone number or a verification code. " +
-  "Never sign anyone up and never message anyone. start_signup returns a link the person opens and completes themselves. check_status works only after the person signs in " +
-  "on the app's own page, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps.";
+  "The person completes signup and authorization themselves. Never send a message on their behalf. start_signup points to the app's published signup instructions. " +
+  "check_status works only after the person signs in and authorizes access in that app's browser, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps.";
 
 const annotations = (title: string) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 
@@ -106,11 +106,11 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "start_signup",
-      title: "Get the sign-up link",
-      description: "Returns the link and the text keyword a person uses to sign themselves up for one app, with plain instructions to give them. It does not sign anyone up and takes no personal details.",
+      title: "Get signup instructions",
+      description: "Returns one app's published signup instructions and text keyword. For a native connector, use the client's authorization link for browser signup. This tool takes no personal details.",
       inputSchema: { type: "object", properties: { app: appProp("The app to join.") }, required: ["app"], additionalProperties: false },
       outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages }),
-      annotations: annotations("Get the sign-up link"),
+      annotations: annotations("Get signup instructions"),
       ...schemes("start_signup"),
     },
     {
@@ -237,11 +237,11 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
 }
 
 const publicSignupUrl = (a: McpApp) => publicSignupUsesBrowser(a.id) ? `${a.links.join}?via=agent` : `${a.links.site}/SKILL.md`;
-const skillSignup = (a: McpApp) => `Read ${publicSignupUrl(a)} in your own agent and follow the signup instructions there.`;
+const skillSignup = (a: McpApp) => `Read ${publicSignupUrl(a)} in your own agent. The app's browser confirms your phone during native connector authorization. Keep the verification code on that page.`;
 
 function invitationGuidance(a: McpApp): string {
   return `${a.name} is invite-only. Ask a member who knows you, or the team, for an invitation. ` +
-    `Use a forwarded invitation link in your own agent, or reply to the team's invitation text to accept. ` +
+    `Use a forwarded invitation in the app's browser during connector authorization, or reply to the team's invitation text to accept. ` +
     `Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
@@ -264,7 +264,7 @@ function publicInfo(a: McpApp, surface: Surface) {
     consent_rules: [
       "Nobody is introduced unless both people say yes.",
       "Nothing crosses from one app to another unless the person shares it.",
-      "The person verifies their own phone in the app's signup session. This connector must never receive the code.",
+      "The person verifies their own phone in the app's browser. This connector must never receive the code.",
     ],
     links: { privacy: a.links.privacy, terms: a.links.terms, sms_terms: a.links.smsTerms, support: a.links.support },
   };
@@ -275,7 +275,7 @@ const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoine
 const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
   GetInvitation: a => `Not joined. ${invitationGuidance(a)}`,
   JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
-  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} in your agent.`}`,
+  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} and finish signup in the app's browser.`}`,
   ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   AlreadySignedUp: () => "You are signed up.",
   TextStart: () => `Messages are stopped. To start again, text START to the line.`,
@@ -329,10 +329,10 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         data: {
           app: a.id, join_mode: a.joinMode, url: publicSignupUrl(a), keyword: a.keyword,
           instructions_for_person: a.joinMode === "invite"
-            ? `${invitationGuidance(a)} ${skillSignup(a)} Keep the verification code in that signup session.`
+            ? `${invitationGuidance(a)} ${skillSignup(a)}`
             : (publicSignupUsesBrowser(a.id)
               ? `Open ${publicSignupUrl(a)} yourself and enter your own phone number. Never share the code. Enter it on that page.`
-              : `${skillSignup(a)} Keep the verification code in that signup session.`)
+              : `${skillSignup(a)}`)
               + (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
           ages: { join: a.ages.join, matching: a.ages.match },
         },

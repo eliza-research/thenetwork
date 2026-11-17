@@ -1,6 +1,6 @@
 # Confirm an agent signup on the app's site
 
-[Story F45](product/stories.md#story-f45--sign-up-in-my-agents-conversation) keeps profile drafting and the final result in the member's agent. The app's site owns phone verification during signup and [connector authorization](oauthBrowserAuthorization.md) owns the grant. The person enters the number and verification code on the app's own site. The agent's inputs and results never contain those credentials or the browser's session. This contract defines the signup handoff. The [deployed skill model](agentSignup.md) records the older serving path until the site and connector implement the handoff.
+[Story F45](product/stories.md#story-f45--sign-up-in-my-agents-conversation) keeps profile drafting and the final result in the member's agent. The app's site owns phone verification during signup and [connector authorization](oauthBrowserAuthorization.md) owns the grant. The person enters the number and verification code on the app's own site. The agent's inputs and results never contain those credentials or the browser's session. The [signup conversation](agentSignup.md) defines how the agent offers the native authorization link and confirms the result after the person returns.
 
 ## Story: Confirm my own phone during signup
 
@@ -61,7 +61,7 @@ pure def alwaysSignupWriteNeedsVerifiedAuthority(handoff: PhoneHandoff): bool =
 
 ### Submit the approved profile once and read back the result
 
-Recheck the same live grant, app, member and approved profile before using the authorized MCP profile write. An existing active member can read back their saved profile. Repeated deliveries of one submission report its recorded result. The agent reports a saved signup only after the service confirms the profile it approved. An unavailable or different result stays unconfirmed.
+Recheck the same live grant, app, member and approved profile before using the authorized MCP profile write. An existing member can check their current membership status without a new profile submission. Repeated deliveries of one profile submission report its recorded result. The agent reports the approved text recorded only after the service confirms that submission and a status check confirms the same app and an eligible membership. An unavailable or different result stays unconfirmed.
 
 ```quint
 pure def canSubmitHandoffProfile(handoff: PhoneHandoff): bool =
