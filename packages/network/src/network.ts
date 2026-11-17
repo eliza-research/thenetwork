@@ -75,7 +75,7 @@ import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGather
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
-import { initial as initialPlanDispatch, planLaneOpen, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
 import {
@@ -713,9 +713,9 @@ export function gatheringRepeatProbeKey(oppId: string, memberId: MemberId, retry
   return `${oppId}:${retry ? "times" : "probe"}:${memberId}`;
 }
 
-/** The exact Slop consent receipt stays separate from generic unanswered-message tracking. */
-export function slopProbeReceiptKey(oppId: string, memberId: MemberId, slot: { at: number; probeReceiptId?: string }): string {
-  return `slop-probe-receipt:${oppId}:${memberId}:${slot.probeReceiptId ?? slot.at}`;
+/** Keep the exact open-question receipt separate from unanswered-message tracking. */
+export function probeReplyReceiptKey(oppId: string, memberId: MemberId, slot: { at: number; probeReceiptId?: string }): string {
+  return `probe-reply-receipt:${oppId}:${memberId}:${slot.probeReceiptId ?? slot.at}`;
 }
 
 function isGatheringRepeat(o: Pick<Opp, "id" | "gatheringRepeat">): boolean {
@@ -1143,11 +1143,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
-      if (po.replacementFor) {
-        const delivery = this.ctx.initialInviteReceipt?.(replacementProbeKey(po.id, m.id));
-        const sentAt = this.ctx.initialInviteReceipt ? (delivery?.kind === "accepted" ? delivery.at : undefined) : aw.at;
-        if (!replacementAnswerAllowed(this.memberReply, sentAt !== undefined, msg.ts, sentAt ?? now)) return "open" as const;
-      }
+      const receiptKey = po.replacementFor ? replacementProbeKey(po.id, m.id) : probeReplyReceiptKey(po.id, m.id, aw);
+      const delivery = this.ctx.initialInviteReceipt?.(receiptKey);
+      const acceptedAt = this.ctx.initialInviteReceipt ? (delivery?.kind === "accepted" ? delivery.at : undefined) : aw.at;
+      const allowed = po.replacementFor ? replacementAnswerAllowed(this.memberReply, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)
+        : planProbeReplyCurrent(this.memberReply, acceptedAt !== undefined, msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now);
+      if (!allowed) return "open" as const;
       const yn0 = po.replacementFor ? consentOf(body).answer : this.yesNoOf(body);
       // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer": a yes that
       // names a time other than the plan's one time ("yes, Friday 7pm") is asked again, never booked.
@@ -1159,7 +1160,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const o = this.opps.get(aw.oppId!);
       const options = o?.offered?.[m.id] ?? [];
       if (this.app.id === "slop" && o?.category === "romance") {
-        const receipt = this.ctx.initialInviteReceipt?.(slopProbeReceiptKey(o.id, m.id, aw));
+        const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
         const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
         // spec/probeDispatch.md, "A Slop answer follows acceptance of the exact question"
         if (!slopProbeReplyCurrent(this.memberReply && !msg.reaction, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)) return "open" as const;
@@ -3308,7 +3309,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // probe deadline is not counted, not kept as availability evidence and not acknowledged.
     const outcome = this.planAnswer(o, m.id, yes, false, () => {
       m.answered++;
-      this.sampleInterruption(m, o.id);
+      // Check the plan receipt independently of the unanswered ledger, which an earlier message can clear.
+      this.sampleInterruption(m, o.id, true);
       this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
       if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
       const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
@@ -4774,9 +4776,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   submitProposal(p: Proposal) { this.queued.push(p); }
 
   /** An invitation that received a direct explicit answer may earn one sample. */
-  private sampleInterruption(m: MemberState, opportunityId: string) {
+  private sampleInterruption(m: MemberState, opportunityId: string, acceptedDelivery = this.invitesBeforeReply.has(opportunityId)) {
     const bucket = interruptionSampleBucket(this.app.id, m.id, opportunityId);
-    if (interruptionFeedbackSample(bucket, this.invitesBeforeReply.has(opportunityId), this.memberReply, !!m.interruptionSurvey)) {
+    if (interruptionFeedbackSample(bucket, acceptedDelivery, this.memberReply, !!m.interruptionSurvey)) {
       m.interruptionSurvey = { opportunityId, answeredAt: this.now() };
     }
   }
@@ -6173,9 +6175,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       };
       case "plan_probe": return {
         valid: () => !!o && !!o.planRun && o.planRun.answers[h.id] === "pending",
-        onSent: () => {
+        onSent: messageId => {
           if (!o) return;
-          m.awaiting = { kind: "probe", oppId: o.id, at: now() };
+          m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId };
           m.asked++; o.contacted.add(h.id);
           o.sentAt = { ...o.sentAt, [h.id]: now() };
           this.counters.probesSent++; this.plansCounters.planProbes++;

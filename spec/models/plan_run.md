@@ -429,6 +429,8 @@ module plan_run {
    * (buildPlanProbe returns null for a recipient not in plan.invited, engine/src/plans.ts:488, or when the
    * leak gate drops every frame: copyOk), then send() with about = the participants still in the plan
    * (status not no, unavailable or dropped: network.ts:3019, SD-046 fixed) and the send-time leak guard (leakOk).
+   * This model treats send as accepted delivery. The service can queue before acceptance and checks the
+   * exact member, opportunity, message and receive time before applying a reply (spec/planDispatch.md).
    */
   pure def probeF(e: Env, o: Opp, m: str, copyOk: bool, leakOk: bool): Res =
     if (not(seatOk(e, m)) or not(o.invited.contains(m)) or not(copyOk)) planNoF(e, o, m, true)   // refuse "plan_copy"

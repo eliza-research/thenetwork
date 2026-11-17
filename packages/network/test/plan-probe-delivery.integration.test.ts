@@ -99,6 +99,12 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
       expect(probe.opportunity_id).toBe(oppId);
       expect(await adapter.queue.statusOf(probe.id)).toBe("retry_scheduled");
     }
+    const initialAnswer = async () => (await rt.pg.load())?.opps.find(opp => opp.id === oppId)?.planRun?.answers[invited[0]!];
+    const beforeDelivery = clock.now();
+    const sentProbeKeys = staged.map(probe => `tn:${probe.id}`);
+    expect(calls.filter(call => sentProbeKeys.includes(call.idempotencyKey))).toEqual([]);
+    expect((await turn("decline-before-plan-delivery", "No", beforeDelivery)).status).toBe(200);
+    expect(await initialAnswer()).toBe("pending");
 
     const changed = invited[1]!;
     await sql`update network.members set prefs=prefs || ${{ categoriesOptIn: ["hobby"] }}::jsonb where app_id=${app.id} and id=${changed}`;
@@ -118,6 +124,10 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
       }
     }
 
+    expect((await turn("delayed-plan-reply", "Yes", beforeDelivery)).status).toBe(200);
+    expect(await initialAnswer()).toBe("pending");
+    expect((await turn("future-plan-reply", "Yes", clock.now() + 1)).status).toBe(200);
+    expect(await initialAnswer()).toBe("pending");
     // spec/interruptionFeedback.md, "Sample a confirmed invitation after its own answer"
     // spec/interruptionFeedback.md, "A direct answer measures the interruption once"
     expect((await turn("decline-before-survey", "No")).status).toBe(200);

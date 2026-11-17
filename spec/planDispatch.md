@@ -76,3 +76,15 @@ pure def stepAnInviteNeedsAConfirmedSend(before: PlanDispatch, via: str, after: 
 
 pure def sometimesCanSendPlanInvite(invite: PlanDispatch): bool = invite.phase == InviteSent
 ```
+
+### A reply requires acceptance of the exact plan invitation
+
+Save the outbound message ID in the member's pending question. An answer can change the plan only after the provider has accepted that exact invitation for the member and plan. A reply received before acceptance stays ineligible when it arrives late. An older pending question without an ID can use a unique stored outbound invitation for the same member, plan and opening time.
+
+```quint
+pure def planProbeReplyCurrent(memberReply: bool, accepted: bool, receivedAt: int, acceptedAt: int, now: int): bool =
+  memberReply and accepted and receivedAt >= acceptedAt and receivedAt <= now
+
+pure def lawPlanReplyNeedsAcceptance(memberReply: bool, receivedAt: int, acceptedAt: int, now: int): bool =
+  not(planProbeReplyCurrent(memberReply, false, receivedAt, acceptedAt, now))
+```

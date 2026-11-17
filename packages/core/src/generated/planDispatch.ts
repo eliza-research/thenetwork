@@ -133,6 +133,19 @@ export function sometimesCanSendPlanInvite(invite: PlanDispatch): boolean {
   return invite.phase === "InviteSent";
 }
 
+/** Story: Ask me about one group plan during my send window / A reply requires acceptance of the exact plan invitation (spec/planDispatch.md) */
+//@ pure
+export function planProbeReplyCurrent(memberReply: boolean, accepted: boolean, receivedAt: number, acceptedAt: number, now: number): boolean {
+  return memberReply && accepted && receivedAt >= acceptedAt && receivedAt <= now;
+}
+
+/** Story: Ask me about one group plan during my send window / A reply requires acceptance of the exact plan invitation (spec/planDispatch.md) */
+//@ pure
+export function lawPlanReplyNeedsAcceptance(memberReply: boolean, receivedAt: number, acceptedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !planProbeReplyCurrent(memberReply, false, receivedAt, acceptedAt, now);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PlanDispatch, event: Event): boolean {
