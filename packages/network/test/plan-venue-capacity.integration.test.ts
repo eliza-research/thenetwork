@@ -1,9 +1,9 @@
 import { expect, test } from "vitest";
-import { DAY, type Facet } from "@thenetwork/core";
+import { DAY, HOUR, type Facet } from "@thenetwork/core";
 import { World } from "../../engine/src/world.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
-import { planProposals, type PlanEvidence, type Venue } from "../../engine/src/plans.ts";
+import { hasWindow, planProposals, type PlanEvidence, type Venue } from "../../engine/src/plans.ts";
 import type { EngineInput } from "../../engine/src/types.ts";
 
 test("planned groups and partner fallbacks fit their public venue capacity", () => {
@@ -95,4 +95,35 @@ test("plans find a compatible group among the members available at the slot", ()
   expect(runTechMeetup(hobbyGoals))
     .toMatchObject([{ activityId: "tech_meetup", invited: expect.arrayContaining(available), partner: false }]);
   expect(runTechMeetup(hobbyGoals.map(goal => ({ ...goal, category: "professional" })))).toEqual([]);
+});
+
+test("a larger circle below the plan utility floor does not hide a qualifying group", () => {
+  const now = Date.UTC(2026, 9, 12, 15), tz = "America/New_York", area = "Greenpoint";
+  const start = Date.UTC(2026, 9, 16, 23);
+  const window = { start, end: start + HOUR };
+  const group = ["a", "b", "c", "d"];
+  const extra = "e", ids = [...group, extra];
+  const input: EngineInput = {
+    now, intents: [], edges: [], recentProposals: [],
+    members: ids.map(id => ({
+      id, name: id, age: 30, homeCity: "nyc", state: "normal", apps: ["ntwrk"], joinedAt: now - 40 * DAY, unansweredProactive: 0,
+      prefs: { categoriesOptIn: ["social"], quietHours: [22, 8], romanceOptIn: false, formats: ["small_group", "one_to_one"], maxTravelMinutes: 45, onlyWhenAsked: false },
+    })),
+    facets: ids.map(memberId => ({ id: `${memberId}/running`, memberId, kind: "interest", value: "running", tags: ["running"],
+      scope: "shareable", confidence: 1, provenance: "said", app: "ntwrk" })),
+    presence: ids.map(memberId => ({ memberId, city: "nyc", type: "home", areas: [memberId === extra ? "Williamsburg" : area] })),
+  };
+  const evidence = new Map<string, PlanEvidence>(ids.map(memberId => [memberId, { memberId, tz,
+    stated: { at: now, until: now + 7 * DAY, windows: [window], ...(memberId === extra ? { confidence: 0.3 } : {}) },
+  }]));
+  const venue: Venue = { id: "park", name: "Public park", area, city: "nyc", public: true, ageMin: 18, capacity: 5,
+    priceTier: 0, activities: ["group_run"], hours: { weekday: [9, 22], weekend: [9, 22] }, source: "curated" };
+  const world = new World(input, resolveConfig({ seed: 1 }), localEmbed);
+  const run = (exclude?: Set<string>) => planProposals(world, { now, city: "nyc", tz, evidence, venues: [venue], exclude });
+  // The fifth runner clears the availability gate. Its weaker window and other-area venue lower
+  // its utility below the group floor. The real World evaluates every pair normally.
+  expect(hasWindow(evidence.get(extra)!, window, now)).toBeGreaterThan(0);
+  const wanted = [{ activityId: "group_run", window, invited: group, partner: false, quorum: 3 }];
+  expect(run(new Set([extra]))).toMatchObject(wanted);
+  expect(run()).toMatchObject(wanted);
 });

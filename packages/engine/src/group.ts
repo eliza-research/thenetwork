@@ -10,7 +10,7 @@ import {
 import { laneLimits, laneShape, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { isMinor, memberReason } from "./filters.ts";
-import { buildCircles } from "./match/circles.ts";
+import { buildCircles, type Circle } from "./match/circles.ts";
 import { compareText, type EntityId, type MatchProfile } from "./match/profile.ts";
 import { mutualEdges, type MatchEdge } from "./match/search.ts";
 import type { GroupStats, Role } from "./types.ts";
@@ -105,7 +105,8 @@ function circleLimits(lane: MatchLane, minimum: number, maximum: number): Circle
 }
 
 /** Coherent circles of `minimum`..`maximum` pool members that contain every forced member; disjoint, deterministic. */
-export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minimum: number, maximum: number): GroupCircle[] {
+export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minimum: number, maximum: number,
+  rankCircle?: (circle: GroupCircle) => number | undefined): GroupCircle[] {
   if (!formsGroups(graph.lane)) return [];
   const limits = circleLimits(graph.lane, minimum, maximum);
   const forcedProfiles = forced.flatMap(id => { const p = graph.profiles.get(id); return p ? [p] : []; });
@@ -113,14 +114,16 @@ export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minim
   const open = [...graph.profiles].filter(([id]) => forced.includes(id) || forced.every(f => graph.value(f, id) !== undefined));
   const byEntity = new Map(open.map(([, p]) => [p.id, p] as const));
   const lane = laneLimits(graph.lane);
-  const circles = buildCircles(graph.edges, byEntity,
-    { ...lane, circleMinimum: limits.minimum, circleMaximum: limits.maximum }, profile => profile.capacity);
+  const asGroup = (circle: Circle): GroupCircle => {
+    const members = circle.members.map(id => byEntity.get(id)!.memberId);
+    return { members: [...forced, ...members.filter(id => !forced.includes(id))], evidence: circle.evidence, limits };
+  };
+  const containsForced = (circle: Circle) => forcedProfiles.every(profile => circle.members.includes(profile.id));
+  const circles = buildCircles(graph.edges, byEntity, { ...lane, circleMinimum: limits.minimum, circleMaximum: limits.maximum },
+    profile => profile.capacity, rankCircle && (c => containsForced(c) ? rankCircle(asGroup(c)) : undefined));
   return circles
-    .filter(c => forcedProfiles.every(f => c.members.includes(f.id)))
-    .map(c => {
-      const members = c.members.map(id => byEntity.get(id)!.memberId);
-      return { members: [...forced, ...members.filter(id => !forced.includes(id))], evidence: c.evidence, limits };
-    });
+    .filter(containsForced)
+    .map(asGroup);
 }
 
 /** The pair of two pool members as a circle of two (an activity-partner plan), when they share an edge. */

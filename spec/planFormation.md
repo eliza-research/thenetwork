@@ -53,7 +53,7 @@ pure def planSlotPairCanConnect(pairWorth: int): bool =
 
 ### Search for a qualifying group before an activity partner
 
-Search for a group when the capacity and the current pool meet the group minimums. Both the minimum score for any participant and the whole proposal score must meet their thresholds. If no group qualifies, look for a pair when partner plans are enabled, the activity allows pairs, and the place can hold two people.
+Search for a group when the capacity and the current pool meet the group minimums. Both the minimum score for any participant and the whole proposal score must meet their thresholds before the group reserves members. Check candidate sizes within the allowed range as the pair-compatible circle grows. Keep a qualifying smaller circle when adding someone would make the group fall below a threshold. Within each growth step, consider the other eligible extensions before choosing one. If the remaining members have no qualifying group in this search, look for a pair when partner plans are enabled, the activity allows pairs, and the place can hold two people.
 
 ```quint
 pure def searchForPlanGroup(available: int, minimumInvite: int, maximumGroup: int, minimumGroup: int): bool =
@@ -61,6 +61,13 @@ pure def searchForPlanGroup(available: int, minimumInvite: int, maximumGroup: in
 
 pure def planScoreQualifies(minimumScore: int, overallScore: int, memberFloor: int, planFloor: int): bool =
   minimumScore >= memberFloor and overallScore >= planFloor
+
+pure def planGroupCanReserve(coherent: bool, minimumScore: int, overallScore: int, memberFloor: int, planFloor: int): bool =
+  coherent and planScoreQualifies(minimumScore, overallScore, memberFloor, planFloor)
+
+pure def lawPlanGroupReservationRequiresBothScores(coherent: bool, minimumScore: int, overallScore: int, memberFloor: int, planFloor: int): bool =
+  planGroupCanReserve(coherent, minimumScore, overallScore, memberFloor, planFloor) implies
+    (coherent and minimumScore >= memberFloor and overallScore >= planFloor)
 
 pure def searchForPlanPartner(hasGroup: bool, partnerEnabled: bool, activityMinimum: int, capacity: int): bool =
   not(hasGroup) and partnerEnabled and activityMinimum <= 2 and capacity >= 2

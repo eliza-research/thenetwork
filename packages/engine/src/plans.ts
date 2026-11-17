@@ -22,7 +22,8 @@ import {
 } from "../../core/src/generated/planDecision.ts";
 import {
   cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
-  planActivityWindowEnd, planCanFitPlace, planInviteLimit, planScoreQualifies, planSlotPairCanConnect, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
+  planActivityWindowEnd, planCanFitPlace, planGroupCanReserve, planInviteLimit, planScoreQualifies, planSlotPairCanConnect,
+  searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
@@ -379,17 +380,28 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
         const formation = chooseCircle(searching, c, host !== undefined);
         return formation.phase === "PrimaryChosen" ? [...formation.primary] : undefined;
       };
-      // Disjoint k-best (engine-attention-plans-12): the circle builder puts each member in at most
-      // one circle, so one (slot, activity) is not always won by the same members.
-      const passing: Chosen[] = (searchForPlanGroup(pool2.length, minInvite, maxG, minG) ? poolCircles(graph, [], minInvite, maxG) : [])
-        .flatMap(circle => { const s = score(circle.members); return passes(s) && admit(circle, hostOf(circle)) ? [{ circle, s, partner: false }] : []; })
+      // spec/planFormation.md, "Search for a qualifying group before an activity partner"
+      const groupByRoster = new Map<string, Chosen | undefined>();
+      const rankGroup = (circle: GroupCircle) => {
+        const key = JSON.stringify(circle.members);
+        if (!groupByRoster.has(key)) {
+          const s = score(circle.members);
+          const group = s && planGroupCanReserve(!!admit(circle, hostOf(circle)), s.min, s.score, pcfg.minMemberU, pcfg.threshold)
+            ? { circle, s, partner: false } : undefined;
+          groupByRoster.set(key, group);
+        }
+        const group = groupByRoster.get(key);
+        return group && rankOf(group);
+      };
+      const passing = (searchForPlanGroup(pool2.length, minInvite, maxG, minG) ? poolCircles(graph, [], minInvite, maxG, rankGroup) : [])
+        .flatMap(circle => groupByRoster.get(JSON.stringify(circle.members)) ?? [])
         .sort((x, y) => rankOf(y) - rankOf(x) || compareText(circleKey(x.circle.members), circleKey(y.circle.members)));
       const chosen = passing.slice(0, limit);
       // Activity-partner plans (one-to-one intro rules: sequential probes, double opt-in): the best
       // admitted pairs of the members left, when no circle of them clears the floors.
       const taken = new Set(chosen.flatMap(c => c.circle.members));
-      const groupLeft = () => passing.slice(limit).some(c => c.circle.members.every(id => !taken.has(id)));
-      while (chosen.length < limit && searchForPlanPartner(groupLeft(), pcfg.partnerPlans, a.groupSize[0], cap)) {
+      const partnerAllowed = searchForPlanPartner(passing.length > chosen.length, pcfg.partnerPlans, a.groupSize[0], cap);
+      while (chosen.length < limit && partnerAllowed) {
         let best: Chosen | undefined;
         for (const p of graph.pairs) {
           if (taken.has(p.a) || taken.has(p.b)) continue;

@@ -88,6 +88,19 @@ export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean,
   return !hasGroup && partnerEnabled && activityMinimum <= 2 && capacity >= 2;
 }
 
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
+//@ pure
+export function planGroupCanReserve(coherent: boolean, minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
+  return coherent && planScoreQualifies(minimumScore, overallScore, memberFloor, planFloor);
+}
+
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
+//@ pure
+export function lawPlanGroupReservationRequiresBothScores(coherent: boolean, minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
+  //@ ensures \result === true
+  return !planGroupCanReserve(coherent, minimumScore, overallScore, memberFloor, planFloor) || (coherent && minimumScore >= memberFloor && overallScore >= planFloor);
+}
+
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */
 //@ pure
 export function isPlanAlternate(adult: boolean, compatibleWithEveryone: boolean): boolean {
