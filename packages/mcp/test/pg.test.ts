@@ -81,6 +81,30 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
         expect(await store.getAuthRequest(refused.id)).toEqual(refused);
       }
 
+      // spec/connectedAssistants.md, "A confirmed removal shows its result"
+      // The browser clock can reach the deadline while the revocation waits for the row lock.
+      const owner = {
+        app, phoneKey: writes.grant.phoneKey, personId: null, e164: PHONE_A, sessionHash: "fixture-session",
+        confirmationEndsAt: at + 1_000, now: () => env.clock.t,
+      };
+      let unlock!: () => void;
+      const releaseGrant = new Promise<void>(resolve => { unlock = resolve; });
+      let grantLocked!: () => void;
+      const locked = new Promise<void>(resolve => { grantLocked = resolve; });
+      const lock = other.sql.begin(async tx => {
+        await tx`select id from oauth.grants where id=${grantId} for update`;
+        grantLocked();
+        await releaseGrant;
+      });
+      await locked;
+      const staleRemoval = store.revokeGrant(grantId, at, owner);
+      env.clock.t = owner.confirmationEndsAt;
+      unlock();
+      await lock;
+      expect(await staleRemoval).toBe(false);
+      expect(await store.getGrant(grantId)).toMatchObject({ revokedAt: null });
+      env.clock.t = at;
+
       // Hold an approved request lock while app erasure starts on a separate connection.
       const second = { ...pending, id: `approval_${randomUUID()}` };
       const secondId = `grant_${randomUUID()}`;

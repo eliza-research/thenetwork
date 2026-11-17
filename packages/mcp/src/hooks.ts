@@ -14,6 +14,8 @@ export type PublicStatus = "not_joined" | "invited" | "onboarding" | "active" | 
 export interface SignedIn {
   e164: string;
   personId: string | null;
+  /** Server-held session hash for signing a confirmation that only this session can submit. */
+  browserBinding?: string;
   /** A rotated site session: send this Set-Cookie with the page so the person stays signed in. */
   setCookie?: string;
 }
@@ -209,8 +211,10 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const a = app && token ? await (p.authenticatedSiteSession ? p.authenticatedSiteSession(app.id,req) : p.sessions!.authenticate(app.id, token)) : undefined;
       if(a==="unavailable")return "unavailable";
       if (!a || (await p.accounts.held(a.session.e164))) return undefined;
+      const personId = (await p.accounts.personFor(a.session.e164))?.id ?? null;
+      if (a.session.personId !== null && a.session.personId !== personId) return undefined;
       return {
-        e164: a.session.e164, personId: (await p.accounts.personFor(a.session.e164))?.id ?? null,
+        e164: a.session.e164, personId, browserBinding: a.session.tokenHash,
         ...(a.rotated ? { setCookie: siteCookie(id, a.token) } : {}),
       };
     }),

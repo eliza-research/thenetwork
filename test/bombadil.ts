@@ -4,6 +4,35 @@ import { always, eventually } from "@antithesishq/bombadil";
 import { actions, extract, registerCustomAction } from "@antithesishq/bombadil/browser";
 export * from "@antithesishq/bombadil/browser/defaults/properties";
 
+// spec/authorizationPages.md, "The server reply selects the page view"
+// spec/connectedAssistants.md, "A confirmed removal shows its result"
+const connector = extract(({ document, window }) => {
+  const path = window.location.pathname;
+  const remove = document.querySelector<HTMLFormElement>('form[action="/oauth/consents/revoke"]');
+  return {
+    path,
+    canAllow: document.querySelector('button[name="decision"][value="approve"]') !== null,
+    canChoose: document.querySelector('form input[name="remove"]') !== null,
+    canConfirm: remove !== null,
+    hasProof: !!remove?.querySelector<HTMLInputElement>('input[name="confirmation"]')?.value,
+    removed: document.querySelector('[role="status"]')?.textContent?.trim() === "Access removed.",
+    onList: path === "/oauth/consents" || path === "/oauth/consents/revoke",
+  };
+});
+
+const beginConnector = registerCustomAction("begin-connector", async (_document, window) => {
+  window.location.assign("/api/explore/connect");
+});
+const allowAssistant = registerCustomAction("allow-assistant", async (document) => {
+  document.querySelector<HTMLButtonElement>('button[name="decision"][value="approve"]')?.click();
+});
+const chooseRemoval = registerCustomAction("choose-assistant-removal", async (document) => {
+  document.querySelector<HTMLInputElement>('form input[name="remove"]')?.form?.requestSubmit();
+});
+const confirmRemoval = registerCustomAction("confirm-assistant-removal", async (document) => {
+  document.querySelector<HTMLFormElement>('form[action="/oauth/consents/revoke"]')?.requestSubmit();
+});
+
 const profileSelector = '[data-join-step="Profile"] form';
 const signup = extract(({ document, window }) => {
   const panel = document.querySelector<HTMLElement>("[data-join-step]");
@@ -50,8 +79,14 @@ export const joinActions = actions(() => {
     if (!state.consent && state.consentAsked) return [chooseConsent()];
     return [submitProfile()];
   }
-  // A reload after signup must read the stored membership through the same site API.
-  return state.step === "Done" || state.step === "Member" ? ["Reload"] : ["Wait"];
+  // A reload after signup reads back the stored membership before connecting the assistant.
+  if (state.step === "Done") return ["Reload"];
+  if (state.step === "Member") return [beginConnector()];
+  const auth = connector.current;
+  if (auth.canAllow) return [allowAssistant()];
+  if (auth.canChoose) return [chooseRemoval()];
+  if (auth.canConfirm) return [confirmRemoval()];
+  return ["Wait"];
 });
 
 export const successNeedsConsent = always(() => {
@@ -60,3 +95,12 @@ export const successNeedsConsent = always(() => {
 });
 export const profileDetailsStayOutOfUrls = always(() => !signup.current.hasPrivateUrlFields);
 export const currentMembershipAppearsAfterReload = eventually(() => signup.current.step === "Member");
+
+export const revokeFormNeedsConfirmation = always(() => {
+  const state = connector.current;
+  return !state.canConfirm || state.path === "/oauth/consents" && state.hasProof && !state.canChoose;
+});
+export const confirmedAssistantRemovalAppears = eventually(() => {
+  const state = connector.current;
+  return state.onList && state.removed && !state.canChoose && !state.canConfirm;
+});

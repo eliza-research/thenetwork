@@ -8,7 +8,7 @@ This spec owns the view layer of the "Connected assistants" page at `/oauth/cons
 
 ### The page lists live grants only for a signed-in session
 
-The page first checks the site session. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". With a session it lists each live grant of this phone in this app. With no live grant it shows the empty state.
+The page first checks the site session. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". With a session it lists each live grant of the current verified person and phone in this app. A grant with no person belongs only to a verified phone that still has no person. With no live grant it shows the empty state.
 
 ```quint
 type ConsentsView = Loading | SignInFirstView | RetryLaterView | NotAllowedView | ListView | EmptyView | ConfirmingRemoval
@@ -19,6 +19,12 @@ pure val initial: ConsentsPage = { view: Loading, grants: 0, signedIn: false, no
 pure val grantsValues = Set(0, 1, 2)
 
 pure def viewForGrants(grants: int): ConsentsView = if (grants > 0) ListView else EmptyView
+
+pure def browserOwnsLiveGrant(sameApp: bool, samePhone: bool, samePerson: bool, active: bool, asOf: int, grantExpiresAt: int): bool =
+  sameApp and samePhone and samePerson and active and asOf < grantExpiresAt
+
+pure def lawAnEarlierPhoneOwnerHasNoGrant(sameApp: bool, samePhone: bool, active: bool, asOf: int, grantExpiresAt: int): bool =
+  not(browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt))
 
 pure def canLoad(page: ConsentsPage, grants: int): bool = page.view == Loading and grants >= 0
 pure def load(page: ConsentsPage, loaded: LoadReply, grants: int): ConsentsPage =
@@ -106,9 +112,17 @@ pure def stepOnlyConfirmedRemovalChangesGrants(before: ConsentsPage, via: str, a
 
 ### A confirmed removal shows its result
 
-The confirmed removal checks the session again. When the access ends, the page lists the grants that stay and shows "Access removed.". When the grant was already gone or is not the person's, the page lists the grants with no notice. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". A form from another site gets "Not allowed". Only a confirmed removal shows the notice.
+The confirmation page binds the chosen grant to the current browser session and gives the form five minutes. A POST checks the session, the grant owner, and this exact confirmation again. An expired or different confirmation leaves the grant as it is. When the access ends, the page lists the grants that stay and shows "Access removed.". When the grant was already gone or is not the person's, the page lists the grants with no notice. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". A form from another site gets "Not allowed". Only a confirmed removal shows the notice.
 
 ```quint
+pure val removeConfirmationMs = 300000
+
+pure def removalFormMayRevoke(ownedLiveGrant: bool, exactBrowserConfirmation: bool, asOf: int, confirmationEndsAt: int): bool =
+  ownedLiveGrant and exactBrowserConfirmation and asOf < confirmationEndsAt
+
+pure def lawCannotRevokeWithoutConfirmation(ownedLiveGrant: bool, asOf: int, confirmationEndsAt: int): bool =
+  not(removalFormMayRevoke(ownedLiveGrant, false, asOf, confirmationEndsAt))
+
 type RemoveReply = Removed | NothingRemoved | RemoveSignedOut | RemoveUnavailable | RemoveRefused
 
 pure def canConfirmRemoval(page: ConsentsPage, grants: int): bool = page.view == ConfirmingRemoval and grants >= 0

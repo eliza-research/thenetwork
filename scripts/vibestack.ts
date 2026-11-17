@@ -216,6 +216,7 @@ async function checkBrowser(nightly: boolean): Promise<number> {
       name: "thenetwork-browser", private: true, type: "module", packageManager,
       scripts: { start: "node --import tsx start-browser.mjs" },
     }));
+    writeFileSync(join(project, "tsconfig.json"), JSON.stringify({ extends: join(root, "tsconfig.json") }));
     const fixture = pathToFileURL(join(root, "test/fixtures/browserSignup.ts")).href;
     writeFileSync(join(project, "start-browser.mjs"), `import ${JSON.stringify(fixture)};\n`);
     // The explorer discovers the site's HTML shell. The fixture builds and serves the Peon join page.

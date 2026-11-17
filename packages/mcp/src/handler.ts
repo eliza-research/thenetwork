@@ -7,6 +7,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // Spec: MCP 2026-07-28 (Streamable HTTP, stateless, per-request _meta; initialize kept for 2025-03-26
 // to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
 // (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
+import { createHmac } from "node:crypto";
 import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
@@ -25,11 +26,12 @@ import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
+import { browserOwnsLiveGrant, removalFormMayRevoke, removeConfirmationMs, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
-import { MemoryOAuthStore, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
+import { MemoryOAuthStore, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
@@ -250,8 +252,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     }
   }
   /** Every revocation goes through here, so the inbox always hears about it. */
-  async function revokeGrant(id: string, at: number) {
-    const ok = await store.revokeGrant(id, at);
+  async function revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {
+    const ok = await store.revokeGrant(id, at, owner);
     if (ok) await linked(await store.getGrant(id), false);
     return ok;
   }
@@ -865,25 +867,52 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   // ---------------------------------------------------------------- the person's consent records
 
+  /** The signed form binds one grant and its expiry to the confirmed browser session. */
+  function consentRemovalMac(browserBinding: string, grant: Grant, until: number): string {
+    return createHmac("sha256", browserBinding)
+      .update(JSON.stringify(["connected-assistants-remove", grant.app, grant.phoneKey, grant.personId, grant.id, until]))
+      .digest("base64url");
+  }
+
   async function consents(c: Ctx, revokeOne: boolean): Promise<Response> {
     const who = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
-    if(who==="unavailable")return browserUnavailable(c);
-    if (!who) return messagePage(c.app, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
-    let removal: "Removed" | "NothingRemoved" | undefined;
+    if (who === "unavailable") return browserUnavailable(c, "/oauth/consents");
+    const signInFirst = () => messagePage(c.app, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
+    if (!who) return signInFirst();
+    const owner = { app: c.app.id, phoneKey: o.platform.phoneKey(who.e164), personId: who.personId };
+    const owns = (grant: Grant, at: number) => browserOwnsLiveGrant(grant.app === owner.app, grant.phoneKey === owner.phoneKey,
+      grant.personId === owner.personId, grant.revokedAt === null, at, grant.expiresAt);
+    let removal: Extract<RemoveReply, "Removed" | "NothingRemoved"> | undefined;
     if (revokeOne) {
       if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
       // A cross-site form cannot remove access for the person: the Origin must be this site.
       if (!originOk(c) || (c.req.headers.get("origin") === null && c.req.headers.get("sec-fetch-site") !== "same-origin")) return messagePage(c.app, "Not allowed", "This form must be sent from this site.", 403);
       const form = await readForm(c.req);
-      const g = form?.get("grant") ? await store.getGrant(form.get("grant")!) : undefined;
-      if (g && g.phoneKey === o.platform.phoneKey(who.e164) && g.app === c.app.id && (await revokeGrant(g.id, now()))) {
-        await store.audit({ at: now(), kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app: c.app.id, detail: "by the person" });
+      const id = form?.get("grant");
+      const grant = id ? await store.getGrant(id) : undefined;
+      const proof = /^([0-9]{1,15})\.([A-Za-z0-9_-]{43})$/.exec(form?.get("confirmation") ?? "");
+      const until = proof ? Number(proof[1]) : 0;
+      const sessionHash = who.browserBinding;
+      const matches = !!(grant && proof && sessionHash && safeEqual(proof[2]!, consentRemovalMac(sessionHash, grant, until)));
+      const currentOwner = matches && who.personId === await o.platform.personForKey(owner.phoneKey);
+      const at = now();
+      removal = "NothingRemoved";
+      if (grant && sessionHash && removalFormMayRevoke(currentOwner && owns(grant, at), matches, at, until)
+        && await revokeGrant(grant.id, at, { ...owner, e164: who.e164, sessionHash, confirmationEndsAt: until, now })) {
+        await store.audit({ at: now(), kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: c.app.id, detail: "by the person" });
         removal = "Removed";
-      } else removal = "NothingRemoved";
+      }
     }
-    const grants = await store.grantsFor(o.platform.phoneKey(who.e164), c.app.id, now());
-    const named = await Promise.all(grants.map(async g => ({ ...g, clientName: (await store.getClient(g.clientId))?.name ?? null })));
-    const page = consentsPage(c.app, named, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirming: revokeOne ? undefined : c.url.searchParams.get("remove") ?? undefined });
+    const at = now();
+    const grants = (await store.grantsFor(owner.phoneKey, owner.app, at)).filter(grant => owns(grant, at));
+    const named = await Promise.all(grants.map(async grant => ({ ...grant, clientName: (await store.getClient(grant.clientId))?.name ?? null })));
+    if (who.personId !== await o.platform.personForKey(owner.phoneKey)) return signInFirst();
+    const selected = revokeOne ? undefined : grants.find(grant => grant.id === c.url.searchParams.get("remove"));
+    const until = Math.min(at + removeConfirmationMs, selected?.expiresAt ?? Infinity);
+    const confirmation = selected && who.browserBinding ? {
+      grantId: selected.id, proof: `${until}.${consentRemovalMac(who.browserBinding, selected, until)}`,
+    } : undefined;
+    const page = consentsPage(c.app, named, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirmation });
     if (who.setCookie) page.headers.append("set-cookie", who.setCookie);
     return page;
   }

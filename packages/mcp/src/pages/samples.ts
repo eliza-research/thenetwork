@@ -23,7 +23,7 @@ export const samplePages: SamplePage[] = [
   { name: "Consent", render: app => consentPage(app, "preview", "Your assistant", "assistant.example", "https://assistant.example", [...SCOPES]) },
   { name: "Consent: unnamed, try again", render: app => consentPage(app, "preview", null, "assistant.example", "https://assistant.example", [...SCOPES], { unavailable: true }) },
   { name: "Connected assistants", render: app => consentsPage(app, [grant("grant_a", "Your assistant"), grant("grant_b", null)], ms => new Date(ms).toISOString().slice(0, 10)) },
-  { name: "Connected assistants: confirm removal", render: app => consentsPage(app, [grant("grant_a", "Your assistant")], ms => new Date(ms).toISOString().slice(0, 10), { confirming: "grant_a" }) },
+  { name: "Connected assistants: confirm removal", render: app => consentsPage(app, [grant("grant_a", "Your assistant")], ms => new Date(ms).toISOString().slice(0, 10), { confirmation: { grantId: "grant_a", proof: "preview" } }) },
   { name: "Connected assistants: access removed", render: app => consentsPage(app, [], String, { removal: "Removed" }) },
   ...titles.map(title => ({ name: title, render: (app: McpApp) => messagePage(app, title, "Go back to the assistant and connect again.", 400, "/oauth/consents") })),
 ];

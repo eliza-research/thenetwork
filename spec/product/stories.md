@@ -559,9 +559,9 @@ Acceptance:
 
 - Without a session, the page shows "Sign in first" and tells the person to connect the app in the agent and confirm the phone there. It offers no control.
 - When the session check is not available, the page shows "Please try again" with one link that loads the page again. "Not allowed" offers no control.
-- Each grant card shows the assistant's name or an unnamed label, says that the name is the assistant's own claim, and shows the approval date, the approved scopes and "Remove access".
+- Only the current person's live grants appear. Each grant card shows the assistant's name or an unnamed label, says that the name is the assistant's own claim, and shows the approval date, the approved scopes and "Remove access".
 - "Remove access" asks for a confirmation. "Keep access" shows the list with no change.
-- A confirmed removal shows the grants that stay and "Access removed.". A grant that was already gone shows the list with no notice. The empty state shows after the last removal.
+- A confirmed removal shows the grants that stay and "Access removed.". The server requires a current confirmation for the exact grant and session. A missing or expired confirmation, or a grant that was already gone, shows the list with no notice. The empty state shows after the last removal.
 - Each view after the first load shows the brand mark and the Privacy and Terms links.
 
 Spec: [connected assistants page](../connectedAssistants.md).

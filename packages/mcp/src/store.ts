@@ -3,6 +3,7 @@
 // Tokens and codes are stored only as sha256 hashes (they are 32 random bytes, so a plain hash is
 // enough). A client secret is stored the same way. The phone number of a grant stays on the server,
 // as platform.sessions keeps it; no tool and no response carries it.
+import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
@@ -60,6 +61,14 @@ export interface Grant {
   createdAt: number;
   expiresAt: number;
   revokedAt: number | null;
+}
+
+/** Require this live owner at the revocation write. */
+export interface BrowserGrantRemoval extends Pick<Grant, "app" | "personId" | "phoneKey"> {
+  e164: string;
+  sessionHash: string;
+  confirmationEndsAt: number;
+  now: () => number;
 }
 
 export interface AuthCode {
@@ -130,7 +139,7 @@ export interface OAuthStore {
   /** The live grants of a phone in one app (the person's consent page). */
   grantsFor(phoneKey: string, app: McpAppId, at: number): Promise<Grant[]>;
   /** Revoke the grant and every token of it. False if it was not live. */
-  revokeGrant(id: string, at: number): Promise<boolean>;
+  revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval): Promise<boolean>;
 
   putCode(c: AuthCode): Promise<void>;
   /** Read without consuming; transient authority outages must leave a code retryable. */
@@ -237,8 +246,14 @@ export class MemoryOAuthStore implements OAuthStore {
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return [...this.grants.values()].filter(g => g.phoneKey === phoneKey && g.app === app && g.revokedAt === null && g.expiresAt > at).map(g => structuredClone(g));
   }
-  async revokeGrant(id: string, at: number) {
+  async revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {
     const g = this.grants.get(id);
+    if (owner) {
+      at = owner.now();
+      const ownedLive = !!g && g.revokedAt === null && g.expiresAt > at
+        && g.app === owner.app && g.phoneKey === owner.phoneKey && g.personId === owner.personId;
+      if (!removalFormMayRevoke(ownedLive, true, at, owner.confirmationEndsAt)) return false;
+    }
     for (const t of this.tokens.values()) if (t.grantId === id && t.revokedAt === null) t.revokedAt = at;
     if (!g || g.revokedAt !== null) return false;
     g.revokedAt = at;

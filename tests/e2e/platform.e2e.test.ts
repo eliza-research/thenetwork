@@ -922,8 +922,22 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(st.otp.sent.length).toBe(sent);
       const token = c.token!.access_token as string;
       expect(toolData(await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).status).toBe("active");
+      // spec/connectedAssistants.md, "A confirmed removal shows its result"
+      const grants = await (await st.site("friends", "/oauth/consents", { browser: b })).text();
+      const grant = /name="remove" value="([^"]+)"/.exec(grants)![1]!;
+      const confirm = await (await st.site("friends", `/oauth/consents?remove=${encodeURIComponent(grant)}`, { browser: b })).text();
+      const confirmation = /name="confirmation" value="([^"]+)"/.exec(confirm)![1]!;
+      const post = (proof?: string) => st.site("friends", "/oauth/consents/revoke", {
+        browser: b, form: { grant, ...(proof ? { confirmation: proof } : {}) },
+      });
+      expect(await (await post()).text()).not.toContain("Access removed.");
+      expect(await (await post(confirmation)).text()).toContain("Access removed.");
+      expect((await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
+
+      const second = await connectMcp(st, "friends", phone, { browser: b });
+      expect(second.token?.access_token).toEqual(expect.any(String));
       expect((await st.site("friends", "/api/me/delete", { browser: b, json: { scope: "app" } })).status).toBe(200);
-      const after = await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token);
+      const after = await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, second.token!.access_token);
       expect(after.res.status).toBe(401);
     }, T);
 

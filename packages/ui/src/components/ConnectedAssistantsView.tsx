@@ -32,6 +32,7 @@ export type ConnectedAssistantsViewProps = Omit<AuthShellProps, "title" | "chrom
   notice?: boolean;
   /** The grant that waits for the person to confirm its removal. */
   confirmingGrantId?: string;
+  removalProof?: string;
   /** The page itself: "Remove access" sends `remove` here with GET, "Keep access" and "Try again" open it. */
   pageHref?: string;
   /** Where the confirmed removal posts `grant`. */
@@ -47,6 +48,7 @@ export function ConnectedAssistantsView({
   grants = [],
   notice = false,
   confirmingGrantId,
+  removalProof,
   pageHref = "/oauth/consents",
   revokeAction = "/oauth/consents/revoke",
   ...props
@@ -91,6 +93,7 @@ export function ConnectedAssistantsView({
                     <div className="flex flex-wrap gap-3">
                       <form method="post" action={revokeAction}>
                         <input type="hidden" name="grant" value={grant.id} />
+                        <input type="hidden" name="confirmation" value={removalProof} />
                         <Button type="submit" variant="destructive" aria-describedby={assistantId}>
                           Remove access
                         </Button>

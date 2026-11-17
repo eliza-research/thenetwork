@@ -109,23 +109,24 @@ export function messagePage(app: McpApp, title: MessageTitle, text: string, stat
 }
 
 /**
- * The connected assistants page. `confirming` is the grant id of a "Remove access" choice (`?remove=` on the page URL);
+ * The connected assistants page. `confirmation` identifies the selected grant and the form proof for this browser session;
  * the page then asks the person to confirm the removal of that grant. `removal` is the result of a confirmed removal,
  * and `grants` are the grants that stay after it.
  */
-export function consentsPage(app: McpApp, grants: Array<Grant & { clientName: string | null }>, fmt: (ms: number) => string, o: { confirming?: string; removal?: Extract<RemoveReply, "Removed" | "NothingRemoved"> } = {}) {
+export function consentsPage(app: McpApp, grants: Array<Grant & { clientName: string | null }>, fmt: (ms: number) => string, o: { confirmation?: { grantId: string; proof: string }; removal?: Extract<RemoveReply, "Removed" | "NothingRemoved"> } = {}) {
   // spec/connectedAssistants.md, "A confirmed removal shows its result"
   const before = load(consentsInitial, "LoadedList", grants.length + (o.removal === "Removed" ? 1 : 0));
   const asked = canChooseRemoval(before) ? chooseRemoval(before) : before;
   const shown = o.removal === undefined
-    ? (o.confirming !== undefined && grants.some(g => g.id === o.confirming) && canChooseRemoval(before) ? chooseRemoval(before) : before)
+    ? (o.confirmation !== undefined && grants.some(g => g.id === o.confirmation?.grantId) && canChooseRemoval(before) ? chooseRemoval(before) : before)
     : canConfirmRemoval(asked, grants.length) ? confirmRemoval(asked, o.removal, grants.length) : load(consentsInitial, "LoadedList", grants.length);
   const view = h(ConnectedAssistantsView, {
     app: appKeyOf(app),
     view: shown.view,
     grants: grants.map(g => ({ id: g.id, clientName: g.clientName, allowedOn: fmt(g.createdAt), scopes: g.scopes })),
     notice: shown.notice,
-    confirmingGrantId: shown.view === "ConfirmingRemoval" ? o.confirming : undefined,
+    confirmingGrantId: shown.view === "ConfirmingRemoval" ? o.confirmation?.grantId : undefined,
+    removalProof: shown.view === "ConfirmingRemoval" ? o.confirmation?.proof : undefined,
   });
   return respond(app, "Connected assistants", view);
 }

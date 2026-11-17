@@ -3,9 +3,10 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -44,10 +45,12 @@ const insertCode = (sql: SQL, c: AuthCode) => sql`insert into oauth.codes (hash,
 
 const insertAudit = (sql: SQL, a: AuditRow) => sql`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
 
+type CheckBrowserOwner = (tx: SQL, owner: BrowserGrantRemoval) => Promise<boolean>;
+
 export class PgOAuthStore implements OAuthStore {
   readonly sql: SQL;
   private readonly owned: boolean;
-  constructor(db: string | SQL) {
+  constructor(db: string | SQL, private readonly checkBrowserOwner?: CheckBrowserOwner) {
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
   }
@@ -139,13 +142,27 @@ export class PgOAuthStore implements OAuthStore {
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return (await this.sql`select * from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} and revoked_at is null and expires_at > ${ts(at)} order by created_at`).map(grant);
   }
-  async revokeGrant(id: string, at: number) {
-    return this.sql.begin(async tx => {
-      const r = await tx`update oauth.grants set revoked_at = ${ts(at)} where id = ${id} and revoked_at is null returning id`;
-      await tx`update oauth.tokens set revoked_at = ${ts(at)} where grant_id = ${id} and revoked_at is null`;
-      await tx`update oauth.signup_drafts set fields='{}'::jsonb where grant_id=${id}`;
-      return r.length > 0;
-    });
+  async revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {
+    try {
+      return await this.sql.begin(async tx => {
+        if (owner) {
+          const [selected] = await tx`select revoked_at,expires_at from oauth.grants where id=${id}
+            and app_id=${owner.app} and phone_key=${owner.phoneKey} and person_id is not distinct from ${owner.personId}
+            for update`;
+          if (!selected || (this.checkBrowserOwner && !await this.checkBrowserOwner(tx, owner))) return false;
+          at = owner.now();
+          const ownedLive = selected.revoked_at === null && ms(selected.expires_at)! > at;
+          if (!removalFormMayRevoke(ownedLive, true, at, owner.confirmationEndsAt)) return false;
+        }
+        const rows = await tx`update oauth.grants set revoked_at = ${ts(at)} where id = ${id} and revoked_at is null returning id`;
+        await tx`update oauth.tokens set revoked_at = ${ts(at)} where grant_id = ${id} and revoked_at is null`;
+        await tx`update oauth.signup_drafts set fields='{}'::jsonb where grant_id=${id}`;
+        return rows.length > 0;
+      });
+    } catch (error) {
+      if (owner && (error as { code?: string })?.code === "55P03") return false;
+      throw error;
+    }
   }
 
   async putCode(c: AuthCode) { await insertCode(this.sql, c); }

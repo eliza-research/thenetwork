@@ -55,7 +55,24 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     log("MCP server off: it needs TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY and a database outside PLATFORM_ENV=dev");
     return undefined;
   }
-  const store = o.databaseUrl ? new PgOAuthStore(o.databaseUrl) : new MemoryOAuthStore();
+  const store = o.databaseUrl ? new PgOAuthStore(o.databaseUrl, async (tx, owner) => {
+    // Share the platform join fence for a still-unattached phone. Do not wait on
+    // platform rows while holding the grant lock that a number move can need.
+    const [joinLock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`platform:join:${owner.e164}`})) as locked`;
+    if (!joinLock?.locked) return false;
+    const [session] = await tx`select expires_at,revoked_at from platform.sessions where token_hash=${owner.sessionHash}
+      and app_id=${owner.app} and e164=${owner.e164} and (person_id is null or person_id::text=${owner.personId}) for share nowait`;
+    if (!session) return false;
+    const [phone] = await tx`select person_id,hold from platform.phone_identities where e164=${owner.e164} for share nowait`;
+    if (phone?.hold || (phone?.person_id ?? null) !== owner.personId) return false;
+    if (owner.personId) {
+      const [person] = await tx`select 1 from platform.people where id=${owner.personId}::uuid and deleted_at is null
+        and phone_hash=${owner.phoneKey} for share nowait`;
+      if (!person) return false;
+    }
+    const at = owner.now();
+    return new Date(session.expires_at).getTime() > at && (session.revoked_at === null || new Date(session.revoked_at).getTime() > at);
+  }) : new MemoryOAuthStore();
   // The migration runner applies the oauth schema (9001); a deployed service login has no CREATE right.
   if (store instanceof PgOAuthStore && o.migrate !== false) await store.migrate();
   const api = svc.publicApi;

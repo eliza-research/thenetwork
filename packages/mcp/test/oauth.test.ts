@@ -318,26 +318,50 @@ describe("banned numbers", () => {
 });
 
 describe("the person's consent records", () => {
-  test("listed on the site and revocable by the person only, from the site itself", async () => {
+  // spec/connectedAssistants.md, "A confirmed removal shows its result"
+  test("lists the current person's grants and requires the exact browser confirmation to remove one", async () => {
     const env = setup();
-    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const personId = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     const c = await connect(env, PEON, PHONE_A);
     const site = /sid_peon=[^;]+/.exec(c.flow.siteCookie!)![0];
-    const list = await env.fetch(new Request(`${origin(PEON)}/oauth/consents`, { headers: { cookie: site } }));
-    const html = await list.text();
+    const page = (path = "", cookie = site) => env.fetch(new Request(`${origin(PEON)}/oauth/consents${path}`, { headers: { cookie } }));
+    const [grant] = await env.store.grantsFor(env.accounts.phoneHash(PHONE_A), "peon", env.clock.t);
+    expect(grant?.personId).toBe(personId);
+    const former = { ...grant!, id: "earlier-owner-grant", personId: "earlier-owner" };
+    await env.store.putGrant(former);
+    const html = await (await page()).text();
     expect(html).toContain("Test Assistant");
-    const chosen = /name="remove" value="([^"]+)"/.exec(html)![1]!;
-    const confirm = await (await env.fetch(new Request(`${origin(PEON)}/oauth/consents?remove=${encodeURIComponent(chosen)}`, { headers: { cookie: site } }))).text();
+    expect(html).not.toContain(former.id);
     expect(html).not.toContain('name="grant"');
-    const grantId = /name="grant" value="([^"]+)"/.exec(confirm)![1]!;
-    expect(grantId).toBe(chosen);
-    expect(confirm).toContain("Keep access");
-    const post = (o: string) => env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, { method: "POST", headers: { cookie: site, origin: o, "content-type": "application/x-www-form-urlencoded" }, body: `grant=${grantId}` }));
-    expect((await post("https://evil.example")).status).toBe(403);
-    expect(await (await post(origin(PEON))).text()).toContain("Access removed.");
-    expect(await (await post(origin(PEON))).text()).not.toContain("Access removed.");
+    const chosen = /name="remove" value="([^"]+)"/.exec(html)![1]!;
+    const confirmPath = `?remove=${encodeURIComponent(chosen)}`;
+    const getProof = async () => {
+      const confirm = await (await page(confirmPath)).text();
+      expect(confirm).toContain(`name="grant" value="${chosen}"`);
+      expect(confirm).toContain("Keep access");
+      return /name="confirmation" value="([^"]+)"/.exec(confirm)![1]!;
+    };
+    const post = (id: string, confirmation?: string, o = origin(PEON), cookie = site) => env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, {
+      method: "POST", headers: { cookie, origin: o, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant: id, ...(confirmation ? { confirmation } : {}) }),
+    }));
+    expect(await (await page(`?remove=${former.id}`)).text()).not.toContain('name="confirmation"');
+    expect(await (await post(chosen)).text()).not.toContain("Access removed.");
+    const proof = await getProof();
+    expect((await post(chosen, proof, "https://evil.example")).status).toBe(403);
+    expect(await (await post(former.id, proof)).text()).not.toContain("Access removed.");
+    const anotherSession = await env.sessions.create("peon", PHONE_A, personId);
+    expect(await (await post(chosen, proof, origin(PEON), `sid_peon=${anotherSession.token}`)).text()).not.toContain("Access removed.");
+    env.clock.t += 5 * 60_000;
+    expect(await (await post(chosen, proof)).text()).not.toContain("Access removed.");
+    expect(await env.store.getGrant(chosen)).toMatchObject({ revokedAt: null });
+    const current = await getProof();
+    expect(await (await post(chosen, current)).text()).toContain("Access removed.");
+    expect(await (await post(chosen, current)).text()).not.toContain("Access removed.");
+    expect(await env.store.getGrant(former.id)).toMatchObject({ revokedAt: null });
+    expect((await env.store.auditRows()).filter(row => row.kind === "consent_revoked").map(row => row.grantId)).toEqual([chosen]);
     expect((await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token })).res.status).toBe(401);
-    expect((await env.fetch(new Request(`${origin(PEON)}/oauth/consents`))).status).toBe(401);
+    expect((await page("", "")).status).toBe(401);
   });
 
   test("a signed-in site session skips the code step; revokeAllFor ends every grant of a phone", async () => {

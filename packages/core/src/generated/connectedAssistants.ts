@@ -26,6 +26,8 @@ export type Event =
   | { type: "keepAccess" }
   | { type: "confirmRemoval"; removal: RemoveReply; grants: number };
 
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+export const removeConfirmationMs: number = 300000;
 /** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
 export const noConsentsOffers: ConsentsOffers = { removeAccess: false, confirmRemove: false, keepAccess: false, retryLink: false };
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -35,6 +37,19 @@ export const initial: ConsentsPage = { view: "Loading", grants: 0, signedIn: fal
 //@ pure
 export function inv(current: ConsentsPage): boolean {
   return alwaysGrantsShowOnlyWithSession(current) && alwaysListMatchesGrants(current) && alwaysNoticeOnlyOnTheList(current);
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function browserOwnsLiveGrant(sameApp: boolean, samePhone: boolean, samePerson: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
+  return sameApp && samePhone && samePerson && active && asOf < grantExpiresAt;
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function lawAnEarlierPhoneOwnerHasNoGrant(sameApp: boolean, samePhone: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
+  //@ ensures \result === true
+  return !browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt);
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -177,6 +192,19 @@ export function stepKeepAccessChangesNothing(before: ConsentsPage, via: string, 
 //@ pure
 export function stepOnlyConfirmedRemovalChangesGrants(before: ConsentsPage, via: string, after: ConsentsPage): boolean {
   return !(after.grants !== before.grants) || (via === "load" || via === "reloadPage" || (via === "confirmRemoval" && before.view === "ConfirmingRemoval"));
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function removalFormMayRevoke(ownedLiveGrant: boolean, exactBrowserConfirmation: boolean, asOf: number, confirmationEndsAt: number): boolean {
+  return ownedLiveGrant && exactBrowserConfirmation && asOf < confirmationEndsAt;
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function lawCannotRevokeWithoutConfirmation(ownedLiveGrant: boolean, asOf: number, confirmationEndsAt: number): boolean {
+  //@ ensures \result === true
+  return !removalFormMayRevoke(ownedLiveGrant, false, asOf, confirmationEndsAt);
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
