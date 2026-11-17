@@ -14,6 +14,10 @@ export type Event =
   | { type: "recordInboxSeen" }
   | { type: "readDeliveryClosure"; deliveryClosed: boolean };
 
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+export const threadUpdateCommand: string = "updates";
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+export const threadUpdatePageSize: number = 3;
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export const initial: AcknowledgementFlow = { phase: "AcknowledgementStarting" };
 
@@ -34,6 +38,26 @@ export function appAllowsInboxItem(scoped: boolean, sameApp: boolean): boolean {
 export function lawScopedReadRequiresAppMatch(sameApp: boolean): boolean {
   //@ ensures \result === true
   return !appAllowsInboxItem(true, sameApp) || sameApp;
+}
+
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+//@ pure
+export function mayShowThreadUpdate(sharedLine: boolean, sameRoutedApp: boolean, activeAppOwner: boolean): boolean {
+  return activeAppOwner && appAllowsInboxItem(!sharedLine, sameRoutedApp);
+}
+
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawDedicatedThreadCannotShowAnotherApp(sameRoutedApp: boolean, activeAppOwner: boolean): boolean {
+  //@ ensures \result === true
+  return !mayShowThreadUpdate(false, sameRoutedApp, activeAppOwner) || sameRoutedApp;
+}
+
+/** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: boolean, activeAppOwner: boolean): boolean {
+  //@ ensures \result === true
+  return !mayShowThreadUpdate(true, sameRoutedApp, activeAppOwner) || activeAppOwner;
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */

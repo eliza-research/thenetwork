@@ -17,6 +17,24 @@ pure def lawScopedReadRequiresAppMatch(sameApp: bool): bool =
   appAllowsInboxItem(true, sameApp) implies sameApp
 ```
 
+### A signed Updates reply reads a bounded page in the member's current text thread
+
+The whole word `updates`, with optional outer space and any letter case, is a direct command on the signed phone text thread. The shared line may read current updates for the phone owner's active app memberships. A dedicated line reads only its app. A sender needs the current active membership for each item and does not join, consent or resume by reading. Group turns and assistant profile submissions do not run this command. A reply is one text with up to three summaries. A provider-accepted digest whose exact text and recipient still match its receipt has already shown its preview summaries on this thread. Keep those summaries available on other surfaces and offer the rest in the thread. The text can ask the person to reply `updates` again when more are available. Mark these summaries seen in the same durable turn that records the reply. A replay never reads a new page and cannot expose a stored summary after its owner, active app membership or current update changes.
+
+```quint
+pure val threadUpdateCommand = "updates"
+pure val threadUpdatePageSize = 3
+
+pure def mayShowThreadUpdate(sharedLine: bool, sameRoutedApp: bool, activeAppOwner: bool): bool =
+  activeAppOwner and appAllowsInboxItem(not(sharedLine), sameRoutedApp)
+
+pure def lawDedicatedThreadCannotShowAnotherApp(sameRoutedApp: bool, activeAppOwner: bool): bool =
+  mayShowThreadUpdate(false, sameRoutedApp, activeAppOwner) implies sameRoutedApp
+
+pure def lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: bool, activeAppOwner: bool): bool =
+  mayShowThreadUpdate(true, sameRoutedApp, activeAppOwner) implies activeAppOwner
+```
+
 ### A delivered text can appear only once and its opportunity must still be current
 
 Key a delivered Network text by its message ID, with the opportunity as

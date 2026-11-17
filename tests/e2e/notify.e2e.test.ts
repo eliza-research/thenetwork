@@ -4,10 +4,12 @@
 // inbox's own sends go through the Network's consent-checked delivery. Needs the dev Postgres.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
+import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../packages/core/src/svc/contract.ts";
+import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import type { Outbound } from "../../packages/network/service/channel.ts";
 import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
 import { buttonPageLink } from "../../packages/notify/src/links.ts";
-import { connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, webJoin, type Stack } from "./harness.ts";
+import { connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
@@ -248,5 +250,95 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect((await updates(bearer, { update_token: reference })).updates).toEqual([
       { summary, kind: "reminder", at: expect.any(String) },
     ]);
+  }, T);
+
+  test("signed shared texts page the member's current inbox and stop stale private replies from replaying", async () => {
+    const from = newPhone();
+    const peon = await webJoin(st, "peon", from, { age: 30 });
+    expect(peon.res.status).toBe(200);
+    expect((await webJoin(st, "friends", from, { age: 30, browser: peon.b })).res.status).toBe(200);
+    const { person_id: personId } = await member("peon", from);
+    const first = "Your hike starts at noon.";
+    const second = "Your work call moved to Wednesday.";
+    const third = "Your picnic is in Fort Greene.";
+    const fourth = "Your interview has a new room.";
+    const scoped = "A new update about your hike is ready.";
+    const notify = st.svc.notify!;
+    const now = st.clock.now();
+    const add = (app: "peon" | "friends", subjectId: string, summary: string, expiresAt?: number) =>
+      notify.add({personId, app, eventType: "reminder", subjectId, summary, urgency: "requested", expiresAt}, now);
+    await add("friends", "thread-first", first);
+    await add("peon", "thread-second", second);
+    await add("friends", "thread-third", third);
+    const { item: rest } = await add("peon", "thread-fourth", fourth);
+    await add("peon", "thread-expired", "An expired update.", now);
+    await sql`insert into network.opportunities (id,app_id,kind,state,source,city,objective) values
+      ('thread-closed','peon','intro','CANCELLED','network','nyc','A cancelled work introduction')`;
+    await add("peon", "thread-closed", "A closed opportunity.");
+
+    const turn = (messageId: string, text = "updates", app?: "peon" | "friends"): TurnRequest => ({
+      channel: "twilio", transport: "sms", messageId, from, to: null, text, receivedAt: st.clock.now(), ...(app ? {app} : {}),
+    });
+    const post = async (input: TurnRequest) => {
+      const body = JSON.stringify(input);
+      const headers = await svcSign(TURN_SECRET, {method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(st.clock.now()/1000)});
+      const res = await fetch(new URL(TURN_PATH, st.backendOrigin), {method: "POST", headers: {...headers, "content-type": "application/json"}, body});
+      return {status: res.status, body: await res.json() as TurnResponse | {error: string}};
+    };
+    const original = turn("thread-updates-1", "  UpDaTeS  ");
+    const firstPage = await post(original);
+    expect(firstPage).toMatchObject({status: 200, body: {outcome: "handled", reason: "inbox_updates", replies: [
+      `${first}\n${second}\n${third}\n+1 more. Reply "updates" to see them.`,
+    ]}});
+    const unseen = () => notify.store.unseen(personId, now);
+    expect((await unseen()).map(item => item.id)).toEqual([rest.id]);
+    expect(await sql`select 1 from notify.inbox_items where person_id=${personId} and seen_on='sms'`).toHaveLength(4);
+    const history = await sql`select body from network.messages where type='inbox_updates' and inbound_id='msg:twilio:thread-updates-1'`;
+    expect([...history]).toEqual([{body: "Private inbox updates reply."}]);
+
+    await add("friends", "thread-scoped", scoped);
+    expect(await post(original)).toEqual(firstPage);
+    expect(await post(turn("thread-updates-dedicated", "updates", "peon"))).toMatchObject({status: 200, body: {replies: [fourth]}});
+    expect((await unseen()).map(item => item.summary)).toEqual([scoped]);
+    expect(await post(turn("thread-updates-2"))).toMatchObject({status: 200, body: {replies: [scoped]}});
+    expect(await post(turn("thread-updates-empty"))).toMatchObject({status: 200, body: {replies: ["You have no new updates from The Network."]}});
+    expect(await post({...turn("thread-updates-unknown"), from: newPhone()})).toMatchObject({status: 200, body: {reason: "inbox_updates", replies: []}});
+
+    const { id: friendsMember } = await member("friends", from);
+    await sql`update network.members set opted_out=true where app_id='friends' and id=${friendsMember}`;
+    await sql`update platform.memberships set state='paused' where app_id='friends' and person_id=${personId}`;
+    await sql`insert into network.messages (id,app_id,member_id,direction,channel,body,status,ts)
+      values ('newest-paused-thread','friends',${friendsMember},'outbound','imessage','An earlier Friends message.','dry_run',${new Date(now + 1)})`;
+    const eligible = "Your work call has a new time.";
+    await add("peon", "active-other-thread", eligible);
+    expect(await post(turn("thread-updates-paused", "updates", "friends"))).toMatchObject({status: 200, body: {replies: []}});
+    expect(await post(turn("thread-updates-active-elsewhere"))).toMatchObject({status: 200, body: {app: "peon", replies: [eligible]}});
+    await sql`update platform.memberships set state='active' where app_id='friends' and person_id=${personId}`;
+    await sql`update network.members set opted_out=false where app_id='friends' and id=${friendsMember}`;
+
+    const preview = ["Your first digest summary.", "Your second digest summary.", "Your third digest summary.", "Your remaining digest summary."];
+    for (const [index, summary] of preview.entries()) await add("peon", `thread-preview-${index}`, summary);
+    const digest = (await notify.plan(now)).sends.find(send => send.personId === personId);
+    if (!digest) throw new Error("missing queued digest");
+    await st.svc.notifyTick();
+    const [message] = await sql`select body,app_id,member_id from network.messages where id=${digest.deliveryId}`;
+    expect(message?.body).toEqual(`${preview.slice(0, 3).join("\n")}\n+1 more. Reply "updates" to see them.`);
+    const acceptedAt = new Date(now);
+    await sql`insert into platform.outbound (id,app_id,member_id,line,to_address,kind,body,fingerprint,time_zone,status,
+        next_attempt_at,created_at,updated_at,sent_at)
+      values (${digest.deliveryId},${message.app_id},${message.member_id},'+12125550388',${from},'transactional',${message.body},
+        ${digest.deliveryId},'America/New_York','sent',${acceptedAt},${acceptedAt},${acceptedAt},${acceptedAt})`;
+    expect(await post(turn("thread-updates-overflow"))).toMatchObject({status: 200, body: {replies: [preview[3]]}});
+    expect((await unseen()).map(item => item.summary)).toEqual(preview.slice(0, 3));
+
+    if (!("outcome" in firstPage.body) || firstPage.body.outcome !== "handled") throw new Error("missing shared thread app");
+    const otherApp = firstPage.body.app === "peon" ? "friends.help" : "peon.biz";
+    expect(await post(turn("thread-updates-leave", `leave ${otherApp}`))).toMatchObject({status: 200, body: {consent: {state: "opted_out", scope: "app"}}});
+    expect(await post(original)).toMatchObject({status: 409, body: {error: "turn_inbox_updates_changed"}});
+
+    const current = turn("thread-updates-current");
+    expect(await post(current)).toMatchObject({status: 200, body: {reason: "inbox_updates", replies: ["You have no new updates from The Network."]}});
+    expect(await post(turn("thread-updates-stop", "STOP"))).toMatchObject({status: 200, body: {consent: {state: "opted_out", scope: "all"}}});
+    expect(await post(current)).toMatchObject({status: 409, body: {error: "turn_inbox_updates_changed"}});
   }, T);
 });

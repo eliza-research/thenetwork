@@ -96,7 +96,7 @@ export type StagedMemberInvitation =
 
 const gatheringPrivateBody = { gathering_rsvp: "Private gathering RSVP", gathering_followup: "Private gathering follow-up" };
 const gatheringMessage = (type?: string): type is keyof typeof gatheringPrivateBody => !!type && Object.hasOwn(gatheringPrivateBody, type);
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type === "inbox_updates" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
@@ -108,6 +108,7 @@ export interface Unit {
   atomicProfileFactReply?: true;
   atomicParticipationReply?: true;
   atomicCalendarReply?: true;
+  atomicInboxUpdatesReply?: true;
   atomicGatheringReply?: keyof typeof gatheringPrivateBody;
   atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
@@ -943,7 +944,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | keyof typeof gatheringPrivateBody, publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "inbox_updates" | keyof typeof gatheringPrivateBody, publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -1088,6 +1089,10 @@ export class NetworkRuntime {
       if (!captured.some(send => send.type === "calendar_invite")) throw new Error("Calendar invite reply was not collected");
       replyReason = "calendar_invite";
     }
+    if (u.atomicInboxUpdatesReply) {
+      if (!captured.some(send => send.type === "inbox_updates")) throw new Error("Inbox updates reply was not collected");
+      replyReason = "inbox_updates";
+    }
     if (u.atomicGatheringReply) {
       if (!captured.some(send => send.type === u.atomicGatheringReply)) throw new Error("Gathering reply was not collected");
       replyReason = u.atomicGatheringReply;
@@ -1113,6 +1118,7 @@ export class NetworkRuntime {
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
       body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
         : s.type === "calendar_invite" ? "Private calendar invite reply."
+        : s.type === "inbox_updates" ? "Private inbox updates reply."
         : gatheringMessage(s.type) ? `${gatheringPrivateBody[s.type]} reply.`
         : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,

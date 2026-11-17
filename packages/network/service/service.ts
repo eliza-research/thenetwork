@@ -144,7 +144,8 @@ import { normalizeAddress } from "../../blooio/src/phone.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
-import { inboxOpportunityAllowsUpdate } from "../../core/src/generated/notificationAcknowledgement.ts";
+import { appAllowsInboxItem, inboxOpportunityAllowsUpdate, mayShowThreadUpdate, threadUpdatePageSize } from "../../core/src/generated/notificationAcknowledgement.ts";
+import { threadUpdateBody, threadUpdateReceipt, threadUpdateReplyId, threadUpdateRequested, unpreviewedThreadUpdates } from "./thread-updates.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-consent-context.ts";
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
@@ -999,6 +1000,80 @@ export class NetworkService implements RuntimeHost {
     return items.filter(item => allowed.has(item.id));
   }
 
+  /** A shared line spans current own memberships. A dedicated line retains its app boundary. */
+  private async currentThreadUpdates(tx: SQL, e164: string, personId: string, route: Route, items: InboxItem[]) {
+    const accounts = this.accountsFor(tx);
+    const owned = items.filter(item => item.personId === personId);
+    const visible = new Set<string>();
+    const obsolete = new Set<string>();
+    for (const app of [...new Set(owned.map(item => item.app))].sort()) {
+      if (!isAppId(app) || !appAllowsInboxItem(!route.shared, app === route.app)) continue;
+      const binding = await accounts.activeMembership(this.apps[app], { e164, personId });
+      if (!binding) continue;
+      await tx`select set_config('app.app_id',${app},true)`;
+      const [active] = await tx`select id from network.members where app_id=${app} and id=${binding.membership.memberId}
+        and person_id=${personId} and account_status='active' and not opted_out`;
+      if (!mayShowThreadUpdate(route.shared, app === route.app, !!active)) continue;
+      const inApp = owned.filter(item => item.app === app);
+      for (const item of await this.currentInboxUpdates(tx, personId, app, inApp)) visible.add(item.id);
+      for (const item of inApp) if (!visible.has(item.id)) obsolete.add(item.id);
+    }
+    await tx`select set_config('app.app_id',${route.app},true)`;
+    return { visible: items.filter(item => visible.has(item.id)), obsolete: [...obsolete] };
+  }
+
+  private threadUpdatesTurn(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, route: Route): Promise<InboundOutcome> {
+    return rt.unitOfWork(async () => {
+      if (!this.notify || !rt.signedMemberTurn(memberId, rowId)) return "inbox_updates" as const;
+      rt.unit.memberCommand = async tx => {
+        const e164 = normalizePhone(ev.from);
+        if (!e164) return;
+        const binding = await memberCommandOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164 });
+        if (!binding?.member) return;
+        const personId = binding.person.id;
+        const now = this.clock.now();
+        const store = new PgNotifyStore(tx);
+        const channel = ev.transport === "sms" ? "sms" : "imessage";
+        const notifier = new Notifier(store, { get: async () => undefined }, this.notify!.cfg);
+        await notifier.threadReply(personId, channel, now);
+        const { visible, obsolete } = await this.currentThreadUpdates(tx, e164, personId, route, await store.unseen(personId, now));
+        const unread = await unpreviewedThreadUpdates(tx, store, e164, personId, visible);
+        const page = unread.slice(0, threadUpdatePageSize);
+        const seen = new Set(await store.markSeen(personId, channel, now, [...obsolete, ...page.map(item => item.id)]));
+        const shown = page.filter(item => seen.has(item.id));
+        const remaining = unread.length - page.length;
+        const id = threadUpdateReplyId(this.threadUpdatesTurnHash(rowId, personId), shown, remaining);
+        rt.unit.atomicInboxUpdatesReply = true;
+        rt.collectedMemberReply(memberId, id, threadUpdateBody(shown, remaining), "inbox_updates");
+      };
+      return "inbox_updates" as const;
+    });
+  }
+
+  private threadUpdatesTurnHash(rowId: string, personId: string): string {
+    return keyedHash(this.hashKey, `thread-updates:${rowId}:${personId}`).slice(0, 32);
+  }
+
+  private async threadUpdatesReplyCurrent(input: TurnRequest, reply: Extract<TurnResponse, { outcome: "handled" }>): Promise<boolean> {
+    const memberId = reply.memberId;
+    const rt = reply.app && memberId ? await this.runtimeOfMember(reply.app, memberId) : undefined;
+    if (!rt || !memberId || !threadUpdateRequested(input.text) || reply.replies.length !== 1 || reply.replyIds?.length !== 1) return false;
+    const route = await this.route({ ...input, kind: "message", chatId: input.from, isGroup: false, mediaUrls: [] }, input.app);
+    if (!route.shared && route.app !== rt.app.id) return false;
+    return rt.scoped(async tx => {
+      const binding = await memberCommandOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from });
+      if (!binding?.member) return false;
+      const personId = binding.person.id;
+      const receipt = threadUpdateReceipt(reply.replyIds![0]!, this.threadUpdatesTurnHash(`in:${input.channel}:${input.messageId}`, personId));
+      if (!receipt) return false;
+      const now = this.clock.now();
+      const rows = await new PgNotifyStore(tx).getItems(receipt.ids);
+      const live = rows.filter(item => item.expiresAt === undefined || item.expiresAt > now);
+      const { visible } = await this.currentThreadUpdates(tx, input.from, personId, { ...route, app: rt.app.id }, live);
+      return visible.length === receipt.ids.length && threadUpdateBody(visible, receipt.remaining) === reply.replies[0];
+    });
+  }
+
   /** An assistant connected (OAuth grant) or disconnected (revoked) for a person: the surface signal. */
   async assistantLinked(personId: string, surface: Surface, active: boolean): Promise<void> {
     await this.notify?.setActive(personId, surface, active);
@@ -1531,7 +1606,7 @@ export class NetworkService implements RuntimeHost {
    *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
    */
-  private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId): Promise<Route> {
+  private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId, threadRead = false): Promise<Route> {
     let dedicated = forced;
     if (!dedicated && ev.to) {
       const line = normalizeAddress(ev.to);
@@ -1548,6 +1623,15 @@ export class NetworkService implements RuntimeHost {
     if (explicit.phase === "ExplicitRoute" && named) return { app: named, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
+    if (threadRead && e164) {
+      const ranked = [...mine].sort((a, b) => (b.lastItem ?? 0) - (a.lastItem ?? 0) || (b.lastOut ?? 0) - (a.lastOut ?? 0));
+      for (const { app, memberId } of ranked) {
+        const rt = this.runtimeFor(app)!;
+        const binding = await rt.scoped(tx => memberCommandOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164 }));
+        if (binding?.member) return { app, shared: true };
+      }
+      return { app: "ntwrk", shared: true };
+    }
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     const alreadyInPendingApp = !!pending && mine.some(x => pendingMatchesApp(pending.app, x.app));
     const hasMembership = mine.length > 0;
@@ -1627,11 +1711,12 @@ export class NetworkService implements RuntimeHost {
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
+    const threadRead = !kw && threadUpdateRequested(ev.text);
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
     if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar && !gatheringRsvp && !gatheringFollowup) await this.lineAdapter()?.engaged?.(ev.from);
-    const route = await this.route(ev, o.app);
+    const route = await this.route(ev, o.app, threadRead && !!this.inboundTurn() && !banned);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
     let rt = joinedMember && await this.runtimeOfMember(route.app, joinedMember.memberId);
@@ -1731,6 +1816,11 @@ export class NetworkService implements RuntimeHost {
       return "left";
     }
     if (banned) return "held";
+
+    if (threadRead) {
+      if (!turn || !e164 || !memberId || ev.mediaUrls?.length) return "inbox_updates";
+      return this.threadUpdatesTurn(rt, memberId, ev, rowId, route);
+    }
 
     // An account command never joins an app or opts the sender in.
     if (!memberId && surveyAnswer) return "handled";
@@ -3236,6 +3326,9 @@ export class NetworkService implements RuntimeHost {
           gatheringFollowupReplyCurrent(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, command,
             { id: `in:${input.channel}:${input.messageId}`, at: input.receivedAt }, this.clock.now(), this.hashKey, handled.replies[0]!));
         if (!current) return json({ error: "turn_gathering_followup_changed", retryable: false }, 409);
+      }
+      if (handled.reason === "inbox_updates" && handled.replies.length && !await this.threadUpdatesReplyCurrent(input, handled)) {
+        return json({error: "turn_inbox_updates_changed", retryable: false}, 409);
       }
       if (handled.reason === "standing_intents" && handled.replies.length) {
         const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
