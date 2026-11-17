@@ -8,7 +8,7 @@ A member needs to receive each relevant update once and get credit for confirmed
 
 Check notification projection and deduplication and the network capital ledger. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring, the [notification dispatch machine](../notificationDispatch.md) for digest rechecks, recording and queued relevance, and the [inbox acknowledgement machine](../notificationAcknowledgement.md) for scoped reads, update tokens, seen writes, and action feedback.
+Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring, the [notification dispatch machine](../notificationDispatch.md) for digest rechecks, recording and queued relevance, and the [inbox acknowledgement machine](../notificationAcknowledgement.md) for scoped reads, current-opportunity output, update tokens, seen writes, and action feedback. This model retains text identity and seen writes. The acknowledgement specification covers the opportunity lookup and whether an item is returned.
 
 The VibeLang dispatch shell rechecks the recipient before recording. The Postgres store locks the selected items in ID order, checks that each still belongs to the recipient and remains pending, and records the claim and notice flags in one transaction. The machine treats that transaction's response as an effect result.
 
@@ -54,8 +54,8 @@ module notify_capital {
   // ================================================================================================
 
   pure val APPS = Set("ntwrk", "slop")
-  // Network texts. Since SD-303 (service.ts:656-660) the inbox subject of a Network text is the
-  // text's own id, so text t is subject t.
+  // Network texts. Model a subject by its text ID. The stored subject may also carry the exact
+  // opportunity ID (SD-303, SD-430).
   pure val TEXTS = Set(1, 2)
   // Items from Notifier.add (scheduler.ts:95-98). No production producer calls it yet (notify
   // README "Not yet: producers"); the API, its tests and a future producer do. Only these items can
@@ -150,7 +150,7 @@ module notify_capital {
 
   // projectNotifications -> delivered -> recordSent -> store.addDelivered: ONE transaction
   // (scheduler.ts:105-110, pg-store.ts addDelivered; SD-151 fix 472cecb). It inserts the item (or
-  // finds it by its dedupe key, subject = the text id since SD-303 fix 893944f) and, when the item is
+  // finds it by its dedupe key, modeled here by the text ID) and, when the item is
   // not notified, records the net:<id> delivery of that item alone. A throw rolls back both, so an
   // item made from a Network text is never pending. The projection selects members whose account is
   // not removed (runtime.ts:725); the inbox insert trigger refuses a removed scope (retention.sql:29-38).
@@ -309,8 +309,8 @@ module notify_capital {
   // ------------------------------------------------------------------------------------------------
   // Actions: the member and the assistant
 
-  // readUpdates without a token (scheduler.ts readUpdates; service.ts:672-679; MCP get_updates): touch,
-  // then mark the app's unseen items seen. touch writes last_used_at only (pg-store.ts touch).
+  // readUpdates without a token (scheduler.ts, service.ts, MCP get_updates): touch, then mark the
+  // app's selected unseen items seen. Production separately limits the response to current items.
   action readApp(app: str, surface: str): bool = all {
     ms.get(app) == "active",
     // A read with nothing new is a stutter, except a use of a dropped surface.

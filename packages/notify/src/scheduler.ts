@@ -238,7 +238,8 @@ export class Notifier {
    * `callerPersonId` comes from the OAuth grant or the channel binding. With a token, only its
    * items; without, every unseen item; with `app`, only that app's. Everything returned is marked seen.
    */
-  async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string, opts: { app?: string } = {}): Promise<InboxItem[]> {
+  async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string,
+    opts: { app?: string; visible?: (items: InboxItem[]) => Promise<InboxItem[]> } = {}): Promise<InboxItem[]> {
     await this.store.touch(callerPersonId, surface, now);
     // A surface bound to one app (an MCP grant) never sees another app's items: cross-app privacy.
     let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
@@ -252,8 +253,9 @@ export class Notifier {
       }
     }
     if (!canRecordInboxSeen(read)) return [];
-    await this.store.markSeen(callerPersonId, surface, now, items.map(i => i.id));
-    return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? items : [];
+    const visible = opts.visible ? await opts.visible(items) : items;
+    const seen = new Set(await this.store.markSeen(callerPersonId, surface, now, items.map(i => i.id)));
+    return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? visible.filter(i => seen.has(i.id)) : [];
   }
 
   /** For a surface that lists its own items (the MCP connector): token to subject ids, or null. */

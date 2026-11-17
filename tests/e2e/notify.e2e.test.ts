@@ -35,12 +35,17 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect(res.status).toBe(200);
     const m = await member("peon", phone);
     const rt = runtime("peon");
+    await sql`insert into network.opportunities (id,app_id,kind,state,source,city,objective) values
+      ('opp_e2e_1','peon','intro','PROPOSED','network','nyc','A work introduction'),
+      ('opp_e2e_closed','peon','intro','CANCELLED','network','nyc','A cancelled work introduction')`;
     const sent: Outbound = { id: `e2e-send-${Date.now()}`, memberId: m.id as any, body: "A founder in Brooklyn is hiring a designer. Interested?", kind: "proactive", type: "probe", oppId: "opp_e2e_1", proactive: true, system: false, ts: st.clock.now() };
-    await st.svc.delivered(rt, [sent, { ...sent, id: `${sent.id}-sys`, type: "system", system: true }]);
+    const second = { ...sent, id: `${sent.id}-second`, body: "The call is tomorrow.", acceptedAt: sent.ts + 1 };
+    const closed = { ...sent, id: `${sent.id}-closed`, oppId: "opp_e2e_closed", body: "A cancelled work introduction." };
+    await st.svc.delivered(rt, [sent, second, closed, { ...sent, id: `${sent.id}-sys`, type: "system", system: true }]);
     // Recorded once, already delivered (the scheduler never texts it again).
     const rows = await sql`select i.app_id, i.notified_at, d.delivery_id from notify.inbox_items i join notify.deliveries d on d.delivery_id = i.delivery_id where i.person_id = ${m.person_id}`;
-    expect(rows.length).toBe(1);
-    expect(rows[0].delivery_id).toBe(`net:${sent.id}`);
+    expect(rows).toHaveLength(3);
+    expect(rows.map(row => row.delivery_id)).toEqual(expect.arrayContaining([`net:${sent.id}`, `net:${second.id}`, `net:${closed.id}`]));
     // Another app's item for the same person never shows on a peon grant.
     await st.svc.notify!.add({ personId: m.person_id, app: "slop", eventType: "probe", subjectId: "opp_other_app", urgency: "normal", summary: "Not for peon." }, st.clock.now());
 
@@ -51,9 +56,9 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
 
     const tool = (await rpc(st, "peon", "/mcp", "tools/list")).body!.result.tools.find((t: any) => t.name === "get_updates");
     const unseen = await sql`select seen_at from notify.inbox_items where person_id = ${m.person_id} and app_id = 'peon'`;
-    expect(unseen[0].seen_at).toBeNull();
-    const first = await updates(c.token!.access_token);
-    expect(first.updates.map((u: any) => u.summary)).toEqual(["A founder in Brooklyn is hiring a designer. Interested?"]);
+    expect(unseen.map(row => row.seen_at)).toEqual([null, null, null]);
+    const concurrent = await Promise.all([updates(c.token!.access_token), updates(c.token!.access_token)]);
+    expect(concurrent.flatMap(result => result.updates.map((u: any) => u.summary))).toEqual([sent.body, second.body]);
     const firstUse = (await sql`select last_used_at from notify.surface_signals where person_id=${m.person_id} and surface='claude'`)[0].last_used_at;
     st.clock.advance(1000);
     const again = await updates(c.token!.access_token);
@@ -62,7 +67,7 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect(new Date(secondUse).getTime()).toBeGreaterThan(new Date(firstUse).getTime());
     expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
     const seen = await sql`select seen_on from notify.inbox_items where person_id = ${m.person_id} and app_id = 'peon'`;
-    expect(seen[0].seen_on).toBe("claude");
+    expect(seen.map(row => row.seen_on)).toEqual(["claude", "claude", "claude"]);
     const other = await sql`select seen_at from notify.inbox_items where person_id = ${m.person_id} and app_id = 'slop'`;
     expect(other[0].seen_at).toBeNull();
     expect((await updates(c.token!.access_token, { update_token: "T-ZZZZZZ" })).updates).toEqual([]);

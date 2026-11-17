@@ -79,9 +79,13 @@ test("scheduled canonical state is projected only inside its window and survives
 },60_000);
 
 test("updates use the canonical app inbox and replay its original receipt; uncertain reads never repeat",async()=>{
+  await sql`insert into network.opportunities (id,app_id,kind,state,source,city,objective)
+    values ('signed-update-closed','friends','group','CANCELLED','network','nyc','A cancelled private plan')`;
   await service.notify!.add({personId,app:"friends",eventType:"fixture",subjectId:"own",urgency:"normal",summary:"Approved own update"},clock.now());
+  await service.notify!.add({personId,app:"friends",eventType:"fixture",subjectId:"signed-update-closed",urgency:"normal",summary:"A cancelled private plan."},clock.now());
   await service.notify!.add({personId,app:"slop",eventType:"fixture",subjectId:"other-app",urgency:"normal",summary:"OTHER_APP_PRIVATE_CANARY"},clock.now());
   const first=await post(UPDATES_PATH,action());expect(first.status).toBe(200);expect(first.headers.get("cache-control")).toBe("no-store");const updates=await first.json();expect(updates).toEqual({items:[{summary:"Approved own update"}]});
+  expect((await sql`select seen_on from notify.inbox_items where person_id=${personId} and subject_id='signed-update-closed'`)[0].seen_on).toBe("web");
   expect(await (await post(UPDATES_PATH,action())).json()).toEqual(updates);
   expect(await service.updatesFor(personId,"friends","web")).toEqual([]);
   const opened=await post(TURN_PATH,turn("unknown-updates-open","Tell me something about the weather"));expect((await opened.json() as any).outcome).toBe("open");

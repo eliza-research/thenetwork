@@ -17,6 +17,32 @@ pure def lawScopedReadRequiresAppMatch(sameApp: bool): bool =
   appAllowsInboxItem(true, sameApp) implies sameApp
 ```
 
+### A delivered text can appear only once and its opportunity must still be current
+
+Key a delivered Network text by its message ID, with the opportunity as
+context when there is one. A repeated projection uses the same durable
+delivery ID, including for a retained older subject. Each new accepted text
+about that opportunity remains a separate item. Resolve an item's opportunity
+in the caller's app. Retained subjects that used only the opportunity or
+message ID still resolve there. Omit a closed opportunity or a missing
+opportunity from an explicitly bound text. Retire stale items as seen with
+the selected read. Ordinary updates with no opportunity remain visible.
+
+```quint
+pure def inboxOpportunityTerminal(opportunityStatus: str): bool =
+  opportunityStatus == "COMPLETED" or opportunityStatus == "FEEDBACK_COLLECTED" or opportunityStatus == "DECLINED" or opportunityStatus == "EXPIRED" or
+    opportunityStatus == "CANCELLED" or opportunityStatus == "SKIPPED" or opportunityStatus == "ABANDONED" or opportunityStatus == "QUORUM_FAILED"
+
+pure def inboxOpportunityAllowsUpdate(bound: bool, found: bool, opportunityStatus: str): bool =
+  not(bound) or (found and not(inboxOpportunityTerminal(opportunityStatus)))
+
+pure def lawClosedOpportunityCannotDisplay(opportunityStatus: str): bool =
+  inboxOpportunityTerminal(opportunityStatus) implies not(inboxOpportunityAllowsUpdate(true, true, opportunityStatus))
+
+pure def lawMissingBoundOpportunityCannotDisplay(opportunityStatus: str): bool =
+  not(inboxOpportunityAllowsUpdate(true, false, opportunityStatus))
+```
+
 ### Only a live update token of this member can resolve items
 
 An update token is a reference to the inbox. The caller still needs their own authenticated identity, and a token expires at its expiry time. After an eligible lookup, record first redemption and load the token's stored items. For a surface that lists its own updates, return subject IDs for these items and let that surface acknowledge what it displayed separately.

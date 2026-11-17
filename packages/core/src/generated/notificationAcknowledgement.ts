@@ -36,6 +36,32 @@ export function lawScopedReadRequiresAppMatch(sameApp: boolean): boolean {
   return !appAllowsInboxItem(true, sameApp) || sameApp;
 }
 
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function inboxOpportunityTerminal(opportunityStatus: string): boolean {
+  return opportunityStatus === "COMPLETED" || opportunityStatus === "FEEDBACK_COLLECTED" || opportunityStatus === "DECLINED" || opportunityStatus === "EXPIRED" || opportunityStatus === "CANCELLED" || opportunityStatus === "SKIPPED" || opportunityStatus === "ABANDONED" || opportunityStatus === "QUORUM_FAILED";
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function inboxOpportunityAllowsUpdate(bound: boolean, found: boolean, opportunityStatus: string): boolean {
+  return !bound || (found && !inboxOpportunityTerminal(opportunityStatus));
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawClosedOpportunityCannotDisplay(opportunityStatus: string): boolean {
+  //@ ensures \result === true
+  return !inboxOpportunityTerminal(opportunityStatus) || !inboxOpportunityAllowsUpdate(true, true, opportunityStatus);
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawMissingBoundOpportunityCannotDisplay(opportunityStatus: string): boolean {
+  //@ ensures \result === true
+  return !inboxOpportunityAllowsUpdate(true, false, opportunityStatus);
+}
+
 /** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
 //@ pure
 export function mayRedeemInboxToken(sameOwner: boolean, expiresAt: number, at: number): boolean {

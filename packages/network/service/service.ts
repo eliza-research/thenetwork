@@ -136,6 +136,7 @@ import { normalizeAddress } from "../../blooio/src/phone.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
+import { inboxOpportunityAllowsUpdate } from "../../core/src/generated/notificationAcknowledgement.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-consent-context.ts";
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
@@ -933,9 +934,13 @@ export class NetworkService implements RuntimeHost {
     for (const b of items) {
       const personId = person.get(b.memberId);
       if (!personId) continue;
+      const deliveryId = `net:${b.id}`;
+      // A previous projection may have used just the opportunity as its subject.
+      if (await this.notify.store.getDelivery(deliveryId)) continue;
+      const subjectId = b.oppId ? `${b.oppId}#${b.id}` : b.id;
       await this.notify.recordSent(
-        { personId, app: rt.app.id, eventType: b.type!, subjectId: b.oppId ?? b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
-        { deliveryId: `net:${b.id}`, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.acceptedAt ?? b.ts },
+        { personId, app: rt.app.id, eventType: b.type!, subjectId, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
+        { deliveryId, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.acceptedAt ?? b.ts },
       );
     }
   }
@@ -947,8 +952,36 @@ export class NetworkService implements RuntimeHost {
    */
   async updatesFor(personId: string, app: AppId, surface: Surface, token?: string): Promise<Array<{ summary: string; at: string; kind: string }>> {
     if (!this.notify) return [];
-    const items: InboxItem[] = await this.notify.readUpdates(personId, surface, this.clock.now(), token, { app });
+    const items = await this.notify.readUpdates(personId, surface, this.clock.now(), token, {
+      app, visible: items => this.sql.begin(async tx => {
+        await tx`select set_config('app.app_id',${app},true)`;
+        return this.currentInboxUpdates(tx, personId, app, items);
+      }),
+    });
     return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
+  }
+
+  private async currentInboxUpdates(tx: SQL, personId: string, app: AppId, items: InboxItem[]): Promise<InboxItem[]> {
+    if (!items.length) return [];
+    const subjects = items.map(item => {
+      const messageId = item.deliveryId?.startsWith("net:") ? item.deliveryId.slice(4) : undefined;
+      const suffix = messageId ? `#${messageId}` : undefined;
+      let opportunityId: string | null = null;
+      if (suffix && item.subjectId !== messageId) {
+        opportunityId = item.subjectId.endsWith(suffix) ? item.subjectId.slice(0, -suffix.length) : item.subjectId;
+      }
+      return { id: item.id, subject_id: item.subjectId, opportunity_id: opportunityId,
+        message_id: messageId === item.subjectId ? messageId : null };
+    });
+    const rows = await tx<{ id: string; state: string | null; bound: boolean }[]>`select subject.id, opportunity.state,
+      (subject.opportunity_id is not null or message.opportunity_id is not null or opportunity.id is not null) as bound
+      from jsonb_to_recordset(${subjects}::jsonb) as subject(id text, subject_id text, opportunity_id text, message_id text)
+      left join network.messages message on message.app_id=${app} and message.id=subject.message_id and message.direction='outbound'
+        and exists (select 1 from network.members member where member.app_id=${app} and member.id=message.member_id and member.person_id=${personId}::uuid)
+      left join network.opportunities opportunity on opportunity.app_id=${app}
+        and opportunity.id=coalesce(subject.opportunity_id, message.opportunity_id, subject.subject_id)`;
+    const allowed = new Set(rows.filter(row => inboxOpportunityAllowsUpdate(row.bound, row.state !== null, row.state ?? "")).map(row => row.id));
+    return items.filter(item => allowed.has(item.id));
   }
 
   /** An assistant connected (OAuth grant) or disconnected (revoked) for a person: the surface signal. */
@@ -2855,7 +2888,9 @@ export class NetworkService implements RuntimeHost {
           const result = await this.sql.begin(async tx => {
             await lock(tx);
             const notifications = new Notifier(new PgNotifyStore(tx), {get: personId => this.notifyRecipient(personId)}, this.notify!.cfg);
-            const items = await notifications.readUpdates(who.person.id, "web", this.clock.now(), undefined, {app});
+            const items = await notifications.readUpdates(who.person.id, "web", this.clock.now(), undefined, {
+              app, visible: items => this.currentInboxUpdates(tx, who.person.id, app, items),
+            });
             const result = {items:items.map(item => ({summary:item.summary}))};
             await complete(tx, result);
             return result;
