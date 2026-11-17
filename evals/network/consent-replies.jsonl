@@ -350,3 +350,28 @@
 {"text":"can we do next month?","label":"yes","keys":[]}
 {"text":"next month please","label":"yes","keys":[]}
 {"text":"next year would be better","label":"yes","keys":[]}
+{"text":"the Saturday after next works","label":"yes","keys":[]}
+{"text":"Saturday after next works","label":"yes","keys":[]}
+{"text":"the Sunday after next works","label":"yes","keys":[]}
+{"text":"Sunday after next works","label":"yes","keys":[]}
+{"text":"the following Saturday works","label":"yes","keys":[]}
+{"text":"following Saturday works","label":"yes","keys":[]}
+{"text":"the following Sunday works","label":"yes","keys":[]}
+{"text":"a week from Saturday works","label":"yes","keys":[]}
+{"text":"Saturday in two weeks works","label":"yes","keys":[]}
+{"text":"Saturday 11am in two weeks works","label":"yes","keys":[]}
+{"text":"Saturday morning in two weeks works","label":"yes","keys":[]}
+{"text":"Saturday of next week works","label":"yes","keys":[]}
+{"text":"next week's Saturday works","label":"yes","keys":[]}
+{"text":"Saturday after next week works","label":"yes","keys":[]}
+{"text":"the following week works","label":"yes","keys":[]}
+{"text":"the following Saturday 11am works","label":"yes","keys":[]}
+{"text":"Saturday 11am after next works","label":"yes","keys":[]}
+{"text":"Saturday after next at 11am works","label":"yes","keys":[]}
+{"text":"the following Saturday at 11am works","label":"yes","keys":[]}
+{"text":"Saturday after next, 11am works","label":"yes","keys":[]}
+{"text":"the following Saturday, 11am works","label":"yes","keys":[]}
+{"text":"Saturday of next week, 11am works","label":"yes","keys":[]}
+{"text":"Saturday morning after next works","label":"yes","keys":[]}
+{"text":"Saturday morning after next at 11am works","label":"yes","keys":[]}
+{"text":"the following Saturday morning works","label":"yes","keys":[]}
