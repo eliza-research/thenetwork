@@ -7,7 +7,7 @@ import type { MatchLane } from "../../core/src/generated/matchLane.ts";
 import { memberReason, type FilterReason } from "./filters.ts";
 import type { Circle } from "./match/circles.ts";
 import { packValueOf, pairSideOf, vectorsOf } from "./match/pair.ts";
-import type { EntityId, MatchProfile } from "./match/profile.ts";
+import { compareText, type EntityId, type MatchEntity, type MatchProfile } from "./match/profile.ts";
 import type { SearchResult } from "./match/search.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Candidate, NetworkEvent, Role } from "./types.ts";
@@ -48,17 +48,58 @@ function sideBenefit(w: World, a: MatchProfile, b: MatchProfile): number {
   return pairSideOf(a, b, vectors.traits?.costs ?? [], packValueOf(w, vectors, a, b)).utility / pairValueScale;
 }
 
+/** Most facets one participant cites as the ground of a pair. */
+const GROUNDING_FACETS = 2;
+const normalTag = (tag: string): string => tag.trim().toLowerCase();
+const entityOf = (p: MatchProfile): MatchEntity =>
+  ({ id: p.id, memberId: p.memberId, lane: p.lane, side: p.side, market: p.market, capacity: p.capacity });
+
+/**
+ * The facets that ground the pair values of `a` with `others`: matchable or shareable facets of a's
+ * member with a tag that is a complement or affinity hit (a seeks it and another offers it, a offers it
+ * and another seeks it, or both have the interest). Shareable first, then by id, at most
+ * GROUNDING_FACETS. Scoring reads their provenance as the candidate's confidence; explanations show
+ * only the shareable ones.
+ */
+function groundingFacets(w: World, a: MatchProfile, others: readonly MatchProfile[]): string[] {
+  const vectors = vectorsOf(w);
+  const own = vectors.tags(w, entityOf(a));
+  const hits = new Set<string>();
+  for (const b of others) {
+    const theirs = vectors.tags(w, entityOf(b));
+    const hit = (mine: readonly string[], other: readonly string[]) => {
+      const set = new Set(other.map(normalTag));
+      for (const tag of mine.map(normalTag)) if (set.has(tag)) hits.add(tag);
+    };
+    hit(own.seeks, theirs.offers); hit(own.offers, theirs.seeks); hit(own.interests, theirs.interests);
+  }
+  if (hits.size === 0) return [];
+  return (w.get(a.memberId)?.match ?? []).filter(f => f.tags.some(tag => hits.has(normalTag(tag))))
+    .sort((x, y) => Number(y.scope === "shareable") - Number(x.scope === "shareable") || compareText(x.id, y.id))
+    .slice(0, GROUNDING_FACETS).map(f => f.id);
+}
+
+/** The generator's evidence for each participant, then the facets that ground the participant's pair values. */
+function groundedEvidence(w: World, profiles: readonly MatchProfile[], cited: Candidate["evidence"]): Candidate["evidence"] {
+  return Object.fromEntries(profiles.map(p => {
+    const own = cited[p.memberId] ?? [];
+    const grounds = groundingFacets(w, p, profiles.filter(q => q !== p));
+    return [p.memberId, [...new Set([...own, ...grounds])].slice(0, Math.max(GROUNDING_FACETS, own.length))];
+  }));
+}
+
 /** Participant -> entity for every participant matched through an entity that is not itself. */
 function entitiesOf(profiles: readonly MatchProfile[]): Record<MemberId, EntityId> | undefined {
   const named = profiles.filter(p => p.id !== p.memberId);
   return named.length > 0 ? Object.fromEntries(named.map(p => [p.memberId, p.id])) : undefined;
 }
 
-/** A two-participant candidate from a searched pair: lane, entities, fit = value / 1000, each side's own benefit. */
+/** A two-participant candidate from a searched pair: lane, entities, grounded evidence, fit = value / 1000, each side's own benefit. */
 export function pairCandidate(w: World, a: MatchProfile, b: MatchProfile, value: number, rest: MatchedFields): Candidate {
   const entities = entitiesOf([a, b]);
   return makeCandidate({
     ...rest, participants: [a.memberId, b.memberId], lane: a.lane, ...(entities ? { entities } : {}),
+    evidence: groundedEvidence(w, [a, b], rest.evidence),
     fit: Math.max(0, value) / pairValueScale,
     benefit: { [a.memberId]: sideBenefit(w, a, b), [b.memberId]: sideBenefit(w, b, a) },
   });
@@ -82,6 +123,7 @@ export function circleCandidate(w: World, circle: Circle, lane: MatchLane, rest:
   const entities = entitiesOf(profiles);
   return makeCandidate({
     ...rest, participants: profiles.map(p => p.memberId), lane, ...(entities ? { entities } : {}),
+    evidence: groundedEvidence(w, profiles, rest.evidence),
     fit: circle.evidence.lowestPairValue / pairValueScale, benefit,
   });
 }

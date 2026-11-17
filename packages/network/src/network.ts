@@ -1235,8 +1235,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       const parsedAnswer = parseProbeReply(body, options);
       const r0 = gathering ? parsedAnswer : mergeConsent(parsedAnswer, this.understood, options);
       // A bare "👍" / "ok" after two or more messages in a row ("On it." and the probe) may answer
-      // either one: it is not a yes to meeting someone (asked once more).
-      const r = r0.answer === "yes" && this.outboundBefore >= 2 && ACK_ONLY.test(body.trim()) ? { ...r0, answer: "unclear" as const } : r0;
+      // either one, and after another message that followed the probe it answers that message: it is
+      // not a yes to meeting someone (asked once more). spec/models/opportunity.md, readProbe.
+      const answersOther = !aw.clarified && m.lastSent !== undefined && m.lastSent.consentProbe !== aw.oppId;
+      const r = r0.answer === "yes" && (this.outboundBefore >= 2 || answersOther) && ACK_ONLY.test(body.trim()) ? { ...r0, answer: "unclear" as const } : r0;
       if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
       if (this.clarify(m, aw, c)) return;
     }

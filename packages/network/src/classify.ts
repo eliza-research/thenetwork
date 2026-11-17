@@ -911,6 +911,14 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       unresolved.push(m);
     } else mark(matching, m.at, m.end - m.at);
   }
+  // "Weekends work best" names the weekend: it picks the offered Saturday and Sunday options, and with
+  // none offered it names a time the probe did not offer (asked again, never booked).
+  for (const m of t.matchAll(/\bweekends?\b/g)) {
+    const weekend = offered.filter(o => o.day === "Saturday" || o.day === "Sunday").map(o => o.key);
+    if (negatedAt(t, m.index!, m[0].length)) for (const key of weekend) neg.add(key);
+    else if (weekend.length) mark(weekend, m.index!, m[0].length);
+    else unresolved.push({ at: m.index!, end: m.index! + m[0].length });
+  }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");

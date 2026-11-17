@@ -119,6 +119,9 @@ module opportunity {
   }
   type MemSt = {
     optedOut: bool, minor: bool, forgotten: bool, aw: Aw, outbound: int,
+    // The opportunity of the last message collected for the member when it asked for consent (a probe or
+    // its new times); "" for any other message (m.lastSent.consentProbe).
+    lastOutProbe: str,
     initialInvites: Set[str],
     onlyWhenAsked: bool, noShows: int
   }
@@ -157,7 +160,7 @@ module opportunity {
   }
 
   pure val MEM0: MemSt = {
-    optedOut: false, minor: false, forgotten: false, aw: NO_AW, outbound: 0, initialInvites: Set(),
+    optedOut: false, minor: false, forgotten: false, aw: NO_AW, outbound: 0, lastOutProbe: "", initialInvites: Set(),
     onlyWhenAsked: false, noShows: 0
   }
 
@@ -212,7 +215,8 @@ module opportunity {
   pure def collect(s: S, m: str, kind: str, o: str, proactive: bool): S = {
     val x = mm(s, m)
     val invites = if (kind == "probe" and proactive) x.initialInvites.union(Set(o)) else x.initialInvites
-    val s1 = { ...putM(s, m, { ...x, outbound: x.outbound + 1, initialInvites: invites }), collected: s.collected + 1 }
+    val lastOutProbe = if (kind == "probe" or kind == "times") o else ""
+    val s1 = { ...putM(s, m, { ...x, outbound: x.outbound + 1, lastOutProbe: lastOutProbe, initialInvites: invites }), collected: s.collected + 1 }
     if (kind == "probe") putO(s1, o, { ...op(s1, o), probeQ: op(s1, o).probeQ.set(m, "pending") })
     else if (kind == "reveal") putO(s1, o, { ...op(s1, o), revealQ: op(s1, o).revealQ.set(m, "pending") })
     else s1
@@ -418,8 +422,9 @@ module opportunity {
       val wasAlternate = minorReason and x.alts.contains(m)
       val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
       if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
-      // A minor who was asked and then replaced is still on the roster: the open item closes (network.ts:2768-2770).
-      else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
+      // A minor who was asked and then replaced is still on the roster: the open item closes, booked or not
+      // (spec/opportunityLifecycle.md, closesForMinor).
+      else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m))) push(a1, [J("close", o, "", reason)])
       else if (not(x.parts.contains(m))) a1
       else if (minorReason and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "review") push(a1, [J("close", o, "", reason)])
@@ -446,11 +451,12 @@ module opportunity {
   // A bare "counter" ("how about next week instead?") is "unclear" (consentOf, classify.ts:598, SD-041); a
   // counter with a yes word ("sounds fun! how about next week") is a yes with no time, the same reading as
   // "yes_other_times"; "it was great" -> yes (an affirmation); "I couldn't make it" -> no (a can't);
-  // "ok" -> yes, unclear after two of our messages in a row (N:774).
-  pure def readProbe(intent: str, outboundBefore: int): str =
+  // "ok" -> yes, unclear after two of our messages in a row (N:774), and unclear when another message
+  // followed the unclarified probe: the "ok" or "Thanks! 👍" answers that message, not the probe.
+  pure def readProbe(intent: str, outboundBefore: int, answersOther: bool): str =
     if (Set("yes", "fb_good").contains(intent)) "yes_all"
     else if (intent == "yes_other_times") "yes_none"
-    else if (intent == "ack") (if (outboundBefore >= 2) "unclear" else "yes_all")
+    else if (intent == "ack") (if (outboundBefore >= 2 or answersOther) "unclear" else "yes_all")
     else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
     else "unclear"
 
@@ -518,7 +524,7 @@ module opportunity {
       putM(s, m, { ...mm(s, m), aw: owedAnswer(s, m, "") })
     } else {
       // The probe branch (N:762-772).
-      val pr = readProbe(intent, outboundBefore)
+      val pr = readProbe(intent, outboundBefore, aw.kind == "probe" and not(aw.clarified) and mm(s, m).lastOutProbe != aw.opp)
       val probeDone = aw.kind == "probe" and pr != "unclear"
       val clarifyNow = aw.kind == "probe" and pr == "unclear" and not(aw.clarified)
         and not(Set("cancel", "fb_other_noshow", "fb_self_noshow").contains(intent))
