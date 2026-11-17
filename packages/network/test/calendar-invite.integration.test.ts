@@ -21,9 +21,11 @@ const cancelBeforeNotice = "a cancellation stays private from a booked participa
 const cancelWaitingForNotice = "a cancellation waits for a pending signed receipt of booking details";
 const feedbackReception = "post-meeting feedback reaches only a participant who received the booking";
 const feedbackWaitingForNotice = "post-meeting feedback waits for a pending signed receipt of booking details";
+const attendanceRequiresBooking = "attendance records require receipt of the participant's booking";
 
 test.skipIf(!pgAvailable).each([
   calendarJourney, expiredBookingNotice, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
+  attendanceRequiresBooking,
 ] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
   // spec/calendarInvite.md, "A calendar link follows the booked revision and the current owner"
@@ -86,7 +88,7 @@ test.skipIf(!pgAvailable).each([
     const awaiting = world.net.exportState();
     await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: awaiting.members, opps: awaiting.opps }));
     const adapter = rt.adapter as BlooioAdapter;
-    if (scenario === expiredBookingNotice || scenario === cancelBeforeNotice || scenario === feedbackReception) {
+    if (scenario === expiredBookingNotice || scenario === cancelBeforeNotice || scenario === feedbackReception || scenario === attendanceRequiresBooking) {
       await adapter.lineSafety("review", "hold the booking notice");
     }
     const confirm = turn("calendar-booking", "yes", phones[1]);
@@ -96,7 +98,7 @@ test.skipIf(!pgAvailable).each([
     const bookedState = (await rt.pg.load())!;
     const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
     expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
-    if (scenario === feedbackReception || scenario === feedbackWaitingForNotice) {
+    if (scenario === feedbackReception || scenario === feedbackWaitingForNotice || scenario === attendanceRequiresBooking) {
       // spec/meetingSettlement.md, "Send feedback requests during the open attendance period"
       // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
       const waiting = scenario === feedbackWaitingForNotice;
@@ -123,6 +125,18 @@ test.skipIf(!pgAvailable).each([
       const feedbackSends = () => delivered.filter(call => feedbackKeys.has(call.idempotencyKey));
       expect(feedbackSends()).toEqual([expect.objectContaining({ to: phones[waiting ? 0 : 1],
         text: expect.stringContaining(waiting ? "Blair" : "Ari") })]);
+      const attendance = () => sql`select member_id,event->'counterparts' as counterparts from network.capital_events
+        where app_id='friends' and type='plan_attended' and event->>'planId'=${id}`;
+      if (scenario === attendanceRequiresBooking) {
+        // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+        expect((await send(turn("feedback-peer-present", "We both came. It was great.", phones[1]))).status).toBe(200);
+        clock.set(booked.meetingAt! + 4 * DAY + MINUTE);
+        await rt.unitOfWork(n => n.tick(clock.now()));
+        expect(await attendance()).toEqual([{ member_id: ids[1], counterparts: [] }]);
+        await rt.unitOfWork(n => n.tick(clock.now()));
+        expect(await attendance()).toEqual([{ member_id: ids[1], counterparts: [] }]);
+        return;
+      }
       const feedbackText = "It was great. I would definitely meet again.";
       const feedbackData = async () => (await rt.pg.load())!.feedback.filter(record => record.opportunityId === id);
       if (waiting) {
@@ -147,6 +161,9 @@ test.skipIf(!pgAvailable).each([
         // An exact answer after settlement can affect private feedback but cannot rewrite attendance.
         clock.set(afterDeadline);
         await rt.unitOfWork(n => n.tick(clock.now()));
+        expect(await attendance()).toEqual(expect.arrayContaining([
+          { member_id: ids[0], counterparts: [ids[1]] }, { member_id: ids[1], counterparts: [ids[0]] },
+        ]));
         const settled = async () => {
           const saved = (await rt.pg.load())!;
           const opportunity = saved.opps.find(opp => opp.id === id)!;

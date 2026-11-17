@@ -223,7 +223,7 @@ pure def lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: int, handledE
 
 ### Classify each attendee from the available reports
 
-Only participants with an accepted invitation and a delivered booking count as booked. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.
+Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.
 
 ```quint
 type AttendanceMark = Attended | Absent | Ghosted | NoFinding
@@ -234,6 +234,12 @@ type AttendanceEvidence = {
 type AttendanceFinding = { mark: AttendanceMark, logFeedback: bool, reliabilityNoShow: bool }
 
 pure def deliveredInvitee(accepted: bool, bookingDelivered: bool): bool = accepted and bookingDelivered
+
+pure def attendanceBookingReceived(accepted: bool, exactReceipt: bool, receiptAt: int, settledAt: int): bool =
+  deliveredInvitee(accepted, exactReceipt and receiptAt >= 0 and receiptAt <= settledAt)
+
+pure def lawAttendanceNeedsExactBookingReceipt(accepted: bool, receiptAt: int, settledAt: int): bool =
+  not(attendanceBookingReceived(accepted, false, receiptAt, settledAt))
 
 pure def countAttendance(evidence: AttendanceEvidence): AttendanceFinding =
   val corroboratedMissing = evidence.reportedMissing and evidence.receivedFeedbackPrompt

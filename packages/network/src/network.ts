@@ -48,14 +48,14 @@ import {
   memberInviteUsesAllowance, memberInviteVouchWeak, memberInviteWithinBurstWindow, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
-  chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
+  attendanceBookingReceived, chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
   settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalBookingReceiptCurrent, lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice, lateArrivalReportTimeCurrent } from "../../core/src/generated/groupLateArrival.ts";
-import { isLateArrivalReport, lateArrivalBookingReceiptKey, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
+import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
@@ -673,6 +673,9 @@ const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 
 const BOOKED_REMINDER_KINDS = ["day-before-reminder", "near-meeting-reminder", "day-of-checkin"] as const;
 export const meetingFeedbackKey = (oppId: string, memberId: MemberId, revision = 0): string => `${meetingFeedbackPrefix}${oppId}:r${revision}:${memberId}`;
+/** In-memory lookup for an exact booking notice. This key is never sent. */
+export const bookingNoticeReceiptKey = (oppId: string, memberId: MemberId, revision = 0): string =>
+  `booking-notice-receipt:${[oppId, revision, memberId].map(encodeURIComponent).join(":")}`;
 export type BookedReminderKind = typeof BOOKED_REMINDER_KINDS[number];
 export const replacementProbePrefix = "booked-group-replacement-probe:";
 
@@ -960,12 +963,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private groupLateArrivalBookingReceived(opp: LateArrivalBooking, id: MemberId, at: number): boolean {
-    if (!this.ctx.initialInviteReceipt) {
-      const simulatedAt = opp.bookedAt?.[id];
-      return lateArrivalBookingReceiptCurrent(simulatedAt !== undefined, simulatedAt ?? -1, at);
-    }
-    const receipt = this.ctx.initialInviteReceipt?.(lateArrivalBookingReceiptKey(opp.id, id, opp.scheduleRevision));
-    return lateArrivalBookingReceiptCurrent(receipt?.kind === "accepted", receipt?.kind === "accepted" ? receipt.at : -1, at);
+    const receivedAt = this.bookingNoticeReceiptAt(opp, id);
+    return lateArrivalBookingReceiptCurrent(receivedAt !== undefined, receivedAt ?? -1, at);
+  }
+
+  private bookingNoticeReceiptAt(opp: Pick<Opp, "id" | "scheduleRevision" | "bookedAt">, id: MemberId): number | undefined {
+    if (!this.ctx.initialInviteReceipt) return opp.bookedAt?.[id];
+    const receipt = this.ctx.initialInviteReceipt(bookingNoticeReceiptKey(opp.id, id, opp.scheduleRevision));
+    return receipt?.kind === "accepted" ? receipt.at : undefined;
   }
 
 
@@ -3947,7 +3952,12 @@ export class ConsentNetwork implements NetworkUnderTest {
   private finalize(o: Opp) {
     if (o.finalized || o.meetingAt === undefined) return;
     o.finalized = true;
-    const going = o.participants.filter(p => deliveredInvitee(o.status.get(p) === "yes", o.bookedAt?.[p] !== undefined));
+    const settledAt = this.now();
+    // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+    const going = o.participants.filter(p => {
+      const receivedAt = this.bookingNoticeReceiptAt(o, p);
+      return attendanceBookingReceived(o.status.get(p) === "yes", receivedAt !== undefined, receivedAt ?? -1, settledAt);
+    });
     if (!going.length) return;
     const post = o.post ?? {};
     const said = (p: MemberId) => post[p];

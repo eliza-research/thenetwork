@@ -33,8 +33,8 @@ import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEli
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalMinimumRoster, lateArrivalNotice, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
-import { bookingNoticeReceived, meetingFeedbackCandidate } from "../../core/src/generated/meetingSettlement.ts";
-import { lateArrivalBookingReceiptKey, parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
+import { bookingNoticeReceived, canResolveAttendance, feedbackDelayMs, meetingFeedbackCandidate, restoreAttendance, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
+import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
@@ -43,7 +43,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -355,8 +355,9 @@ export class NetworkRuntime {
       || row.memberId !== delivery.to || row.oppId !== delivery.oppId) return refused;
     const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${app} for share`;
     const opp = saved?.state.opps.find(o => o.id === delivery.oppId);
-    if (!saved || !opp || opp.stage !== "scheduled" || opp.meetingAt !== delivery.meetingAt || (opp.scheduleRevision ?? 0) !== delivery.revision) return refused;
-    const receipts = await this.groupLateArrivalBookingReceipts(tx, opp, this.clock.now());
+    if (!saved || !opp || opp.stage !== "scheduled" || opp.meetingAt !== delivery.meetingAt
+      || (opp.scheduleRevision ?? 0) !== delivery.revision || opp.participants.length < lateArrivalMinimumRoster) return refused;
+    const receipts = await this.bookingNoticeReceipts(tx, opp, this.clock.now());
     const received = (id: MemberId) => receipts.has(id);
     if (!storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now(), received)) return refused;
     const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
@@ -370,11 +371,10 @@ export class NetworkRuntime {
     return storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now(), received) ? { ok: true } : refused;
   }
 
-  private async groupLateArrivalBookingReceipts(tx: SQL, opp: NetworkState["opps"][number], now: number): Promise<Map<MemberId, number>> {
+  private async bookingNoticeReceipts(tx: SQL, opp: NetworkState["opps"][number], now: number): Promise<Map<MemberId, number>> {
     const receipts = new Map<MemberId, number>();
     const roster = [...new Set(opp.participants)].filter(id => opp.bookedAt?.[id] !== undefined
       && opp.status.some(([member, status]) => member === id && status === "yes"));
-    if (roster.length < lateArrivalMinimumRoster) return receipts;
     for (const id of roster) {
       const receipt = await currentBookingReceipt(tx, this.app.id, opp.id, id, opp.scheduleRevision ?? 0, opp.lane ?? null);
       const sentAt = receipt?.sent_at?.getTime();
@@ -831,12 +831,18 @@ export class NetworkRuntime {
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
-    const lateArrivalGroups = (state?.opps ?? []).filter(opp => opp.stage === "scheduled" && opp.review?.decision === "approve"
-      && !opp.review.invalidated && !opp.seat && opp.participants.length >= lateArrivalMinimumRoster
-      && opp.meetingAt !== undefined && lateArrivalWindow(opp.meetingAt - now));
-    if (lateArrivalGroups.length) await this.scoped(async tx => {
-      for (const opp of lateArrivalGroups) for (const [id, at] of await this.groupLateArrivalBookingReceipts(tx, opp, now)) {
-        this.initialInviteReceipts.set(lateArrivalBookingReceiptKey(opp.id, id, opp.scheduleRevision), { kind: "accepted", at });
+    const bookingReceiptsNeeded = (state?.opps ?? []).filter(opp => {
+      if (opp.seat || opp.meetingAt === undefined) return false;
+      const elapsed = now - opp.meetingAt;
+      if (opp.stage === "scheduled" && opp.review?.decision === "approve" && !opp.review.invalidated
+        && opp.participants.length >= lateArrivalMinimumRoster && lateArrivalWindow(-elapsed)) return true;
+      if (opp.stage !== "done" && !(opp.stage === "scheduled" && elapsed >= feedbackDelayMs)) return false;
+      const everyoneResponded = opp.participants.every(id => !opp.status.some(([member, status]) => member === id && status === "yes") || !!opp.post?.[id]);
+      return canResolveAttendance(restoreAttendance(!!opp.finalized), elapsed >= settlementDelayMs, everyoneResponded);
+    });
+    if (bookingReceiptsNeeded.length) await this.scoped(async tx => {
+      for (const opp of bookingReceiptsNeeded) for (const [id, at] of await this.bookingNoticeReceipts(tx, opp, now)) {
+        this.initialInviteReceipts.set(bookingNoticeReceiptKey(opp.id, id, opp.scheduleRevision), { kind: "accepted", at });
       }
     });
     for (const opp of state?.opps ?? []) {
