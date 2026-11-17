@@ -24,6 +24,7 @@
 import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
 import { unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { planStandingWindowCoversSlot } from "../../core/src/generated/planFormation.ts";
 import { calendarAvailability, type CalendarAvailabilityEvidence } from "../../core/src/calendar-free-busy.ts";
 export { calendarAvailability };
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
@@ -983,6 +984,17 @@ export interface StandingAvailability extends WeeklyWindow {
   /** true = inferred (e.g. from calendar patterns), false = said by the member. */
   inferred?: boolean;
 }
+
+/** Check a recurring window on the slot's local start date against the complete interval. */
+export function standingWindowCoversSlot(w: WeeklyWindow, slot: TimeSlot, tz: string, lp = localParts(slot.start, tz)): boolean {
+  if (!w.byDay.includes((lp.weekday + 1) % 7)) return false;
+  const atHour = (hour: number) => {
+    const wholeHour = Math.floor(hour);
+    return fromLocal(lp.year, lp.month, lp.day, wholeHour, tz) + (hour - wholeHour) * HOUR;
+  };
+  return planStandingWindowCoversSlot(atHour(w.startHour), atHour(w.endHour), slot.start, slot.end);
+}
+
 /** Everything the Network knows about when a member is free. All of it is engine-visible; none of it is shareable. */
 export interface AvailabilityEvidence {
   memberId: MemberId; tz: string;
@@ -1015,7 +1027,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
     const c0 = w.inferred ? A.standing.inferredConfidence : A.standing.statedConfidence;
     const conf = c0 * Math.pow(2, -Math.max(0, now - (w.confirmedAt ?? w.statedAt)) / (A.standing.halfLifeDays * DAY));
     any = Math.max(any, conf);
-    if (w.byDay.includes(day) && lp.hour >= w.startHour && lp.hour < w.endHour) inside = Math.max(inside, conf);
+    if (standingWindowCoversSlot(w, slot, ev.tz, lp)) inside = Math.max(inside, conf);
   }
   if (inside > 0) p += inside * (A.standing.inside - p);
   else if (any > 0) p *= 1 - A.standing.outsideFactor * any;

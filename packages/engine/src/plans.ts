@@ -26,7 +26,7 @@ import {
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
-import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
+import { availabilityProb, candidateSlots, standingWindowCoversSlot, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
@@ -84,8 +84,8 @@ export function planFreeProb(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg
     p *= 1 - pcfg.stated.outsideFactor * c;
     return { p, source: "stated" };
   }
-  const lp = localParts(slot.start, ev.tz), day = (lp.weekday + 1) % 7;
-  if ((ev.standing ?? []).some(w => w.byDay.includes(day) && lp.hour >= w.startHour && lp.hour < w.endHour)) return { p, source: "standing" };
+  const lp = localParts(slot.start, ev.tz);
+  if ((ev.standing ?? []).some(w => standingWindowCoversSlot(w, slot, ev.tz, lp))) return { p, source: "standing" };
   const part = daypartOf(slot.start, ev.tz, att);
   if ((ev.history ?? []).some(h => h.outcome !== "declined_time" && h.at <= now && daypartOf(h.at, ev.tz, att) === part)) return { p, source: "learned" };
   return { p, source: "prior" };

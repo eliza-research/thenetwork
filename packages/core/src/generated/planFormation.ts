@@ -164,6 +164,12 @@ export function lawPlanActivityWindowEndsAfterStart(startsAt: number, durationMi
   return !(durationMinutes > 0) || planActivityWindowEnd(startsAt, durationMinutes) > startsAt;
 }
 
+/** Story: Use the same activity window for availability and a proposal / A standing window applies to the whole activity (spec/planFormation.md) */
+//@ pure
+export function planStandingWindowCoversSlot(windowStart: number, windowEnd: number, slotStart: number, slotEnd: number): boolean {
+  return windowStart <= slotStart && slotStart < slotEnd && slotEnd <= windowEnd;
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: CityPlanRun, event: Event): boolean {

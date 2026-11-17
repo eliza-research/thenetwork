@@ -31,6 +31,14 @@ test("the generic planner checks availability through the end of a four-hour hik
   expect(run(makeEvidence(4, 2))).toEqual([]);
   expect(run(makeEvidence(4), (id, slot) => id === "a" && slot.end > start + 3 * HOUR && slot.start < hike.end)).toEqual([]);
 
+  // spec/planFormation.md, "A standing window applies to the whole activity"
+  const makeStanding = (endHour: number) => new Map(ids.map((id): [string, plans.PlanEvidence] => [id, {
+    memberId: id, tz, quietHours: [22, 8],
+    standing: [{ byDay: [6], startHour: 10, endHour, source: "conversation", statedAt: START }],
+  }]));
+  expect(run(makeStanding(14))).toMatchObject([{ activityId: "day_hike", window: hike, invited: expect.arrayContaining(ids) }]);
+  expect(run(makeStanding(12))).toEqual([]);
+
   const event: NetworkEvent = { id: "guided-walk", title: "Ranger-guided hike", city: "nyc", category: "social", tags: ["hiking"], start, end: start + HOUR };
   const eventWorld = new World({ ...snapshot, events: [event] }, cfg, localEmbed);
   const published = plans.planProposals(eventWorld, { now: START, city: "nyc", tz, venues: [], evidence: makeEvidence(1, 1) });

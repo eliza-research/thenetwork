@@ -133,3 +133,15 @@ pure def planActivityWindowEnd(startsAt: int, durationMinutes: int): int = start
 pure def lawPlanActivityWindowEndsAfterStart(startsAt: int, durationMinutes: int): bool =
   durationMinutes > 0 implies planActivityWindowEnd(startsAt, durationMinutes) > startsAt
 ```
+
+### A standing window applies to the whole activity
+
+Resolve the standing window on the proposed start's local date. Count it as
+availability for the activity only if its weekday applies and it contains the
+complete activity interval. An activity can end at the window's end. A partial
+window supplies no positive standing evidence for the activity.
+
+```quint
+pure def planStandingWindowCoversSlot(windowStart: int, windowEnd: int, slotStart: int, slotEnd: int): bool =
+  windowStart <= slotStart and slotStart < slotEnd and slotEnd <= windowEnd
+```
