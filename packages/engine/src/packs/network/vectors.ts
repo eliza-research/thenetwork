@@ -10,7 +10,7 @@ import { networkIntentRoute, type NetworkIntentRoute } from "../../../../core/sr
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EntityStanding, EntityTags, MatchEntity, Membership, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
-import { objectivesFor } from "./taxonomy.ts";
+import { detailProse, objectivesFor } from "./taxonomy.ts";
 import { INTERESTS, SKILLS } from "./vocabulary.ts";
 
 export const MATCH_LANES: readonly MatchLane[] = ["Friend", "Date", "Cofounder", "Intro", "Hire", "Mentor", "Invest"];
@@ -102,7 +102,7 @@ function wantOf(text: string, details: string | undefined, category: Category | 
   const needs = objectives.flatMap(o => o.needs);
   const interests = objectives.flatMap(o => o.interests);
   const pools = objectives.flatMap(o => (o.pool ? [`want_${o.pool}`] : []));
-  return { roles: wantRoles(`${text} ${details ?? ""}`, category, tags, [...needs, ...interests]), seeks: [...needs, ...pools], interests, pools };
+  return { roles: wantRoles(`${text} ${detailProse(details)}`, category, tags, [...needs, ...interests]), seeks: [...needs, ...pools], interests, pools };
 }
 
 interface RunCache {

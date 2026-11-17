@@ -10,6 +10,8 @@ The Network uses a member's current [standing intent](standingIntent.md) to choo
 
 An investment, mentorship or cofounder request routes only to its specific lane and side. Intro serves professional requests without a specific relationship. An explicit social or hobby request can open Friend, including when the activity is technical. The shell uses technical words to infer a professional purpose when it has no category for the request. This path excludes romance and Network growth. The shell can use a saved matching goal's explicit lane tag for the ordinary lanes.
 
+The shell reads the member's aim and free-text details as evidence for the requested relationship. A structured list of partner skill tags contributes to partner fit and cannot select a specific relationship lane.
+
 The Friend profile reads matching interests and goals that belong to Friend. An unrelated work goal supplies no Friend affinity or exchange tags. Stated interests can contribute even when the member has no separate social goal.
 
 ```quint

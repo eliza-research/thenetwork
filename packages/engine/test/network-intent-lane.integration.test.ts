@@ -49,6 +49,13 @@ test.each([
   expect(proposals[0]?.participants.toSorted()).toEqual(["asker", "partner"]);
 });
 
+test("structured partner skills preserve the member's stated lane", () => {
+  const { w, proposals } = match(workPair("Get feedback on a pitch deck", "Meet people doing similar work",
+    { details: "format: one_to_one; tags: startups,pitch_feedback,fundraising" }));
+  expect(w.match.profilesOf("asker").map(p => `${p.lane}/${p.side}`)).toEqual(["Friend/Peer", "Intro/Peer"]);
+  expect(proposals).toEqual([expect.objectContaining({ lane: "Intro", roles: { asker: "peer", partner: "peer" }, kind: "intro" })]);
+});
+
 const signed: Partial<Intent> = { app: "ntwrk", details: cofounderIntentDetails };
 const cofounderPair = () => workPair(cofounderIntentObjective, cofounderIntentObjective, signed);
 
