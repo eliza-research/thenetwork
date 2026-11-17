@@ -102,6 +102,7 @@ import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjectiv
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import { approvedVenueBookingLink, venueBookingLink, venueBookingNoticeBase, venueBookingNoticeKey } from "./venue-booking-link.ts";
+import { chooseFriendsPlanWindow, friendsPlanOfferedWindows, friendsPlanProbeDeliveryKey, friendsPlanTimeOptions, parseFriendsPlanTimeReply, validFriendsPlanTimeWindows } from "./friends-plan-time-choice.ts";
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { publicEventRevision } from "./public-event-revision.ts";
 import {
@@ -194,6 +195,7 @@ export interface ReviewPlanPreview {
   opportunityId: string; revision: number; deadline: number;
   activity: string; place: { name: string; area?: string };
   start: number; end: number; probeDeadline: number; quorum: number; maxSeats: number;
+  options?: { start: number; end: number }[];
   alternates: MemberId[];
 }
 /** A gaming flag in the human review queue (NC integration ask 4). */
@@ -659,7 +661,7 @@ type SendHook =
   | { t: "reschedule_offer" | "reschedule_updated"; oppId: string; key: string }
   | ({ t: "group_late" } & LateArrivalDelivery)
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean; engineQuestion?: true } | { t: "checkin" }
-  | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string }
+  | { t: "plan_probe"; oppId: string; id: MemberId; options?: TimeOption[] } | { t: "crew_offer"; crewId: string }
   | { t: "invite_notice"; notice: InviteJoinNotice }
   | EmptyIntentNotice;
 type InviteJoinNotice = { inviteeId: MemberId; at: number };
@@ -1201,6 +1203,18 @@ export class ConsentNetwork implements NetworkUnderTest {
       const allowed = po.replacementFor ? replacementAnswerAllowed(this.memberReply, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)
         : planProbeReplyCurrent(this.memberReply, acceptedAt !== undefined, msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now);
       if (!allowed) return "open" as const;
+      if (po.plan?.reviewedOptions) {
+        // spec/friendsPlanTimeChoice.md. A reaction or an LLM reading cannot select an offered time.
+        const offered = po.offered?.[m.id];
+        if (msg.reaction || !offered?.length) return "open" as const;
+        const reply = parseFriendsPlanTimeReply(body, offered);
+        if (reply.answer === "yes" || reply.answer === "no") {
+          m.awaiting = undefined;
+          return this.onPlanProbeAnswer(m, po, reply.answer === "yes", body, reply.picks);
+        }
+        if (this.clarify(m, aw, c, "Which of the offered times work for you? Reply with the letters or the times.")) return;
+        return "open" as const;
+      }
       const yn0 = po.replacementFor ? consentOf(body).answer : this.yesNoOf(body);
       // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer": a yes that
       // names a time other than the plan's one time ("yes, Friday 7pm") is asked again, never booked.
@@ -1519,11 +1533,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * once more, plainly. Nothing is booked or revealed on it. False when the message is something
    * else (a request, a cancel) or we already asked again for this probe.
    */
-  private clarify(m: MemberState, aw: NonNullable<MemberState["awaiting"]>, c: Classified): boolean {
+  private clarify(m: MemberState, aw: NonNullable<MemberState["awaiting"]>, c: Classified, text = copy.probeClarify): boolean {
     if (["people_request", "plans_request", "cancel", "invite_friend", "feedback_like", "block", "report"].includes(c.kind) || aw.clarified) return false;
     aw.clarified = true;
     this.ctx.log("probe_unclear", { oppId: aw.oppId ?? null, memberId: m.id });
-    this.send(m, copy.probeClarify, { type: "question", proactive: false }, "reply");
+    this.send(m, text, { type: "question", proactive: false }, "reply");
     return true;
   }
 
@@ -2875,6 +2889,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { opportunityId: o.id, revision, deadline: review.deadline,
       activity: activity.label, place: { name: plan.place.name, ...(plan.place.area ? { area: plan.place.area } : {}) },
       start: plan.window.start, end: plan.window.end, probeDeadline: plan.probeDeadline, quorum: plan.quorum,
+      ...(plan.reviewedOptions ? { options: plan.reviewedOptions.map(({ start, end }) => ({ start, end })) } : {}),
       maxSeats: plan.size.max, alternates: [...o.alternates] };
   }
 
@@ -3451,7 +3466,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** The answer to a plan probe. "Can't make that time" is a no, and a time this member is not free (availability evidence). */
-  private onPlanProbeAnswer(m: MemberState, o: Opp, yes: boolean, body: string) {
+  private onPlanProbeAnswer(m: MemberState, o: Opp, yes: boolean, body: string, picks?: readonly attention.TimeSlot[]) {
     // spec/planDecision.md, "Only a pending member can change an open plan": a reply at or after the
     // probe deadline is not counted, not kept as availability evidence and not acknowledged.
     const outcome = this.planAnswer(o, m.id, yes, false, () => {
@@ -3460,8 +3475,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.sampleInterruption(m, o.id, true);
       this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
       if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
-      const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
-      if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-40);
+      if (picks) {
+        o.picks = { ...o.picks, [m.id]: picks.map(slot => slot.start) };
+        if (yes) m.availHistory = [...(m.availHistory ?? []), ...picks.map(slot => ({ at: slot.start, outcome: "accepted" as const }))].slice(-40);
+      } else {
+        const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
+        if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-40);
+      }
       this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
     });
     // A yes that the deadline turned away, here or in an earlier tick, still hears how the plan ended.
@@ -4344,7 +4364,29 @@ export class ConsentNetwork implements NetworkUnderTest {
       const previousHost = plan.repeatOf ? this.opps.get(plan.repeatOf)?.plan?.hostId : undefined;
       plan.hostId = ordered[friendsRepeatHostIndex(previousHost ? ordered.indexOf(previousHost) : -1, ordered.length)];
     }
-    return [...week.repeats, ...week.plans, ...week.partners];
+    const partners = week.partners.map(plan => {
+      const reviewedOptions = plan.options.map(({ start, end }) => ({ start, end }));
+      if (!plan.venueId || !validFriendsPlanTimeWindows(reviewedOptions)
+        || !reviewedOptions.some(slot => slot.start === plan.window.start && slot.end === plan.window.end)) return plan;
+      const probeDeadline = Math.min(plan.probeDeadline, reviewedOptions[0]!.start - Math.max(PARTNER_LEAD, this.pcfg.deadlineBeforeStartHours * HOUR));
+      if (probeDeadline <= now) return plan;
+      return { ...plan, reviewedOptions, probeDeadline };
+    });
+    return [...week.repeats, ...week.plans, ...partners];
+  }
+
+  private friendsPlanSlotCurrent(plan: plans.Plan, roster: readonly MemberId[], slot: attention.TimeSlot, now: number, oppId: string): boolean {
+    const venue = this.replacementVenue(plan);
+    const duration = (slot.end - slot.start) / MINUTE;
+    return !!venue && slot.start >= now + PARTNER_LEAD && duration > 0
+      && plans.venueOpenForSlot(venue, slot, duration, NY)
+      && roster.every(id => this.inNyc(id, now, slot.end) && !this.bookedNear(id, slot.start, oppId)
+        && plans.planWindowMatchesStated(this.member(id).stated, slot, now))
+      && this.calendarAllows(roster, slot, now);
+  }
+
+  private pickedPlanWindows(o: Opp, id: MemberId): attention.TimeSlot[] {
+    return (o.offered?.[id] ?? []).filter(slot => o.picks?.[id]?.includes(slot.start));
   }
 
   private friendsRepeatSource(o: Opp, now: number, alreadyOffered = false): plans.PlanOutcomeRecord | undefined {
@@ -4536,14 +4578,20 @@ export class ConsentNetwork implements NetworkUnderTest {
       : !friendReplacement || this.planFriendSeatFits(this.planWorld(now, true), id, about.filter(peer => peer !== id), "existingPlan"));
     const seat = stepPlanDispatch(initialPlanDispatch, { type: "checkSeat", eligible });
     if (seat.phase !== "CheckingPresence") return this.planAnswer(o, id, false, true);
-    // Away from New York (an announced trip) at any time from now to the plan: never asked.
-    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: this.inNyc(id, now, o.plan.window.end) });
+    const reviewed = o.plan.reviewedOptions;
+    const first = o.plan.invited[0];
+    const options = reviewed ? friendsPlanTimeOptions(reviewed, friendsPlanOfferedWindows(reviewed,
+      first === id ? undefined : first && o.planRun.answers[first] === "yes" ? this.pickedPlanWindows(o, first) : [],
+      slot => this.friendsPlanSlotCurrent(o.plan!, about, slot, now, o.id)), NY) : undefined;
+    // The options path already checked presence and availability for each exact interval.
+    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: !!options || this.inNyc(id, now, o.plan.window.end) });
     if (presence.phase !== "CheckingAvailability") {
       this.refuse(id, "probe", presence.reason);
       return this.planAnswer(o, id, false, true);
     }
     const availability = stepPlanDispatch(presence, { type: "checkAvailability",
-      statedAllows: plans.planWindowMatchesStated(m.stated, o.plan.window, now), calendarAllows: this.calendarAllows([id], o.plan.window, now) });
+      statedAllows: options ? options.length > 0 : plans.planWindowMatchesStated(m.stated, o.plan.window, now),
+      calendarAllows: !!options || this.calendarAllows([id], o.plan.window, now) });
     if (availability.phase !== "CheckingWindow") {
       this.refuse(id, "probe", availability.reason);
       return this.planAnswer(o, id, false, true);
@@ -4578,7 +4626,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (budget.phase !== "RenderingInvite") return this.planDefer(o, id, allowanceReason, now);
     // A crew session's extra seats (organizing reach) go to people outside the crew: they get the plain plan probe.
     const inCrew = !o.plan.crewId || !!this.crews.find(c => c.id === o.plan!.crewId)?.members.includes(id);
-    const text = plans.buildPlanProbe(this.planWorld(now), inCrew ? invitationPlan : { ...invitationPlan, crewId: undefined }, id, NY);
+    const text = plans.buildPlanProbe(this.planWorld(now), inCrew ? invitationPlan : { ...invitationPlan, crewId: undefined }, id, NY, options);
     // spec/planDispatch.md, "A usable message must be sent before the daily record changes"
     const rendered = stepPlanDispatch(budget, { type: "renderInvite", usable: !!text });
     if (rendered.phase !== "SendingInvite" || !text) {
@@ -4588,9 +4636,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const a = plans.activityById.get(o.plan.activityId)!;
     const res = this.send(m, text, {
       type: "plan_probe", proposalId: o.id, proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
-      plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: about.length, ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
-    }, "probe", { about, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance,
-      ...(o.replacementFor ? { key: replacementProbeKey(o.id, id) } : {}),
+      plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: about.length,
+        ...(options ? { options } : {}), ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
+    }, "probe", { about, hook: { t: "plan_probe", oppId: o.id, id, ...(options ? { options } : {}) }, noDefer: true, planInvite: allowance,
+      ...(options ? { key: friendsPlanProbeDeliveryKey(o.id, reviewRevision(o), id) }
+        : o.replacementFor ? { key: replacementProbeKey(o.id, id) } : {}),
     });
     if (stepPlanDispatch(rendered, { type: "recordSend", sent: res === "sent" }).phase === "InviteSent") {
       m.planDay = day;
@@ -4662,9 +4712,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     const publicEvent = this.currentPublishedEvent(o);
     const publicEventIssue = this.publicEventRefusal(o, publicEvent);
     if (publicEventIssue) return this.close(o, publicEventIssue);
-    const plan = o.plan!;
-    const a = plans.activityById.get(plan.activityId)!;
+    const original = o.plan!;
     const now = this.now();
+    let plan = original;
+    if (original.reviewedOptions) {
+      const [first, second] = going;
+      const selected = first && second && chooseFriendsPlanWindow(original.reviewedOptions,
+        this.pickedPlanWindows(o, first), this.pickedPlanWindows(o, second),
+        slot => this.friendsPlanSlotCurrent(original, going, slot, now, o.id));
+      if (!selected) {
+        o.planRun = { ...o.planRun!, stage: "closed" };
+        return this.closeNoCommonTime(o, second ?? first ?? original.invited[0]!);
+      }
+      plan = { ...original, window: selected };
+    }
+    const a = plans.activityById.get(plan.activityId)!;
     if (o.replacementFor && !this.replacementPlanCurrent(o, now)) return this.planFallback(o);
     const friendWorld = this.appPack()?.id === "friends" ? this.planWorld(now, true) : undefined;
     const friendPartnerEligible = !friendWorld || !plan.partner || this.planFriendPartnerFits(friendWorld, going, plan.category);
@@ -4705,12 +4767,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
       return this.planFallback(o);
     }
+    o.plan = plan;
     o.meetingAt = plan.window.start; o.venueId = plan.venueId; o.venue = plan.place.name; o.venueArea = plan.place.area ?? "";
     const gv = VENUES.find(v => v.id === plan.venueId);
     this.ctx.log("venue", { oppId: o.id, venueId: plan.venueId ?? plan.eventId ?? null, venue: plan.place.name, lat: gv?.lat ?? publicEvent?.listing?.lat ?? null, lng: gv?.lng ?? publicEvent?.listing?.lng ?? null, meetingAt: o.meetingAt, time: "plan" });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++; this.plansCounters.plansBooked++;
     o.stage = STAGE_BY_PHASE[next.phase];
-    o.planRun = { ...o.planRun!, stage: "booked" };
+    o.planRun = { ...o.planRun!, plan, stage: "booked" };
     for (const id of keep) o.status.set(id, "yes");
     if (!o.recorded) { o.recorded = true; this.ctx.recordProposal({ ...this.toProposal(o), participants: [...keep] }, "network"); }
     this.ctx.recordMeeting({ proposalId: o.id, participants: [...keep], at: o.meetingAt, city: "nyc", kind: "plan" });
@@ -6490,10 +6553,11 @@ export class ConsentNetwork implements NetworkUnderTest {
         onSent: messageId => {
           if (!o) return;
           m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId };
+          if (h.options) o.offered = { ...o.offered, [h.id]: h.options };
           m.asked++; o.contacted.add(h.id);
           o.sentAt = { ...o.sentAt, [h.id]: now() };
           this.counters.probesSent++; this.plansCounters.planProbes++;
-          this.ctx.log("probe_sent", { oppId: o.id, memberId: h.id, category: o.category, options: 0, invite: true, plan: true });
+          this.ctx.log("probe_sent", { oppId: o.id, memberId: h.id, category: o.category, options: h.options?.length ?? 0, invite: true, plan: true });
         },
         onRefused: () => { if (o) this.planOut(o, h.id); },
       };

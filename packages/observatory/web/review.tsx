@@ -137,9 +137,16 @@ function usePlanPreview(o: Opp | undefined): PlanPreview {
 function PlanPreviewFacts({ preview }: { preview: PlanPreview }) {
   if (!preview) return null;
   if (typeof preview === "string") return <p role="status" className="text-sm text-muted-foreground">{preview === "loading" ? "Loading the plan for review." : "This plan preview is unavailable."}</p>;
+  const localTimeRange = ({ start, end }: { start: number; end: number }) => `${stamp(start)} – ${stamp(end)} ET`;
   return <section className="flex flex-col gap-1 text-sm" aria-label="Plan under review">
     <FactLine parts={[preview.activity, preview.place.name, preview.place.area]} />
-    <FactLine parts={[`${stamp(preview.start)} – ${stamp(preview.end)} ET`, `Quorum ${preview.quorum} · up to ${preview.maxSeats} seats`]} />
+    {preview.options && <div>
+      <span className="text-muted-foreground">Time options</span>
+      <ol role="list" aria-label="Time options">
+        {preview.options.map((slot, index) => <li key={slot.start}>{"ABC"[index]}. {localTimeRange(slot)}</li>)}
+      </ol>
+    </div>}
+    <FactLine parts={[!preview.options && localTimeRange(preview), `Quorum ${preview.quorum} · up to ${preview.maxSeats} seats`]} />
     <FactLine parts={[`Invitation deadline ${stamp(preview.probeDeadline)} ET`, <span>Alternates {preview.alternates.length === 0 ? "none" : preview.alternates.map((id, i) => <span key={id}>{i > 0 && ", "}{i + 1}. <MemberName id={id} /></span>)}</span>]} />
   </section>;
 }

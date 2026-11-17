@@ -10,6 +10,8 @@ Check quorum, group size, deadlines, alternatives, and contact eligibility. The 
 
 The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
+The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers reviewed options and exact shared consent for weekly one-to-one plans. This model covers group quorum at a single fixed time.
+
 The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
 
 The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.

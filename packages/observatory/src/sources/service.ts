@@ -1,6 +1,7 @@
 import { readCapped } from "../../../platform/src/body.ts";
 import { gatheringFromService, type GatheringRequest, type GatheringResponse } from "../gatherings.ts";
 import { reviewRevisionCurrent } from "../../../core/src/generated/reviewDeadline.ts";
+import { friendPlanHasWindow, friendPlanReviewedWindowsValid } from "../../../core/src/generated/friendsPlanTimeChoice.ts";
 import { scrubText } from "../scrub.ts";
 import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 // Real mode's write path: the Network service's staff API (packages/network/service, runbook-real
@@ -37,6 +38,21 @@ import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
 import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport, StaffPlanPreview } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
+
+/** Read exact reviewed intervals in the order staff and members see them. */
+function reviewedPlanOptions(value: unknown, primary: { start: number; end: number }, probeDeadline: number): StaffPlanPreview["options"] {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > 3) throw new Error("plan preview unavailable");
+  const options: NonNullable<StaffPlanPreview["options"]> = [];
+  for (const slot of value) {
+    if (!slot || !Number.isSafeInteger(slot.start) || !Number.isSafeInteger(slot.end) || slot.start <= 0) throw new Error("plan preview unavailable");
+    options.push({ start: slot.start, end: slot.end });
+  }
+  // spec/friendsPlanTimeChoice.md, "Review fixes the available windows"
+  if (!friendPlanReviewedWindowsValid(options) || !friendPlanHasWindow(options, primary.start, primary.end)
+      || probeDeadline >= options[0]!.start) throw new Error("plan preview unavailable");
+  return options;
+}
 
 export interface ServiceConfig {
   url: string;
@@ -124,9 +140,11 @@ export class ServiceClient {
         || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
         || !textField(p.activity) || !textField(p.place.name) || (p.place.area !== undefined && !textField(p.place.area))
         || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new Error("plan preview unavailable");
+    const options = reviewedPlanOptions(p.options, p, p.probeDeadline);
     return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
       activity: scrubText(p.activity, false), place: { name: scrubText(p.place.name, false), ...(p.place.area ? { area: scrubText(p.place.area, false) } : {}) },
-      start: p.start, end: p.end, probeDeadline: p.probeDeadline, quorum: p.quorum, maxSeats: p.maxSeats, alternates: p.alternates };
+      start: p.start, end: p.end, probeDeadline: p.probeDeadline, quorum: p.quorum, maxSeats: p.maxSeats,
+      ...(options ? { options } : {}), alternates: p.alternates };
   }
 
   /** The staff API owns authoring and review; only its accepted result reaches the workspace. */

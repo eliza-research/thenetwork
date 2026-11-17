@@ -218,6 +218,8 @@ export interface Plan {
   /** Public place shown in the probe: venue or event name and area. */
   place: { name: string; area?: string };
   window: TimeSlot;
+  /** Exact candidate windows at this venue on a weekly Friends partner review. */
+  reviewedOptions?: TimeSlot[];
   /** Members probed (primary group, plus alternates once backfilled). */
   invited: MemberId[];
   alternates: MemberId[];
@@ -533,6 +535,7 @@ const COST = ["Free.", "About $10-20 each; everyone pays their own way.", "About
 const FRAME_COPY = [
   "Your crew for is on again: In?",
   "Up for with someone who are into at near? I'll only share who it is if you both say yes.",
+  "Up for with someone who are into at near? Reply with every time that works. I'll only share who it is if you both pick the same time.",
   "with others who are into. Want in? I'll share who's coming once enough people say yes.",
 ];
 /**
@@ -554,13 +557,14 @@ export const PLAN_COPY_PUBLIC: ReadonlySet<string> = new Set(tokenize([...COST, 
  * vocabulary) and a name-token check; richer variants are dropped first; null if none passes.
  * Null for any minor involved and for anything romance (plans never are).
  */
-export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string): string | null {
+export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string, choices?: readonly { key: string; label: string }[]): string | null {
   const others = plan.invited.filter(x => x !== recipient);
   if (!plan.invited.includes(recipient) || w.pack.ontology.lanes.some(l => l.neverInPlans && l.id === plan.category)) return null;
   if ([recipient, ...others].some(id => !w.get(id) || isMinor(w, id))) return null;
   const a = activityById.get(plan.activityId);
   if (!a) return null;
   const when = timeOptionsPhrase([plan.window], tz);
+  const menu = choices?.map(option => `${option.key.toUpperCase()}: ${option.label}`).join("\n");
   const ah = a.tags.find(t => others.length > 0 && others.every(o => w.get(o)!.share.some(f => f.tags.includes(t))));
   const into = ah ? ` who are into ${ah.replace(/_/g, " ")}` : "";
   const cost = COST[a.costTier]!;
@@ -568,6 +572,7 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
     const near = withArea && plan.place.area ? ` near ${plan.place.area}` : "";
     const i = withInto ? into : "";
     if (plan.crewId) return `Your crew for ${a.label} is on again: ${when}, ${plan.place.name}${near}. In? ${cost}`;
+    if (plan.partner && menu) return `Up for ${a.label} with someone${i} at ${plan.place.name}${near}? ${cost}\n${menu}\nReply with every time that works. I'll only share who it is if you both pick the same time.`;
     if (plan.partner) return `Up for ${a.label} with someone${i}, ${when} at ${plan.place.name}${near}? ${cost} I'll only share who it is if you both say yes.`;
     return `${when}: ${a.label} at ${plan.place.name}${near} with ${others.length} others${i}. ${cost} Want in? I'll share who's coming once enough people say yes.`;
   };
@@ -576,7 +581,7 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
   // probe is about, not a fact about any member, so its words are not private vocabulary here. Any
   // other private word of the others (canaries, agent_private values, matchable facets) still blocks.
   // The fixed copy (PLAN_COPY_PUBLIC) and the time phrase are the Network's own words, also allowed.
-  const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
+  const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${menu ?? when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
   const vocab = new Set([...privateVocabulary(w, others)].filter(t => !own.has(t.toLowerCase())));
   for (const [i, ar] of [[true, true], [false, true], [false, false]] as const) {
     if (i && !into) continue;
@@ -716,6 +721,7 @@ export function partnerPlanFor(p: Plan, pair: [MemberId, MemberId], now: number,
   // One-to-one: no host, and not a crew session (the crew frame would skip the partner probe copy).
   delete plan.hostId;
   delete plan.crewId;
+  delete plan.reviewedOptions;
   return plan;
 }
 

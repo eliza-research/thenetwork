@@ -781,6 +781,14 @@ const NEITHER = /\b(neither|none of (those|them|these|the times)|none (of those 
 const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|whichever|any ?time|all good)\b/;
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
 const ALL_WEAK = /\b(either|both)\b/;
+const EXPLICIT_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:any(?: of (?:them|these|those|the options|the offered times)| (?:option|slot|time))?|anytime|all(?: of (?:them|these|those)| three)?|either(?: one| option| time)?|both|whichever(?: option| time)?)(?: (?:is (?:fine|good)|works?|will work)(?: for me)?)?[.!\s]*$/;
+const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
+const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
+const EXPLICIT_KEY_CLAUSE = /(^\s*|[,;.!\n]\s*|\b(?:and|or)\s+)([abc])\s+(?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please)\b/g;
+const EXPLICIT_NO_OFFERED_TIMES = /^\s*none of (?:(?:those|these)(?: times| options)?|them|the (?:times|options)) works?(?: for me)?[.!\s]*$/;
+// A day and clock label cannot establish consent to a relative or separately named date.
+const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
+const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
  * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
@@ -857,12 +865,19 @@ function timeMentions(text: string): TimeMention[] {
  * works"), a conditional ("sure, but only with a woman") and a hedge ("who is it? thursday maybe")
  * are "unclear": the member is asked again, never booked.
  */
-export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
+interface ProbeReply {
+  answer: "yes" | "no" | "unclear";
+  keys: string[];
+  why: ConsentWhy;
+  explicitTimeSelection?: true;
+}
+
+export function parseProbeReply(body: string, options: readonly TimeOption[] = [], explicitTimesOnly = false): ProbeReply {
   const t = normText(body);
   const c = consentScan(body);
   if (!options.length || c.answer === "counter") {
     // spec/probeReply.md, "A suggested alternative needs a separate yes before asking for new times"
-    const yes = c.answer === "yes" || c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
+    const yes = c.answer === "yes" || !explicitTimesOnly && c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
     return { answer: c.answer === "no" ? "no" : yes ? "yes" : "unclear", keys: [], why: c.why };
   }
   const all = options.map(o => o.key);
@@ -878,10 +893,18 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
-  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
+  if (explicitTimesOnly) {
+    for (const m of t.matchAll(EXPLICIT_KEY_LIST)) {
+      const keys = [...m[0].matchAll(/\b[abc]\b/g)].map(key => key[0]);
+      mark(keys, m.index!, m[0].length);
+    }
+    for (const m of t.matchAll(EXPLICIT_KEY_CLAUSE)) mark([m[2]!], m.index! + m[1]!.length, 1);
+  } else {
+    for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
+  }
   for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
-  const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
-  if (alone && all.includes(alone[1]!)) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
+  if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
@@ -904,7 +927,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (refused) {
       namedExclusion ||= exclusion;
       for (const key of matching) neg.add(key);
-    } else if (!matching.length || matching.length > 1 && !m.part
+    } else if (!matching.length || matching.length > 1 && (explicitTimesOnly || !m.part)
       || m.part && !m.day && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
       // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
@@ -916,23 +939,30 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
   if (!residue && !/\?/.test(t)) for (const k of pos) strong.add(k);
-  const picked = all.filter(k => pos.has(k));
+  const picked = all.filter(k => pos.has(k) && (!explicitTimesOnly || !neg.has(k)));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
+  const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
+    ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  if (explicitTimesOnly) {
+    if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
+    if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
+  }
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
-  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
+  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
-  const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
+  const allAt = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
-    return open.length ? { answer: "yes", keys: open, why: c.why } : { ...unclear, why: "slot" };
+    return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
   }
   if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
+  if (explicitTimesOnly) return unclear;
   if (c.answer === "yes" || namedExclusion && open.length) return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;

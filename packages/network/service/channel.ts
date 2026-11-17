@@ -10,7 +10,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    own <APP>_LIVE_APPROVED=1 (founder approval per app; for ntwrk the last two are the same flag).
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { MemberId } from "@thenetwork/core";
+import type { MemberId, TimeOption } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
 import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
@@ -29,6 +29,7 @@ import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArr
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
 import { engineQuestionDeliveryPrefix, queuedEngineQuestionAllowed } from "../../core/src/generated/engineAsks.ts";
+import { friendPlanProbeDeliveryPrefix } from "../../core/src/generated/friendsPlanTimeChoice.ts";
 import { queuedPlanProbeAllowed } from "../../core/src/generated/planDispatch.ts";
 import { reengagementDeliveryPrefix, reengagementMayDispatch } from "../../core/src/generated/outreachPolicy.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
@@ -38,6 +39,8 @@ import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./mo
 import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
 import { lockPeerOpportunityContact, peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { approvedVenueBookingLink, venueBookingNoticeBase, venueBookingNoticeKey } from "../src/venue-booking-link.ts";
+import { friendsPlanOfferedWindows, friendsPlanProbeDeliveryKey, friendsPlanTimeOptions } from "../src/friends-plan-time-choice.ts";
+import { NY } from "../src/outreach.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -277,7 +280,51 @@ type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
   type: string | null;
   category: string | null;
   prefs: { categoriesOptIn?: unknown; romanceOptIn?: unknown } | null;
+  exact_message: boolean | null;
 };
+
+type StoredPlanProbe = {
+  stage: string | null; review_decision: string | null; review_invalidated: string | null;
+  review_revision: number;
+  pending_seat: boolean | null; probe_deadline: number | null;
+  activity_window: plans.StatedWindows["windows"][number] | null; stated: plans.StatedWindows | null;
+  reviewed_offer: boolean; partner: boolean | null; invited: MemberId[] | null;
+  reviewed_options: plans.Plan["reviewedOptions"] | null; offered: TimeOption[] | null;
+  pending_delivery: boolean | null; peer_id: MemberId | null; peer_stated: plans.StatedWindows | null;
+  first_answer: string | null; first_picks: number[] | null; first_offered: TimeOption[] | null;
+};
+
+const sameTimeOption = (left: TimeOption, right: TimeOption): boolean =>
+  left.key === right.key && left.start === right.start && left.end === right.end && left.label === right.label;
+
+/** A previously rendered offer can only go out with the exact, still-permitted choices. */
+function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactMessage: boolean, now: number): RecipientCheck {
+  const refused = { ok: false, reason: "plan_probe_changed" } as const;
+  const invited = Array.isArray(current.invited) ? current.invited : [];
+  const [first, second] = invited;
+  const selected = row.memberId === first ? undefined : Array.isArray(current.first_picks) ? current.first_picks : [];
+  const reviewed = current.reviewed_options;
+  const offered = current.offered;
+  if (!exactMessage || !row.oppId || !row.memberId || row.id !== friendsPlanProbeDeliveryKey(row.oppId, current.review_revision, row.memberId)
+    || row.app !== "friends" || current.stage !== "probing" || current.partner !== true
+    || invited.length !== 2 || !first || !second || first === second || !current.pending_delivery
+    || (row.memberId !== first && row.memberId !== second) || !current.peer_id
+    || !Array.isArray(reviewed) || !Array.isArray(offered) || !offered.length) return refused;
+  if (selected !== undefined && current.first_answer !== "yes") return refused;
+  const picks = selected === undefined ? undefined
+    : (Array.isArray(current.first_offered) ? current.first_offered : []).filter(option => selected.includes(option.start));
+  const allowed = friendsPlanOfferedWindows(reviewed, picks, slot => slot.start > now
+    && plans.planWindowMatchesStated(current.stated ?? undefined, slot, now)
+    && plans.planWindowMatchesStated(current.peer_stated ?? undefined, slot, now));
+  const currentOptions = friendsPlanTimeOptions(reviewed, allowed, NY);
+  let reviewedIndex = -1;
+  for (const option of offered) {
+    const index = currentOptions.findIndex(candidate => sameTimeOption(candidate, option));
+    if (index <= reviewedIndex) return { ok: false, reason: "plan_availability_changed" };
+    reviewedIndex = index;
+  }
+  return { ok: true };
+}
 
 /** Recheck the exact engine question under the current runtime and recipient locks. */
 async function engineQuestionAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<RecipientCheck> {
@@ -308,11 +355,15 @@ async function engineQuestionAdmission(tx: SQL, row: QueueRow, runtimeId: string
 
 /** Called after the queue locks the member row that owns these settings. */
 async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: number): Promise<RecipientCheck> {
-  if (row.kind !== "proactive" || !row.memberId) return { ok: true };
-  const [probe] = await tx<QueuedProbe[]>`select msg.type,opp.category,member.prefs,member.participation_state,member.participation_window,member.opted_out
+  const reviewedKey = row.id.startsWith(friendPlanProbeDeliveryPrefix);
+  const refused = { ok: false, reason: "plan_probe_changed" } as const;
+  if (row.kind !== "proactive" || !row.memberId) return reviewedKey ? refused : { ok: true };
+  const [probe] = await tx<QueuedProbe[]>`select msg.type,opp.category,member.prefs,member.participation_state,member.participation_window,member.opted_out,
+      (msg.opportunity_id=${row.oppId ?? null} and msg.body=${row.text}) as exact_message
     from network.messages msg join network.members member on member.app_id=msg.app_id and member.id=msg.member_id
     left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id and opp.id=${row.oppId ?? null}
     where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.direction='outbound'`;
+  if (reviewedKey && probe?.type !== "plan_probe") return refused;
   if (probe?.type !== "probe" && probe?.type !== "plan_probe") return { ok: true };
   const paused = effectiveParticipation(probe, now).state === "paused";
   const categories = probe.prefs?.categoriesOptIn;
@@ -323,21 +374,28 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
 
   // lockPeerOpportunityContact already shares the exact runtime row against
   // updates to either the plan or the recipient's check-in state.
-  const [current] = await tx<{
-    stage: string | null; review_decision: string | null; review_invalidated: string | null;
-    pending_seat: boolean | null; probe_deadline: number | null;
-    activity_window: plans.StatedWindows["windows"][number] | null; stated: plans.StatedWindows | null;
-  }[]>`select plan.stage, plan.review->>'decision' as review_decision, plan.review->'invalidated' as review_invalidated,
+  const [current] = await tx<StoredPlanProbe[]>`select plan.stage, plan.review->>'decision' as review_decision, plan.review->'invalidated' as review_invalidated,
+      case when jsonb_typeof(plan.review->'rerolls')='array' then jsonb_array_length(plan.review->'rerolls') else 0 end as review_revision,
       plan."planRun"->'answers'->>${row.memberId}::text='pending' as pending_seat,
-      (plan.plan->>'probeDeadline')::double precision as probe_deadline, plan.plan->'window' as activity_window, member.stated
+      (plan.plan->>'probeDeadline')::double precision as probe_deadline, plan.plan->'window' as activity_window, member.stated,
+      plan.plan ? 'reviewedOptions' as reviewed_offer, plan.plan->'partner'='true'::jsonb as partner, plan.plan->'invited' as invited,
+      plan.plan->'reviewedOptions' as reviewed_options, plan.offered->${row.memberId}::text as offered,
+      (member.awaiting->>'kind'='probe' and member.awaiting->>'oppId'=plan.id and member.awaiting->>'probeReceiptId'=${row.id}) as pending_delivery,
+      peer.id as peer_id, peer.stated as peer_stated, plan."planRun"->'answers'->>(plan.plan->'invited'->>0) as first_answer,
+      plan.picks->(plan.plan->'invited'->>0) as first_picks, plan.offered->(plan.plan->'invited'->>0) as first_offered
     from network.network_state saved
-    join lateral jsonb_to_recordset(saved.state->'opps') as plan(id text,stage text,review jsonb,"planRun" jsonb,plan jsonb) on plan.id=${row.oppId ?? null}
-    join lateral jsonb_to_recordset(saved.state->'members') as member(id text,stated jsonb) on member.id=${row.memberId}
+    join lateral jsonb_to_recordset(saved.state->'opps') as plan(id text,stage text,review jsonb,"planRun" jsonb,plan jsonb,offered jsonb,picks jsonb) on plan.id=${row.oppId ?? null}
+    join lateral jsonb_to_recordset(saved.state->'members') as member(id text,stated jsonb,awaiting jsonb) on member.id=${row.memberId}
+    left join lateral jsonb_to_recordset(case when plan.plan ? 'reviewedOptions' then saved.state->'members' else '[]'::jsonb end)
+      as peer(id text,stated jsonb) on peer.id=case when member.id=plan.plan->'invited'->>0 then plan.plan->'invited'->>1 else plan.plan->'invited'->>0 end
     where saved.app_id=${row.app} and saved.id=${rt.pg.id}`;
-  if (!current?.stage || !current.activity_window || current.probe_deadline === null) return { ok: false, reason: "plan_probe_changed" };
+  if (!current?.stage || !current.activity_window || current.probe_deadline === null) return refused;
   const laneOpen = rt.net.planProbeWindowOpen(current.stage, { window: current.activity_window, probeDeadline: current.probe_deadline }, now);
   if (!queuedPlanProbeAllowed(current.review_decision === "approve" && !current.review_invalidated, current.pending_seat === true, laneOpen)) {
-    return { ok: false, reason: "plan_probe_changed" };
+    return refused;
+  }
+  if (current.reviewed_offer || reviewedKey) {
+    return reviewedKey && current.reviewed_offer ? reviewedFriendPlanProbe(current, row, probe.exact_message === true, now) : refused;
   }
   return plans.planWindowMatchesStated(current.stated ?? undefined, current.activity_window, now)
     ? { ok: true } : { ok: false, reason: "plan_availability_changed" };
@@ -574,6 +632,9 @@ export class BlooioAdapter implements ChannelAdapter {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         if (row.id.startsWith(engineQuestionDeliveryPrefix)) {
+          await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
+        }
+        if (row.id.startsWith(friendPlanProbeDeliveryPrefix)) {
           await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
         }
         if (row.id.startsWith(lateArrivalDeliveryPrefix)) await tx`select id from network.network_state where id=${rt.pg.id} for share`;

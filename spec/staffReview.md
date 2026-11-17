@@ -68,7 +68,7 @@ pure def sometimesReviewDraftOpens(ctl: ReviewCtl): bool = ctl.mode == EditRevie
 
 ### A plan preview belongs to the open revision under review
 
-For a planner proposal, staff authorized to read the review queue for the app can read the public place, activity window, quorum, seat limit, invitation deadline, and ordered alternates for the specific review revision. The Network reads these fields from the plan and the current review roster. It returns the preview only while that revision is pending and its review deadline is open. The read records the actor, app, and opportunity before it returns any preview.
+For a planner proposal, staff authorized to read the review queue for the app can read the public place, activity window, quorum, seat limit, invitation deadline, and ordered alternates for the specific review revision. A Friends activity partner proposal with several reviewed times shows each complete interval in chronological order at the same venue. The preview uses the invitation deadline that applies to the earliest option. The Network reads these fields from the plan and the current review roster. It returns the preview only while that revision is pending and its review deadline is open. The read records the actor, app, and opportunity before it returns any preview.
 
 ```quint
 import reviewDeadline as Deadline from "./reviewDeadline"
