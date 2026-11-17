@@ -59,7 +59,7 @@ export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null 
   if (T.enabled) {
     const h = p.history;
     if (T.negativeFrom > 0 && h.negativeFrom >= T.negativeFrom) return "trust_review";
-    if (T.blockedBy > 0 && h.blockedBy >= T.blockedBy) return "trust_review";
+    if (T.blockedBy > 0 && h.contextualBlocks >= T.blockedBy) return "trust_review";
     if (T.noShows > 0 && h.noShows >= T.noShows && h.noShows > h.dates) return "trust_review";
     if (T.eagerYes > 0 && h.yes >= T.eagerYes && h.no === 0 && h.silent === 0) return "trust_review";
   }

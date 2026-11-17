@@ -50,7 +50,7 @@ The current matching snapshot reads [canonical ban authority](../staffSafetyServ
 //                                            person_blocks write 578
 //   packages/network/service/snapshot.ts     canonical ban from platform.matching_ages -> restricted matching status
 //   packages/network/src/relay.ts            RelayDesk.apply 244-252 (a severe block calls severeBlock)
-//   packages/engine/src/packs/slop/rules.ts  reviewReason (trust_review; SD-027 is skipped)
+//   packages/engine/src/packs/slop/rules.ts  reviewReason (trust_review; SD-027 pair/context separation)
 //   packages/engine/src/packs/slop/profile.ts histories 232-260 (a record with `by` counts for that member only)
 //
 // One action is one unit of work (one SQL transaction of one Network). The service's cross-app hold loop
@@ -109,6 +109,7 @@ module safety_trust {
     caseSt: Mid -> str,
     blocks: Set[Set[Mid]],
     personBlocks: Set[(str, str)],
+    contextualBlocks: Set[(Mid, Mid)],
     // platform.person_holds: (person, app or "*")
     personHolds: Set[(str, str)],
     opps: str -> Opp,
@@ -224,8 +225,8 @@ module safety_trust {
   // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
   pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()
   pure def dates(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "completed").size()
-  // profile.ts: a "blocked" edge per blocker (person blocks reach every app's snapshot)
-  pure def blockedBy(st: State, m: Mid): int = PERSONS.filter(q => st.personBlocks.contains((q, m.p))).size()
+  // profile.ts: one directed block per member with settled same-app encounter evidence at block time.
+  pure def blockedBy(st: State, m: Mid): int = st.contextualBlocks.filter(b => b._2 == m).size()
   // slop rules.ts with SLOP_DEFAULT_OPTIONS trust { blockedBy: 2, noShows: 2 }
   pure def trustReview(st: State, m: Mid): bool =
     m.app == "slop" and (blockedBy(st, m) >= 2 or (noShows(st, m) >= 2 and noShows(st, m) > dates(st, m)))
@@ -397,10 +398,13 @@ module safety_trust {
   // other apps call the pair off at their next tick (SD-025, ghost pendingCallOff).
   pure def blockAndReport(st: State, m: Mid, kind: str, target: Mid, source: str, intended: bool, meant: str): State = {
     val met = metBefore(st, m, target)
+    val contextual = m.app == "slop" and m != target and not(st.personBlocks.contains((m.p, target.p))) and
+      st.inters.exists(i => i.parts == Set(m, target) and i.at <= st.now and (i.outcome == "completed" or i.outcome == "no_show"))
     val s1 = {
       ...st,
       blocks: st.blocks.union(Set(Set(m, target))),
       personBlocks: st.personBlocks.union(Set((m.p, target.p))),
+      contextualBlocks: if (contextual) st.contextualBlocks.union(Set((m, target))) else st.contextualBlocks,
       pendingCallOff: st.pendingCallOff.union(Set((m.p, target.p, m.app))),
       staffCleared: st.staffCleared.filter(x => x.p != target.p),
     }
@@ -426,6 +430,7 @@ module safety_trust {
     caseSt: st.caseSt.set(m, "none"),
     minorF: st.minorF.set(m, false),
     blocks: st.blocks.filter(b => not(b.contains(m))),
+    contextualBlocks: st.contextualBlocks.filter(b => b._1 != m and b._2 != m),
     opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
       if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
     inters: st.inters.filter(i => not(i.parts.contains(m))),
@@ -488,6 +493,7 @@ module safety_trust {
     caseSt: ALL_MIDS.mapBy(_ => "none"),
     blocks: Set(),
     personBlocks: Set(),
+    contextualBlocks: Set(),
     personHolds: Set(),
     opps: OPP_IDS.mapBy(_ => FREE_OPP),
     reports: Set(),
@@ -615,7 +621,8 @@ module safety_trust {
     val others = o.going.exclude(Set(m))
     // postDateReports on slop and peon (SD-221); never for a plan
     val reportKind = if (o.kind == "date") reader else "none"
-    val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }) }
+    val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
+      inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow"))) }
     // checkInReported -> blockAndReport for each other (SD-229); the member means the person of the date
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
@@ -626,7 +633,6 @@ module safety_trust {
       intent != "selfNoShow" or o.absent.contains(m),
       checkInReaderSound(intent, reader),
       s' = { ...s2,
-        inters: s2.inters.union(Set(recordOf(o, m, intent == "selfNoShow"))),
         staffCleared: if (intent == "selfNoShow") s2.staffCleared.filter(y => not(o.parts.contains(y))) else s2.staffCleared,
         wanted: if (intent == "report") s2.wanted.union(others.map(x => (m.p, x.p))) else s2.wanted,
         lastAction: "checkIn" },
@@ -1177,7 +1183,7 @@ module safety_trust {
 
   // SD-027, block part (W3-235). trust.ts:8-11 "strangers who know a first name can never put someone on hold";
   // network-consent-14 blocks of people you never met count against the blocker, not the target. The
-  // trust_review rule by blocks needs two blockers who met the member (profile.ts:277 counts every block).
+  // trust_review rule by blocks needs two blockers with a settled encounter before the block.
   pure def metBlockers(st: State, m: Mid): int = PERSONS.filter(q => st.personBlocks.contains((q, m.p)) and st.metPairs.contains((q, m.p))).size()
   val strangersCannotEngineHold = ALL_MIDS.forall(m => (s.live.get(m) and m.app == "slop" and blockedBy(s, m) >= 2
     and not(noShows(s, m) >= 2 and noShows(s, m) > dates(s, m))) implies metBlockers(s, m) >= 2)
@@ -1484,12 +1490,13 @@ module safety_trust {
       .then(tick(1))
       .expect(lvl(s, BEN_S) == "ok" and watchLasts14Days)
 
-  // SD-027 (skipped): ana and cy block ben (strangers); ben is in trust_review with no case.
+  // SD-027 pair/context separation: these blocks still apply to each pair without triggering member review.
   run sd027TrustReviewTest =
     init
       .then(report("ana", "slop", "ben", "block", "harassment", false))
       .then(report("cy", "slop", "ben", "block", "harassment", false))
-      .expect(trustReview(s, BEN_S) and not(engineHoldVisible) and not(strangersCannotEngineHold))
+      .expect(not(trustReview(s, BEN_S)) and strangersCannotEngineHold and
+        s.personBlocks.contains(("ana", "ben")) and s.personBlocks.contains(("cy", "ben")))
 
   // SD-222 (fixed): ben did not come and says so; only ben is charged a no-show.
   run sd222SelfNoShowTest =

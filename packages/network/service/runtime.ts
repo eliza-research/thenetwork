@@ -470,7 +470,15 @@ export class NetworkRuntime {
       tx`select * from network.facets where app_id=${row.app} and member_id in ${tx(opp.participants)} and status<>'rejected'
         and ${automatedFacetPredicate(tx)} order by member_id,id`,
       tx`select * from network.presence where app_id=${row.app} and member_id in ${tx(opp.participants)} order by member_id,city,type`,
-      tx`select from_id,to_id,created_at from network.edges where app_id=${row.app} and type='blocked' and to_id in ${tx(opp.participants)} order by from_id,to_id`,
+      // Mirror the snapshot's direct edges plus its canonical person blocks for these subjects.
+      tx`select from_id,to_id,created_at from network.edges where app_id=${row.app} and type='blocked' and to_id in ${tx(opp.participants)}
+        union all
+        select f.id,t.id,pb.at from platform.person_blocks pb
+          join network.members f on f.person_id=pb.from_person and f.app_id=${row.app}
+          join network.members t on t.person_id=pb.to_person and t.app_id=${row.app}
+          where t.id in ${tx(opp.participants)} and not exists (
+            select 1 from network.edges e where e.app_id=${row.app} and e.from_id=f.id and e.to_id=t.id and e.type='blocked')
+        order by from_id,to_id`,
     ]);
     const input: Parameters<typeof check>[0] = {
       now, members: members.map(m => ({ id: m.id, name: m.name, homeCity: m.home_city, prefs: m.prefs, age: m.age,

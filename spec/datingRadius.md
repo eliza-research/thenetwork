@@ -51,3 +51,17 @@ pure def slopPairContactAllowed(approved: bool, pairCurrent: bool, reveal: bool,
 pure def lawSlopPairRevealNeedsCurrentConsent(approved: bool, pairCurrent: bool, bothConsented: bool): bool =
   slopPairContactAllowed(approved, pairCurrent, true, bothConsented) implies (approved and pairCurrent and bothConsented)
 ```
+
+### Only encounter-backed blocks inform a member review
+
+Every block keeps both members apart. A block can inform the separate dating review only when the same two members already shared a recorded completed or no-show encounter in this app. Count each qualifying blocker once. Anonymous proposals and later encounters provide no evidence for the earlier block. Other safety and staff decisions apply independently.
+
+```quint
+pure def slopRecordedBlockContext(encounterResult: str): bool = Set("completed", "no_show").contains(encounterResult)
+
+pure def slopContextualBlockAllowed(encounterAt: int, blockedAt: int, now: int): bool =
+  encounterAt >= 0 and encounterAt <= blockedAt and blockedAt <= now
+
+pure def lawNoBlockContextWithoutAnEncounter(blockedAt: int, now: int): bool =
+  not(slopContextualBlockAllowed(-1, blockedAt, now))
+```

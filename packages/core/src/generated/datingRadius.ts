@@ -49,3 +49,22 @@ export function lawSlopPairRevealNeedsCurrentConsent(approved: boolean, pairCurr
   //@ ensures \result === true
   return !slopPairContactAllowed(approved, pairCurrent, true, bothConsented) || (approved && pairCurrent && bothConsented);
 }
+
+/** Story: Find a date within both travel limits / Only encounter-backed blocks inform a member review (spec/datingRadius.md) */
+//@ pure
+export function slopRecordedBlockContext(encounterResult: string): boolean {
+  return ["completed", "no_show"].includes(encounterResult);
+}
+
+/** Story: Find a date within both travel limits / Only encounter-backed blocks inform a member review (spec/datingRadius.md) */
+//@ pure
+export function slopContextualBlockAllowed(encounterAt: number, blockedAt: number, now: number): boolean {
+  return encounterAt >= 0 && encounterAt <= blockedAt && blockedAt <= now;
+}
+
+/** Story: Find a date within both travel limits / Only encounter-backed blocks inform a member review (spec/datingRadius.md) */
+//@ pure
+export function lawNoBlockContextWithoutAnEncounter(blockedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !slopContextualBlockAllowed(-1, blockedAt, now);
+}
