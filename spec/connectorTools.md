@@ -2,7 +2,7 @@
 
 Each app site has its own MCP connector. A connection covers that one app (the host). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
 
-The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and each bound connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
+The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
 
 - The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
 - The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval. The shell keeps a grant-bound keyed receipt for each exact profile ([profile submission](mcpProfileSubmission.md)) so retries do not repeat intake.
@@ -17,7 +17,7 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
 
-The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. The full surface applies the ordinary host rule.
+The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. A connection to a disabled OpenAI host is not available. The full surface applies the ordinary host rule. The shell refuses a request to a host that is not available before it lists or calls a tool, so the tool list of an available host uses the ordinary host rule.
 
 ```quint
 type AppId = Ntwrk | Slop | Peon | Friends
@@ -105,7 +105,7 @@ pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
 
 ### A connection binds to one host on one surface, and the person connects it in the browser
 
-The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before and after authorization, and it answers that an app is not available when the surface does not offer it. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, until the person connects again.
+The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the surface does not offer it. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
 
 ```quint
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
@@ -137,8 +137,11 @@ pure def bound(c: Connection): bool = c.phase == Anonymous or c.phase == Connect
 
 pure def canConnect(c: Connection): bool = c.phase == Unbound
 
-pure def connect(c: Connection, host: AppId, surface: Surface): Connection =
-  { ...c, host: host, surface: surface, phase: if (hostServes(surface, host)) Anonymous else Unavailable }
+pure def connect(c: Connection, host: AppId, surface: Surface, openAiEnabled: bool): Connection =
+  { ...c, host: host, surface: surface, phase: if (configuredHostServes(surface, host, openAiEnabled)) Anonymous else Unavailable }
+
+pure def lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): bool =
+  connect(c, host, OpenAiSurface, false).phase == Unavailable
 
 pure def canAuthorize(c: Connection): bool = c.phase == Anonymous or c.phase == Revoked
 

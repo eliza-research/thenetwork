@@ -2,7 +2,7 @@
 // Postgres version (pg-store.ts, schema in db/schema.sql) keeps the same rules as this in-memory
 // one, and the same tests run against both.
 
-import { digestItemSetCanBeRecorded, inboxItemExpired, inboxItemStillPending } from "../../core/src/generated/notificationDispatch.ts";
+import { digestItemSetCanBeRecorded, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
 import type { InboxItem, InboxItemInput, Surface } from "./types.ts";
@@ -115,8 +115,8 @@ export class MemoryNotifyStore implements NotifyStore {
     if (d.deliveryId.startsWith("ntf_")) {
       const pending = [...new Set(d.itemIds)].filter(id => {
         const item = this.items.get(id);
-        return item?.personId === d.personId && inboxItemStillPending(item.seenAt !== undefined, item.notifiedAt !== undefined)
-          && !inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, d.sentAt);
+        return item?.personId === d.personId && inboxItemDigestible(item.seenAt !== undefined, item.notifiedAt !== undefined,
+          item.expiresAt !== undefined, item.expiresAt ?? 0, d.sentAt);
       });
       if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
     }

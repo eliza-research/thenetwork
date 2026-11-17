@@ -1,6 +1,6 @@
 # Join through the shared text line
 
-The service parses the sender's text, reads the app and pending records and applies the effective age policy. The generated transitions select the routing, join and enrollment actions. The service retains its phone lock, database writes, consent events and send controls.
+The service parses the sender's text, reads the app and pending records and applies the effective age policy. The generated transitions select the routing, join and enrollment actions. The service retains its phone lock, database writes, consent events and send controls. A first-contact notice writes no membership: the service runs the normal join flow after it. The service's unique write keeps at most one notice per phone, and its failure handler removes a notice that could not complete.
 
 ## Story: Text the Network to join an app
 
@@ -8,7 +8,7 @@ The service parses the sender's text, reads the app and pending records and appl
 
 ### Dedicated lines and explicit app choices take priority
 
-An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read or invitation feedback reply for an app takes priority over an app keyword. Otherwise inspect pending join and current memberships.
+An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read takes priority over an invitation feedback reply, and both take priority over an app keyword. Otherwise inspect pending join and current memberships.
 
 ```quint
 type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ExplicitRoute | PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
@@ -21,11 +21,24 @@ pure def checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): T
   else if (explicitFacts.dedicated) { phase: DedicatedRoute }
   else if (explicitFacts.profileApp or explicitFacts.surveyApp or explicitFacts.appKeyword) { phase: ExplicitRoute }
   else { phase: AwaitingFallbackRoute }
+
+pure def explicitAppSource(explicitFacts: ExplicitFacts): str =
+  if (explicitFacts.dedicated) "dedicated"
+  else if (explicitFacts.profileApp) "profile"
+  else if (explicitFacts.surveyApp) "survey"
+  else if (explicitFacts.appKeyword) "keyword"
+  else ""
+
+pure def lawSavedProfileBeatsKeyword(surveyApp: bool, appKeyword: bool): bool =
+  explicitAppSource({ dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword }) == "profile"
+
+pure def lawFeedbackBeatsKeyword(appKeyword: bool): bool =
+  explicitAppSource({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword }) == "survey"
 ```
 
 ### A pending join routes only a possible join answer
 
-Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. Use only pending fields from the routed app.
+Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. The shell parses the answer for an age only when the sender has a pending join for an app they have yet to join and already belongs to an app. Use only pending fields from the routed app.
 
 ```quint
 type FallbackFacts = { hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool, answerHasAge: bool, hasOpenItem: bool }
@@ -135,9 +148,15 @@ pure def lawSlopEnrollmentRequiresAdult(adult: bool): bool =
 
 ### A first-contact notice cannot substitute for enrollment
 
-The notice is available only in the signed turn for a nonmember number that is not banned. A known underage floor or refused age prevents the notice. The existing unique write allows at most one notice per phone and the failure handler removes a notice that could not complete.
+The notice is available only in the signed turn for a nonmember number that is not banned. A known underage floor or refused age prevents the notice.
 
 ```quint
 pure def noticeAllowed(joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
   joinAgeAllowed and ageFloorAllowed
+
+pure def firstContactNoticeAllowed(signedTurn: bool, nonMember: bool, banned: bool, joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
+  signedTurn and nonMember and not(banned) and noticeAllowed(joinAgeAllowed, ageFloorAllowed)
+
+pure def lawMemberOrBannedGetsNoNotice(signedTurn: bool, nonMember: bool, banned: bool, joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
+  (not(nonMember) or banned or not(signedTurn)) implies not(firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed))
 ```

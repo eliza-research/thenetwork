@@ -109,7 +109,7 @@ pure def stepUpdateShownOnlyByTheUpdatesTool(before: Entry, via: str, after: Ent
 
 ### An update text links to an assistant only when the person uses one
 
-An update text carries only the reference, in the prompt `Ask The Network for update T-7F3K9Q`, and nothing else about the update. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update itself goes in the text thread. On iMessage, the text links straight to the assistant with the prompt filled in. On SMS and Telegram, the text links to one ntwrk.party page with a button for each assistant. Each assistant link fills the prompt and never sends it: ChatGPT takes `?prompt=`, because its `?q=` sends the prompt at once on the web.
+An update text that links to an assistant carries only the reference, in the prompt `Ask The Network for update T-7F3K9Q`, and nothing else about the update. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update itself goes in the text thread. On iMessage, the text links straight to the assistant with the prompt filled in. On SMS and Telegram, the text links to one ntwrk.party page with a button for each assistant. Each assistant link fills the prompt and never sends it: ChatGPT takes `?prompt=`, because its `?q=` sends the prompt at once on the web.
 
 ```quint
 type Channel = IMessage | Sms | Telegram
@@ -139,12 +139,14 @@ pure def lawChatGptLinkNeverSends(assistant: LinkedAssistant): bool =
 
 ### Every entry can reach its result
 
-The supported paths include signup through a skill from each kind of entry, an explanation, a shown update, an update that shows nothing, a request to connect, and a refused route.
+The supported paths include signup through a skill from each entry that leads to a skill (a site prompt, the Claude plugin, the OpenAI plugin and the skill catalog), an explanation, a shown update, an update that shows nothing, a request to connect, and a refused route.
 
 ```quint
 pure def sometimesFollowingSkill(s: Entry): bool = s.phase == FollowingSkill
 pure def sometimesFollowingSkillFromSite(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromSite
 pure def sometimesFollowingSkillFromCatalog(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromSkillCatalog
+pure def sometimesFollowingSkillFromClaudePlugin(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromClaudePlugin
+pure def sometimesFollowingSkillFromOpenAiPlugin(s: Entry): bool = s.phase == FollowingSkill and s.entry == FromOpenAiPlugin
 pure def sometimesExplaining(s: Entry): bool = s.phase == Explaining
 pure def sometimesUpdateShown(s: Entry): bool = s.phase == UpdateShown
 pure def sometimesNothingNewShown(s: Entry): bool = s.phase == NothingNewShown

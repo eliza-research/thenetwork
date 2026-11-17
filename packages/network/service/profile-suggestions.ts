@@ -2,7 +2,7 @@ import { parseNetworkCollectionCommand, networkCollectionDeadline, NETWORK_COLLE
 import { createHash, randomUUID } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
-  collectionPreviewUnchanged, collectionRevisionIsOriginal, initial as initialSource, ownerCleanupUsesReceipt,
+  initial as initialSource, ownerCleanupUsesReceipt,
   step as stepSource, suggestionCleanupAction,
 } from "../../core/src/generated/profileSuggestionSource.ts";
 import { parseProfileReviewWithdrawalProof, type ProfileReviewWithdrawalRequest,
@@ -175,29 +175,33 @@ export class ProfileSuggestions {
           && prior.response?.kind === 'profile_collection' && prior.response.inputSha256 === inputSha256 && prior.response.batchId === id,
       });
       if (collection.phase === "SourceDenied") return null;
-      if (claim) {
-        // Existing inbound action receipts are the durable idempotency owner. Deleting a batch
-        // never deletes this receipt, so replay cannot recreate erased private suggestions.
-        const turn = collectionTurn;
-        if (collection.phase === "ReplayingCollection") {
-          // Owner/source were checked above in this same transaction. Do not rebind
-          // identity here and accidentally replace the freshly acquired source deadline.
-          const [b] = await tx`select * from platform.profile_suggestion_batches where id=${id} and app_id=${owner.app}
-            and person_id=${owner.personId} and member_id=${member.id} and user_id=${owner.userId}
-            and organization_id=${owner.organizationId} and chat_id=${owner.chatId} for update`;
-          if (!b || !collectionRevisionIsOriginal(b.revision)) return null;
-          const rows = await tx`select status from platform.profile_suggestions where batch_id=${id}`;
-          if (!collectionPreviewUnchanged(rows.length === input.suggestions.length, rows.every((r: any) => r.status === 'proposed'))) return null;
-          const preview = await this.view(tx, b, this.fence?.now() ?? now);
-          this.checkAuthority(b);
-          return preview;
-        }
-        if (Object.keys(turn.action_receipts ?? {}).length >= 16) return null;
-        // A later turn cannot reuse an erased batch UUID while its original minimal receipt remains.
-        if ((await tx`select id from platform.inbound where jsonb_exists(action_receipts,${receiptKey!}) limit 1`).length) return null;
-        if ((await tx`select id from platform.profile_suggestion_batches where id=${id}`).length) return null;
+      // Existing inbound action receipts are the durable idempotency owner. Deleting a batch
+      // never deletes this receipt, so replay cannot recreate erased private suggestions.
+      if (collection.phase === "ReplayingCollection") {
+        // Owner/source were checked above in this same transaction. Do not rebind
+        // identity here and accidentally replace the freshly acquired source deadline.
+        const [b] = await tx`select * from platform.profile_suggestion_batches where id=${id} and app_id=${owner.app}
+          and person_id=${owner.personId} and member_id=${member.id} and user_id=${owner.userId}
+          and organization_id=${owner.organizationId} and chat_id=${owner.chatId} for update`;
+        if (!b) return null;
+        const rows = await tx`select status from platform.profile_suggestions where batch_id=${id}`;
+        collection = stepSource(collection, {
+          type: "checkCollectionReplay", revision: b.revision,
+          sameCount: rows.length === input.suggestions.length, onlyPending: rows.every((r: any) => r.status === 'proposed'),
+        });
+        if (collection.phase !== "CollectionReplayed") return null;
+        const preview = await this.view(tx, b, this.fence?.now() ?? now);
+        this.checkAuthority(b);
+        return preview;
       }
       if (collection.phase !== "SavingCollection") return null;
+      const capacityFree = !claim || Object.keys(collectionTurn.action_receipts ?? {}).length < 16;
+      // A later turn cannot reuse an erased batch UUID while its original minimal receipt remains.
+      const batchIdUnused = !claim || (capacityFree
+        && !(await tx`select id from platform.inbound where jsonb_exists(action_receipts,${receiptKey!}) limit 1`).length
+        && !(await tx`select id from platform.profile_suggestion_batches where id=${id}`).length);
+      collection = stepSource(collection, { type: "checkCollectionSave", capacityFree, batchIdUnused });
+      if (collection.phase !== "CollectionSaved") return null;
       const [b] = await tx`insert into platform.profile_suggestion_batches(id,app_id,person_id,member_id,user_id,organization_id,chat_id,created_at,expires_at,window_start,window_end,timezone,allowed_kinds,retain_on_disconnect)
         values(${id},${owner.app},${owner.personId},${member.id},${owner.userId},${owner.organizationId},${owner.chatId},${new Date(now)},${new Date(input.expiresAt)},${new Date(input.windowStart)},${new Date(input.windowEnd)},${input.timezone},${tx.array(input.allowedKinds,"TEXT")},${input.retainOnDisconnect}) returning *`;
       for (const s of input.suggestions) await tx`insert into platform.profile_suggestions(id,batch_id,app_id,connection_id,source,observed_at,kind,confidence,value,tags,original_value_hash,privacy_scope)

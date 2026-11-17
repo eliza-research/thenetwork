@@ -1,6 +1,6 @@
 # Participation controls in conversation
 
-The member can change settings for the app handling their signed text. The service reads the canonical phone and membership, writes the setting, and records the reply in the same transaction. These settings govern later outreach in that app. The shared-line STOP and START commands use the [carrier consent rules](carrierConsent.md).
+The member can change settings for the app handling their signed text. The service reads the canonical phone and membership, writes the setting, and records the reply in the same transaction. The service writes quiet hours only for a quiet hours command, so a signup or an update to a different setting keeps the saved hours. These settings govern later outreach in that app. The shared-line STOP and START commands use the [carrier consent rules](carrierConsent.md).
 
 ## Story: Change when and about what Eliza can contact me
 
@@ -17,11 +17,24 @@ pure def participationControlAllowed(signedDirect: bool, ownActiveMembership: bo
 
 ### Quiet hours use the member's local clock
 
-Save two explicitly specified whole hours. Ask for clarification when the text does not determine both endpoints. Accept overnight windows. Explicitly turning quiet hours off stores an empty window. A signup or an update to a different setting does not override the saved hours.
+Save two explicitly specified whole hours. Ask for clarification when the text does not determine both endpoints. Accept overnight windows. Explicitly turning quiet hours off stores an empty window, with the same start and end hour.
 
 ```quint
 pure def controlQuietHoursValid(startHour: int, endHour: int): bool =
   startHour >= 0 and startHour < 24 and endHour >= 0 and endHour < 24
+
+pure def quietHoursCommandComplete(startKnown: bool, endKnown: bool, startHour: int, endHour: int): bool =
+  startKnown and endKnown and controlQuietHoursValid(startHour, endHour)
+
+pure val quietHoursOffHour: int = 0
+
+pure def quietHoursEmpty(startHour: int, endHour: int): bool = startHour == endHour
+
+pure def lawMissingEndpointNeedsClarification(known: bool, startHour: int, endHour: int): bool =
+  not(quietHoursCommandComplete(false, known, startHour, endHour)) and not(quietHoursCommandComplete(known, false, startHour, endHour))
+
+pure def lawQuietHoursOffIsEmpty(startHour: int): bool =
+  (startHour == quietHoursOffHour) implies (quietHoursEmpty(startHour, quietHoursOffHour) and controlQuietHoursValid(startHour, quietHoursOffHour))
 ```
 
 ### A category changes only on an explicit request

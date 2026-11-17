@@ -367,7 +367,7 @@ pure def lawSafetyEventsShowInTheSafetySegment(playerEvent: bool, feedSize: int)
 
 ### The mine segment exists only in the simulated world
 
-The mine segment shows only in the simulated world. A wanted segment that does not show falls back to all. An empty feed says why: the simulated world waits for play, no event is in the range, or no event matches the filters and the focus.
+The mine segment shows only in the simulated world. A wanted segment that does not show falls back to all. An empty feed says why. With no events, the simulated world waits for play and real data has no event in the range. When events exist but none shows, the note says that no event matches the filters and the focus if a focus is set or the world is simulated; on real data without a focus it says that no event is in the range.
 
 ```quint
 type FeedNote = PressPlayNote | NoEventsInRangeNote | NothingMatchesNote

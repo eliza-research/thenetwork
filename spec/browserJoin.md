@@ -1,6 +1,6 @@
 # Join in the browser
 
-The peon.biz site keeps one browser page at `/join`. A person's agent sends the person to `https://peon.biz/join?via=agent#firstName=..&age=..`. On this page the person confirms their own phone, reviews their first name and age, agrees to the texts and joins. This spec models only what the page shows and what the page lets the person do. The server owns the join rules ([site enrollment](siteEnrollment.md)) and the code limits ([phone verification limits](otpLimits.md)). The browser shell owns the address, the fetch calls, the security check widget, the focus and the copy. The shell sends each server answer to this machine as one event. The public sites have no sign-in link, no settings page and no member dashboard: this page is only for joining.
+The peon.biz site keeps one browser page at `/join`. A person's agent sends the person to `https://peon.biz/join?via=agent#firstName=..&age=..`. On this page the person confirms their own phone, reviews their first name and age, agrees to the texts and joins. This spec models only what the page shows and what the page lets the person do. The server owns the join rules ([site enrollment](siteEnrollment.md)) and the code limits ([phone verification limits](otpLimits.md)). The browser shell owns the address, the fetch calls, the security check widget, the focus and the copy. The shell keeps a Peon invitation token only in the page's memory: the token survives direct phone verification in the same page, the Cloud phone sign-in provider receives no token, and the page puts no invitation in persistent storage. After Cloud returns, the person reopens the original invitation link in the verified session. For a first Cloud sign-in, the site can seal the allowed name, age and agent-return flag with the pending Peon handoff, and the Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The site clears the draft cookie when the returning tab presents its one-use receipt. The page stores only the receipt across navigation and clears it on return. The shell sends each server answer to this machine as one event. The public sites have no sign-in link, no settings page and no member dashboard: this page is only for joining.
 
 ## Story: Open the join page from my agent's link
 
@@ -43,6 +43,12 @@ pure val initial: JoinPage = {
 pure val fragmentNameMax = 50
 pure val fragmentAgeValues = Set(0, 7, 120, 121)
 pure val ageDigitCountValues = Set(0, 1, 3, 4)
+
+pure def fragmentNameKept(nameLength: int): int =
+  if (nameLength > fragmentNameMax) fragmentNameMax else nameLength
+
+pure def lawFragmentNameKeptWithinLimit(nameLength: int): bool =
+  fragmentNameKept(nameLength) <= fragmentNameMax
 
 pure def fragmentAgeAccepted(ageDigitsOnly: bool, ageDigitCount: int, fragmentAge: int): bool =
   ageDigitsOnly and ageDigitCount >= 1 and ageDigitCount <= 3 and fragmentAge <= 120
@@ -174,7 +180,7 @@ pure def lawOnlyCloudAnswerUsesCloud(lookup: AuthLookup): bool =
 
 ### The page sends a number only when it is valid and the security check passed
 
-The page refuses a number that is not a 10-digit US mobile number, and shows "invalid phone". While the security check runs, the page refuses to send and asks the person to wait. When the check failed, the page refuses to send and asks the person to refresh. A check that fails while the phone step shows replaces an empty error or a check error. A check that passes clears a check error. A passed check can expire, and then it runs again. A code request starts only when the check passed, or when the site has no check.
+The page refuses a number that is not a 10-digit US mobile number, and shows "invalid phone". While the security check runs, the page refuses to send and asks the person to wait. When the check failed, the page refuses to send and asks the person to refresh. A check that fails while the phone step shows replaces an empty error, "wait for the check" or "check failed". A check that passes clears "wait for the check" and "check failed". It keeps the other errors, such as a refused check or "confirm the check" after a resend. A passed check can expire, and then it runs again. A code request starts only when the check passed, or when the site has no check.
 
 ```quint
 pure def canSettleCheck(page: JoinPage): bool = page.check == CheckRunning
@@ -308,7 +314,7 @@ pure def answerCloudStart(page: JoinPage, opened: bool): JoinPage =
 
 ### After sign-in the page reads the session again and shows its step
 
-The page routes the new session as it does when it loads. When the session is gone, the page shows the phone step with "session ended". When the page cannot read the session, it shows the phone step with "cannot reach the server". An "account changed" notice stays until the person joins.
+The page routes the new session as it does when it loads. When the session is gone, the page shows the phone step with "session ended". When the page cannot read the session, it shows the phone step with "cannot reach the server". An "account changed" notice stays through the session read, until a verified code or a saved profile clears it.
 
 ```quint
 pure def canRecheck(page: JoinPage, view: SessionView): bool =
@@ -394,22 +400,7 @@ pure def lawFailedSaveKeepsOwnedProfile(page: JoinPage): bool =
 
 ### A Peon invitation stays in memory until the verified account agrees to join
 
-Read one valid token from Peon's issued `/join#invite=` link. Remove the
-fragment before making any API request. Keep the token in this page's
-memory. Only the same-origin Peon session can bind it to its verified
-account marker. A new owner of the same verified phone has a different
-marker. When that account completes the consent form, the page sends
-the token in the same-origin Join JSON request along with its account
-marker. The server decides whether the invitation is current and can be
-accepted by that account. If it refuses the invitation, the page cannot
-join without it on that attempt. Clear the token after a definite result
-or loss or replacement of the verified account. A temporary request
-failure can retry with the same verified account.
-
-An invitation survives direct phone verification in the same page.
-The Cloud phone sign-in provider receives no invitation token. After
-Cloud returns, reopen the original invitation link in the verified
-session. The page puts no invitation in persistent storage.
+Read one valid token from Peon's issued `/join#invite=` link, and remove the fragment before any API request. Only a Peon session that the server shows with a verified account marker can bind the token. A new owner of the same verified phone has a different marker. The page sends the token, with its account marker, in the same-origin Join JSON request only when the bound account sends it, the address is clean and the person ticked the consent box on a complete profile. The server decides whether the invitation is current and can be accepted by that account. If it refuses the invitation, the page cannot join without it on that attempt. The page clears the token when it loses or replaces the account that it shows, and after every join answer except a temporary failure, which can retry with the same verified account.
 
 ```quint
 pure def browserInvitationMayBind(peonApp: bool, verifiedView: bool): bool =
@@ -424,8 +415,13 @@ pure def browserInvitationKeepsAccount(beforeAccount: int, afterAccount: int): b
 pure def browserInvitationMayRetry(joinAnswer: JoinOutcome): bool =
   joinAnswer == JoinFailed
 
-pure def lawBrowserInvitationNeedsCleanConsentedAccount(boundAccount: bool, addressClean: bool, consented: bool): bool =
-  browserInvitationMaySubmit(boundAccount, addressClean, consented) implies (boundAccount and addressClean and consented)
+pure def lawBrowserInvitationNeedsCleanConsentedAccount(page: JoinPage, form: ProfileForm, boundAccount: bool): bool =
+  val submitted = submitProfile(page, form)
+  (canSubmitProfile(page) and canAnswerJoin(submitted) and browserInvitationMaySubmit(boundAccount, submitted.addressClean, submitted.consented))
+    implies (boundAccount and page.addressClean and profileComplete(form) and submitted.consented)
+
+pure def lawBrowserInvitationKeptOnlyForRetry(joinAnswer: JoinOutcome): bool =
+  browserInvitationMayRetry(joinAnswer) implies (joinRefusal(joinAnswer) == NoBlock and answerJoin(initial, joinAnswer).screen == initial.screen)
 
 pure def lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: int, afterAccount: int): bool =
   (beforeAccount > 0 and beforeAccount != afterAccount) implies
@@ -434,9 +430,7 @@ pure def lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: int, afterA
 
 ### Profile values never pass from one account to another
 
-The approved name and age from the agent's link stay in the form through the first sign-in. A changed number, a new code, a verified code and the session read after it do not clear the form. When the page loses or replaces the account that it shows, it clears the form.
-
-For a first Cloud sign-in, the site can seal the allowed name, age and agent-return flag with the pending Peon handoff. The Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The returning tab presents its one-use receipt to the same-origin session read. Only the exact callback session on Peon, while it can join, receives the draft. A fresh link overrides a draft from a prior handoff. The page restores the fields without text consent. The site clears the draft cookie when the returning tab presents its receipt. The page stores only the receipt across navigation and clears it on return. An invitation stays in the original page's memory.
+The approved name and age from the agent's link stay in the form through the first sign-in. A changed number, a new code, a verified code and the session read after it do not clear the form. When the page loses or replaces the account that it shows, it clears the form. After a first Cloud sign-in, the returning tab presents its one-use receipt to the same-origin session read, and only the exact callback session on Peon, while it can join and before the handoff expires, receives the draft. A fresh link overrides a draft from a prior handoff: when the link brought an agent flag or any field, the page does not present the receipt, and the page restores a draft only over a form that has no values and no agent flag. The page restores the fields without text consent. An invitation stays in the original page's memory.
 
 ```quint
 pure def stepFormClearedWhenAccountLeaves(before: JoinPage, after: JoinPage): bool =
@@ -455,7 +449,8 @@ pure def lawCloudPrefillNeedsOwnLiveHandoff(eligible: bool, receiptMatches: bool
     not(cloudJoinPrefillCanRead(eligible, receiptMatches, sessionMatches, asOf, expiresAt))
 
 pure def canRestoreCloudPrefill(page: JoinPage, view: SessionView): bool =
-  page.screen == Loading and view.result == MayJoin and sessionConsistent(view)
+  page.screen == Loading and view.result == MayJoin and sessionConsistent(view) and
+    not(page.formHasValues) and not(page.viaAgent)
 
 pure def restoreCloudPrefill(page: JoinPage, view: SessionView, fromAgent: bool, hasFields: bool): JoinPage =
   { ...page, viaAgent: fromAgent, formHasValues: hasFields, consented: false }

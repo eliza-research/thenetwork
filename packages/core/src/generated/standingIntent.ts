@@ -21,15 +21,22 @@ export function classifyStandingIntent(status: string, expiresAt: number, asOf: 
 
 /** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
 //@ pure
+export function standingIntentSuppliesEvidence(phase: StandingIntentPhase): boolean {
+  return phase === "IntentLive";
+}
+
+/** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
+//@ pure
+export function lawPausedOrClosedSuppliesNoEvidence(expiresAt: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !standingIntentSuppliesEvidence(classifyStandingIntent("paused", expiresAt, asOf)) && !standingIntentSuppliesEvidence(classifyStandingIntent("closed", expiresAt, asOf));
+}
+
+/** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
+//@ pure
 export function lawDeadlineEndsAnActiveIntent(expiresAt: number): boolean {
   //@ ensures \result === true
   return classifyStandingIntent("active", expiresAt, expiresAt) === "IntentExpired";
-}
-
-/** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
-//@ pure
-export function standingIntentBlocksLearnedCopy(phase: StandingIntentPhase): boolean {
-  return phase !== "IntentExpired";
 }
 
 /** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
@@ -40,9 +47,29 @@ export function learnedIntentMayProject(phase: StandingIntentPhase, blockingReco
 
 /** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
 //@ pure
+export function standingIntentBlocksLearnedCopy(phase: StandingIntentPhase): boolean {
+  return phase !== "IntentExpired";
+}
+
+/** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
+//@ pure
 export function lawBlockingRecordPreventsLearnedProjection(phase: StandingIntentPhase): boolean {
   //@ ensures \result === true
   return !learnedIntentMayProject(phase, true);
+}
+
+/** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
+//@ pure
+export function lawOnlyExpiredRecordLetsLearnedCopyThrough(status: string, expiresAt: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return standingIntentBlocksLearnedCopy(classifyStandingIntent(status, expiresAt, asOf)) === !(status === "active" && expiresAt <= asOf);
+}
+
+/** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
+//@ pure
+export function lawExpiredActiveRowStopsSuperseding(expiresAt: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !(asOf >= expiresAt) || !standingIntentSuppliesEvidence(classifyStandingIntent("active", expiresAt, asOf));
 }
 
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */

@@ -49,7 +49,7 @@ pure def biasOpportunityInWindow(createdAt: int, from: int, asOf: int): bool =
   createdAt >= from and createdAt <= asOf
 
 pure def biasOpportunityReached(stage: str, closedFrom: str): bool =
-  stage != "review" and not(stage == "closed" and closedFrom == "review")
+  stage != "review" and not(stage == "closed" and (closedFrom == "review" or closedFrom == ""))
 
 pure def biasDateHeld(stage: str, hasMeeting: bool, meetingAt: int, from: int, asOf: int): bool =
   stage == "done" and hasMeeting and meetingAt >= from and meetingAt <= asOf

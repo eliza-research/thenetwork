@@ -4,7 +4,7 @@
 
 ## Story: Join a reviewed public hike only after the group agrees
 
-> As a participant, I want to see a confirmed hike only when the three invited members have each agreed, and I want a private update if it falls through.
+> As a participant, I want to see a confirmed hike only when the three invited members have each agreed, and I want a private update if the booked hike falls through.
 
 ### Review comes before anonymous contact
 
@@ -38,7 +38,7 @@ pure def sometimesRejectedWithoutContact(s: ReviewedGroupJourney): bool = s.phas
 
 ### Booking requires an independent yes from all three invitees
 
-Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes.
+Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes. The deadline does not record a decline: an invitee who did not reply stays without an answer.
 
 ```quint
 pure def groupReplyPending(s: ReviewedGroupJourney, hiker: Hiker): bool =
@@ -61,7 +61,7 @@ pure def answerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: bool): Group
 
 pure def canExpireGroup(s: ReviewedGroupJourney): bool = s.phase == GroupInvited
 pure def expireGroup(s: ReviewedGroupJourney): GroupStep =
-  { state: { ...s, phase: GroupUnderfilled, declined: hikers.select(person => not(s.accepted.includes(person))) }, out: List() }
+  { state: { ...s, phase: GroupUnderfilled }, out: List() }
 
 pure def alwaysRevealsBelongToOneBooking(s: ReviewedGroupJourney): bool =
   s.meetings == (if (s.phase == HikeBooked or s.phase == HikeCancelled) 1 else 0) and s.reveals == 3 * s.meetings

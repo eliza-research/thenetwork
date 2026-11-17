@@ -30,15 +30,35 @@ export function lawCalendarNeedsBookingNotice(currentAdult: boolean, scheduled: 
 
 /** Story: Add my booked meeting to my calendar / A calendar link follows the booked revision and the current owner (spec/calendarInvite.md) */
 //@ pure
-export function calendarDownloadAllowed(currentBooking: boolean, sameStart: boolean, sameRevision: boolean, now: number, expiresAt: number): boolean {
-  return currentBooking && sameStart && sameRevision && now < expiresAt;
+export function calendarInviteExpiresAt(issuedAt: number, startAt: number): number {
+  return startAt < exact_calendarInvite(issuedAt + calendarInviteLifetimeMs) ? startAt : exact_calendarInvite(issuedAt + calendarInviteLifetimeMs);
 }
 
 /** Story: Add my booked meeting to my calendar / A calendar link follows the booked revision and the current owner (spec/calendarInvite.md) */
 //@ pure
-export function lawCalendarLinkExpires(currentBooking: boolean, sameStart: boolean, sameRevision: boolean, expiresAt: number): boolean {
+export function calendarDownloadAllowed(currentOwner: boolean, currentBooking: boolean, sameStart: boolean, sameRevision: boolean, now: number, expiresAt: number): boolean {
+  return currentOwner && currentBooking && sameStart && sameRevision && now < expiresAt;
+}
+
+/** Story: Add my booked meeting to my calendar / A calendar link follows the booked revision and the current owner (spec/calendarInvite.md) */
+//@ pure
+export function lawCalendarLinkExpires(currentOwner: boolean, currentBooking: boolean, sameStart: boolean, sameRevision: boolean, expiresAt: number): boolean {
   //@ ensures \result === true
-  return !calendarDownloadAllowed(currentBooking, sameStart, sameRevision, expiresAt, expiresAt);
+  return !calendarDownloadAllowed(currentOwner, currentBooking, sameStart, sameRevision, expiresAt, expiresAt);
+}
+
+/** Story: Add my booked meeting to my calendar / A calendar link follows the booked revision and the current owner (spec/calendarInvite.md) */
+//@ pure
+export function lawCalendarLinkNeedsCurrentOwner(currentBooking: boolean, sameStart: boolean, sameRevision: boolean, now: number, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return !calendarDownloadAllowed(false, currentBooking, sameStart, sameRevision, now, expiresAt);
+}
+
+/** Story: Add my booked meeting to my calendar / A calendar link follows the booked revision and the current owner (spec/calendarInvite.md) */
+//@ pure
+export function lawCalendarLinkEndsByStartAndLifetime(issuedAt: number, startAt: number): boolean {
+  //@ ensures \result === true
+  return calendarInviteExpiresAt(issuedAt, startAt) <= startAt && calendarInviteExpiresAt(issuedAt, startAt) <= exact_calendarInvite(issuedAt + calendarInviteLifetimeMs);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

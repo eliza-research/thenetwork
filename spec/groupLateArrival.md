@@ -8,7 +8,7 @@ A late-arrival report is part of the [booked meeting journey](product/stories.md
 
 ### Relay one direct report for one current booked group
 
-Accept an exact late-arrival report from the member's signed conversation, for one reviewed, scheduled group whose confirmed roster includes that member. The group needs at least three accepted participants whose booking has been sent. Carry the exact schedule revision and start time through the send queue. Start accepting reports one hour before the meeting and stop thirty minutes after it starts. An accepted member can make one report per schedule revision.
+Accept an exact late-arrival report from the member's signed conversation, for one reviewed, scheduled group whose confirmed roster includes that member. The group must be a meeting whose logistics the Network arranged, not a job introduction. The group needs at least three accepted participants whose booking has been sent. Carry the exact schedule revision and start time through the send queue. Start accepting reports one hour before the meeting and stop thirty minutes after it starts. An accepted member can make one report per schedule revision.
 
 ```quint
 pure val lateArrivalLeadMs = 60 * 60000

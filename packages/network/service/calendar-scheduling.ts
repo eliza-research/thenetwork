@@ -6,7 +6,7 @@ import {
   CALENDAR_SCHEDULING_MAX_BODY, calendarOwnerProof, calendarOwnerRequest, calendarReplyObservation, type CalendarOwnerRequest, type CalendarPreloadRequest,
   type CalendarSchedulingObservation, type CalendarSchedulingOwner,
 } from "../../core/src/svc/calendar-scheduling.ts";
-import { calendarAuthorityLifetimeMs, calendarCoverageMaxMs, calendarOwnerPath, calendarPreloadPath, calendarPreloadSeatAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
+import { calendarAuthorityLifetimeMs, calendarCoverageMaxMs, calendarDirectTurnReadsBooked, calendarOwnerPath, calendarPreloadPath, calendarPreloadSeatAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { storedCalendarOwnerOptedIn, type NetworkState } from "../src/network.ts";
 
 const REQ_TIMEOUT_MS = 1500;
@@ -29,7 +29,9 @@ export function schedulingCalendarMembers(state: NetworkState, target: CalendarS
       && calendarPreloadSeatAllowed(statuses.get(id) ?? "", true, true);
     const lateJoin = target.kind === "tick" ? opp.participants.some(pendingSeat)
       : target.kind === "member" && !rescheduling && pendingSeat(target.memberId);
-    const booked = opp.stage === "scheduled" && (opp.meetingAt ?? 0) > now && (lateJoin || rescheduling);
+    const directBooked = target.kind === "member"
+      && calendarDirectTurnReadsBooked(statuses.get(target.memberId) ?? "", pendingSeat(target.memberId), rescheduling);
+    const booked = opp.stage === "scheduled" && (opp.meetingAt ?? 0) > now && (target.kind === "tick" ? lateJoin : directBooked);
     if (!reviewing && !(opp.review?.decision === "approve" && !opp.review.invalidated && (probing || booked))) continue;
     // spec/calendarFreeBusy.md, "A scheduling read uses only the seats still involved in that work"
     const seats = opp.participants.filter(id => calendarPreloadSeatAllowed(statuses.get(id) ?? "", booked, lateJoin && pendingSeat(id)));

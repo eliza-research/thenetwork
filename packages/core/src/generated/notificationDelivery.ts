@@ -28,6 +28,32 @@ export function removeProactiveItems(recentSends: number, weeklyCap: number, con
   return recentSends >= weeklyCap && containsProactive;
 }
 
+/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
+//@ pure
+export function holdAtWeeklyCap(removeProactive: boolean, requestedCount: number): boolean {
+  return removeProactive && requestedCount <= 0;
+}
+
+/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
+//@ pure
+export function digestUsesProactiveSlot(proactiveCount: number): boolean {
+  return proactiveCount > 0;
+}
+
+/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
+//@ pure
+export function lawRequestedOnlyDigestUsesNoSlot(proactiveCount: number): boolean {
+  //@ ensures \result === true
+  return !(proactiveCount <= 0) || !digestUsesProactiveSlot(proactiveCount);
+}
+
+/** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
+//@ pure
+export function lawCapHoldsOnlyWhenNothingRequestedRemains(removeProactive: boolean, requestedCount: number): boolean {
+  //@ ensures \result === true
+  return !(requestedCount > 0) || !holdAtWeeklyCap(removeProactive, requestedCount);
+}
+
 /** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
 //@ pure
 export function assistantGrantCounts(samePerson: boolean, sameAssistant: boolean, allowsUpdates: boolean, live: boolean): boolean {

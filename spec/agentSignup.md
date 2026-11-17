@@ -216,7 +216,7 @@ pure def requestNewCode(s: AgentSignup): AgentSignup =
 
 ### The account's state decides whether the agent may join
 
-After sign-in, the agent reads the account. An account of another app stops the flow. An existing membership is read back and reported as it is. The agent never sends Join again to overwrite it. An account on hold stops with the review outcome. If the site says an invitation is required, the agent can attempt Join only with a forwarded link for this app that the person supplied and explicitly approved with their profile and text consent. A joinable account can use the same kind of invitation by choice. The agent keeps the token value private and treats the server result as the authority on whether the invitation can be used.
+After sign-in, the agent reads the account. An account of another app stops the flow. An existing membership ends the flow and is reported as it is, with no read-back step. The agent never sends Join again to overwrite it. An account on hold stops with the review outcome. If the site says an invitation is required, the agent can attempt Join only with a forwarded link for this app that the person supplied and explicitly approved with their profile and text consent. A joinable account can use the same kind of invitation by choice. The agent keeps the token value private and treats the server result as the authority on whether the invitation can be used.
 
 ```quint
 type AccountFact = OtherAppAccount | MemberAccount | JoinableAccount | InviteRequired | HeldForReview

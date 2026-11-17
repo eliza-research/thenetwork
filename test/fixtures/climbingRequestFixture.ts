@@ -1,10 +1,11 @@
 import { withSignedTurnFixture, type SignedTurnFixture } from "./signedTurnFixture.ts";
 
-type Item = { oppId: string; deadline: number; origin: "request" };
+type Item = { oppId: string; revision: number; deadline: number; origin: "request" };
 
 function isRequestItem(value: unknown): value is Item {
   return !!value && typeof value === "object" && "origin" in value && value.origin === "request" &&
-    "oppId" in value && typeof value.oppId === "string" && "deadline" in value &&
+    "oppId" in value && typeof value.oppId === "string" && "revision" in value &&
+    typeof value.revision === "number" && Number.isSafeInteger(value.revision) && "deadline" in value &&
     typeof value.deadline === "number" && Number.isSafeInteger(value.deadline);
 }
 

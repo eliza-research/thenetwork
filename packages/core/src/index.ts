@@ -14,7 +14,7 @@ export * from "./pii.ts";
 export * from "./stats.ts";
 export { budgetReached, inCooldown, pairInteractionCooling } from "./generated/matchingBudgets.ts";
 export {
-  availabilityCheckInBudget, initialInviteBudget, minorInitialInviteBudget, planInviteBudget, unsolicitedStateBudget,
+  availabilityCheckInBudget, initialInviteBudget, minorInitialInviteBudget, minorInviteBudget, planInviteBudget, stricterInviteBudget, unsolicitedStateBudget,
   type OutreachBudget,
 } from "./generated/participationBudgets.ts";
 export { withinMutualRadius } from "./dating-radius.ts";

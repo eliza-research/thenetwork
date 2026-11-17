@@ -1,6 +1,6 @@
 import { CITY_TZ, fromLocal, localParts, temporaryPresenceWindow, validAge, type NetworkEvent } from "@thenetwork/core";
 import {
-  maxSoloEventOptions, soloEventAgeAllowed, soloEventCityAllowed, soloEventEligible, soloEventPrecedes,
+  soloReplyHasRoom, soloEventAgeAllowed, soloEventCityAllowed, soloEventEligible, soloEventPrecedes,
 } from "../../core/src/generated/soloConcierge.ts";
 import { presenceWindowCovers, presenceWindowsOverlap, type PresenceWindow } from "../../core/src/generated/travelPresence.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
@@ -96,12 +96,12 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   const picks: string[] = [];
   const publicLinks: string[] = [];
   for (const { event, fit, minutes, scheduled } of options.sort((a, b) => precedes(a, b) ? -1 : precedes(b, a) ? 1 : a.event.id.localeCompare(b.event.id))) {
+    if (!soloReplyHasRoom(picks.length)) break;
     const why = fit > 0 ? "Fits one of your interests." : scheduled ? "Fits your saved availability." : minutes !== undefined && limit !== undefined ? "Within your travel range." : "Within the time you asked about.";
     const line = `${event.title} — ${when.format(event.start)} at ${event.listing.venue}. ${why} ${event.listing.url}`;
     if ([...picks, line].join("\n").length > 1500) continue;
     picks.push(line);
     publicLinks.push(event.listing.url);
-    if (picks.length === maxSoloEventOptions) break;
   }
   return { body: picks.length ? picks.join("\n") : "I couldn't find any current NYC Parks listings that fit your request.", publicLinks };
 }

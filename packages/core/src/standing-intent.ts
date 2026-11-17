@@ -1,5 +1,5 @@
 import { DAY } from "./clock.ts";
-import { classifyStandingIntent } from "./generated/standingIntent.ts";
+import { classifyStandingIntent, standingIntentSuppliesEvidence } from "./generated/standingIntent.ts";
 import type { Intent } from "./types.ts";
 
 type IntentTiming = Pick<Intent, "status" | "createdAt" | "horizonDays">;
@@ -13,5 +13,5 @@ export function standingIntentPhaseAt(intent: IntentTiming, now: number) {
 }
 
 export function standingIntentLive(intent: IntentTiming, now: number): boolean {
-  return standingIntentPhaseAt(intent, now) === "IntentLive";
+  return standingIntentSuppliesEvidence(standingIntentPhaseAt(intent, now));
 }

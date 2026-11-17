@@ -1,6 +1,6 @@
 # Trust level
 
-This library classifies the score after the network applies a trust signal. The network stores scores and events, schedules decay, and handles staff decisions.
+This library classifies the score after the network applies a trust signal. The network stores scores and events, schedules decay, and handles staff decisions. The classifier's patterns decide which messages carry a signal: a recognized request to start a consented number swap within a mutual match is not an extraction signal and follows the relay path, and a sentence that tells what someone else did is a disclosure, so a report that quotes someone else's behavior adds no points to the reporter.
 
 ## Story: Pause unsafe activity
 
@@ -22,7 +22,7 @@ pure def levelForScore(score: int, held: bool): TrustLevel =
 
 ### An explicit attempt to bypass contact consent triggers watch
 
-The classifier distinguishes a request for another member’s private phone number with an explicit intention to contact them directly. One such attempt reaches watch on a clean record. An ordinary extraction signal adds two points. A recognized request to start a consented swap within a mutual match follows the relay path without adding trust points. A report that quotes someone else’s behavior does not add points to the reporter.
+The classifier distinguishes a request for another member’s private phone number with an explicit intention to contact them directly. One such attempt reaches watch on a clean record. An ordinary extraction signal adds two points.
 
 ```quint
 pure def contactExtractionRisk(explicitBypass: bool): int =

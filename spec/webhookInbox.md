@@ -1,6 +1,6 @@
 # Process a sender's queued webhook messages
 
-The [signed turn model](models/turn_consent.md) also covers the sender's pending webhook inbox. The [VibeLang drain shell](../packages/core/src/vibe/webhookInboxShell.vibe) runs the generated selection and attempt transitions. Postgres owns durable insertion, the sender lock, sorted reads, and atomic completion.
+The [signed turn model](models/turn_consent.md) also covers the sender's pending webhook inbox. The [VibeLang drain shell](../packages/core/src/vibe/webhookInboxShell.vibe) runs the generated selection and attempt transitions. Postgres owns durable insertion, the sender lock, sorted reads, and atomic completion. The completion write cancels a selected row only when it is still pending, comes from the same sender, and has a receive time at or before the STOP's own.
 
 ## Story: Handle my pending messages in order while prioritizing consent
 
@@ -29,7 +29,7 @@ pure def lawComplianceGoesFirst(signedTurnBlocks: bool): bool =
 
 ### Completing a STOP clears earlier ordinary rows in the same write
 
-After handling succeeds, record completion. A STOP cancels selected pending ordinary rows from the same sender with receive times at or before its own. Complete the STOP and cancel these rows in one database write. Other compliance requests leave those rows alone. The queue reports completion only after the write commits.
+After handling succeeds, record completion. A STOP selects for cancellation every ordinary row in its window other than itself. Complete the STOP and cancel these rows in one database write. Other compliance requests select no rows, and a STOP never selects a compliance row. The queue reports completion only after the write commits.
 
 ```quint
 type WebhookPhase = RunningWebhook | CompleteWebhook | CancelEarlier | WebhookDone | RetryWebhook | DropWebhook

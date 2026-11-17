@@ -11,6 +11,8 @@ export type ProbeTiming = "WaitForQuestion" | "WaitForWindow" | "CheckAvailabili
 export type ProbeAvailability = "ReadyToSend" | "ParticipantAway" | "NoCommonTime";
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 export type ReplacementRoute = "IgnoreReplacement" | "CloseRequester" | "CloseManager" | "FindAlternate";
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+export type NoAlternateRoute = "ContinueGroup" | "CloseWithoutAlternate";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -236,9 +238,29 @@ export function replacementRoute(probing: boolean, requesterOut: boolean, manage
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
+export function noAlternateRoute(group: boolean, remaining: number): NoAlternateRoute {
+  return group && remaining >= 3 ? "ContinueGroup" : "CloseWithoutAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
 export function lawRequiredParticipantCannotBeReplaced(probing: boolean, requesterOut: boolean, managerOut: boolean): boolean {
   //@ ensures \result === true
   return !(requesterOut || managerOut) || replacementRoute(probing, requesterOut, managerOut) !== "FindAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
+export function lawPairClosesWithoutAlternate(remaining: number): boolean {
+  //@ ensures \result === true
+  return noAlternateRoute(false, remaining) === "CloseWithoutAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
+export function lawGroupBelowThreeCloses(remaining: number): boolean {
+  //@ ensures \result === true
+  return !(remaining < 3) || noAlternateRoute(true, remaining) === "CloseWithoutAlternate";
 }
 
 /** Do the rules allow this event in this state? */

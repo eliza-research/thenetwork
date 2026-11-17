@@ -23,10 +23,10 @@ import {
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
-  type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
+  type TokenAuthority, type TokenFlow, type TokenReason, accessTokenAuthority, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
-import { browserOwnsLiveGrant, removalFormMayRevoke, removeConfirmationMs, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
+import { browserOwnsLiveGrant, removalConfirmationEndsAt, removalFormMayRevoke, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
@@ -945,7 +945,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const named = await Promise.all(grants.map(async grant => ({ ...grant, clientName: (await store.getClient(grant.clientId))?.name ?? null })));
     if (who.personId !== await o.platform.personForKey(owner.phoneKey)) return signInFirst();
     const selected = revokeOne ? undefined : grants.find(grant => grant.id === c.url.searchParams.get("remove"));
-    const until = Math.min(at + removeConfirmationMs, selected?.expiresAt ?? Infinity);
+    const until = selected ? removalConfirmationEndsAt(at, selected.expiresAt) : 0;
     const confirmation = selected && who.browserBinding ? {
       grantId: selected.id, proof: `${until}.${consentRemovalMac(who.browserBinding, selected, until)}`,
     } : undefined;
@@ -1000,9 +1000,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
-    const authority = await grantAuthorityCurrent(grant);
-    if (t.expiresAt <= now() || grant.expiresAt <= now()) return "invalid";
-    if (authority !== "valid") return authority;
+    // spec/oauthTokenLifecycle.md, "The request needs current grant authority and must stay within its consent"
+    const current = tokenAuthority[await grantAuthorityCurrent(grant)];
+    const authority = accessTokenAuthority(!(t.expiresAt <= now() || grant.expiresAt <= now()), current);
+    if (authority === "Invalid") return "invalid";
+    if (authority === "Unavailable") return "unavailable";
     return { token: t, grant, client };
   }
 

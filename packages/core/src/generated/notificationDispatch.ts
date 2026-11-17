@@ -25,14 +25,32 @@ export function inv(current: DigestFlow): boolean {
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
+export function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean {
+  return requested || proactiveAllowed;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
 export function inboxItemStillPending(seen: boolean, notified: boolean): boolean {
   return !seen && !notified;
 }
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
-export function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean {
-  return requested || proactiveAllowed;
+export function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean {
+  return hasExpiry && expiresAt <= at;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
+export function inboxItemDigestible(seen: boolean, notified: boolean, hasExpiry: boolean, expiresAt: number, at: number): boolean {
+  return inboxItemStillPending(seen, notified) && !inboxItemExpired(hasExpiry, expiresAt, at);
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
+export function canRereadItems(digest: DigestFlow): boolean {
+  return digest.phase === "DigestStarting";
 }
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
@@ -44,8 +62,9 @@ export function rereadItems(digest: DigestFlow, plannedCount: number, remainingC
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
-export function canRereadItems(digest: DigestFlow): boolean {
-  return digest.phase === "DigestStarting";
+export function lawExpiredItemLeavesTheDigest(seen: boolean, notified: boolean, expiresAt: number, at: number): boolean {
+  //@ ensures \result === true
+  return !(expiresAt <= at) || !inboxItemDigestible(seen, notified, true, expiresAt, at);
 }
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
@@ -103,12 +122,6 @@ export function sometimesQueuesDigest(digest: DigestFlow): boolean {
 //@ pure
 export function sometimesCancelsDigest(digest: DigestFlow): boolean {
   return digest.phase === "DigestCancelled";
-}
-
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
-//@ pure
-export function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean {
-  return hasExpiry && expiresAt <= at;
 }
 
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */

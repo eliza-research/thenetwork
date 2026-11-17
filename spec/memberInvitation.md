@@ -1,6 +1,6 @@
 # Member invitation
 
-The default is a forwarding link. [Expected invitation delivery](expectedMemberInvitation.md) covers the optional confirmed service send.
+The default is a forwarding link. [Expected invitation delivery](expectedMemberInvitation.md) covers the optional confirmed service send. The shell stores the pending draft. A cancellation or an opt-out deletes the draft, so a later confirmation finds no draft to confirm.
 
 ## Story: Forward an invitation for someone I know
 
@@ -45,7 +45,7 @@ pure def lawUnavailableMemberInviteDoesNotSpend(status: str): bool =
 
 ### Confirm private relationship evidence before issuance
 
-Ask the inviter how long and how well they know the person. Read back the reported relationship, duration and depth. A confirmation must come from the inviter's direct turn and refer to that current draft. A draft is valid for fifteen minutes from the request. A cancellation or opt-out ends the draft. Keep only the reported relationship, coarse duration and depth with the invitation. An invitee's phone, profile details and the inviter's raw notes do not go to matching, delivery or staff review.
+Ask the inviter how long and how well they know the person. Read back the reported relationship, duration and depth. A confirmation must come from the inviter's direct turn and refer to that current draft. A draft is valid for fifteen minutes from the request. Keep only the reported relationship, coarse duration and depth with the invitation. An invitee's phone, profile details and the inviter's raw notes do not go to matching, delivery or staff review.
 
 ```quint
 pure val memberInviteDraftMs: int = 900000
@@ -82,6 +82,12 @@ pure def memberInviteNeedsReview(weak: bool, burst: bool, riskLanguage: bool): b
 
 pure def lawUnusualMemberInviteRequiresReview(weak: bool, burst: bool, riskLanguage: bool): bool =
   (weak or burst or riskLanguage) implies memberInviteNeedsReview(weak, burst, riskLanguage)
+
+pure def memberInviteHeldLinkReleased(needsReview: bool, approvedInSignedTurn: bool): bool =
+  not(needsReview) or approvedInSignedTurn
+
+pure def lawHeldMemberInviteNeedsApproval(needsReview: bool): bool =
+  needsReview implies not(memberInviteHeldLinkReleased(needsReview, false))
 ```
 
 ### The link goes to the inviter as a reply

@@ -2,7 +2,7 @@
 import { runPromise, tryPromise } from "effect/Effect";
 import { $schemaErrorMatcher, TaggedError } from "vibelang-runtime/internal";
 import * as Effect from "effect/Effect";
-import { apply, inboxItemAllowedForRecipient, inboxItemExpired, inboxItemStillPending, initial, } from "./generated/notificationDispatch.effect.js";
+import { apply, inboxItemAllowedForRecipient, inboxItemDigestible, inboxItemExpired, initial, } from "./generated/notificationDispatch.effect.js";
 class DigestIOFailure extends TaggedError("DigestIOFailure") {
     static {
         $schemaErrorMatcher(this, "DigestIOFailure", true);
@@ -16,8 +16,7 @@ function io(message, work) {
 export function dispatchInboxDigest(planned, now, effects) {
     return runPromise(Effect.gen(function* () {
         const items = yield* io("Could not read the planned inbox items", () => effects.readItems(planned.itemIds));
-        const pending = items.filter(item => inboxItemStillPending(item.seenAt !== undefined, item.notifiedAt !== undefined)
-            && !inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now));
+        const pending = items.filter(item => inboxItemDigestible(item.seenAt !== undefined, item.notifiedAt !== undefined, item.expiresAt !== undefined, item.expiresAt ?? 0, now));
         const recipient = pending.length > 0
             ? yield* io("Could not refresh the digest recipient", () => effects.readRecipient(planned.personId)) : undefined;
         const fresh = recipient === undefined ? [] : pending.filter(item => inboxItemAllowedForRecipient(item.urgency === "requested", recipient.proactiveAllowed));

@@ -82,6 +82,12 @@ export function readRefresh(flow: TokenFlow, refreshMatches: boolean): TokenFlow
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
 //@ pure
+export function accessTokenAuthority(credentialLive: boolean, authority: TokenAuthority): TokenAuthority {
+  return !credentialLive ? "Invalid" : authority;
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
 export function canReadGrant(flow: TokenFlow): boolean {
   return flow.phase === "CheckingGrant";
 }
@@ -102,6 +108,20 @@ export function canReadRefreshBinding(flow: TokenFlow): boolean {
 //@ pure
 export function codeCanBeConsumed(flow: TokenFlow, bothLive: boolean): boolean {
   return flow.phase === "AwaitingConsumption" && bothLive;
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function lawExpiredAccessTokenIsInvalid(authority: TokenAuthority): boolean {
+  //@ ensures \result === true
+  return accessTokenAuthority(false, authority) === "Invalid";
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function lawBannedAccessTokenIsInvalid(credentialLive: boolean): boolean {
+  //@ ensures \result === true
+  return accessTokenAuthority(credentialLive, "Invalid") === "Invalid";
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */

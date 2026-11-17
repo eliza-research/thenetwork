@@ -31,8 +31,13 @@ pure def participationOverride(optedOut: bool, windowActive: bool, scheduledMode
   else if (not(windowActive)) KeepBase
   else if (scheduledMode == "open") UseNormal
   else if (scheduledMode == "paused") UsePaused
-  else UseQuiet
+  else if (scheduledMode == "busy" or scheduledMode == "traveling") UseQuiet
+  else KeepBase
 
 pure def lawStopAlwaysPauses(windowActive: bool, scheduledMode: str): bool =
   participationOverride(true, windowActive, scheduledMode) == UsePaused
+
+pure def lawUnknownModeKeepsBase(scheduledMode: str): bool =
+  (scheduledMode != "open" and scheduledMode != "paused" and scheduledMode != "busy" and scheduledMode != "traveling")
+    implies participationOverride(false, true, scheduledMode) == KeepBase
 ```

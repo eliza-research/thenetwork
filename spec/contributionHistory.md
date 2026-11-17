@@ -25,7 +25,7 @@ pure def lawContributionHistoryRequiresAdult(age: int): bool =
 
 ### Show verified acts a page at a time
 
-Rebuild credits from the committed event log for this app. For events with an equal timestamp, establish membership and age before activity, record the accepted plan and offered help before their outcomes, and record attendance before its feedback. Apply reversals after the credits they can reverse. Show the date and a fixed label for each valid contribution, newest first, with up to five items per reply. Include a verified contribution even when it earned zero credit. Omit losses, reversed entries, amounts, ranks, names, identifiers, private notes and provenance. Use the signed reply's leak checks and do not fall back to independent delivery.
+Rebuild credits from the committed event log for this app. For events with an equal timestamp, establish membership and age first, then apply safety flags and confirmed abuse, then activity. Record the accepted plan and offered help before their outcomes, and record attendance before its feedback. Apply reversals after the credits they can reverse. Show the date and a fixed label for each valid contribution, newest first, with up to five items per reply. Include a verified contribution even when it earned zero credit. Omit losses, reversed entries, amounts, ranks, names, identifiers, private notes and provenance. Use the signed reply's leak checks and do not fall back to independent delivery.
 
 ```quint
 pure val contributionHistoryPageSize = 5

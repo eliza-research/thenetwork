@@ -11,6 +11,7 @@ export type UnlinkedCancellation = "NoCancellation" | "NoMatchingBooking" | "Ask
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "startProbing"; approvalRecorded: boolean; eligible: boolean }
+  | { type: "reroll"; replacementFound: boolean }
   | { type: "book"; hasConsent: boolean }
   | { type: "complete"; feedbackDue: boolean }
   | { type: "close" };
@@ -22,6 +23,12 @@ export const initial: OpportunityLifecycle = { phase: "InReview", approved: fals
 //@ pure
 export function inv(current: OpportunityLifecycle): boolean {
   return alwaysContactStagesRequireApproval(current);
+}
+
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
+//@ pure
+export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
+  return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
 }
 
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
@@ -40,8 +47,16 @@ export function startProbing(proposal: OpportunityLifecycle, approvalRecorded: b
 
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
-export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
-  return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
+export function canReroll(proposal: OpportunityLifecycle, replacementFound: boolean): boolean {
+  return proposal.phase === "InReview";
+}
+
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
+//@ pure
+export function reroll(proposal: OpportunityLifecycle, replacementFound: boolean): OpportunityLifecycle {
+  //@ ensures (inv(proposal) && canReroll(proposal, replacementFound)) ==> alwaysContactStagesRequireApproval(\result)
+  //@ ensures (inv(proposal) && canReroll(proposal, replacementFound)) ==> stepTerminalOpportunityCannotReopen(proposal, \result)
+  return { phase: replacementFound ? "InReview" : "Closed", approved: false };
 }
 
 /** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
@@ -68,7 +83,14 @@ export function book(proposal: OpportunityLifecycle, hasConsent: boolean): Oppor
 //@ pure
 export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   //@ ensures \result === true
-  return !groupCanContinue(remaining) || remaining >= 3;
+  return !(remaining < 3) || !groupCanContinue(remaining);
+}
+
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawPairLeftFromGroupNeedsFreshConsent(proposal: OpportunityLifecycle, remaining: number): boolean {
+  //@ ensures \result === true
+  return !(proposal.phase === "Scheduled" && !groupCanContinue(remaining)) || (canClose(proposal) && !canBook(close(proposal), true));
 }
 
 /** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
@@ -211,6 +233,7 @@ export function lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, 
 //@ pure
 export function enabled(current: OpportunityLifecycle, event: Event): boolean {
   if (event.type === "startProbing") return canStartProbing(current, event.approvalRecorded, event.eligible);
+  if (event.type === "reroll") return canReroll(current, event.replacementFound);
   if (event.type === "book") return canBook(current, event.hasConsent);
   if (event.type === "complete") return canComplete(current, event.feedbackDue);
   if (event.type === "close") return canClose(current);
@@ -223,6 +246,7 @@ export function step(current: OpportunityLifecycle, event: Event): OpportunityLi
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "startProbing" && canStartProbing(current, event.approvalRecorded, event.eligible)) return startProbing(current, event.approvalRecorded, event.eligible);
+  if (event.type === "reroll" && canReroll(current, event.replacementFound)) return reroll(current, event.replacementFound);
   if (event.type === "book" && canBook(current, event.hasConsent)) return book(current, event.hasConsent);
   if (event.type === "complete" && canComplete(current, event.feedbackDue)) return complete(current, event.feedbackDue);
   if (event.type === "close" && canClose(current)) return close(current);
@@ -244,6 +268,7 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "startProbing" && typeof raw.approvalRecorded === "boolean" && typeof raw.eligible === "boolean") return { type: "startProbing", approvalRecorded: raw.approvalRecorded, eligible: raw.eligible };
+  if (raw.type === "reroll" && typeof raw.replacementFound === "boolean") return { type: "reroll", replacementFound: raw.replacementFound };
   if (raw.type === "book" && typeof raw.hasConsent === "boolean") return { type: "book", hasConsent: raw.hasConsent };
   if (raw.type === "complete" && typeof raw.feedbackDue === "boolean") return { type: "complete", feedbackDue: raw.feedbackDue };
   if (raw.type === "close") return { type: "close" };

@@ -1,6 +1,6 @@
 import type { AppId, MemberId } from "@thenetwork/core";
 import { standingCeiling, type LaneSide, type MatchLane } from "../../../core/src/generated/matchLane.ts";
-import { observeStanding } from "../../../core/src/generated/memberStanding.ts";
+import { observeStanding, standingHistoryUsable } from "../../../core/src/generated/memberStanding.ts";
 import { sha256 } from "../hash.ts";
 import type { MemberStandingRow } from "../types.ts";
 import type { World } from "../world.ts";
@@ -45,7 +45,8 @@ export function standingObservations(w: World, updates?: MemberStandingRow[]) {
     const { memberId, lane, side } = member;
     const sources = new Set(sourceIds.map(id => standingEvidenceKey(w.pack.id, memberId, lane, side, id)));
     const previous = prior.get(key);
-    const authorized = previous?.evidenceIds.every(id => sources.has(id)) ? previous : undefined;
+    // spec/memberStanding.md, "Standing history requires current account and lane authority"
+    const authorized = standingHistoryUsable(previous !== undefined, previous?.evidenceIds.every(id => sources.has(id)) === true) ? previous : undefined;
     const { standing: value, updatedAt: observedAt } = observeStanding(authorized?.value ?? target, authorized?.observedAt ?? now, target, now, authorized !== undefined);
     observedHere.set(key, value);
     if (observedAt >= 0 && (!authorized || value !== authorized.value || observedAt !== authorized.observedAt)) {

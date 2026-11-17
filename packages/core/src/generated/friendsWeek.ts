@@ -191,9 +191,29 @@ export function friendTableHasMinimumCandidates(compatibleCandidates: number, mi
 
 /** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
 //@ pure
-export function lawFriendTableNeedsMoreThanOneCompatiblePeer(compatibleCandidates: number, minimumInvitees: number): boolean {
+export function friendTableTriesNextStarter(tableReserved: boolean, startersLeft: number): boolean {
+  return !tableReserved && startersLeft > 0;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendTableBelowMinimumIsRefused(compatibleCandidates: number, minimumInvitees: number): boolean {
   //@ ensures \result === true
-  return !(compatibleCandidates <= 2 && minimumInvitees >= 3) || !friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees);
+  return !(compatibleCandidates < minimumInvitees) || !friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendTableStopsAfterAReservedTable(startersLeft: number): boolean {
+  //@ ensures \result === true
+  return !friendTableTriesNextStarter(true, startersLeft);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendTableStopsWhenNoStarterIsLeft(tableReserved: boolean): boolean {
+  //@ ensures \result === true
+  return !friendTableTriesNextStarter(tableReserved, 0);
 }
 
 /** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */

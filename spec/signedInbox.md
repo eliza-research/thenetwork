@@ -8,7 +8,7 @@ The [signed turn model](models/turn_consent.md) follows the consent ledger and t
 
 ### A worker runs only a committed claim
 
-Hold the sender's transaction lock and recheck the admission deadline before making a claim. A worker renews its lease every thirty seconds by default. An inactive processing row becomes unresolved after the two-minute lease. The unresolved row holds up ordinary messages for at most ten minutes. An ordinary pending row also holds up a new ordinary turn. Compliance skips those two wait conditions. A processing row still prevents a second concurrent claim for the same sender.
+Hold the sender's transaction lock and recheck the admission deadline before making a claim. A claim runs the turn only when the worker holds the sender's lock, the admission is open, and the claim row was inserted. Otherwise the worker reads the prior row. A worker renews its lease every thirty seconds by default. An inactive processing row becomes unresolved after the two-minute lease. The unresolved row holds up ordinary messages for at most ten minutes. An ordinary pending row also holds up a new ordinary turn. Compliance skips those two wait conditions. A processing row still prevents a second concurrent claim for the same sender.
 
 ```quint
 pure val processingLeaseMs: int = 120000
@@ -29,8 +29,12 @@ pure def mayStartClaimWrite(senderLock: bool, admissionOpen: bool): bool = sende
 pure def ordinaryTurnMustWait(compliance: bool): bool = not(compliance)
 
 pure def canRecordClaim(turn: SignedInbox): bool = turn.phase == Claiming
-pure def recordClaim(turn: SignedInbox, inserted: bool): SignedInbox =
-  { phase: if (inserted) RunningTurn else CheckingPrior }
+pure def recordClaim(turn: SignedInbox, inserted: bool, senderLock: bool, admissionOpen: bool): SignedInbox =
+  { phase: if (inserted and mayStartClaimWrite(senderLock, admissionOpen)) RunningTurn else CheckingPrior }
+
+pure def lawClaimRunsOnlyUnderLockAndOpenAdmission(inserted: bool, senderLock: bool, admissionOpen: bool): bool =
+  recordClaim({ phase: Claiming }, inserted, senderLock, admissionOpen).phase == RunningTurn
+    implies (inserted and senderLock and admissionOpen)
 ```
 
 ### A replay must match a stored request

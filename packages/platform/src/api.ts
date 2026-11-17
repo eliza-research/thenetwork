@@ -17,10 +17,10 @@ import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } f
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
-  type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck,
+  type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCacheKeeps,
   grantExpiresAt, grantResourceMatches, initial as authorityInitial, step as stepAuthority,
 } from "../../core/src/generated/cloudAuthority.ts";
 import { productionCloudDelegation } from "./cloud-delegation.ts";
@@ -296,10 +296,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const { userId, organizationId, e164, expiresAt, stewardUserId, issuedAt } = claims;
     if (typeof userId !== "string" || !userId || typeof organizationId !== "string" || !organizationId
       || typeof e164 !== "string" || normalizePhone(e164) !== e164
-      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || !liveBeforeDeadline(now(), expiresAt)
+      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)
       || typeof stewardUserId !== "string" || !stewardUserId
-      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt) || issuedAt <= 0
-      || !cloudIssuedAtWithinSkew(issuedAt * 1000, now())) return;
+      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt)
+      || !cloudIdentityTimesValid(issuedAt * 1000, expiresAt, now())) return;
     return { ...claims, e164, issuedAt, expiresAt };
   }
   const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
@@ -329,8 +329,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     }
     const {kind: _kind, ...proof} = identity;
     const answer = cloudResponse[await validate(cloud, proof)];
-    const status = authorityStatus(stepAuthority(check, {type: "finishCloudCheck", answer, proofLive: !(expiresAt <= now())}));
-    if (status === "valid") {
+    const answeredLive = !(expiresAt <= now());
+    const status = authorityStatus(stepAuthority(check, {type: "finishCloudCheck", answer, proofLive: answeredLive}));
+    if (cloudCacheKeeps(answer, answeredLive)) {
       if (validated.size > 10_000) validated.clear();
       validated.set(sessionHash, now() + VALIDATION_TTL_MS);
     } else validated.delete(sessionHash);
@@ -811,8 +812,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         type: "checkGrantEnvelope",
         envelopeValid: authority.version===1 && authority.app===grant.app && authority.resource===grant.resource
           && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && !(authority.issuedAt*1000>now())
-          && Number.isSafeInteger(authority.expiresAt) && !(authority.expiresAt<=now())
+          && Number.isSafeInteger(authority.expiresAt)
           && typeof authority.sealed==="string" && authority.sealed.length<=16000,
+        grantLive: !(authority.expiresAt<=now()),
       });
       if (!canCheckGrantDelegation(envelope)) return authorityStatus(envelope);
       const value=unseal("cloud-grant",authority.sealed);
@@ -828,8 +830,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const owner=await accounts.byPhoneHash(grant.phoneKey);
       const owned = stepAuthority(bound, {
         type: "checkGrantOwner",
-        phoneEligible: (grant.personId === null || grant.personId === owner?.person.id)
-          && !await accounts.held(phone) && !await accounts.banned(phone) && !await o.store.isSuppressed(grant.phoneKey),
+        ownerCurrent: grant.personId === null || grant.personId === owner?.person.id,
+        phoneEligible: !await accounts.held(phone) && !await accounts.banned(phone) && !await o.store.isSuppressed(grant.phoneKey),
       });
       if (!canFinishCloudCheck(owned)) return authorityStatus(owned);
       const answer = cloudResponse[await productionDelegation.validate(grant.app, delegation)];

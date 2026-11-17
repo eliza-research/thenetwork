@@ -8,7 +8,7 @@ export type MovePolicy = "MoveAllowed" | "MoveBlocked" | "NumberTaken";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type PhoneChangePhase = "Beginning" | "CheckingStartOwner" | "CheckingConfirmOwner" | "CheckingStartPolicy" | "AwaitingRateLimit" | "AwaitingCodeSend" | "AwaitingPendingWrite" | "PendingRecorded" | "AwaitingPendingRead" | "AwaitingVerification" | "AwaitingMovePolicy" | "AwaitingMove" | "Moved" | "Refused";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
-export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone";
+export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone" | "MoveRequestStale";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type PhoneChangeFailure = "NoFailure" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
@@ -20,7 +20,7 @@ export type Event =
   | { type: "beginConfirmation" }
   | { type: "checkCurrentPhone"; ownership: CurrentPhone }
   | { type: "checkStartPolicy"; oldNumberAllowed: boolean }
-  | { type: "checkStartRate"; slotGranted: boolean }
+  | { type: "checkStartRate"; startsBefore: number }
   | { type: "recordCodeSend"; sendAccepted: boolean }
   | { type: "recordPendingWrite" }
   | { type: "readPending"; hasTarget: boolean; elapsedMs: number }
@@ -95,15 +95,21 @@ export function checkStartPolicy(change: PhoneChange, oldNumberAllowed: boolean)
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
+export function phoneChangeSlotOpen(startsBefore: number): boolean {
+  return startsBefore < phoneChangesPerDay;
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
 export function canCheckStartRate(change: PhoneChange): boolean {
   return change.phase === "AwaitingRateLimit";
 }
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
-export function checkStartRate(change: PhoneChange, slotGranted: boolean): PhoneChange {
+export function checkStartRate(change: PhoneChange, startsBefore: number): PhoneChange {
   //@ ensures (inv(change) && canCheckStartRate(change)) ==> alwaysMoveRequiresProof(\result)
-  return slotGranted ? ({ ...change, phase: "AwaitingCodeSend" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "RateLimited" } as PhoneChange);
+  return phoneChangeSlotOpen(startsBefore) ? ({ ...change, phase: "AwaitingCodeSend" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "RateLimited" } as PhoneChange);
 }
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
@@ -130,6 +136,13 @@ export function canRecordPendingWrite(change: PhoneChange): boolean {
 export function recordPendingWrite(change: PhoneChange): PhoneChange {
   //@ ensures (inv(change) && canRecordPendingWrite(change)) ==> alwaysMoveRequiresProof(\result)
   return { ...change, phase: "PendingRecorded" };
+}
+
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
+//@ pure
+export function lawFourthStartIsRefused(startsBefore: number): boolean {
+  //@ ensures \result === true
+  return !(startsBefore >= 3) || !phoneChangeSlotOpen(startsBefore);
 }
 
 /** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
@@ -194,7 +207,7 @@ export function canRecordMove(change: PhoneChange): boolean {
 //@ pure
 export function recordMove(change: PhoneChange, moveResult: MoveOutcome): PhoneChange {
   //@ ensures (inv(change) && canRecordMove(change)) ==> alwaysMoveRequiresProof(\result)
-  return moveResult === "MoveApplied" ? ({ ...change, phase: "Moved" } as PhoneChange) : (moveResult === "MoveNumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange));
+  return moveResult === "MoveApplied" ? ({ ...change, phase: "Moved" } as PhoneChange) : (moveResult === "MoveNumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : (moveResult === "MoveRequestStale" ? ({ ...change, phase: "Refused", failure: "NoPendingChange" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange)));
 }
 
 /** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md) */
@@ -253,7 +266,7 @@ export function step(current: PhoneChange, event: Event): PhoneChange {
   if (event.type === "beginConfirmation" && canBeginConfirmation(current)) return beginConfirmation(current);
   if (event.type === "checkCurrentPhone" && canCheckCurrentPhone(current)) return checkCurrentPhone(current, event.ownership);
   if (event.type === "checkStartPolicy" && canCheckStartPolicy(current)) return checkStartPolicy(current, event.oldNumberAllowed);
-  if (event.type === "checkStartRate" && canCheckStartRate(current)) return checkStartRate(current, event.slotGranted);
+  if (event.type === "checkStartRate" && canCheckStartRate(current)) return checkStartRate(current, event.startsBefore);
   if (event.type === "recordCodeSend" && canRecordCodeSend(current)) return recordCodeSend(current, event.sendAccepted);
   if (event.type === "recordPendingWrite" && canRecordPendingWrite(current)) return recordPendingWrite(current);
   if (event.type === "readPending" && canReadPending(current)) return readPending(current, event.hasTarget, event.elapsedMs);
@@ -281,13 +294,13 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "beginConfirmation") return { type: "beginConfirmation" };
   if (raw.type === "checkCurrentPhone" && (raw.ownership === "OwnedPhone" || raw.ownership === "UnavailablePhone" || raw.ownership === "WrongPerson")) return { type: "checkCurrentPhone", ownership: raw.ownership };
   if (raw.type === "checkStartPolicy" && typeof raw.oldNumberAllowed === "boolean") return { type: "checkStartPolicy", oldNumberAllowed: raw.oldNumberAllowed };
-  if (raw.type === "checkStartRate" && typeof raw.slotGranted === "boolean") return { type: "checkStartRate", slotGranted: raw.slotGranted };
+  if (raw.type === "checkStartRate" && Number.isSafeInteger(raw.startsBefore)) return { type: "checkStartRate", startsBefore: raw.startsBefore };
   if (raw.type === "recordCodeSend" && typeof raw.sendAccepted === "boolean") return { type: "recordCodeSend", sendAccepted: raw.sendAccepted };
   if (raw.type === "recordPendingWrite") return { type: "recordPendingWrite" };
   if (raw.type === "readPending" && typeof raw.hasTarget === "boolean" && Number.isSafeInteger(raw.elapsedMs)) return { type: "readPending", hasTarget: raw.hasTarget, elapsedMs: raw.elapsedMs };
   if (raw.type === "recordVerification" && typeof raw.otpVerified === "boolean") return { type: "recordVerification", otpVerified: raw.otpVerified };
   if (raw.type === "checkMovePolicy" && (raw.policy === "MoveAllowed" || raw.policy === "MoveBlocked" || raw.policy === "NumberTaken")) return { type: "checkMovePolicy", policy: raw.policy };
-  if (raw.type === "recordMove" && (raw.moveResult === "MoveApplied" || raw.moveResult === "MoveNumberTaken" || raw.moveResult === "MoveMissingPhone")) return { type: "recordMove", moveResult: raw.moveResult };
+  if (raw.type === "recordMove" && (raw.moveResult === "MoveApplied" || raw.moveResult === "MoveNumberTaken" || raw.moveResult === "MoveMissingPhone" || raw.moveResult === "MoveRequestStale")) return { type: "recordMove", moveResult: raw.moveResult };
   return undefined;
 }
 

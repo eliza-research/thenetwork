@@ -1,6 +1,6 @@
 // GENERATED from spec/sitePages.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
+import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
 
 /** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
 export type SitePage = "LandingPage" | "PrivacyPage" | "TermsPage" | "NotFoundPage" | "JoinPage";
@@ -13,22 +13,22 @@ export type RequestMethod = "GetMethod" | "HeadMethod" | "OtherMethod";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJoin" | "ServeSkill" | "ServeCatalog" | "ServeRobots" | "ForwardToBackend" | "ServeNotFound" | "RefuseRetired" | "RedirectToLanding" | "RefuseMethod";
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
-export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean }
+export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean; allowsReadOnly: boolean }
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
 export type OptInWay = "OptInOnJoinPage" | "OptInInAgent" | "OptInByText";
 /** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
 export type SkillDoc = "RootSkill" | "CatalogIndex" | "CatalogSkill";
 
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
+export const skillAllowOrigin: string = "*";
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
+export const skillCacheSeconds: number = 300;
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export const smsTermsAnchor: string = "sms";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export const retiredSettingsPaths: string[] = ["/settings", "/settings/", "/settings.html"];
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export const retiredJoinPaths: string[] = ["/join", "/join/", "/join.html"];
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
-export const skillAllowOrigin: string = "*";
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
-export const skillCacheSeconds: number = 300;
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export const smsTermsItems: SmsTermsItem[] = ["SmsProgram", "SmsOptIn", "SmsFrequency", "SmsStopEverything", "SmsLeaveOne", "SmsStartAgain", "SmsHelp", "SmsCosts", "SmsNoMarketingShare"];
 /** Story: Read the pages of the site / Each site has a landing page, a privacy page, terms and a not-found page, and only peon.biz has a join page (spec/sitePages.md) */
@@ -53,6 +53,26 @@ export function siteHasPage(app: brandIdentity_AppKey, page: SitePage): boolean 
 export function lawJoinPageOnlyOnPeon(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return siteHasPage(app, "JoinPage") === (app === "Peon");
+}
+
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+//@ pure
+export function footerOf(page: SitePage): SitePage[] {
+  return footerLinks;
+}
+
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+//@ pure
+export function lawEveryFooterIsPrivacyThenTerms(app: brandIdentity_AppKey, page: SitePage): boolean {
+  //@ ensures \result === true
+  return !siteHasPage(app, page) || (footerOf(page).length === 2 && nth_sitePages(footerOf(page), 0) === "PrivacyPage" && nth_sitePages(footerOf(page), 1) === "TermsPage");
+}
+
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+//@ pure
+export function lawLandingFooterHasNoOtherLink(otherPage: SitePage): boolean {
+  //@ ensures \result === true
+  return !footerOf("LandingPage").includes(otherPage) || (otherPage === "PrivacyPage" || otherPage === "TermsPage");
 }
 
 /** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
@@ -105,7 +125,14 @@ export function isRetiredRoute(route: SiteRoute): boolean {
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 //@ pure
 export function answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer {
-  return route === "RefuseRetired" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true } as SiteAnswer) : (route === "RefuseMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer)))));
+  return route === "RefuseRetired" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowsReadOnly: false } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true, allowsReadOnly: false } as SiteAnswer) : (route === "RefuseMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false, allowsReadOnly: true } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false, allowsReadOnly: false } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowsReadOnly: false } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowsReadOnly: false } as SiteAnswer)))));
+}
+
+/** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
+//@ pure
+export function lawOnlyARetiredJoinWriteNamesAllowedMethods(route: SiteRoute, method: RequestMethod): boolean {
+  //@ ensures \result === true
+  return answerFor(route, method).allowsReadOnly === (route === "RefuseMethod");
 }
 
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
@@ -234,4 +261,10 @@ export function lawBackendPathsAreForwarded(app: brandIdentity_AppKey, method: R
 export function lawRetiredPathsNeverReachTheBackend(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "SettingsPath", method) !== "ForwardToBackend" && routeFor(app, "JoinPath", method) !== "ForwardToBackend";
+}
+
+/** An element of a list, which must hold it. */
+export function nth_sitePages<T>(xs: T[], i: number): T {
+  if (!(0 <= i && i < xs.length)) throw new RangeError(`a list of ${xs.length} has no element ${i}`);
+  return xs[i];
 }

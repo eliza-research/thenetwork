@@ -14,6 +14,7 @@ import { gateMemberFacing, hardGate, prepareDeepReview, type DeepVerdict } from 
 import { prepareScreen, screenDecision, screenSnapshot, type ScreenVerdict } from "./judgeScreen.ts";
 import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
 import { standingIntentCandidateInScope } from "../../core/src/generated/standingIntent.ts";
+import { emptyIntentWaitOver } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
@@ -326,7 +327,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const eligibleByIntent = new Map<string, boolean>();
   for (const s of scored) if (s.c.anchor?.type === "intent") eligibleByIntent.set(s.c.anchor.id, (eligibleByIntent.get(s.c.anchor.id) ?? false) || s.eligible);
   for (const id of w.ids) for (const it of w.get(id)!.intents) {
-    if (w.now - it.createdAt < cfg.emptyStateDays * 86_400_000 || inProposal.has(id)) continue;
+    if (!emptyIntentWaitOver(w.now - it.createdAt, cfg.emptyStateDays) || inProposal.has(id)) continue;
     let reason = "no_candidates";
     const own = memberReason(w, id, { category: it.category, role: "seeker", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: it.createdAt });
     if (own) continue; // the owner is not currently matchable (paused, held, over budget...): not an empty state

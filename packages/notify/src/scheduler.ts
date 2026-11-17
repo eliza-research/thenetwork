@@ -16,7 +16,7 @@ import { createHash, randomInt } from "node:crypto";
 import {
   appAllowsInboxItem, canRecordInboxSeen, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
 } from "../../core/src/generated/notificationAcknowledgement.ts";
-import { inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
+import { digestUsesProactiveSlot, holdAtWeeklyCap, inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
 import { inboxItemAllowedForRecipient } from "../../core/src/generated/notificationDispatch.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
@@ -139,7 +139,7 @@ export class Notifier {
       const recent = await this.store.capSendsSince(personId, now - WEEK_MS + 1);
       if (removeProactiveItems(recent.length, this.cfg.weeklyCap, items.some(i => i.urgency !== "requested"))) {
         const requested = items.filter(i => i.urgency === "requested");
-        if (requested.length === 0) {
+        if (holdAtWeeklyCap(true, requested.length)) {
           holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
           continue;
         }
@@ -172,7 +172,7 @@ export class Notifier {
       delivery,
       token,
       text: composeText(items, delivery, token, this.cfg.pageBase),
-      countsTowardCap: items.some(i => i.urgency !== "requested"),
+      countsTowardCap: digestUsesProactiveSlot(items.filter(i => i.urgency !== "requested").length),
     };
   }
 

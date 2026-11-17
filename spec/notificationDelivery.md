@@ -27,6 +27,17 @@ When a digest includes a proactive item and the member has reached the cap, remo
 ```quint
 pure def removeProactiveItems(recentSends: int, weeklyCap: int, containsProactive: bool): bool =
   recentSends >= weeklyCap and containsProactive
+
+pure def holdAtWeeklyCap(removeProactive: bool, requestedCount: int): bool =
+  removeProactive and requestedCount <= 0
+
+pure def digestUsesProactiveSlot(proactiveCount: int): bool = proactiveCount > 0
+
+pure def lawCapHoldsOnlyWhenNothingRequestedRemains(removeProactive: bool, requestedCount: int): bool =
+  (requestedCount > 0) implies not(holdAtWeeklyCap(removeProactive, requestedCount))
+
+pure def lawRequestedOnlyDigestUsesNoSlot(proactiveCount: int): bool =
+  (proactiveCount <= 0) implies not(digestUsesProactiveSlot(proactiveCount))
 ```
 
 ## Story: Receive updates on a surface I use

@@ -2,6 +2,7 @@
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
+import { rateCounterCutoff } from "../../core/src/generated/platformRetention.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
@@ -323,7 +324,7 @@ export class PgPeopleStore implements PeopleStore {
       const long = Object.keys(LONG_RATE_WINDOWS);
       n += (await tx`delete from platform.rate_limits where last_at < ${b} and not (split_part(bucket, ':', 1) = any(${this.sql.array(long, "TEXT")})) returning 1`).length;
       for (const kind of long) {
-        n += (await tx`delete from platform.rate_limits where split_part(bucket, ':', 1) = ${kind} and last_at < ${ts(before - LONG_RATE_WINDOWS[kind]!)} returning 1`).length;
+        n += (await tx`delete from platform.rate_limits where split_part(bucket, ':', 1) = ${kind} and last_at < ${ts(rateCounterCutoff(before, LONG_RATE_WINDOWS[kind]!))} returning 1`).length;
       }
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;

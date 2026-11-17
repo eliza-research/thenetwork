@@ -13,7 +13,7 @@ The owner must be eligible to collect. A claimed collection requires the stored,
 ```quint
 type SourcePhase =
   SourceInitial | SourceDenied | CheckingCollectionTurn | CheckingLiveSources | ReadingCollectionReceipt |
-  ReplayingCollection | SavingCollection | CheckingWithdrawalTurn | ReadingCleanupReceipt |
+  ReplayingCollection | CollectionReplayed | SavingCollection | CollectionSaved | CheckingWithdrawalTurn | ReadingCleanupReceipt |
   ReplayingCleanup | ApplyingCleanup | CleanupConfirmed
 type SourceFlow = { phase: SourcePhase }
 pure val initial: SourceFlow = { phase: SourceInitial }
@@ -33,7 +33,7 @@ pure def readLiveSourceConsent(flow: SourceFlow, allowed: bool): SourceFlow =
 
 ### A collection replay only returns its original private pending batch
 
-An existing receipt must match the collection request and batch. Replay the original preview only while its revision is the first and all originally expected items remain proposed. A conflicting receipt is refused. A new batch may be saved when the shell confirms capacity and an unused batch ID, with its receipt committed in the same transaction.
+An existing receipt must match the collection request and batch. Replay the original preview only while its revision is the first and all originally expected items remain proposed. A conflicting receipt is refused. A new batch may be saved only when the shell confirms capacity and an unused batch ID, with its receipt committed in the same transaction. A collection without a claimed turn has no receipt capacity to check, and its batch ID is new.
 
 ```quint
 pure def canReadCollectionReceipt(flow: SourceFlow): bool = flow.phase == ReadingCollectionReceipt
@@ -45,11 +45,27 @@ pure def collectionRevisionIsOriginal(revision: int): bool = revision == 1
 pure def collectionPreviewUnchanged(sameCount: bool, onlyPending: bool): bool =
   sameCount and onlyPending
 
+pure def canCheckCollectionReplay(flow: SourceFlow): bool = flow.phase == ReplayingCollection
+pure def checkCollectionReplay(flow: SourceFlow, revision: int, sameCount: bool, onlyPending: bool): SourceFlow =
+  { phase: if (collectionRevisionIsOriginal(revision) and collectionPreviewUnchanged(sameCount, onlyPending)) CollectionReplayed else SourceDenied }
+
+pure def canCheckCollectionSave(flow: SourceFlow): bool = flow.phase == SavingCollection
+pure def checkCollectionSave(flow: SourceFlow, capacityFree: bool, batchIdUnused: bool): SourceFlow =
+  { phase: if (capacityFree and batchIdUnused) CollectionSaved else SourceDenied }
+
+pure def stepCollectionReplayNeedsOriginalPreview(before: SourceFlow, via: str, after: SourceFlow): bool =
+  after.phase == CollectionReplayed implies (before.phase == ReplayingCollection and via == "checkCollectionReplay")
+
+pure def stepCollectionSavedNeedsCapacity(before: SourceFlow, via: str, after: SourceFlow): bool =
+  after.phase == CollectionSaved implies (before.phase == SavingCollection and via == "checkCollectionSave")
+
 pure def stepCollectionSaveRequiresReceiptCheck(before: SourceFlow, via: str, after: SourceFlow): bool =
   after.phase == SavingCollection implies (before.phase == ReadingCollectionReceipt and via == "readCollectionReceipt")
 
 pure def sometimesSavesSourceCollection(flow: SourceFlow): bool = flow.phase == SavingCollection
 pure def sometimesReplaysSourceCollection(flow: SourceFlow): bool = flow.phase == ReplayingCollection
+pure def sometimesReturnsReplayedCollection(flow: SourceFlow): bool = flow.phase == CollectionReplayed
+pure def sometimesSavesNewCollection(flow: SourceFlow): bool = flow.phase == CollectionSaved
 ```
 
 ## Story: Stop collection or remove data from one connector

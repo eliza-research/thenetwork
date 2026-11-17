@@ -345,7 +345,7 @@ pure def sometimesAllRequests(w: Workspace): bool = w.requestSegment == AllSegme
 
 ### The switch shows only to an admin who can change it
 
-The config panel shows the switch, its history and the settings in force. A pack lock keeps matching off and shows the lock. Otherwise an admin on a server that can change the switch sees the switch. Other analysts see that only an admin can change it, or that the server is read-only.
+The config panel shows the switch, its history and the settings in force. When the pack is locked and matching is off, the panel shows the lock. Otherwise an admin on a server that can change the switch sees the switch, also when the pack is locked and matching is still on. Other analysts see that only an admin can change it, or that the server is read-only.
 
 ```quint
 type ConfigControl = SwitchControl | LockedNote | AdminOnlyNote | ReadOnlyNote
@@ -419,7 +419,7 @@ pure def sometimesSwitchRefused(w: Workspace): bool = w.config.phase == ConfigFa
 
 ### Only an admin loads the audit log
 
-The admin enters an actor, a target or both, and loads the rows. The server logs each load. A failed load shows its error.
+The admin can enter an actor, a target or both as optional filters, and loads the rows. The server logs each load. A failed load shows its error.
 
 ```quint
 pure def canLoadAudit(w: Workspace): bool = w.staff.admin and w.audit != AuditLoading

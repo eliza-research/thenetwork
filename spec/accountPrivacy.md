@@ -1,6 +1,6 @@
 # Leave an app, erase an account, or read an export
 
-The account service acts on the canonical person for the caller's verified phone. Its callers own request authorization. The site API checks the session and the number's hold, and requires fresh sign-in for full deletion. The shared-line caller handles its own text and consent authority. The model governs the account service's scoped operation after those checks. Storage and hooks perform the work.
+The account service acts on the canonical person for the caller's verified phone. Its callers own request authorization. The site API checks the session and the number's hold, and requires fresh sign-in for full deletion. The shared-line caller handles its own text and consent authority. The model governs the account service's scoped operation after those checks. Storage and hooks perform the work. The shell applies the export owner check again after it collects the data, and returns an empty export when the check then fails. An export lists the person's photo ID, upload time, size and content type for the app, and keeps photo content, storage keys and ratings private. The gathering query includes only the export owner's responses to the same event revision, and keeps other members' identities and responses, private references and staff review records out of the export. Removing a membership also deletes its imported suggestions and connection receipts, and the photo relay items addressed to that member in the app; the sending person's photo and records of other current memberships stay with their owners.
 
 ## Story: Leave one app and keep my other memberships
 
@@ -94,11 +94,14 @@ pure def recordAccountErasure(privacy: PrivacyRequest, committed: bool): Privacy
 
 ### A removed or absent membership has no exportable profile
 
-Bind the request to the verified session's person and phone before reading consent or app records. An unbound session can export phone consent only while the phone has no owner. A held phone or a changed owner removes access to the export. Check ownership again after collecting the data. Include a profile and its Network data only while the same membership exists for the requested app. The shell owns app-specific data lookup and formatting.
+Bind the request to the verified session's person and phone before reading consent or app records. An unbound session can export phone consent only while the phone has no owner and no hold. A held phone or a changed owner removes access to the export. Include a profile and its Network data only while the same membership exists for the requested app. The shell owns app-specific data lookup and formatting.
 
 ```quint
 pure def lawHeldPhoneCannotExport(verifiedOwner: str, currentOwner: str): bool =
   not(verifiedPrivacyOwnerMatches(verifiedOwner, currentOwner, true))
+
+pure def lawUnboundExportNeedsUnownedPhone(currentOwner: str, held: bool): bool =
+  verifiedPrivacyOwnerMatches("", currentOwner, held) implies (currentOwner == "" and not(held))
 
 pure def canCheckAppExport(privacy: PrivacyRequest): bool =
   privacy.phase == AwaitingAppExport and privacy.operation == ExportApp
@@ -113,7 +116,7 @@ pure def recordConsentExport(privacy: PrivacyRequest): PrivacyRequest =
 
 ### An export includes the member's own facts and photo metadata
 
-Read the Network record for the same app, person and member. Include its exported facts, own messages and opportunities. Include a private fact only when it is confirmed and the person stated it or accepted it from an authorized source. The former Gmail import can appear here only as a confirmed fact the person already accepted. Exclude appearance ratings and internal private assessments. Include the person's photo ID, upload time, size and content type for this app. Keep photo content, storage keys and ratings private.
+Read the Network record for the same app, person and member. Include its exported facts, own messages and opportunities. Include a private fact only when it is confirmed and the person stated it or accepted it from an authorized source: a Gmail or Google Calendar import. Such an import appears here only as a confirmed fact the person already accepted. Exclude appearance ratings and internal private assessments. The export also carries the person's photo metadata for this app.
 
 ```quint
 pure def memberExportFacetAllowed(visibility: str, status: str, provenance: str, facetSource: str, isAppearance: bool): bool =
@@ -129,7 +132,7 @@ pure def lawPrivateExportNeedsConfirmation(provenance: str, facetSource: str, is
 
 ### An export includes the member's own gathering responses
 
-The Network exports a member's retained RSVP, attendance and follow-up choices with the event details for that revision. Attendance and follow-up are optional. Include only the export owner's responses to the same event revision. Keep other members' identities and responses, private references and staff review records out of the export.
+For ntwrk.party only, and only while the membership is bound, the Network exports a member's retained RSVP, attendance and follow-up choices with the event details for that revision. Attendance and follow-up are optional. Other apps export no gathering responses.
 
 ```quint
 pure def memberExportGatheringsAllowed(app: str, membershipBound: bool): bool =
@@ -138,7 +141,7 @@ pure def memberExportGatheringsAllowed(app: str, membershipBound: bool): bool =
 
 ### The service completes each operation in its own scope
 
-A completed leave has recorded app opt-out. Full erasure follows ownership verification and app cleanup. A profile in an export requires its own app membership. Removing a membership also deletes its imported suggestions and connection receipts, and the photo relay items addressed to that member in the app. The sending person's photo and records belonging to other current memberships stay with their owners.
+A completed leave has recorded app opt-out. Full erasure follows ownership verification and app cleanup. A profile in an export requires its own app membership. A removed membership has no scoped membership.
 
 ```quint
 pure def alwaysLeaveRecordsConsent(privacy: PrivacyRequest): bool =

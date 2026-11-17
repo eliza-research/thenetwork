@@ -2,6 +2,8 @@
 
 The [runtime model](models/runtime_ops.md) follows the store lock, saved state, provider work, and recovery across processes. This module governs the run order after a store lock is obtained, startup delivery choice, and tick follow-up. The [VibeLang serving shell](../packages/core/src/vibe/runtimeUnitShell.vibe) runs the generated transitions around the effects. The stores retain the lock, transactions, and serial queue.
 
+The shell also owns these effects, which the rules below do not model. When a load, import, action, or save fails, the shell applies no further transition, so the unit never records a save, and the caller gets the original failure. On every tick, the shell drains and flushes deliveries, also when the tick skips the network lock.
+
 ## Story: Work from the latest saved network state
 
 > As an operator, I want a tick, inbound action, or review decision to load the current state before changing it, then publish only its saved work.
@@ -20,7 +22,7 @@ pure def lawBusyTickSkips(locallyBusy: bool): bool = locallyBusy implies not(tic
 
 ### Restore a saved snapshot before running and make one save after success
 
-Under the lock, load the latest state. If the store has a snapshot, import it before running the action. Otherwise use the initialized network. Save the state once after the action returns. A load, import, action, or save error stops the normal path and reaches the caller as the original failure. The runtime hands off delivery after the save, using committed messages or the durable queue.
+Under the lock, load the latest state. If the store has a snapshot, import it before running the action. Otherwise use the initialized network. Save the state once after the action returns. A save is recorded only after the action. The runtime hands off delivery after the save, using committed messages or the durable queue.
 
 ```quint
 type UnitPhase = LoadingSnapshot | RestoringSnapshot | RunningAction | SavingState | StateSaved
@@ -49,7 +51,7 @@ pure def sometimesCanSave(unit: RuntimeUnit): bool = unit.phase == StateSaved
 
 ### Runtime follow-up depends on the adapter and whether the tick ran
 
-The registry can disable matching in loaded state. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Each tick can drain and flush deliveries even when it skips the network lock. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.
+The registry can disable matching in loaded state. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.
 
 ```quint
 pure def matchingDisabledByRegistry(matchingAllowed: bool): bool = not(matchingAllowed)

@@ -24,11 +24,25 @@ context when there is one. A repeated projection uses the same durable
 delivery ID, including for a retained older subject. Each new accepted text
 about that opportunity remains a separate item. Resolve an item's opportunity
 in the caller's app. Retained subjects that used only the opportunity or
-message ID still resolve there. Omit a closed opportunity or a missing
-opportunity from an explicitly bound text. Retire stale items as seen with
-the selected read. Ordinary updates with no opportunity remain visible.
+message ID still resolve there. Do not project a text again when its
+delivery ID is already recorded. Omit a closed opportunity or a missing
+opportunity from an explicitly bound text. Ordinary updates with no
+opportunity remain visible.
 
 ```quint
+pure def networkTextDeliveryKey(messageId: str, opportunityId: str): str = messageId
+
+pure def networkTextProjectionNeeded(deliveryRecorded: bool): bool = not(deliveryRecorded)
+
+pure def lawRepeatedProjectionKeepsItsKey(messageId: str, firstOpportunity: str, laterOpportunity: str): bool =
+  networkTextDeliveryKey(messageId, firstOpportunity) == networkTextDeliveryKey(messageId, laterOpportunity)
+
+pure def lawEachNewTextKeepsItsOwnKey(firstMessage: str, laterMessage: str, opportunityId: str): bool =
+  (firstMessage != laterMessage) implies networkTextDeliveryKey(firstMessage, opportunityId) != networkTextDeliveryKey(laterMessage, opportunityId)
+
+pure def lawRecordedTextIsNotProjectedAgain(deliveryRecorded: bool): bool =
+  networkTextProjectionNeeded(deliveryRecorded) == not(deliveryRecorded)
+
 pure def inboxOpportunityTerminal(opportunityStatus: str): bool =
   opportunityStatus == "COMPLETED" or opportunityStatus == "FEEDBACK_COLLECTED" or opportunityStatus == "DECLINED" or opportunityStatus == "EXPIRED" or
     opportunityStatus == "CANCELLED" or opportunityStatus == "SKIPPED" or opportunityStatus == "ABANDONED" or opportunityStatus == "QUORUM_FAILED"
@@ -57,7 +71,7 @@ pure def lawInboxTokenExpiresAtDeadline(expiresAt: int): bool =
 
 ### A read marks the selected items seen before responding
 
-Touch the surface before the read. After selecting the update items, record those IDs as seen before returning them. An unusable token ends a token-limited read without marking anything. A separate acknowledgement of displayed subjects marks only current unseen items with those subjects and can skip the write when nothing matches.
+Touch the surface before the read. After selecting the update items, record those IDs as seen before returning them. The selected items include the stale items that the response omits, so the same read retires them as seen. An unusable token ends a token-limited read without marking anything. A separate acknowledgement of displayed subjects marks only current unseen items with those subjects and can skip the write when nothing matches.
 
 ```quint
 type AcknowledgementPhase =

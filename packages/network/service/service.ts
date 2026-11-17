@@ -37,7 +37,7 @@ import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "..
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
   initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
-  staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetySelectsTarget,
+  staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetyReportFor, staffSafetySelectsTarget,
   step as stepStaffSafety,
 } from "../../core/src/generated/staffSafetyService.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
@@ -70,8 +70,8 @@ import { ProfileFactEdits } from "./profile-fact-edits.ts";
 import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
-  checkExplicitRoute, checkFallbackRoute, initial as textJoinInitial, initialRoute, namedOtherApp,
-  networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
+  checkExplicitRoute, checkFallbackRoute, explicitAppSource, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute, namedOtherApp,
+  networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
@@ -80,6 +80,7 @@ import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invit
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
 import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
+import { memberInviteHeldLinkReleased } from "../../core/src/generated/memberInvitation.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
 import { queueReviewedGatheringInvitations } from "./monthly-gathering-delivery.ts";
@@ -144,7 +145,7 @@ import { normalizeAddress } from "../../blooio/src/phone.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
-import { inboxOpportunityAllowsUpdate } from "../../core/src/generated/notificationAcknowledgement.ts";
+import { inboxOpportunityAllowsUpdate, networkTextDeliveryKey, networkTextProjectionNeeded } from "../../core/src/generated/notificationAcknowledgement.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-consent-context.ts";
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
@@ -949,9 +950,9 @@ export class NetworkService implements RuntimeHost {
     for (const b of items) {
       const personId = person.get(b.memberId);
       if (!personId) continue;
-      const deliveryId = `net:${b.id}`;
+      const deliveryId = `net:${networkTextDeliveryKey(b.id, b.oppId ?? "")}`;
       // A previous projection may have used just the opportunity as its subject.
-      if (await this.notify.store.getDelivery(deliveryId)) continue;
+      if (!networkTextProjectionNeeded(!!(await this.notify.store.getDelivery(deliveryId)))) continue;
       const subjectId = b.oppId ? `${b.oppId}#${b.id}` : b.id;
       await this.notify.recordSent(
         { personId, app: rt.app.id, eventType: b.type!, subjectId, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
@@ -1537,9 +1538,11 @@ export class NetworkService implements RuntimeHost {
     const survey = dedicated ? undefined : interruptionFeedbackAnswer(ev.text);
     const surveyApp = survey && isAppId(survey.app) ? survey.app : undefined;
     const keywordApp = dedicated || profileApp || surveyApp ? undefined : this.namedApp(ev.text);
-    const explicit = checkExplicitRoute(initialRoute, { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp });
+    const explicitFacts = { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp };
+    const explicit = checkExplicitRoute(initialRoute, explicitFacts);
     if (explicit.phase === "DedicatedRoute" && dedicated) return { app: dedicated, shared: false };
-    const named = profileApp ?? surveyApp ?? keywordApp;
+    const source = explicitAppSource(explicitFacts);
+    const named = source === "profile" ? profileApp : source === "survey" ? surveyApp : source === "keyword" ? keywordApp : undefined;
     if (explicit.phase === "ExplicitRoute" && named) return { app: named, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
@@ -1807,16 +1810,25 @@ export class NetworkService implements RuntimeHost {
    * first contact gets it. It enrolls nobody: joining still needs the age check and the opt-in.
    */
   private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<boolean> {
-    if (!this.inboundTurn()) return false;
-    if ((await this.memberApps(e164)).length) return false;
-    for (const other of this.runtimes.values()) { await other.identities(); if (other.memberOf(e164)) return false; }
-    const person = await this.accounts.personFor(e164);
-    if (await this.accounts.banned(e164, person)) return false;
-    let pending = await this.pendingOf(e164, "join");
-    if (pending && !pendingMatchesApp(pending.app, app.id)) pending = undefined;
-    const age = parseJoinText(ev.text, this.appWords(), !!pending).age ?? pending?.age ?? undefined;
-    const floor = await this.accounts.lowestAge(e164, person);
-    if (!noticeAllowed(age === undefined || joinAgeCheck(age, floor, app).ok, floor === undefined || canJoin(floor))) return false;
+    const signedTurn = !!this.inboundTurn();
+    let nonMember = signedTurn && !(await this.memberApps(e164)).length;
+    for (const other of this.runtimes.values()) {
+      if (!nonMember) break;
+      await other.identities();
+      if (other.memberOf(e164)) nonMember = false;
+    }
+    const person = nonMember ? await this.accounts.personFor(e164) : undefined;
+    const banned = nonMember && await this.accounts.banned(e164, person);
+    let joinAgeAllowed = false, ageFloorAllowed = false;
+    if (nonMember && !banned) {
+      let pending = await this.pendingOf(e164, "join");
+      if (pending && !pendingMatchesApp(pending.app, app.id)) pending = undefined;
+      const age = parseJoinText(ev.text, this.appWords(), !!pending).age ?? pending?.age ?? undefined;
+      const floor = await this.accounts.lowestAge(e164, person);
+      joinAgeAllowed = age === undefined || joinAgeCheck(age, floor, app).ok;
+      ageFloorAllowed = floor === undefined || canJoin(floor);
+    }
+    if (!firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed)) return false;
     const key = this.noticeKey(e164);
     const wrote = await this.sql.begin(async tx => {
       const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
@@ -2177,7 +2189,7 @@ export class NetworkService implements RuntimeHost {
       reply = draft ? memberInviteDeliveryPrompt(draft.code) : memberInviteDeliveryReply("unavailable");
     } else if (command.kind === "confirm" && adapter) {
       let body: string | undefined;
-      await this.expectedInvitations.confirm(tx, {app, inviterMemberId: memberId, code: command.reference}, async (draftTx, pending) => {
+      await this.expectedInvitations.confirm(tx, {app, inviterMemberId: memberId, code: command.reference, transportAvailable: !!adapter}, async (draftTx, pending) => {
         if (pending.to === sender || !await this.eligibleExpectedInviteRecipient(draftTx, app, pending.to)) return false;
         body = await this.expectedInvitationText(draftTx, rt.app, memberId, pending.link);
         return body !== undefined;
@@ -2209,7 +2221,8 @@ export class NetworkService implements RuntimeHost {
     if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
     const approved = await findApprovedMemberInvitationReview(tx, rt.app.id, id, memberId, now);
     const replyId = `sys:${messageId}`;
-    if (approved) {
+    // A held request returns its link only for the current approval presented in this owner's signed turn.
+    if (memberInviteHeldLinkReleased(true, !!approved) && approved) {
       const staged = this.invitationLink(rt.app, memberId, approved.relationship, approved, now, id);
       rt.unit.memberInvitation = staged;
       rt.collectedMemberReply(memberId, replyId, this.copyOf(rt.app).forwardInvite(staged.url), "member_invitation", [staged.url]);
@@ -2717,7 +2730,7 @@ export class NetworkService implements RuntimeHost {
       const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
       if (hold.phase !== "HoldRemainingTargets") return r;
       // One network at a time (never one unit inside another: no lock order to get wrong).
-      for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
+      for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note, staffSafetyReportFor(false, reportId ?? "") || undefined));
       return r;
     });
   }
@@ -2803,7 +2816,7 @@ export class NetworkService implements RuntimeHost {
       for (const x of members) {
         await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
         const mine = x.rt === rt && x.memberId === memberId;
-        const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
+        const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, staffSafetyReportFor(mine, reportId ?? "") || undefined));
         if (mine) out = r;
       }
       return out;

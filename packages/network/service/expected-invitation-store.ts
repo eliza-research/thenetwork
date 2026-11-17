@@ -151,7 +151,7 @@ export class ExpectedMemberInvitations {
   }
 
   async confirm(
-    tx: SQL, input: InviteOwner & { code: string },
+    tx: SQL, input: InviteOwner & { code: string; transportAvailable: boolean },
     authorize: (tx: SQL, context: ExpectedInvitationDelivery) => Promise<boolean>,
     enqueue: (tx: SQL, context: ExpectedInvitationDelivery) => Promise<string>,
   ): Promise<"queued" | "replayed" | undefined> {
@@ -169,7 +169,8 @@ export class ExpectedMemberInvitations {
       from platform.expected_member_invitations where app_id=${key.app} and token_hash=${key.tokenHash} and challenge_hash=${hash} for update`;
     if (!pending) return;
     if (pending.queued_at !== null) return "replayed";
-    if (invite.expected_recipient_hash !== null || !expectedInviteChallengeCurrent(pending.staged_at.getTime(), now) || pending.expires_at.getTime() <= now) return;
+    const challengeCurrent = expectedInviteChallengeCurrent(pending.staged_at.getTime(), now) && pending.expires_at.getTime() > now;
+    if (invite.expected_recipient_hash !== null || !challengeCurrent) return;
     const recipient = this.open(key, hash, pending);
     if (!recipient) return;
     const delivery: ExpectedInvitationDelivery = {
@@ -187,7 +188,8 @@ export class ExpectedMemberInvitations {
       returning recipient_hash`;
     if (!expectedInviteMayStage({
       direct: true, confirmedExpected: true, exactTarget: true, distinctRecipient: true, issuerCurrent: true,
-      reviewClear: true, recipientAllowed: true, firstContact: reserved.length === 1, now, expiresAt: delivery.expiresAt,
+      reviewClear: true, recipientAllowed: true, firstContact: reserved.length === 1,
+      transportAvailable: input.transportAvailable, challengeCurrent, now, expiresAt: delivery.expiresAt,
     })) return;
     const body = await enqueue(tx, delivery);
     const [queued] = await tx`select id from platform.outbound where app_id=${key.app} and id=${delivery.id}

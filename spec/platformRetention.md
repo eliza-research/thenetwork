@@ -37,11 +37,20 @@ pure def lawRowsAtCutoffStay(cutoff: int): bool = not(rowBeforeCutoff(cutoff, cu
 
 ### Retain the STOP hint count for its full window
 
-An ordinary rate counter follows the platform cutoff. A STOP hint may
+An ordinary rate counter follows the platform cutoff, with no additional time. A STOP hint may
 be sent only once per app and person over thirty days. Retain that
 counter for thirty additional days past the platform cutoff so routine
 cleanup cannot cause an early repeat.
 
 ```quint
 pure val stopHintWindowMs: int = 2592000000
+
+pure def rateCounterCutoff(platformCutoff: int, extraKeepMs: int): int = platformCutoff - extraKeepMs
+pure def stopHintCounterPastRetention(lastAt: int, platformCutoff: int): bool =
+  rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, stopHintWindowMs))
+
+pure def lawOrdinaryCounterFollowsPlatformCutoff(lastAt: int, platformCutoff: int): bool =
+  rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, 0)) == rowBeforeCutoff(lastAt, platformCutoff)
+pure def lawStopHintCounterStaysInWindow(lastAt: int, platformCutoff: int): bool =
+  not(lastAt < platformCutoff - stopHintWindowMs) implies not(stopHintCounterPastRetention(lastAt, platformCutoff))
 ```

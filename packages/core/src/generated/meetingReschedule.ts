@@ -15,6 +15,12 @@ export function rescheduleDraftCurrent(bookingCurrent: boolean, exactOriginal: b
 
 /** Story: Change the time only when everyone agrees / A request selects one future booking and one viable slot (spec/meetingReschedule.md) */
 //@ pure
+export function rescheduleBookingSelected(matchingBookings: number): boolean {
+  return matchingBookings === 1;
+}
+
+/** Story: Change the time only when everyone agrees / A request selects one future booking and one viable slot (spec/meetingReschedule.md) */
+//@ pure
 export function rescheduleTimeEligible(now: number, originalAt: number, proposedAt: number, minimumLead: number, viable: boolean): boolean {
   return originalAt > now && proposedAt !== originalAt && minimumLead > 0 && exact_meetingReschedule(proposedAt - now) >= minimumLead && viable;
 }

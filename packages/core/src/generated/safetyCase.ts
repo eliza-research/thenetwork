@@ -149,6 +149,13 @@ export function reportRestrictsMatching(reportPhase: ReportPhase, metBefore: boo
 
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
+export function lawDecidedReportDoesNotRestrictMatching(decision: ReportDecision, metBefore: boolean, urgent: boolean): boolean {
+  //@ ensures \result === true
+  return !reportRestrictsMatching(reportAfterDecision("ReportOpen", decision, true, true), metBefore, urgent);
+}
+
+/** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
+//@ pure
 export function lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: boolean, reportMatches: boolean): boolean {
   //@ ensures \result === true
   return reportAfterDecision("ReportDismissed", decision, sameMember, reportMatches) === "ReportDismissed";

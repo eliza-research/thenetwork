@@ -1,6 +1,6 @@
 # Meter service costs
 
-The service records estimated or provider-priced costs by app and UTC date. The shell owns provider calls, configured currency parsing, fractional arithmetic, ledger IDs, persistence, and logs. It supplies operational codes and counts without member IDs, phone numbers, or message contents.
+The service records estimated or provider-priced costs by app and UTC date. The shell owns provider calls, configured currency parsing, fractional arithmetic, ledger IDs, persistence, and logs. It supplies operational codes and counts without member IDs, phone numbers, or message contents. The shell records a code send's cost only after the named provider completes that send.
 
 ## Story: Know the cost of paid service work
 
@@ -26,7 +26,7 @@ pure def lawCostFloorIsNonnegative(amount: int): bool = costAmountWithFloor(amou
 
 ### Charge code sends, photo tries, and priced model attempts
 
-Blooio code sends use the SMS estimate. Twilio code sends use the verification estimate. The named provider must complete the send before recording its cost. The photo meter counts each actual try, including an error, with a quantity of at least one. A null result or the disabled rater has no charge. An LLM attempt is recorded only when its reported micro-dollar cost is positive.
+Blooio code sends use the SMS estimate. Twilio code sends use the verification estimate. The photo meter counts each actual try, including an error, with a quantity of at least one. A null result or the disabled rater has no charge. An LLM attempt is recorded only when its reported micro-dollar cost is positive.
 
 ```quint
 type OtpCostBasis = OtpUnmetered | OtpSmsEstimate | OtpVerifyEstimate

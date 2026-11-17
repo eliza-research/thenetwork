@@ -45,7 +45,7 @@ export function biasRatingQuintile(rank: number, population: number): number {
 /** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
 //@ pure
 export function biasOpportunityReached(stage: string, closedFrom: string): boolean {
-  return stage !== "review" && !(stage === "closed" && closedFrom === "review");
+  return stage !== "review" && !(stage === "closed" && (closedFrom === "review" || closedFrom === ""));
 }
 
 /** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */

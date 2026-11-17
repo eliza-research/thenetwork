@@ -23,15 +23,25 @@ pure def lawCalendarNeedsBookingNotice(currentAdult: bool, scheduled: bool, conf
 
 ### A calendar link follows the booked revision and the current owner
 
-The signed reply and the app-scoped download grant commit together. The link expires after 15 minutes or at the meeting start, whichever comes first. Recheck the phone, member, opt-in, booking and exact start and revision on each download and replay. The file contains the public time and venue. It has no guest list, contact details, or private context.
+The signed reply and the app-scoped download grant commit together. The link expires after 15 minutes or at the meeting start, whichever comes first. Recheck the phone, member, opt-in, booking and exact start and revision on each download and replay. The owner is current only when the grant's phone still owns the same active, opted-in adult membership. The file contains the public time and venue. It has no guest list, contact details, or private context.
 
 ```quint
 pure val calendarInviteLifetimeMs = 15 * 60000
 pure val calendarInvitePath = "/api/calendar/invite"
 
-pure def calendarDownloadAllowed(currentBooking: bool, sameStart: bool, sameRevision: bool, now: int, expiresAt: int): bool =
-  currentBooking and sameStart and sameRevision and now < expiresAt
+pure def calendarInviteExpiresAt(issuedAt: int, startAt: int): int =
+  if (startAt < issuedAt + calendarInviteLifetimeMs) startAt else issuedAt + calendarInviteLifetimeMs
 
-pure def lawCalendarLinkExpires(currentBooking: bool, sameStart: bool, sameRevision: bool, expiresAt: int): bool =
-  not(calendarDownloadAllowed(currentBooking, sameStart, sameRevision, expiresAt, expiresAt))
+pure def calendarDownloadAllowed(currentOwner: bool, currentBooking: bool, sameStart: bool, sameRevision: bool, now: int, expiresAt: int): bool =
+  currentOwner and currentBooking and sameStart and sameRevision and now < expiresAt
+
+pure def lawCalendarLinkExpires(currentOwner: bool, currentBooking: bool, sameStart: bool, sameRevision: bool, expiresAt: int): bool =
+  not(calendarDownloadAllowed(currentOwner, currentBooking, sameStart, sameRevision, expiresAt, expiresAt))
+
+pure def lawCalendarLinkNeedsCurrentOwner(currentBooking: bool, sameStart: bool, sameRevision: bool, now: int, expiresAt: int): bool =
+  not(calendarDownloadAllowed(false, currentBooking, sameStart, sameRevision, now, expiresAt))
+
+pure def lawCalendarLinkEndsByStartAndLifetime(issuedAt: int, startAt: int): bool =
+  calendarInviteExpiresAt(issuedAt, startAt) <= startAt
+    and calendarInviteExpiresAt(issuedAt, startAt) <= issuedAt + calendarInviteLifetimeMs
 ```

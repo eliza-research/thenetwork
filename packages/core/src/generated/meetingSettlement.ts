@@ -110,6 +110,19 @@ export function dayOfCheckInDue(sameLocalDay: boolean, replySlotAvailable: boole
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
 //@ pure
+export function dayOfReplyAccepted(currentSchedule: boolean, sameLocalDay: boolean, remainingMs: number): boolean {
+  return currentSchedule && dayOfCheckInWindow(sameLocalDay, remainingMs);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function lawDayOfReplyNeedsCurrentScheduleBeforeStart(currentSchedule: boolean, sameLocalDay: boolean, remainingMs: number): boolean {
+  //@ ensures \result === true
+  return !dayOfReplyAccepted(currentSchedule, sameLocalDay, remainingMs) || (currentSchedule && remainingMs > 0);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
 export function lawDayOfCheckInNeedsAFutureMeeting(sameLocalDay: boolean, replySlotAvailable: boolean, remainingMs: number): boolean {
   //@ ensures \result === true
   return !dayOfCheckInDue(sameLocalDay, replySlotAvailable, remainingMs) || (sameLocalDay && remainingMs > 0);
@@ -168,7 +181,7 @@ export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
-  const local_1: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && evidence.reportedMissing ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
+  const local_1: AttendanceMark = evidence.saidAbsent ? "Absent" : (evidence.saidAttended || evidence.counterpartVerified || evidence.organizerVerified ? "Attended" : (evidence.pairMeeting && evidence.reportedMissing ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
   return { mark: local_1, logFeedback: local_1 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_1 !== "Attended" && !evidence.hasFeedback && evidence.reportedMissing };
 }
 

@@ -71,8 +71,21 @@ export function inv(current: JoinPage): boolean {
 
 /** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
+export function fragmentNameKept(nameLength: number): number {
+  return nameLength > fragmentNameMax ? fragmentNameMax : nameLength;
+}
+
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+//@ pure
 export function fragmentAgeAccepted(ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): boolean {
   return ageDigitsOnly && ageDigitCount >= 1 && ageDigitCount <= 3 && fragmentAge <= 120;
+}
+
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
+//@ pure
+export function lawFragmentNameKeptWithinLimit(nameLength: number): boolean {
+  //@ ensures \result === true
+  return fragmentNameKept(nameLength) <= fragmentNameMax;
 }
 
 /** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
@@ -794,16 +807,24 @@ export function browserInvitationMayRetry(joinAnswer: JoinOutcome): boolean {
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
 //@ pure
-export function lawBrowserInvitationNeedsCleanConsentedAccount(boundAccount: boolean, addressClean: boolean, consented: boolean): boolean {
+export function lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: number, afterAccount: number): boolean {
   //@ ensures \result === true
-  return !browserInvitationMaySubmit(boundAccount, addressClean, consented) || (boundAccount && addressClean && consented);
+  return !(beforeAccount > 0 && beforeAccount !== afterAccount) || !browserInvitationKeepsAccount(beforeAccount, afterAccount);
 }
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
 //@ pure
-export function lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: number, afterAccount: number): boolean {
+export function lawBrowserInvitationNeedsCleanConsentedAccount(page: JoinPage, form: ProfileForm, boundAccount: boolean): boolean {
   //@ ensures \result === true
-  return !(beforeAccount > 0 && beforeAccount !== afterAccount) || !browserInvitationKeepsAccount(beforeAccount, afterAccount);
+  const local_8: JoinPage = submitProfile(page, form);
+  return !(canSubmitProfile(page) && canAnswerJoin(local_8) && browserInvitationMaySubmit(boundAccount, local_8.addressClean, local_8.consented)) || (boundAccount && page.addressClean && profileComplete(form) && local_8.consented);
+}
+
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function lawBrowserInvitationKeptOnlyForRetry(joinAnswer: JoinOutcome): boolean {
+  //@ ensures \result === true
+  return !browserInvitationMayRetry(joinAnswer) || (joinRefusal(joinAnswer) === "NoBlock" && answerJoin(initial, joinAnswer).screen === initial.screen);
 }
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
@@ -855,7 +876,7 @@ export function restoreCloudPrefill(page: JoinPage, view: SessionView, fromAgent
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
 //@ pure
 export function canRestoreCloudPrefill(page: JoinPage, view: SessionView): boolean {
-  return page.screen === "Loading" && view.result === "MayJoin" && sessionConsistent(view);
+  return page.screen === "Loading" && view.result === "MayJoin" && sessionConsistent(view) && !page.formHasValues && !page.viaAgent;
 }
 
 /** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md) */

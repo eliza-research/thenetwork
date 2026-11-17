@@ -1,6 +1,6 @@
 // GENERATED from spec/landingEntry.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
+import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
 
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export type CopyState = "CopyHidden" | "CopyReady" | "CopyCopied" | "CopySelected";
@@ -31,10 +31,16 @@ export type Event =
 export const messagesEntryLabel: string = "Use in iMessage";
 /** Story: Start in Messages instead / The Messages entry writes `join <keyword>` to the shared line (spec/landingEntry.md) */
 export const joinMessagePrefix: string = "join ";
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+export const messageCopiedTemplate: string = "Message copied. Text it to {number} if iMessage did not open.";
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+export const textTheNumberTemplate: string = "Text “{message}” to {number}.";
 /** Story: Start in Messages instead / When Messages does not open in 1.5 seconds, the status line shows the number and the message (spec/landingEntry.md) */
 export const messagesWaitMs: number = 1500;
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingWordLimit: number = 45;
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+export const landingHeadingCount: number = 1;
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
 export const promptLead: string = "Read https://";
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
@@ -384,6 +390,12 @@ export function alwaysFallbackNeedsScript(s: Landing): boolean {
 
 /** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
 //@ pure
+export function messagesFallbackTemplate(copied: boolean): string {
+  return messagesFallbackStatus(copied) === "MessageCopied" ? messageCopiedTemplate : textTheNumberTemplate;
+}
+
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+//@ pure
 export function chooseMessages(s: Landing, copied: boolean): Landing {
   //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysCopyButtonNeedsScript(\result)
   //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysDeviceKnownOnlyWithScript(\result)
@@ -468,6 +480,18 @@ export function settleMessages(s: Landing, pageLeft: boolean): Landing {
   //@ ensures (inv(s) && canSettleMessages(s)) ==> stepCopyLabelChangesOnlyByCopy(s, "settleMessages", \result)
   //@ ensures (inv(s) && canSettleMessages(s)) ==> stepMessagesFallbackShowsNumber(s, "settleMessages", \result)
   return pageLeft ? ({ ...s, messages: "MessagesOpened" } as Landing) : ({ ...s, messages: "MessagesFallback", status: messagesFallbackStatus(s.messageCopied) } as Landing);
+}
+
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+//@ pure
+export function landingWordsAllowed(words: number): boolean {
+  return words >= 0 && words < landingWordLimit;
+}
+
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+//@ pure
+export function landingHeadingsAllowed(headings: number): boolean {
+  return headings === landingHeadingCount;
 }
 
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */

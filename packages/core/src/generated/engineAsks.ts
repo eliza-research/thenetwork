@@ -98,8 +98,15 @@ export function sometimesPublishesQuestions(s: AskRun): boolean {
 
 /** Story: Ask for the information needed to find a match / The Network asks for dating preferences once (spec/engineAsks.md) */
 //@ pure
-export function networkPreferenceQuestion(missingPreferences: boolean, activeIntent: boolean, previouslyAsked: boolean): boolean {
-  return missingPreferences && activeIntent && !previouslyAsked;
+export function networkPreferenceQuestion(datingEligible: boolean, missingPreferences: boolean, activeIntent: boolean, previouslyAsked: boolean): boolean {
+  return datingEligible && missingPreferences && activeIntent && !previouslyAsked;
+}
+
+/** Story: Ask for the information needed to find a match / The Network asks for dating preferences once (spec/engineAsks.md) */
+//@ pure
+export function lawIneligibleMemberGetsNoPreferenceQuestion(missingPreferences: boolean, activeIntent: boolean, previouslyAsked: boolean): boolean {
+  //@ ensures \result === true
+  return !networkPreferenceQuestion(false, missingPreferences, activeIntent, previouslyAsked);
 }
 
 /** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
@@ -136,6 +143,19 @@ export function widerRadiusQuestion(radius: number, offeredRadius: number, alrea
 //@ pure
 export function compatibilityQuestionDue(elapsedMs: number): boolean {
   return elapsedMs >= compatibilityWaitMs;
+}
+
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
+//@ pure
+export function compatibilityTypeQuestionDue(typeEnabled: boolean, typeMissing: boolean, elapsedMs: number): boolean {
+  return typeEnabled && typeMissing && compatibilityQuestionDue(elapsedMs);
+}
+
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
+//@ pure
+export function lawTypeQuestionNeedsItsSwitch(typeMissing: boolean, elapsedMs: number): boolean {
+  //@ ensures \result === true
+  return !compatibilityTypeQuestionDue(false, typeMissing, elapsedMs);
 }
 
 /** Do the rules allow this event in this state? */

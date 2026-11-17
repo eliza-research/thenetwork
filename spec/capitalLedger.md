@@ -1,6 +1,6 @@
 # Network Capital ledger
 
-The Network projects its own events into the private Capital ledger. This module governs which events reach the ledger and which credits count. The shell validates event shape, loads prior records, persists source events, and computes decimals and entries with the existing category multipliers and rounding.
+The Network projects its own events into the private Capital ledger. This module governs which events reach the ledger and which credits count. The shell validates event shape, loads prior records, persists source events, and computes decimals and entries with the existing category multipliers and rounding. The shell marks a member and need pair as used on a qualifying confirmation, before it checks whether an entry can be earned.
 
 ## Story: Count what I contributed once and preserve its history
 
@@ -8,7 +8,7 @@ The Network projects its own events into the private Capital ledger. This module
 
 ### Validate and deduplicate an event before applying it
 
-Validate each event before looking up its ID. A well-formed replay of an event ID has no effect, even after the ledger has advanced. An unseen event must be at or after the last accepted time. Append an admitted event to the configured store before updating the in-memory ledger. A failed append stops application.
+Validate each event before looking up its ID. A well-formed replay of an event ID has no effect, even after the ledger has advanced. An unseen event must be at or after the last accepted time. Append an admitted event to the configured store before updating the in-memory ledger. Only a successful append moves the event to applying (`recordLedgerAppend`). The shell records the append only after the store accepts it, so after a failed append the event stays in the appending phase and is never applied.
 
 ```quint
 type CapitalEventPhase =
@@ -62,7 +62,7 @@ pure def mayEarnCapital(eligible: bool, removed: bool, positiveBase: bool): bool
 
 ### Organizing and needs use their original contribution source
 
-Organizing credit requires a public venue and the configured number of eligible attendees other than the organizer. An organizer and plan pair becomes used when it earns an entry. A need answer needs staff confirmation or an eligible confirmer other than the member. The member and need pair becomes used on a qualifying confirmation before checking whether an entry can be earned.
+Organizing credit requires a public venue and the configured number of eligible attendees other than the organizer. An organizer and plan pair becomes used when it earns an entry. A need answer needs staff confirmation or an eligible confirmer other than the member, and a member and need pair that is not used yet.
 
 ```quint
 pure def organizingCapitalSourceOpen(publicVenue: bool, alreadyCredited: bool): bool =

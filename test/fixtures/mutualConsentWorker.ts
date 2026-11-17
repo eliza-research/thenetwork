@@ -19,7 +19,7 @@ try {
       await fixture?.close();
       fixture = startClimbingRequestFixture();
       const { item, decideReview } = await fixture.ready;
-      const review = await decideReview(item.oppId, "approve");
+      const review = await decideReview(item, "approve");
       const body: unknown = await review.json();
       if (!review.ok || !body || typeof body !== "object" || !("ok" in body) || body.ok !== true) {
         throw new Error("The human reviewer did not approve the climbing introduction");

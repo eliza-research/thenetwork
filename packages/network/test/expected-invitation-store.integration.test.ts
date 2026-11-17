@@ -54,7 +54,7 @@ async function stage(app: AppId, to: string) {
 }
 
 function confirm(input: Awaited<ReturnType<typeof stage>>) {
-  return scoped(input.app, tx => store.confirm(tx, input, authorize, enqueue));
+  return scoped(input.app, tx => store.confirm(tx, { ...input, transportAvailable: true }, authorize, enqueue));
 }
 
 if (pgAvailable) {
@@ -81,9 +81,9 @@ test.skipIf(!pgAvailable)("confirmation atomically queues one bound contact acro
   expect(sealed?.stored).not.toContain(first.link);
   expect(sealed?.stored).not.toContain(first.code);
   expect(await scoped("friends", tx => tx`select 1 from platform.expected_member_invitations where token_hash=${first.tokenHash}`)).toHaveLength(0);
-  expect(await scoped(first.app, tx => store.confirm(tx, { ...first, inviterMemberId: "another_owner" }, authorize, enqueue))).toBeUndefined();
+  expect(await scoped(first.app, tx => store.confirm(tx, { ...first, inviterMemberId: "another_owner", transportAvailable: true }, authorize, enqueue))).toBeUndefined();
 
-  await expect(scoped(first.app, tx => store.confirm(tx, first, authorize, async (inner, delivery) => {
+  await expect(scoped(first.app, tx => store.confirm(tx, { ...first, transportAvailable: true }, authorize, async (inner, delivery) => {
     await enqueue(inner, delivery);
     throw new Error("Could not commit the queue row");
   }))).rejects.toThrow("Could not commit the queue row");

@@ -1,5 +1,5 @@
 import {
-  apply, inboxItemAllowedForRecipient, inboxItemExpired, inboxItemStillPending, initial,
+  apply, inboxItemAllowedForRecipient, inboxItemDigestible, inboxItemExpired, initial,
 } from "./generated/notificationDispatch.effect.js"
 
 interface DigestRecord {
@@ -56,8 +56,8 @@ export function dispatchInboxDigest<P extends DigestPlan, I extends DigestItem, 
 ): Promise<DispatchResult<P>> {
   return runPromise(effect {
     const items = try io("Could not read the planned inbox items", () => effects.readItems(planned.itemIds))
-    const pending = items.filter(item => inboxItemStillPending(item.seenAt !== undefined, item.notifiedAt !== undefined)
-      && !inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now))
+    const pending = items.filter(item => inboxItemDigestible(item.seenAt !== undefined, item.notifiedAt !== undefined,
+      item.expiresAt !== undefined, item.expiresAt ?? 0, now))
     const recipient = pending.length > 0
       ? try io("Could not refresh the digest recipient", () => effects.readRecipient(planned.personId))
       : undefined

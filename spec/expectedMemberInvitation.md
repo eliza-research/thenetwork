@@ -25,7 +25,8 @@ for its current exact owner, link, recipient and unconfirmed draft. Its
 expiry and the same carrier checks still apply. Check current recipient
 eligibility and suppression at confirmation. A recipient
 gets at most one service invitation in the rolling invitation window, even
-across apps. Commit the delivery key and recipient binding together with
+across apps. The first-contact fact is true only when this recipient holds
+no other service invitation reservation in that window and has not declined. Commit the delivery key and recipient binding together with
 the existing invitation under the same concurrency controls.
 The member sees the same response when private recipient facts prevent
 contact. Do not tell the member another person's membership status.
@@ -44,6 +45,8 @@ type ExpectedInviteRequestFacts = {
   reviewClear: bool,
   recipientAllowed: bool,
   firstContact: bool,
+  transportAvailable: bool,
+  challengeCurrent: bool,
   now: int,
   expiresAt: int
 }
@@ -53,7 +56,7 @@ pure val nowValues = Set(-1, 0, 1, 99, 100, 101)
 pure val eligibleRequest: ExpectedInviteRequestFacts = {
   direct: true, confirmedExpected: true, exactTarget: true, distinctRecipient: true,
   issuerCurrent: true, reviewClear: true, recipientAllowed: true, firstContact: true,
-  now: 0, expiresAt: 100
+  transportAvailable: true, challengeCurrent: true, now: 0, expiresAt: 100
 }
 pure val requestValues = Set(eligibleRequest,
   { ...eligibleRequest, direct: false },
@@ -64,6 +67,8 @@ pure val requestValues = Set(eligibleRequest,
   { ...eligibleRequest, reviewClear: false },
   { ...eligibleRequest, recipientAllowed: false },
   { ...eligibleRequest, firstContact: false },
+  { ...eligibleRequest, transportAvailable: false },
+  { ...eligibleRequest, challengeCurrent: false },
   { ...eligibleRequest, now: 100 })
 
 pure def expectedInviteLive(now: int, expiresAt: int): bool = now >= 0 and now < expiresAt
@@ -85,6 +90,7 @@ pure def lawUnavailableTransportCannotReplay(approvalPending: bool, exactDraft: 
 pure def expectedInviteMayStage(request: ExpectedInviteRequestFacts): bool =
   request.direct and request.confirmedExpected and request.exactTarget and request.distinctRecipient and
   request.issuerCurrent and request.reviewClear and request.recipientAllowed and request.firstContact and
+  request.transportAvailable and request.challengeCurrent and
   expectedInviteLive(request.now, request.expiresAt)
 
 pure def canStageExpectedInvite(invite: ExpectedInvite, request: ExpectedInviteRequestFacts): bool =
@@ -104,6 +110,9 @@ pure def lawExpectedInviteNeedsCurrentReview(request: ExpectedInviteRequestFacts
 
 pure def lawExpectedInviteNeedsAnEligibleFirstContact(request: ExpectedInviteRequestFacts): bool =
   expectedInviteMayStage(request) implies (request.recipientAllowed and request.firstContact)
+
+pure def lawExpectedInviteNeedsLiveTransportAndCurrentChallenge(request: ExpectedInviteRequestFacts): bool =
+  expectedInviteMayStage(request) implies (request.transportAvailable and request.challengeCurrent)
 ```
 
 ### One durably claimed dispatch may contact the recipient

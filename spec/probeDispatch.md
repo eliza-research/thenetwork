@@ -125,4 +125,15 @@ pure def alternateAllowed(eligible: bool, sameFirstName: bool, conflict: bool): 
 
 pure def lawRequiredParticipantCannotBeReplaced(probing: bool, requesterOut: bool, managerOut: bool): bool =
   (requesterOut or managerOut) implies replacementRoute(probing, requesterOut, managerOut) != FindAlternate
+
+type NoAlternateRoute = ContinueGroup | CloseWithoutAlternate
+
+pure def noAlternateRoute(group: bool, remaining: int): NoAlternateRoute =
+  if (group and remaining >= 3) ContinueGroup else CloseWithoutAlternate
+
+pure def lawPairClosesWithoutAlternate(remaining: int): bool =
+  noAlternateRoute(false, remaining) == CloseWithoutAlternate
+
+pure def lawGroupBelowThreeCloses(remaining: int): bool =
+  (remaining < 3) implies noAlternateRoute(true, remaining) == CloseWithoutAlternate
 ```

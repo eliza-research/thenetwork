@@ -177,6 +177,13 @@ export function lawHeldPhoneCannotExport(verifiedOwner: string, currentOwner: st
 
 /** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
 //@ pure
+export function lawUnboundExportNeedsUnownedPhone(currentOwner: string, held: boolean): boolean {
+  //@ ensures \result === true
+  return !verifiedPrivacyOwnerMatches("", currentOwner, held) || (currentOwner === "" && !held);
+}
+
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
+//@ pure
 export function canCheckAppExport(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAppExport" && privacy.operation === "ExportApp";
 }

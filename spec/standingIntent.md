@@ -1,6 +1,6 @@
 # Standing intent freshness
 
-[Story F9](product/stories.md#story-f9--keep-a-standing-intent) asks the Network to keep looking until the member stops or the intent expires. The [profile learning](models/profile_learning.md) and [matching engine](models/matching_engine.md) models describe the surrounding flows. The shell supplies the stored status and computes the deadline from the member's recorded statement and its horizon.
+[Story F9](product/stories.md#story-f9--keep-a-standing-intent) asks the Network to keep looking until the member stops or the intent expires. The [profile learning](models/profile_learning.md) and [matching engine](models/matching_engine.md) models describe the surrounding flows. The shell supplies the stored status and computes the deadline from the member's recorded statement and its horizon. The shell keeps the statement time of a learned desire when a matching run reads that desire again; only a fresh statement by the member sets a new time. The shell removes a desire that the member withdraws from the learned desires, so that a withdrawn desire stays out of learned matching evidence.
 
 ## Story: Match only on a current standing intent
 
@@ -8,7 +8,7 @@
 
 ### A standing intent expires at its recorded deadline
 
-An active row contributes evidence until the deadline. At the deadline it expires. A paused or closed row supplies neither matching evidence nor a derived participation preference. The same rule applies to matching, probe order, and judgment views. Explicit participation preferences come from the member record. Rebuild a cached matching profile when the first intent used in it expires.
+An active row contributes evidence until the deadline. At the deadline it expires. Only a live row supplies evidence. An expired, paused, closed or unknown-status row supplies neither matching evidence nor a derived participation preference. The same rule applies to matching, probe order, and judgment views. Explicit participation preferences come from the member record. Rebuild a cached matching profile when the first intent used in it expires.
 
 ```quint
 type StandingIntentPhase = IntentLive | IntentExpired | IntentPaused | IntentClosed | IntentInactive
@@ -19,15 +19,21 @@ pure def classifyStandingIntent(status: str, expiresAt: int, asOf: int): Standin
   else if (status == "closed") IntentClosed
   else IntentInactive
 
+pure def standingIntentSuppliesEvidence(phase: StandingIntentPhase): bool = phase == IntentLive
+
 pure def cachedStandingIntentsCurrent(firstExpiry: int, asOf: int): bool = firstExpiry > asOf
 
 pure def lawDeadlineEndsAnActiveIntent(expiresAt: int): bool =
   classifyStandingIntent("active", expiresAt, expiresAt) == IntentExpired
+
+pure def lawPausedOrClosedSuppliesNoEvidence(expiresAt: int, asOf: int): bool =
+  not(standingIntentSuppliesEvidence(classifyStandingIntent("paused", expiresAt, asOf)))
+    and not(standingIntentSuppliesEvidence(classifyStandingIntent("closed", expiresAt, asOf)))
 ```
 
 ### A fresh statement can replace an expired copy
 
-A learned desire has sixty days from the member's statement. Reading it again leaves the original statement time in place. A withdrawn desire stays out of learned matching evidence. A live, paused, or closed record of the same desire takes precedence over a learned copy. An expired active row lets a fresh statement through. An active row's expiry also ends its ability to supersede a matching closed record when checking a withdrawal.
+A learned desire has sixty days from the member's statement. A learned copy projects only while it is live and no record of the same desire blocks it. A live, paused, or closed record of the same desire takes precedence over a learned copy, and so does a record with an unknown status. An expired active row lets a fresh statement through. When checking a withdrawal, an active row supersedes a matching closed record only while it supplies evidence, so its expiry ends that ability.
 
 ```quint
 pure val learnedIntentDays = 60
@@ -39,6 +45,12 @@ pure def standingIntentBlocksLearnedCopy(phase: StandingIntentPhase): bool = pha
 
 pure def lawBlockingRecordPreventsLearnedProjection(phase: StandingIntentPhase): bool =
   not(learnedIntentMayProject(phase, true))
+
+pure def lawOnlyExpiredRecordLetsLearnedCopyThrough(status: str, expiresAt: int, asOf: int): bool =
+  standingIntentBlocksLearnedCopy(classifyStandingIntent(status, expiresAt, asOf)) iff not(status == "active" and expiresAt <= asOf)
+
+pure def lawExpiredActiveRowStopsSuperseding(expiresAt: int, asOf: int): bool =
+  asOf >= expiresAt implies not(standingIntentSuppliesEvidence(classifyStandingIntent("active", expiresAt, asOf)))
 ```
 
 ### Changed matching evidence starts another standing intent search

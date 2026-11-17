@@ -29,7 +29,7 @@ export type Event =
   | { type: "authorize"; withWrite: boolean }
   | { type: "callWithoutAccess"; tool: ToolName }
   | { type: "callPublicTool"; tool: ToolName; app: AppId }
-  | { type: "connect"; host: AppId; surface: Surface }
+  | { type: "connect"; host: AppId; surface: Surface; openAiEnabled: boolean }
   | { type: "callAfterOwnerChange" }
   | { type: "callCheckStatus" }
   | { type: "changeMemberStatus"; newStatus: MemberStatus }
@@ -257,7 +257,13 @@ export function callPublicTool(c: Connection, tool: ToolName, app: AppId): Conne
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function connect(c: Connection, host: AppId, surface: Surface): Connection {
+export function alwaysOpenAiHidesSlop(c: Connection): boolean {
+  return !bound(c) || hostServes(c.surface, c.host);
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
+export function connect(c: Connection, host: AppId, surface: Surface, openAiEnabled: boolean): Connection {
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysOpenAiHidesSlop(\result)
@@ -269,19 +275,20 @@ export function connect(c: Connection, host: AppId, surface: Surface): Connectio
   //@ ensures (inv(c) && canConnect(c)) ==> stepNothingSentAtTheLimit(c, "connect", \result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepSubmitOnlyForLiveMember(c, "connect", \result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepReadingNeverAddsUnseen(c, "connect", \result)
-  return { ...c, host: host, surface: surface, phase: hostServes(surface, host) ? "Anonymous" : "Unavailable" };
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
-export function alwaysOpenAiHidesSlop(c: Connection): boolean {
-  return !bound(c) || hostServes(c.surface, c.host);
+  return { ...c, host: host, surface: surface, phase: configuredHostServes(surface, host, openAiEnabled) ? "Anonymous" : "Unavailable" };
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
 export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
   return bound(c) && toolListed(c.host, c.surface, tool) && ((c.phase === "Anonymous" && scopeFor(tool) !== "NoScope") || c.phase === "Revoked" || (c.phase === "Connected" && scopeFor(tool) === "ProfileWrite" && !c.hasWrite));
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
+export function lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): boolean {
+  //@ ensures \result === true
+  return connect(c, host, "OpenAiSurface", false).phase === "Unavailable";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -321,15 +328,15 @@ export function memberResult(r: ToolResult): boolean {
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
-export function lawOnlyObservedOwnerChangeEndsGrant(available: boolean, held: boolean, samePerson: boolean): boolean {
-  //@ ensures \result === true
-  return (decideGrantOwner(available, held, samePerson) === "GrantOwnerChanged") === (available && !held && !samePerson);
+export function alwaysMemberResultsNeedConnection(c: Connection): boolean {
+  return !memberResult(c.lastResult) || c.phase === "Connected";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
-export function alwaysMemberResultsNeedConnection(c: Connection): boolean {
-  return !memberResult(c.lastResult) || c.phase === "Connected";
+export function lawOnlyObservedOwnerChangeEndsGrant(available: boolean, held: boolean, samePerson: boolean): boolean {
+  //@ ensures \result === true
+  return (decideGrantOwner(available, held, samePerson) === "GrantOwnerChanged") === (available && !held && !samePerson);
 }
 
 /** Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app (spec/connectorTools.md) */
@@ -680,7 +687,7 @@ export function step(current: Connection, event: Event): Connection {
   if (event.type === "authorize" && canAuthorize(current)) return authorize(current, event.withWrite);
   if (event.type === "callWithoutAccess" && canCallWithoutAccess(current, event.tool)) return callWithoutAccess(current, event.tool);
   if (event.type === "callPublicTool" && canCallPublicTool(current, event.tool)) return callPublicTool(current, event.tool, event.app);
-  if (event.type === "connect" && canConnect(current)) return connect(current, event.host, event.surface);
+  if (event.type === "connect" && canConnect(current)) return connect(current, event.host, event.surface, event.openAiEnabled);
   if (event.type === "callAfterOwnerChange" && canCallAfterOwnerChange(current)) return callAfterOwnerChange(current);
   if (event.type === "callCheckStatus" && canCallCheckStatus(current)) return callCheckStatus(current);
   if (event.type === "changeMemberStatus" && canChangeMemberStatus(current, event.newStatus)) return changeMemberStatus(current, event.newStatus);
@@ -710,7 +717,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean") return { type: "authorize", withWrite: raw.withWrite };
   if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool")) return { type: "callWithoutAccess", tool: raw.tool };
   if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends")) return { type: "callPublicTool", tool: raw.tool, app: raw.app };
-  if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface")) return { type: "connect", host: raw.host, surface: raw.surface };
+  if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };
   if (raw.type === "changeMemberStatus" && (raw.newStatus === "NotJoined" || raw.newStatus === "Invited" || raw.newStatus === "Onboarding" || raw.newStatus === "Active" || raw.newStatus === "Stopped" || raw.newStatus === "OnHold")) return { type: "changeMemberStatus", newStatus: raw.newStatus };

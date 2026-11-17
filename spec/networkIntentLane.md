@@ -32,3 +32,11 @@ pure def lawExcludedNetworkIntentHasNoRoute(specific: NetworkIntentRoute, profes
 ### Each cofounder peer explicitly opts in under their app account
 
 The [Cofounder introduction authority](cofounderDispatch.md) requires a live signed standing intent from each peer. That intent is the only source of consent for a cofounder introduction. The direct one-to-one proposal carries both exact intent IDs as internal authorization facts. Events, repeat encounters, warm paths and recruiting prompts use their own purposes. Closing or expiring either intent removes that peer from the next matching run.
+
+```quint
+pure def cofounderPeersOptedIn(firstIntentLive: bool, secondIntentLive: bool): bool =
+  firstIntentLive and secondIntentLive
+
+pure def lawEndedCofounderIntentBlocksIntroduction(otherIntentLive: bool): bool =
+  not(cofounderPeersOptedIn(false, otherIntentLive)) and not(cofounderPeersOptedIn(otherIntentLive, false))
+```

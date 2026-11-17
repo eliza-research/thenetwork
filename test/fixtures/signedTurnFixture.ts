@@ -23,7 +23,7 @@ export type SignedTurnFixture = {
   replayTurn(request: TurnRequest): Promise<Response>;
   sendReceipt(input: TurnReceiptRequest): Promise<Response>;
   reviewQueue(): Promise<Response>;
-  decideReview(oppId: string, decision: "approve" | "reject", reason?: string): Promise<Response>;
+  decideReview(item: { oppId: string; revision: number }, decision: "approve" | "reject", reason?: string): Promise<Response>;
 };
 
 export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>, options: { friendsReview?: boolean } = {}) {
@@ -128,7 +128,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       return response;
     }
 
-    function review(path: string, body?: { decision: "approve" | "reject"; reason?: string }) {
+    function review(path: string, body?: { decision: "approve" | "reject"; revision: number; reason?: string }) {
       return fetch(new URL(`/apps/friends/review${path}`, http.url), {
         signal: AbortSignal.timeout(10_000),
         headers: { authorization: `Bearer ${reviewer}`, "content-type": "application/json" },
@@ -140,7 +140,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       clock, service: app, createMember, sendTurn,
       replayTurn: input => postSigned(TURN_PATH, input.messageId, input),
       sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input),
-      reviewQueue: () => review(""), decideReview: (oppId, decision, reason) => review(`/${encodeURIComponent(oppId)}`, { decision, reason }),
+      reviewQueue: () => review(""), decideReview: ({ oppId, revision }, decision, reason) => review(`/${encodeURIComponent(oppId)}`, { decision, revision, reason }),
     });
   } finally {
     await server?.stop(true);

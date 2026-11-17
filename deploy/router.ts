@@ -73,7 +73,7 @@ export function retiredSitePage(req: Request, app: string): Response | null {
   const headers: Record<string, string> = {};
   if (answer.noStore) headers["cache-control"] = "no-store";
   if (answer.toLanding) headers.location = "/";
-  if (answer.status === 405) headers.allow = "GET, HEAD";
+  if (answer.allowsReadOnly) headers.allow = "GET, HEAD";
   if (answer.hasBody) headers["content-type"] = "text/plain; charset=utf-8";
   return new Response(answer.hasBody ? "Not found" : null, { status: answer.status, headers });
 }

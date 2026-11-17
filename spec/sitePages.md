@@ -31,6 +31,14 @@ The footer of each page has two links: Privacy, then Terms. The landing footer h
 ```quint
 pure val footerLinks: List[SitePage] = List(PrivacyPage, TermsPage)
 
+pure def footerOf(page: SitePage): List[SitePage] = footerLinks
+
+pure def lawEveryFooterIsPrivacyThenTerms(app: AppKey, page: SitePage): bool =
+  siteHasPage(app, page) implies (footerOf(page).length() == 2 and footerOf(page).nth(0) == PrivacyPage and footerOf(page).nth(1) == TermsPage)
+
+pure def lawLandingFooterHasNoOtherLink(otherPage: SitePage): bool =
+  footerOf(LandingPage).includes(otherPage) implies (otherPage == PrivacyPage or otherPage == TermsPage)
+
 pure def lawFooterLinksExistOnEverySite(app: AppKey, page: SitePage): bool =
   footerLinks.includes(page) implies siteHasPage(app, page)
 ```
@@ -97,21 +105,24 @@ pure def lawRetiredJoinReadsGoToLanding(app: AppKey, method: RequestMethod): boo
 
 ### A retired path answers with no page and is never cached
 
-A retired settings path answers 404 with a short text body, and with no body for HEAD. A retired join read answers 302 to the landing page with no body. A retired join write answers 405 and names the allowed methods. Every retired answer carries `no-store`, so a cache never keeps an old page. The not-found page answers 404. A backend path gets its answer from the backend, so its site answer has status 0.
+A retired settings path answers 404 with a short text body, and with no body for HEAD. A retired join read answers 302 to the landing page with no body. A retired join write answers 405 and names the allowed methods, GET and HEAD; no other answer names allowed methods. Every retired answer carries `no-store`, so a cache never keeps an old page. The not-found page answers 404. A backend path gets its answer from the backend, so its site answer has status 0.
 
 ```quint
-type SiteAnswer = { status: int, noStore: bool, hasBody: bool, toLanding: bool }
+type SiteAnswer = { status: int, noStore: bool, hasBody: bool, toLanding: bool, allowsReadOnly: bool }
 
 pure def isRetiredRoute(route: SiteRoute): bool =
   route == RefuseRetired or route == RedirectToLanding or route == RefuseMethod
 
 pure def answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer =
-  if (route == RefuseRetired) { status: 404, noStore: true, hasBody: method != HeadMethod, toLanding: false }
-  else if (route == RedirectToLanding) { status: 302, noStore: true, hasBody: false, toLanding: true }
-  else if (route == RefuseMethod) { status: 405, noStore: true, hasBody: false, toLanding: false }
-  else if (route == ForwardToBackend) { status: 0, noStore: false, hasBody: false, toLanding: false }
-  else if (route == ServeNotFound) { status: 404, noStore: false, hasBody: method != HeadMethod, toLanding: false }
-  else { status: 200, noStore: false, hasBody: method != HeadMethod, toLanding: false }
+  if (route == RefuseRetired) { status: 404, noStore: true, hasBody: method != HeadMethod, toLanding: false, allowsReadOnly: false }
+  else if (route == RedirectToLanding) { status: 302, noStore: true, hasBody: false, toLanding: true, allowsReadOnly: false }
+  else if (route == RefuseMethod) { status: 405, noStore: true, hasBody: false, toLanding: false, allowsReadOnly: true }
+  else if (route == ForwardToBackend) { status: 0, noStore: false, hasBody: false, toLanding: false, allowsReadOnly: false }
+  else if (route == ServeNotFound) { status: 404, noStore: false, hasBody: method != HeadMethod, toLanding: false, allowsReadOnly: false }
+  else { status: 200, noStore: false, hasBody: method != HeadMethod, toLanding: false, allowsReadOnly: false }
+
+pure def lawOnlyARetiredJoinWriteNamesAllowedMethods(route: SiteRoute, method: RequestMethod): bool =
+  answerFor(route, method).allowsReadOnly iff (route == RefuseMethod)
 
 pure def lawRetiredAnswersAreNeverCached(app: AppKey, path: PathKind, method: RequestMethod): bool =
   isRetiredRoute(routeFor(app, path, method)) implies answerFor(routeFor(app, path, method), method).noStore

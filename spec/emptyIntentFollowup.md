@@ -8,11 +8,23 @@
 
 ### Explain an empty search after its configured wait
 
-Use the daily run's empty result after the configured wait, normally ten days. An absent, filtered or below-threshold match can produce a follow-up. A viable match held by selection or budget is a different result. Keep the engine's reason code in the matching log and the follow-up audit. The message says the Network has no match to offer yet and points to the solo public-event request. It names neither the private intent nor other members.
+Use the daily run's empty result after the configured wait, normally ten days. The wait counts from the time of the statement, so a new statement waits again. An absent, filtered or below-threshold match can produce a follow-up. A viable match held by selection or budget is a different result. Keep the engine's reason code in the matching log and the follow-up audit. The message says the Network has no match to offer yet and points to the solo public-event request. It names neither the private intent nor other members.
 
 ```quint
 pure def emptyIntentFollowupReasonAllowed(reason: str): bool =
   reason == "no_candidates" or reason == "density_gap" or reason == "below_threshold" or reason == "filtered"
+
+pure val emptyIntentDefaultWaitDays: int = 10
+pure val emptyIntentDayMs: int = 86400000
+
+pure def emptyIntentWaitOver(statementAgeMs: int, waitDays: int): bool =
+  statementAgeMs >= waitDays * emptyIntentDayMs
+
+pure def lawNewStatementWaitsBeforeAFollowup(waitDays: int): bool =
+  waitDays <= 0 or not(emptyIntentWaitOver(0, waitDays))
+
+pure def lawDefaultWaitHoldsAStatementForTenDays(statementAgeMs: int): bool =
+  statementAgeMs < 10 * emptyIntentDayMs implies not(emptyIntentWaitOver(statementAgeMs, emptyIntentDefaultWaitDays))
 ```
 
 ### A pending follow-up uses current permission and the same live statement

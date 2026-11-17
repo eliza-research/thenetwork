@@ -1,15 +1,15 @@
 // GENERATED from spec/seedInvitation.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { memberInviteDraftMs as memberInvitation_memberInviteDraftMs, memberInviteMaxMonths as memberInvitation_memberInviteMaxMonths, memberInviteBurstWindowMs as memberInvitation_memberInviteBurstWindowMs, memberInviteBurstPriorCount as memberInvitation_memberInviteBurstPriorCount, memberInviteWindowMs as memberInvitation_memberInviteWindowMs, defaultMemberInviteCapacity as memberInvitation_defaultMemberInviteCapacity, memberInviteUsesAllowance as memberInvitation_memberInviteUsesAllowance, memberInviteWithinWindow as memberInvitation_memberInviteWithinWindow, memberInviteDraftCurrent as memberInvitation_memberInviteDraftCurrent, memberInviteEvidenceValid as memberInvitation_memberInviteEvidenceValid, memberInviteConfirmationReady as memberInvitation_memberInviteConfirmationReady, memberInviteWithinBurstWindow as memberInvitation_memberInviteWithinBurstWindow, memberInviteVouchWeak as memberInvitation_memberInviteVouchWeak, memberInviteBurst as memberInvitation_memberInviteBurst, memberInviteNeedsReview as memberInvitation_memberInviteNeedsReview, memberInviteLinkCanBeShared as memberInvitation_memberInviteLinkCanBeShared, memberInviteCanAttribute as memberInvitation_memberInviteCanAttribute, memberInviteSourceCurrent as memberInvitation_memberInviteSourceCurrent, memberInviteRelationshipKnown as memberInvitation_memberInviteRelationshipKnown, memberInviteCanIssue as memberInvitation_memberInviteCanIssue, lawUnavailableMemberInviteDoesNotSpend as memberInvitation_lawUnavailableMemberInviteDoesNotSpend, lawMemberInviteRequiresConfirmation as memberInvitation_lawMemberInviteRequiresConfirmation, lawUnusualMemberInviteRequiresReview as memberInvitation_lawUnusualMemberInviteRequiresReview, lawMemberInviteLinkNeedsDirectReply as memberInvitation_lawMemberInviteLinkNeedsDirectReply, lawOldMemberInviteCannotBeAttributed as memberInvitation_lawOldMemberInviteCannotBeAttributed, memberMayRequestInvite as memberInvitation_memberMayRequestInvite, lawMemberInviteNeedsAdult as memberInvitation_lawMemberInviteNeedsAdult, lawMemberInviteNeedsDirectRequest as memberInvitation_lawMemberInviteNeedsDirectRequest } from "./memberInvitation.ts";
+import { memberInviteDraftMs as memberInvitation_memberInviteDraftMs, memberInviteMaxMonths as memberInvitation_memberInviteMaxMonths, memberInviteBurstWindowMs as memberInvitation_memberInviteBurstWindowMs, memberInviteBurstPriorCount as memberInvitation_memberInviteBurstPriorCount, memberInviteWindowMs as memberInvitation_memberInviteWindowMs, defaultMemberInviteCapacity as memberInvitation_defaultMemberInviteCapacity, memberInviteUsesAllowance as memberInvitation_memberInviteUsesAllowance, memberInviteWithinWindow as memberInvitation_memberInviteWithinWindow, memberInviteDraftCurrent as memberInvitation_memberInviteDraftCurrent, memberInviteEvidenceValid as memberInvitation_memberInviteEvidenceValid, memberInviteConfirmationReady as memberInvitation_memberInviteConfirmationReady, memberInviteWithinBurstWindow as memberInvitation_memberInviteWithinBurstWindow, memberInviteVouchWeak as memberInvitation_memberInviteVouchWeak, memberInviteBurst as memberInvitation_memberInviteBurst, memberInviteNeedsReview as memberInvitation_memberInviteNeedsReview, memberInviteHeldLinkReleased as memberInvitation_memberInviteHeldLinkReleased, memberInviteLinkCanBeShared as memberInvitation_memberInviteLinkCanBeShared, memberInviteCanAttribute as memberInvitation_memberInviteCanAttribute, memberInviteSourceCurrent as memberInvitation_memberInviteSourceCurrent, memberInviteRelationshipKnown as memberInvitation_memberInviteRelationshipKnown, memberInviteCanIssue as memberInvitation_memberInviteCanIssue, lawUnavailableMemberInviteDoesNotSpend as memberInvitation_lawUnavailableMemberInviteDoesNotSpend, lawMemberInviteRequiresConfirmation as memberInvitation_lawMemberInviteRequiresConfirmation, lawUnusualMemberInviteRequiresReview as memberInvitation_lawUnusualMemberInviteRequiresReview, lawHeldMemberInviteNeedsApproval as memberInvitation_lawHeldMemberInviteNeedsApproval, lawMemberInviteLinkNeedsDirectReply as memberInvitation_lawMemberInviteLinkNeedsDirectReply, lawOldMemberInviteCannotBeAttributed as memberInvitation_lawOldMemberInviteCannotBeAttributed, memberMayRequestInvite as memberInvitation_memberMayRequestInvite, lawMemberInviteNeedsAdult as memberInvitation_lawMemberInviteNeedsAdult, lawMemberInviteNeedsDirectRequest as memberInvitation_lawMemberInviteNeedsDirectRequest } from "./memberInvitation.ts";
 
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
 export type SeedBatchDecision = "IssueSeedBatch" | "ReplaySeedBatch" | "RejectSeedBatch";
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
-export interface SeedBatchFacts { appAdmin: boolean; stableActor: boolean; validCity: boolean; validRecipients: boolean; uniqueRecipients: boolean; privateVouches: boolean; batchNew: boolean; sameBatch: boolean }
+export interface SeedBatchFacts { appAdmin: boolean; stableActor: boolean; validCity: boolean; validRecipients: boolean; uniqueRecipients: boolean; entryCount: number; shortestVouchBytes: number; longestVouchBytes: number; batchNew: boolean; sameBatch: boolean; batchLive: boolean }
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
 export type SeedInvitationPhase = "SeedUnissued" | "SeedIssued" | "SeedRedeemed" | "SeedClosed";
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
-export interface SeedInvitation { phase: SeedInvitationPhase; issuedAt: number }
+export interface SeedInvitation { phase: SeedInvitationPhase; issuedAt: number; vouchRetained: boolean }
 /** Story: Decide whether to join the cohort / Only the verified recipient can spend a current invitation (spec/seedInvitation.md) */
 export interface SeedRecipientFacts { exactApp: boolean; verifiedRecipient: boolean; recipientAllowed: boolean; unredeemed: boolean; issuedAt: number; now: number }
 /** Story: Decide whether to join the cohort / Only the verified recipient can spend a current invitation (spec/seedInvitation.md) */
@@ -26,18 +26,18 @@ export const seedInvitationBatchLimit: number = 100;
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
 export const seedInvitationVouchByteLimit: number = 500;
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
-export const eligibleBatch: SeedBatchFacts = { appAdmin: true, stableActor: true, validCity: true, validRecipients: true, uniqueRecipients: true, privateVouches: true, batchNew: true, sameBatch: false };
+export const eligibleBatch: SeedBatchFacts = { appAdmin: true, stableActor: true, validCity: true, validRecipients: true, uniqueRecipients: true, entryCount: 1, shortestVouchBytes: 1, longestVouchBytes: 500, batchNew: true, sameBatch: false, batchLive: true };
 /** Story: Decide whether to join the cohort / Only the verified recipient can spend a current invitation (spec/seedInvitation.md) */
 export const eligibleRecipient: SeedRecipientFacts = { exactApp: true, verifiedRecipient: true, recipientAllowed: true, unredeemed: true, issuedAt: 0, now: 1 };
 /** Story: Decide whether to join the cohort / Only the verified recipient can spend a current invitation (spec/seedInvitation.md) */
 export const approvedRedemption: SeedRedemptionFacts = { liveBinding: true, freshJoin: true, eligibleEnrollment: true, currentConsent: true };
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
-export const initial: SeedInvitation = { phase: "SeedUnissued", issuedAt: 0 };
+export const initial: SeedInvitation = { phase: "SeedUnissued", issuedAt: 0, vouchRetained: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: SeedInvitation): boolean {
-  return alwaysIssuedSeedInvitationHasTimestamp(current);
+  return alwaysOnlyIssuedOrClosedInvitationKeepsVouch(current) && alwaysIssuedSeedInvitationKeepsVouch(current) && alwaysIssuedSeedInvitationHasTimestamp(current);
 }
 
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
@@ -60,14 +60,14 @@ export function seedInvitationVouchSizeAllowed(bytes: number): boolean {
 
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
 //@ pure
-export function seedInvitationBatchAuthorized(batch: SeedBatchFacts): boolean {
-  return batch.appAdmin && batch.stableActor && batch.validCity && batch.validRecipients && batch.uniqueRecipients && batch.privateVouches;
+export function seedInvitationExpiresAt(issuedAt: number): number {
+  return exact_seedInvitation(issuedAt + memberInvitation_memberInviteWindowMs);
 }
 
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
 //@ pure
-export function seedInvitationExpiresAt(issuedAt: number): number {
-  return exact_seedInvitation(issuedAt + memberInvitation_memberInviteWindowMs);
+export function seedInvitationBatchAuthorized(batch: SeedBatchFacts): boolean {
+  return batch.appAdmin && batch.stableActor && batch.validCity && batch.validRecipients && batch.uniqueRecipients && seedInvitationBatchSizeAllowed(batch.entryCount) && seedInvitationVouchSizeAllowed(batch.shortestVouchBytes) && seedInvitationVouchSizeAllowed(batch.longestVouchBytes);
 }
 
 /** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
@@ -77,16 +77,23 @@ export function lawSeedInvitationIssueNeedsOperator(batch: SeedBatchFacts): bool
   return !seedInvitationBatchAuthorized(batch) || (batch.appAdmin && batch.stableActor);
 }
 
-/** Story: Create the first cohort's invitations / A retry can return only the original live batch (spec/seedInvitation.md) */
+/** Story: Create the first cohort's invitations / Only an authorized app admin can issue an attributable batch (spec/seedInvitation.md) */
 //@ pure
-export function seedInvitationBatchDecision(batch: SeedBatchFacts): SeedBatchDecision {
-  return !seedInvitationBatchAuthorized(batch) ? "RejectSeedBatch" : (batch.batchNew ? "IssueSeedBatch" : (batch.sameBatch ? "ReplaySeedBatch" : "RejectSeedBatch"));
+export function lawSeedInvitationBatchStaysInSizeLimits(batch: SeedBatchFacts): boolean {
+  //@ ensures \result === true
+  return !seedInvitationBatchAuthorized(batch) || (batch.entryCount >= 1 && batch.entryCount <= 100 && batch.shortestVouchBytes >= 1 && batch.longestVouchBytes <= 500);
 }
 
 /** Story: Create the first cohort's invitations / A retry can return only the original live batch (spec/seedInvitation.md) */
 //@ pure
 export function sometimesSeedInvitationIssued(invite: SeedInvitation): boolean {
   return invite.phase === "SeedIssued";
+}
+
+/** Story: Create the first cohort's invitations / A retry can return only the original live batch (spec/seedInvitation.md) */
+//@ pure
+export function seedInvitationBatchDecision(batch: SeedBatchFacts): SeedBatchDecision {
+  return !seedInvitationBatchAuthorized(batch) ? "RejectSeedBatch" : (batch.batchNew ? "IssueSeedBatch" : (batch.sameBatch && batch.batchLive ? "ReplaySeedBatch" : "RejectSeedBatch"));
 }
 
 /** Story: Create the first cohort's invitations / A retry can return only the original live batch (spec/seedInvitation.md) */
@@ -106,16 +113,18 @@ export function lawExistingSeedInvitationBatchCannotIssue(batch: SeedBatchFacts)
 //@ pure
 export function lawSeedInvitationBatchReplayRequiresExactBatch(batch: SeedBatchFacts): boolean {
   //@ ensures \result === true
-  return !(seedInvitationBatchDecision(batch) === "ReplaySeedBatch") || (!batch.batchNew && batch.sameBatch && seedInvitationBatchAuthorized(batch));
+  return !(seedInvitationBatchDecision(batch) === "ReplaySeedBatch") || (!batch.batchNew && batch.sameBatch && batch.batchLive && seedInvitationBatchAuthorized(batch));
 }
 
 /** Story: Create the first cohort's invitations / A retry can return only the original live batch (spec/seedInvitation.md) */
 //@ pure
 export function issueSeedInvitation(invite: SeedInvitation, batch: SeedBatchFacts, issuedAt: number): SeedInvitation {
+  //@ ensures (inv(invite) && canIssueSeedInvitation(invite, batch, issuedAt)) ==> alwaysOnlyIssuedOrClosedInvitationKeepsVouch(\result)
+  //@ ensures (inv(invite) && canIssueSeedInvitation(invite, batch, issuedAt)) ==> alwaysIssuedSeedInvitationKeepsVouch(\result)
   //@ ensures (inv(invite) && canIssueSeedInvitation(invite, batch, issuedAt)) ==> alwaysIssuedSeedInvitationHasTimestamp(\result)
   //@ ensures (inv(invite) && canIssueSeedInvitation(invite, batch, issuedAt)) ==> stepTerminalSeedInvitationDoesNotChange(invite, \result)
   //@ ensures (inv(invite) && canIssueSeedInvitation(invite, batch, issuedAt)) ==> stepExistingSeedInvitationKeepsIssueTime(invite, \result)
-  return canIssueSeedInvitation(invite, batch, issuedAt) ? ({ phase: "SeedIssued", issuedAt: issuedAt } as SeedInvitation) : invite;
+  return canIssueSeedInvitation(invite, batch, issuedAt) ? ({ phase: "SeedIssued", issuedAt: issuedAt, vouchRetained: true } as SeedInvitation) : invite;
 }
 
 /** Story: Decide whether to join the cohort / Only the verified recipient can spend a current invitation (spec/seedInvitation.md) */
@@ -166,16 +175,30 @@ export function lawSeedInvitationCannotResolveAfterExpiry(recipient: SeedRecipie
 /** Story: Decide whether to join the cohort / Only the verified recipient can spend a current invitation (spec/seedInvitation.md) */
 //@ pure
 export function redeemSeedInvitation(invite: SeedInvitation, recipient: SeedRecipientFacts, redemption: SeedRedemptionFacts): SeedInvitation {
+  //@ ensures (inv(invite) && canRedeemSeedInvitation(invite, recipient, redemption)) ==> alwaysOnlyIssuedOrClosedInvitationKeepsVouch(\result)
+  //@ ensures (inv(invite) && canRedeemSeedInvitation(invite, recipient, redemption)) ==> alwaysIssuedSeedInvitationKeepsVouch(\result)
   //@ ensures (inv(invite) && canRedeemSeedInvitation(invite, recipient, redemption)) ==> alwaysIssuedSeedInvitationHasTimestamp(\result)
   //@ ensures (inv(invite) && canRedeemSeedInvitation(invite, recipient, redemption)) ==> stepTerminalSeedInvitationDoesNotChange(invite, \result)
   //@ ensures (inv(invite) && canRedeemSeedInvitation(invite, recipient, redemption)) ==> stepExistingSeedInvitationKeepsIssueTime(invite, \result)
-  return canRedeemSeedInvitation(invite, recipient, redemption) ? ({ ...invite, phase: "SeedRedeemed" } as SeedInvitation) : invite;
+  return canRedeemSeedInvitation(invite, recipient, redemption) ? ({ ...invite, phase: "SeedRedeemed", vouchRetained: false } as SeedInvitation) : invite;
 }
 
 /** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
 //@ pure
 export function seedInvitationMayDecline(exactRecipient: boolean, open: boolean): boolean {
   return exactRecipient && open;
+}
+
+/** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
+//@ pure
+export function alwaysOnlyIssuedOrClosedInvitationKeepsVouch(invite: SeedInvitation): boolean {
+  return !invite.vouchRetained || (invite.phase === "SeedIssued" || invite.phase === "SeedClosed");
+}
+
+/** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
+//@ pure
+export function alwaysIssuedSeedInvitationKeepsVouch(invite: SeedInvitation): boolean {
+  return !(invite.phase === "SeedIssued") || invite.vouchRetained;
 }
 
 /** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
@@ -205,16 +228,32 @@ export function sometimesSeedInvitationClosed(invite: SeedInvitation): boolean {
 /** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
 //@ pure
 export function canCloseSeedInvitation(invite: SeedInvitation, now: number, exactDecline: boolean, suppressedOrBanned: boolean): boolean {
-  return invite.phase === "SeedIssued" && (seedInvitationMayDecline(exactDecline, true) || suppressedOrBanned || now >= seedInvitationExpiresAt(invite.issuedAt));
+  return invite.phase === "SeedIssued" && (seedInvitationMayDecline(exactDecline, invite.phase === "SeedIssued") || suppressedOrBanned || now >= seedInvitationExpiresAt(invite.issuedAt));
+}
+
+/** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
+//@ pure
+export function seedInvitationCloseClearsVouch(invite: SeedInvitation, now: number, exactDecline: boolean): boolean {
+  return seedInvitationMayDecline(exactDecline, invite.phase === "SeedIssued") || now >= seedInvitationExpiresAt(invite.issuedAt);
 }
 
 /** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
 //@ pure
 export function closeSeedInvitation(invite: SeedInvitation, now: number, exactDecline: boolean, suppressedOrBanned: boolean): SeedInvitation {
+  //@ ensures (inv(invite) && canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned)) ==> alwaysOnlyIssuedOrClosedInvitationKeepsVouch(\result)
+  //@ ensures (inv(invite) && canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned)) ==> alwaysIssuedSeedInvitationKeepsVouch(\result)
   //@ ensures (inv(invite) && canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned)) ==> alwaysIssuedSeedInvitationHasTimestamp(\result)
   //@ ensures (inv(invite) && canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned)) ==> stepTerminalSeedInvitationDoesNotChange(invite, \result)
   //@ ensures (inv(invite) && canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned)) ==> stepExistingSeedInvitationKeepsIssueTime(invite, \result)
-  return canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned) ? ({ ...invite, phase: "SeedClosed" } as SeedInvitation) : invite;
+  return canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned) ? ({ ...invite, phase: "SeedClosed", vouchRetained: invite.vouchRetained && !seedInvitationCloseClearsVouch(invite, now, exactDecline) } as SeedInvitation) : invite;
+}
+
+/** Story: Decide whether to join the cohort / Decline, suppression and expiry end the invitation (spec/seedInvitation.md) */
+//@ pure
+export function lawSeedInvitationDeclineOrExpiryClearsVouch(issuedAt: number, now: number, exactDecline: boolean, suppressedOrBanned: boolean): boolean {
+  //@ ensures \result === true
+  const local_0: SeedInvitation = { phase: "SeedIssued", issuedAt: issuedAt, vouchRetained: true };
+  return !seedInvitationCloseClearsVouch(local_0, now, exactDecline) || !closeSeedInvitation(local_0, now, exactDecline, suppressedOrBanned).vouchRetained;
 }
 
 /** Do the rules allow this event in this state? */
@@ -250,11 +289,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
-  const is_SeedBatchFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.appAdmin === "boolean" && typeof v.stableActor === "boolean" && typeof v.validCity === "boolean" && typeof v.validRecipients === "boolean" && typeof v.uniqueRecipients === "boolean" && typeof v.privateVouches === "boolean" && typeof v.batchNew === "boolean" && typeof v.sameBatch === "boolean";
+  const is_SeedBatchFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.appAdmin === "boolean" && typeof v.stableActor === "boolean" && typeof v.validCity === "boolean" && typeof v.validRecipients === "boolean" && typeof v.uniqueRecipients === "boolean" && Number.isSafeInteger(v.entryCount) && Number.isSafeInteger(v.shortestVouchBytes) && Number.isSafeInteger(v.longestVouchBytes) && typeof v.batchNew === "boolean" && typeof v.sameBatch === "boolean" && typeof v.batchLive === "boolean";
   const is_SeedRecipientFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.exactApp === "boolean" && typeof v.verifiedRecipient === "boolean" && typeof v.recipientAllowed === "boolean" && typeof v.unredeemed === "boolean" && Number.isSafeInteger(v.issuedAt) && Number.isSafeInteger(v.now);
   const is_SeedRedemptionFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.liveBinding === "boolean" && typeof v.freshJoin === "boolean" && typeof v.eligibleEnrollment === "boolean" && typeof v.currentConsent === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "issueSeedInvitation" && is_SeedBatchFacts(raw.batch) && Number.isSafeInteger(raw.issuedAt)) return { type: "issueSeedInvitation", batch: ({ appAdmin: raw.batch.appAdmin, stableActor: raw.batch.stableActor, validCity: raw.batch.validCity, validRecipients: raw.batch.validRecipients, uniqueRecipients: raw.batch.uniqueRecipients, privateVouches: raw.batch.privateVouches, batchNew: raw.batch.batchNew, sameBatch: raw.batch.sameBatch }), issuedAt: raw.issuedAt };
+  if (raw.type === "issueSeedInvitation" && is_SeedBatchFacts(raw.batch) && Number.isSafeInteger(raw.issuedAt)) return { type: "issueSeedInvitation", batch: ({ appAdmin: raw.batch.appAdmin, stableActor: raw.batch.stableActor, validCity: raw.batch.validCity, validRecipients: raw.batch.validRecipients, uniqueRecipients: raw.batch.uniqueRecipients, entryCount: raw.batch.entryCount, shortestVouchBytes: raw.batch.shortestVouchBytes, longestVouchBytes: raw.batch.longestVouchBytes, batchNew: raw.batch.batchNew, sameBatch: raw.batch.sameBatch, batchLive: raw.batch.batchLive }), issuedAt: raw.issuedAt };
   if (raw.type === "redeemSeedInvitation" && is_SeedRecipientFacts(raw.recipient) && is_SeedRedemptionFacts(raw.redemption)) return { type: "redeemSeedInvitation", recipient: ({ exactApp: raw.recipient.exactApp, verifiedRecipient: raw.recipient.verifiedRecipient, recipientAllowed: raw.recipient.recipientAllowed, unredeemed: raw.recipient.unredeemed, issuedAt: raw.recipient.issuedAt, now: raw.recipient.now }), redemption: ({ liveBinding: raw.redemption.liveBinding, freshJoin: raw.redemption.freshJoin, eligibleEnrollment: raw.redemption.eligibleEnrollment, currentConsent: raw.redemption.currentConsent }) };
   if (raw.type === "closeSeedInvitation" && Number.isSafeInteger(raw.now) && typeof raw.exactDecline === "boolean" && typeof raw.suppressedOrBanned === "boolean") return { type: "closeSeedInvitation", now: raw.now, exactDecline: raw.exactDecline, suppressedOrBanned: raw.suppressedOrBanned };
   return undefined;
@@ -274,8 +313,8 @@ export function parseState(x: unknown): SeedInvitation | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "SeedUnissued" || raw.phase === "SeedIssued" || raw.phase === "SeedRedeemed" || raw.phase === "SeedClosed") && Number.isSafeInteger(raw.issuedAt) && Object.keys(raw).length === 2)) return undefined;
-  const parsed: SeedInvitation = ({ phase: raw.phase, issuedAt: raw.issuedAt });
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "SeedUnissued" || raw.phase === "SeedIssued" || raw.phase === "SeedRedeemed" || raw.phase === "SeedClosed") && Number.isSafeInteger(raw.issuedAt) && typeof raw.vouchRetained === "boolean" && Object.keys(raw).length === 3)) return undefined;
+  const parsed: SeedInvitation = ({ phase: raw.phase, issuedAt: raw.issuedAt, vouchRetained: raw.vouchRetained });
   return inv(parsed) ? parsed : undefined;
 }
 

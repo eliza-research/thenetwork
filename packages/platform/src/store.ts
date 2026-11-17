@@ -2,7 +2,7 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
-import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
+import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import type { AppId } from "./apps.ts";
@@ -374,7 +374,7 @@ export class MemoryPeopleStore implements PeopleStore {
     let n = 0;
     for (const [k, c] of this.challenges) if (rowBeforeCutoff(c.expiresAt, before)) { this.challenges.delete(k); n++; }
     for (const [k, s] of this.sessions) if (sessionPastRetention(s.expiresAt, s.revokedAt !== null, s.revokedAt ?? before, before)) { this.sessions.delete(k); n++; }
-    for (const [k, l] of this.limits) if (rowBeforeCutoff(l.lastAt, before - (LONG_RATE_WINDOWS[rateKind(k)] ?? 0))) { this.limits.delete(k); n++; }
+    for (const [k, l] of this.limits) if (rowBeforeCutoff(l.lastAt, rateCounterCutoff(before, LONG_RATE_WINDOWS[rateKind(k)] ?? 0))) { this.limits.delete(k); n++; }
     for (const [k, p] of this.pending) if (rowBeforeCutoff(p.at, before)) { this.pending.delete(k); n++; }
     for (const [k, c] of this.phoneChanges) if (phoneChangePastRetention(c.confirmedAt !== null, c.requestedAt, before)) { this.phoneChanges.delete(k); n++; }
     return n;

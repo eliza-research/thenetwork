@@ -186,6 +186,19 @@ export function routeScheduledRequestRetry(flow: MemberRequestFlow, eligible: bo
   return { phase: eligible && !busy ? "RequestSearching" : "RequestDeferred" };
 }
 
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
+//@ pure
+export function immediateRequestSearchAllowed(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
+  return waiting && eligible && !busy && immediateRequestRetryReady(attempted, attemptAge, asked, confirmAge);
+}
+
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
+//@ pure
+export function lawImmediateSearchNeedsFreeEligibleWaitingRequest(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
+  //@ ensures \result === true
+  return !immediateRequestSearchAllowed(waiting, eligible, busy, attempted, attemptAge, asked, confirmAge) || (waiting && eligible && !busy);
+}
+
 /** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function requestDesireWithdrawn(closedIntent: boolean, activeIntent: boolean): boolean {

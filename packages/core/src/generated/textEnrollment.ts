@@ -42,6 +42,26 @@ export function inv(current: TextJoin): boolean {
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
+export function explicitAppSource(explicitFacts: ExplicitFacts): string {
+  return explicitFacts.dedicated ? "dedicated" : (explicitFacts.profileApp ? "profile" : (explicitFacts.surveyApp ? "survey" : (explicitFacts.appKeyword ? "keyword" : "")));
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawSavedProfileBeatsKeyword(surveyApp: boolean, appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return explicitAppSource(({ dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)) === "profile";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawFeedbackBeatsKeyword(appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return explicitAppSource(({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword } as ExplicitFacts)) === "survey";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
 export function checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute {
   return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp || explicitFacts.surveyApp || explicitFacts.appKeyword ? ({ phase: "ExplicitRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)));
 }
@@ -207,6 +227,19 @@ export function lawSlopEnrollmentRequiresAdult(adult: boolean): boolean {
 //@ pure
 export function noticeAllowed(joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
   return joinAgeAllowed && ageFloorAllowed;
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function firstContactNoticeAllowed(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  return signedTurn && nonMember && !banned && noticeAllowed(joinAgeAllowed, ageFloorAllowed);
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawMemberOrBannedGetsNoNotice(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !(!nonMember || banned || !signedTurn) || !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed);
 }
 
 /** Do the rules allow this event in this state? */

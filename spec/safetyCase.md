@@ -30,7 +30,7 @@ pure def lawDecayNeverOpensCase(liftEvent: bool): bool =
 
 ### A recorded hold or lift updates the open case
 
-A trust hold marks the case held. An authorized staff lift removes the trust hold, and the case records the lift. Closing the case leaves the trust decision unchanged.
+A trust hold marks the case held. An authorized staff lift removes the trust hold, and the case records the lift. The lift depends on the trust hold, not on the case phase: a lift marks any live case lifted, also an open case that started after an earlier held case closed while the trust hold stayed. Closing the case leaves the trust decision unchanged.
 
 ```quint
 pure def liveCase(c: SafetyCase): bool = c.phase != NoCase and c.phase != CaseClosed
@@ -81,7 +81,7 @@ pure def holdSubjectKnown(knownMember: bool, reportOnFile: bool): bool = knownMe
 
 ### A hold, ban, or dismissal updates the matching report
 
-An open report can be dismissed or marked held. A hold updates the named report, or every open report for the member when no report is named. A ban updates the member's open and held reports. A dismissed report stays dismissed.
+An open report can be dismissed or marked held. A hold updates the named report, or every open report for the member when no report is named. A ban updates the member's open and held reports. A dismissed report stays dismissed. Until staff decide, an open urgent report from a reporter who met the member restricts that member's matching. A held, banned or dismissed report does not restrict matching through this rule.
 
 ```quint
 type ReportPhase = ReportOpen | ReportHeld | ReportBanned | ReportDismissed
@@ -96,6 +96,9 @@ pure def reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision,
 
 pure def reportRestrictsMatching(reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
   reportPhase == ReportOpen and metBefore and urgent
+
+pure def lawDecidedReportDoesNotRestrictMatching(decision: ReportDecision, metBefore: bool, urgent: bool): bool =
+  not(reportRestrictsMatching(reportAfterDecision(ReportOpen, decision, true, true), metBefore, urgent))
 
 pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: bool, reportMatches: bool): bool =
   reportAfterDecision(ReportDismissed, decision, sameMember, reportMatches) == ReportDismissed

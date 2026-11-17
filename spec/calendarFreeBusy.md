@@ -8,7 +8,7 @@
 
 ### Read only current anonymous intervals for the exact authorized connection
 
-A current adult member must opt in within the app. The trusted calendar authority must supply an active Google Calendar grant for this member, app, connection and the scheduling free/busy purpose. The observation must come from that exact grant's connection on or after its grant time and be less than five minutes old. It contains a coverage interval of at most eight days and no more than 256 busy intervals wholly inside that coverage. The authority omits the grant once it is revoked. Missing authority, an inactive grant, or a malformed observation contributes no signal. The Network does not persist or share provider or event data.
+A current adult member must opt in within the app. The trusted calendar authority must supply an active Google Calendar grant for this member, app, connection and the scheduling free/busy purpose. The observation must come from that exact grant's connection on or after its grant time and be less than five minutes old. It contains a coverage interval of at most eight days and no more than 256 busy intervals wholly inside that coverage. The authority omits the grant once it is revoked. Missing authority, an inactive grant, or a malformed observation contributes no signal.
 
 ```quint
 pure val calendarSchedulingPurpose = "network-scheduling-free-busy-v1"
@@ -38,7 +38,7 @@ pure def lawCalendarNeedsLocalConsent(eligibleOwner: bool, connectionCurrent: bo
 
 ### A known busy interval excludes the slot and incomplete coverage cannot make it free
 
-Compare half-open intervals. A current busy interval excludes an overlapping slot in offers, bookings and rescheduling. Only complete coverage without a busy overlap gives a free signal. Missing, stale, expired or incomplete information is unknown where it has no busy overlap. Unknown falls back to existing scheduling information. Calendar availability alone does not enable new outreach.
+Compare half-open intervals. A current busy interval excludes an overlapping slot in offers, bookings and rescheduling. Only complete coverage without a busy overlap gives a free signal. Missing, stale, expired or incomplete information is unknown where it has no busy overlap. Unknown falls back to existing scheduling information.
 
 ```quint
 type CalendarSignal = CalendarUnknown | CalendarBusy | CalendarFree
@@ -83,7 +83,7 @@ pure def lawCalendarBridgeProofNeedsExactOwner(signed: bool, exactRequest: bool,
 
 ### A scheduling read uses only the seats still involved in that work
 
-Skip members who declined, withdrew or became unavailable for the opportunity. A booked reschedule uses only the accepted roster. Work on a late plan seat can use the accepted roster and the still-pending invitees. A direct member turn may read a booked plan with a pending seat only when that member has a pending seat or is rescheduling an accepted seat.
+Skip members who declined, withdrew or became unavailable for the opportunity. A booked reschedule uses only the accepted roster. Work on a late plan seat can use the accepted roster and the still-pending invitees. A direct member turn may read a booked plan only when that member has a pending seat and is not rescheduling, or is rescheduling an accepted seat.
 
 ```quint
 pure val statusValues = Set("", "queued", "probing", "available", "unavailable", "yes", "no", "dropped")
@@ -92,8 +92,16 @@ pure def calendarPreloadSeatAllowed(status: str, booked: bool, pendingLateSeat: 
   status != "unavailable" and status != "no" and status != "dropped" and
     (not(booked) or status == "yes" or pendingLateSeat)
 
+pure def calendarDirectTurnReadsBooked(status: str, askerPending: bool, rescheduling: bool): bool =
+  val lateJoin = not(rescheduling) and askerPending
+  calendarPreloadSeatAllowed(status, true, lateJoin) and (lateJoin or rescheduling)
+
 pure def lawCalendarDoesNotReadRetiredSeat(booked: bool, pendingLateSeat: bool): bool =
   not(calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat))
+
+pure def lawCalendarDirectTurnNeedsOwnSeat(status: str, askerPending: bool, rescheduling: bool): bool =
+  calendarDirectTurnReadsBooked(status, askerPending, rescheduling) implies
+    ((not(rescheduling) and askerPending) or (rescheduling and status == "yes"))
 ```
 
 ## Service contract
@@ -102,4 +110,4 @@ The Network owns `POST /internal/calendar-scheduling-owner`. Eliza Cloud calls i
 
 Eliza Cloud must implement `POST /api/internal/network/calendar-scheduling`. That request contains `app`, `personId`, `memberId`, `purpose`, `nonce`, and `coverage` with integer `start` and `end`. The HMAC ID is `calendar-read:<nonce>`. The response uses the same owner proof fields plus `grant` and `observation`. The grant contains `app`, `memberId`, `purpose`, `provider`, `connectionId`, `active`, `grantedAt`, and `expiresAt`. The observation contains `app`, `memberId`, `purpose`, `provider`, `connectionId`, `observedAt`, `coverage`, and `busy`. Every interval has only `start` and `end`. All timestamps are Unix milliseconds, the connection and nonce are UUIDs, and the provider is `google_calendar`. Use the purpose `network-scheduling-free-busy-v1` for both requests. A response may cover less than the requested window. The host treats the rest as unknown.
 
-Sign the exact path and raw body with `NETWORK_CALENDAR_FREE_BUSY_SECRET` using the existing service HMAC envelope. Both responses use the original request ID followed by `:proof` and bind the SHA-256 of the raw request body. The Network checks the signature and rejects replays to another request. The service preloads up to twelve known, opted-in participants for relevant reviewed scheduling at a time. The opt-in command alone makes no remote request. Provider revocation takes effect on the next preload. Within a scheduling unit, a proof can expire before work advances. Neither the observation nor the provider grant is saved.
+Sign the exact path and raw body with `NETWORK_CALENDAR_FREE_BUSY_SECRET` using the existing service HMAC envelope. Both responses use the original request ID followed by `:proof` and bind the SHA-256 of the raw request body. The Network checks the signature and rejects replays to another request. The service preloads up to twelve known, opted-in participants for relevant reviewed scheduling at a time. The opt-in command alone makes no remote request. Provider revocation takes effect on the next preload. Within a scheduling unit, a proof can expire before work advances. Neither the observation nor the provider grant is saved, and the service does not share provider or event data. The service uses the calendar signal only to choose or recheck times for reviewed scheduling work; calendar availability alone never starts new outreach.

@@ -110,9 +110,23 @@ export function calendarPreloadSeatAllowed(status: string, booked: boolean, pend
 
 /** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
 //@ pure
+export function calendarDirectTurnReadsBooked(status: string, askerPending: boolean, rescheduling: boolean): boolean {
+  const local_0 = !rescheduling && askerPending;
+  return calendarPreloadSeatAllowed(status, true, local_0) && (local_0 || rescheduling);
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
 export function lawCalendarDoesNotReadRetiredSeat(booked: boolean, pendingLateSeat: boolean): boolean {
   //@ ensures \result === true
   return !calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat);
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
+export function lawCalendarDirectTurnNeedsOwnSeat(status: string, askerPending: boolean, rescheduling: boolean): boolean {
+  //@ ensures \result === true
+  return !calendarDirectTurnReadsBooked(status, askerPending, rescheduling) || ((!rescheduling && askerPending) || (rescheduling && status === "yes"));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

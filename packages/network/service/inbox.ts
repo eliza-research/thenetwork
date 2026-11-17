@@ -92,11 +92,13 @@ export class Inbox {
     const now = this.o.clock.now();
     // STOP, START and HELP are never held back by an earlier turn that did not finish (consent always gets through).
     const keyword = isComplianceText(input.text);
+    let senderLock = false, admissionOpen = false;
     const wrote = await this.o.sql.begin(async tx => {
       const [lock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`inbox-sender:${normalizeAddress(input.from)}`})) as acquired`;
       // spec/signedInbox.md, "A worker runs only a committed claim"
-      const admissionOpen = lock.acquired && (admitUntil === undefined || signedAdmissionOpen(true, this.o.clock.now(), admitUntil));
-      if (!mayStartClaimWrite(lock.acquired, admissionOpen)) return [];
+      senderLock = !!lock.acquired;
+      admissionOpen = senderLock && (admitUntil === undefined || signedAdmissionOpen(true, this.o.clock.now(), admitUntil));
+      if (!mayStartClaimWrite(senderLock, admissionOpen)) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - processingLeaseMs)}`;
@@ -106,7 +108,7 @@ export class Inbox {
         or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - unresolvedBlockMs)})))))
       on conflict do nothing returning id`;
     });
-    const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", inserted: wrote.length > 0 });
+    const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", inserted: wrote.length > 0, senderLock, admissionOpen });
     if (claimed.phase === "CheckingPrior") {
       // spec/signedInbox.md, "A replay must match a stored request"
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;

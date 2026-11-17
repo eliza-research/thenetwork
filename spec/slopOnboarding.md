@@ -1,6 +1,6 @@
 # Slop onboarding prompts
 
-The [matching engine model](models/matching_engine.md) follows answers, profile edits, and later matching. This state machine chooses what the onboarding service does with the current profile. The service keeps the profile, parses each message, persists tags, and sends the generated choice using its existing text. One routing run starts for each opportunity to send an onboarding prompt.
+The [matching engine model](models/matching_engine.md) follows answers, profile edits, and later matching. This state machine chooses what the onboarding service does with the current profile. The service keeps the profile, parses each message, persists tags, and sends the generated choice using its existing text. The service adds a prompt to the ask count for its reason only after it sends the prompt. One routing run starts for each opportunity to send an onboarding prompt.
 
 ## Story: Review the information used for dating
 
@@ -8,7 +8,7 @@ The [matching engine model](models/matching_engine.md) follows answers, profile 
 
 ### Age restrictions stop dating onboarding before a prompt
 
-A minor or someone declined at signup receives no dating question or read-back. Otherwise, the router considers a read-back when the required fields are complete, the profile awaits confirmation, and the read-back is within its ask limit and outside the immediate skip list.
+A minor or someone declined at signup receives no dating question or read-back. Otherwise, the router offers a read-back only when the required fields are complete, the profile awaits confirmation, and the read-back is within its ask limit and outside the immediate skip list. In all other cases it searches for a question.
 
 ```quint
 type PromptPhase = AwaitingProfile | Withheld | ReadbackOffered | QuestionSearch | ReadbackReady | QuestionReady | NoQuestion
@@ -20,11 +20,13 @@ pure val readbackReason: str = "slop_readback"
 
 pure def canRouteProfile(p: PromptRun): bool = p.phase == AwaitingProfile
 
-pure def routeProfile(p: PromptRun, restricted: bool, wantsReadback: bool): PromptRun =
-  { ...p, phase: if (restricted) Withheld else if (wantsReadback) ReadbackOffered else QuestionSearch }
-
 pure def readbackEligible(hardComplete: bool, confirmed: bool, skipped: bool, belowAskCap: bool): bool =
   hardComplete and not(confirmed) and not(skipped) and belowAskCap
+
+pure def routeProfile(p: PromptRun, restricted: bool, hardComplete: bool, confirmed: bool, skipped: bool, belowAskCap: bool): PromptRun =
+  { ...p, phase: if (restricted) Withheld
+    else if (readbackEligible(hardComplete, confirmed, skipped, belowAskCap)) ReadbackOffered
+    else QuestionSearch }
 
 pure def canResolveReadback(p: PromptRun): bool = p.phase == ReadbackOffered
 
@@ -35,7 +37,7 @@ pure def resolveReadback(p: PromptRun, textAvailable: bool): PromptRun =
 
 ### Ask the first missing field that can still be requested
 
-The router considers hard fields before soft preferences. It skips a field if it is already known, if its reason was skipped for this turn, or if the reason reached its ask limit. If none applies, the router has no question. The shell provides the field facts and looks up the final reason's text.
+The router considers hard fields before soft preferences. It skips a field if it is already known, if its reason was skipped for this turn, or if the reason reached its ask limit. The router asks for the dealbreakers only together with the goal (slop_basics), when both are missing; when only the dealbreakers are missing, it does not ask for them. If no field applies, the router has no question. The shell provides the field facts and looks up the final reason's text.
 
 ```quint
 type QuestionFacts = {
@@ -90,7 +92,7 @@ pure def sometimesQuestion(p: PromptRun): bool = p.phase == QuestionReady
 
 ### A correction needs another confirmation
 
-A read-back answer that changes a field clears confirmation. With no changes, the profile becomes confirmed only when the shell read an affirmation from an eligible member. An unanswered prompt is counted only after the service sends it.
+A read-back answer that changes a field clears confirmation. With no changes, the profile becomes confirmed only when the shell read an affirmation from an eligible member. Each recorded prompt adds one to the ask count of its reason.
 
 ```quint
 pure def confirmationAfterAnswer(changed: bool, affirmative: bool, restricted: bool): bool =

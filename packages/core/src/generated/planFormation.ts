@@ -22,8 +22,8 @@ export function inv(current: CityPlanRun): boolean {
 
 /** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
 //@ pure
-export function venueCanHostActivity(isPublic: boolean, sameCity: boolean, supportsActivity: boolean, capacity: number): boolean {
-  return isPublic && sameCity && supportsActivity && capacity >= 2;
+export function venueCanHostActivity(isPublic: boolean, sameCity: boolean, supportsActivity: boolean, capacity: number, openAtSlot: boolean): boolean {
+  return isPublic && sameCity && supportsActivity && capacity >= 2 && openAtSlot;
 }
 
 /** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
@@ -34,8 +34,21 @@ export function venueCanHoldGroup(capacity: number, eligiblePeople: number, mini
 
 /** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
 //@ pure
+export function planInviteLimit(planMaximum: number, placeCapacity: number): number {
+  return placeCapacity < planMaximum ? placeCapacity : planMaximum;
+}
+
+/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
+//@ pure
 export function planCanFitPlace(maximumGroup: number, minimumPlace: number): boolean {
   return !(maximumGroup < minimumPlace);
+}
+
+/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
+//@ pure
+export function lawPlaceCapsInvites(planMaximum: number, placeCapacity: number): boolean {
+  //@ ensures \result === true
+  return !(planInviteLimit(planMaximum, placeCapacity) > placeCapacity) && !(planInviteLimit(planMaximum, placeCapacity) > planMaximum);
 }
 
 /** Story: Find a public activity that fits the group / Friends prefers a venue every primary invitee can reach (spec/planFormation.md) */
@@ -53,6 +66,12 @@ export function lawReachablePlanVenueWins(travelTieBreak: boolean): boolean {
 
 /** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
+export function searchForPlanGroup(available: number, minimumInvite: number, maximumGroup: number, minimumGroup: number): boolean {
+  return available >= minimumInvite && maximumGroup >= minimumGroup;
+}
+
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
+//@ pure
 export function planScoreQualifies(minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
   return minimumScore >= memberFloor && overallScore >= planFloor;
 }
@@ -61,12 +80,6 @@ export function planScoreQualifies(minimumScore: number, overallScore: number, m
 //@ pure
 export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean, activityMinimum: number, capacity: number): boolean {
   return !hasGroup && partnerEnabled && activityMinimum <= 2 && capacity >= 2;
-}
-
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
-//@ pure
-export function searchForPlanGroup(available: number, minimumInvite: number, maximumGroup: number, minimumGroup: number): boolean {
-  return available >= minimumInvite && maximumGroup >= minimumGroup;
 }
 
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */

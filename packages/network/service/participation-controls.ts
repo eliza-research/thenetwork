@@ -1,7 +1,8 @@
 import type { Category } from "@thenetwork/core";
 import {
-  changeParticipationCategory, controlQuietHoursValid, controlRomanceOptIn,
+  changeParticipationCategory, controlRomanceOptIn,
   participationCategoryAllowed, participationControlAllowed, participationControlState,
+  quietHoursCommandComplete, quietHoursEmpty, quietHoursOffHour,
 } from "../../core/src/generated/participationControls.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
@@ -34,13 +35,13 @@ export function participationCommand(text: string): ParticipationCommand | undef
   const line = text.normalize("NFKC").trim().toLowerCase().replace(/[.!]$/, "").replace(/\s+/g, " ").replace(/^please /, "");
   const mode = /^(pause|resume) (?:my )?(?:matching|introductions|matches)$/.exec(line);
   if (mode) return { kind: "mode", pause: mode[1] === "pause" };
-  if (/^(?:quiet hours off|(?:turn off|clear) (?:my )?quiet hours)$/.test(line)) return { kind: "quiet", hours: [0, 0] };
+  if (/^(?:quiet hours off|(?:turn off|clear) (?:my )?quiet hours)$/.test(line)) return { kind: "quiet", hours: [quietHoursOffHour, quietHoursOffHour] };
   const quiet = /^(?:set )?(?:my )?quiet hours(?: (.*))?$/.exec(line);
   if (quiet) {
     const range = /^(?:(?:from|to|are) )?(.+?) *(?: to | until |[-–—]) *(.+)$/.exec(quiet[1] ?? "");
     const start = range ? hourOf(range[1]!.trim()) : undefined;
     const end = range ? hourOf(range[2]!.trim()) : undefined;
-    return { kind: "quiet", hours: start !== undefined && end !== undefined && controlQuietHoursValid(start, end) ? [start, end] : undefined };
+    return { kind: "quiet", hours: quietHoursCommandComplete(start !== undefined, end !== undefined, start ?? 0, end ?? 0) ? [start!, end!] : undefined };
   }
   const setting = /^(allow|enable|turn on|disable|turn off|no more) (.+?)(?: (?:suggestions|offers|matches|introductions))?$/.exec(line);
   const category = setting ? CATEGORY_NAMES.get(setting[2]!) : undefined;
@@ -73,7 +74,7 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
     const hours = command.hours;
     if (!hours) return "Use whole local hours, like ‘quiet hours 10 pm to 8 am’ or ‘quiet hours 22:00 to 08:00’.";
     patch = { quietHours: hours };
-    reply = hours[0] === hours[1] ? "Quiet hours are off for this app." : `Quiet hours are ${displayHour(hours[0])} to ${displayHour(hours[1])} local time for this app.`;
+    reply = quietHoursEmpty(hours[0], hours[1]) ? "Quiet hours are off for this app." : `Quiet hours are ${displayHour(hours[0])} to ${displayHour(hours[1])} local time for this app.`;
   } else {
     const { category, enable } = command;
     const age = category === "romance" && enable ? await accounts.lowestAge(e164, binding.person) : undefined;

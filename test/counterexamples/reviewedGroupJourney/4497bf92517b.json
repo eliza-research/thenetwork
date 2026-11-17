@@ -1,0 +1,19 @@
+{
+  "origin": "journey \"Story: Join a reviewed public hike only after the group agrees\" / \"Booking requires an independent yes from all three invitees\"",
+  "seed": 1,
+  "trace": [
+    [
+      "reviewed-public-hike",
+      {
+        "type": "reviewGroup",
+        "approved": true
+      }
+    ],
+    [
+      "reviewed-public-hike",
+      {
+        "type": "expireGroup"
+      }
+    ]
+  ]
+}

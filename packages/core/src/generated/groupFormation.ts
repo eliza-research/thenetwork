@@ -15,7 +15,7 @@ export type Event =
   | { type: "startSearch"; forcedEligible: boolean; hostRequired: boolean }
   | { type: "choosePrimary"; members: string[]; meetsMinimum: boolean; hasHost: boolean; circle: CircleEvidence; circleLimits: CircleLimits }
   | { type: "openAlternates"; alternateLimit: number }
-  | { type: "reserveAlternate"; member: string }
+  | { type: "reserveAlternate"; member: string; compatible: boolean; sameCityOverlap: boolean; pairedWithReserved: boolean }
   | { type: "finishGroup" };
 
 /** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md) */
@@ -153,17 +153,17 @@ export function openAlternates(g: Formation, alternateLimit: number): Formation 
 
 /** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
-export function canReserveAlternate(g: Formation, member: string): boolean {
-  return g.phase === "RankingAlternates" && g.alternates.length < g.alternateLimit && !g.primary.includes(member);
+export function canReserveAlternate(g: Formation, member: string, compatible: boolean, sameCityOverlap: boolean, pairedWithReserved: boolean): boolean {
+  return g.phase === "RankingAlternates" && g.alternates.length < g.alternateLimit && !g.alternates.includes(member) && alternateAllowed(g.primary.includes(member), compatible && pairedWithReserved, sameCityOverlap);
 }
 
 /** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
-export function reserveAlternate(g: Formation, member: string): Formation {
-  //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> alwaysPrimaryRequiredAfterSearch(\result)
-  //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> alwaysPrimaryCircleCoherent(\result)
-  //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> alwaysAlternateLimitHolds(\result)
-  //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> stepFinishedStaysFinished(g, \result)
+export function reserveAlternate(g: Formation, member: string, compatible: boolean, sameCityOverlap: boolean, pairedWithReserved: boolean): Formation {
+  //@ ensures (inv(g) && canReserveAlternate(g, member, compatible, sameCityOverlap, pairedWithReserved)) ==> alwaysPrimaryRequiredAfterSearch(\result)
+  //@ ensures (inv(g) && canReserveAlternate(g, member, compatible, sameCityOverlap, pairedWithReserved)) ==> alwaysPrimaryCircleCoherent(\result)
+  //@ ensures (inv(g) && canReserveAlternate(g, member, compatible, sameCityOverlap, pairedWithReserved)) ==> alwaysAlternateLimitHolds(\result)
+  //@ ensures (inv(g) && canReserveAlternate(g, member, compatible, sameCityOverlap, pairedWithReserved)) ==> stepFinishedStaysFinished(g, \result)
   return { ...g, alternates: g.alternates.concat([member]) };
 }
 
@@ -207,7 +207,7 @@ export function enabled(current: Formation, event: Event): boolean {
   if (event.type === "startSearch") return canStartSearch(current, event.forcedEligible);
   if (event.type === "choosePrimary") return canChoosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits);
   if (event.type === "openAlternates") return canOpenAlternates(current, event.alternateLimit);
-  if (event.type === "reserveAlternate") return canReserveAlternate(current, event.member);
+  if (event.type === "reserveAlternate") return canReserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved);
   if (event.type === "finishGroup") return canFinishGroup(current);
   return false;
 }
@@ -220,7 +220,7 @@ export function step(current: Formation, event: Event): Formation {
   if (event.type === "startSearch" && canStartSearch(current, event.forcedEligible)) return startSearch(current, event.forcedEligible, event.hostRequired);
   if (event.type === "choosePrimary" && canChoosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits)) return choosePrimary(current, event.members, event.meetsMinimum, event.hasHost, event.circle, event.circleLimits);
   if (event.type === "openAlternates" && canOpenAlternates(current, event.alternateLimit)) return openAlternates(current, event.alternateLimit);
-  if (event.type === "reserveAlternate" && canReserveAlternate(current, event.member)) return reserveAlternate(current, event.member);
+  if (event.type === "reserveAlternate" && canReserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved)) return reserveAlternate(current, event.member, event.compatible, event.sameCityOverlap, event.pairedWithReserved);
   if (event.type === "finishGroup" && canFinishGroup(current)) return finishGroup(current);
   return current;
 }
@@ -244,7 +244,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "startSearch" && typeof raw.forcedEligible === "boolean" && typeof raw.hostRequired === "boolean") return { type: "startSearch", forcedEligible: raw.forcedEligible, hostRequired: raw.hostRequired };
   if (raw.type === "choosePrimary" && Array.isArray(raw.members) && raw.members.every((x0: any) => typeof x0 === "string") && typeof raw.meetsMinimum === "boolean" && typeof raw.hasHost === "boolean" && is_CircleEvidence(raw.circle) && is_CircleLimits(raw.circleLimits)) return { type: "choosePrimary", members: raw.members.map((x0: any) => x0), meetsMinimum: raw.meetsMinimum, hasHost: raw.hasHost, circle: ({ size: raw.circle.size, lowestPairValue: raw.circle.lowestPairValue, pairValueTotal: raw.circle.pairValueTotal, pairCount: raw.circle.pairCount, standingLow: raw.circle.standingLow, standingHigh: raw.circle.standingHigh, uncertaintyTotal: raw.circle.uncertaintyTotal }), circleLimits: ({ minimum: raw.circleLimits.minimum, maximum: raw.circleLimits.maximum, pairFloor: raw.circleLimits.pairFloor, parityBand: raw.circleLimits.parityBand }) };
   if (raw.type === "openAlternates" && Number.isSafeInteger(raw.alternateLimit)) return { type: "openAlternates", alternateLimit: raw.alternateLimit };
-  if (raw.type === "reserveAlternate" && typeof raw.member === "string") return { type: "reserveAlternate", member: raw.member };
+  if (raw.type === "reserveAlternate" && typeof raw.member === "string" && typeof raw.compatible === "boolean" && typeof raw.sameCityOverlap === "boolean" && typeof raw.pairedWithReserved === "boolean") return { type: "reserveAlternate", member: raw.member, compatible: raw.compatible, sameCityOverlap: raw.sameCityOverlap, pairedWithReserved: raw.pairedWithReserved };
   if (raw.type === "finishGroup") return { type: "finishGroup" };
   return undefined;
 }

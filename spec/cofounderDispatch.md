@@ -8,7 +8,7 @@
 
 ### Exact current consent belongs to the same app
 
-Use an active, unexpired professional intent created by the member for the Cofounder lane in the current app. Use the intent's exact identifier from the reviewed proposal. A different intent, including a new cofounder request after closure, does not replace that identifier in an earlier proposal.
+Use an active, unexpired professional intent created by the member for the Cofounder lane in the current app. Use the intent's exact identifier from the reviewed proposal. A different intent, including a new cofounder request after closure, does not replace that identifier in an earlier proposal. A bound intent is current only when its identifier is the one the proposal recorded and the intent is still eligible.
 
 ```quint
 import cofounderIntent as Intake from "./cofounderIntent"
@@ -22,8 +22,14 @@ pure def cofounderIntentEligible(app: str, expectedApp: str, category: str, deta
 pure def lawCofounderIntentRejectsAnotherApp(app: str, expectedApp: str, category: str, details: str, intentLive: bool): bool =
   (app == expectedApp) or not(cofounderIntentEligible(app, expectedApp, category, details, intentLive))
 
+pure def cofounderBoundIntentCurrent(sameIntentId: bool, intentEligible: bool): bool =
+  sameIntentId and intentEligible
+
 pure def lawCofounderIntentRejectsInactive(app: str, expectedApp: str, category: str, details: str): bool =
   not(cofounderIntentEligible(app, expectedApp, category, details, false))
+
+pure def lawCofounderOtherIntentIdNeverCurrent(app: str, expectedApp: str, category: str, details: str, intentLive: bool): bool =
+  not(cofounderBoundIntentCurrent(false, cofounderIntentEligible(app, expectedApp, category, details, intentLive)))
 ```
 
 ### A review, probe and reveal require both exact intents

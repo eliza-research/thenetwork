@@ -123,9 +123,22 @@ export function memberInviteNeedsReview(weak: boolean, burst: boolean, riskLangu
 
 /** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
 //@ pure
+export function memberInviteHeldLinkReleased(needsReview: boolean, approvedInSignedTurn: boolean): boolean {
+  return !needsReview || approvedInSignedTurn;
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
+//@ pure
 export function lawUnusualMemberInviteRequiresReview(weak: boolean, burst: boolean, riskLanguage: boolean): boolean {
   //@ ensures \result === true
   return !(weak || burst || riskLanguage) || memberInviteNeedsReview(weak, burst, riskLanguage);
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
+//@ pure
+export function lawHeldMemberInviteNeedsApproval(needsReview: boolean): boolean {
+  //@ ensures \result === true
+  return !needsReview || !memberInviteHeldLinkReleased(needsReview, false);
 }
 
 /** Story: Forward an invitation for someone I know / The link goes to the inviter as a reply (spec/memberInvitation.md) */

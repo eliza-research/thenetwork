@@ -31,7 +31,7 @@ pure def alwaysOnlyValidChecksUseCache(check: AuthorityCheck): bool = check.from
 
 ### Only a positive live Cloud response updates the cache
 
-When Cloud answers, recheck the proof expiry. A positive response allows use and can refresh the cache. A denial invalidates the proof. An unavailable authority produces a retryable result. Neither denial nor unavailability keeps a positive cache entry for that session.
+When Cloud answers, recheck the proof expiry. A positive response to a live proof allows use and keeps the cache entry for that session (`cloudCacheKeeps`). A denial invalidates the proof. An unavailable authority produces a retryable result. Neither denial, unavailability nor an expired proof keeps a positive cache entry for that session: the shell removes it.
 
 ```quint
 type CloudResponse = CloudAccepted | CloudDenied | CloudUnavailable
@@ -40,6 +40,14 @@ pure def canFinishCloudCheck(check: AuthorityCheck): bool = check.phase == Await
 pure def finishCloudCheck(check: AuthorityCheck, answer: CloudResponse, proofLive: bool): AuthorityCheck =
   { ...check, phase: if (not(proofLive) or answer == CloudDenied) AuthorityInvalid
     else if (answer == CloudAccepted) AuthorityValid else AuthorityUnavailable }
+
+pure def cloudCacheKeeps(answer: CloudResponse, proofLive: bool): bool = proofLive and answer == CloudAccepted
+
+pure def lawDenialOrOutageDropsTheCache(answer: CloudResponse): bool =
+  answer != CloudAccepted implies (not(cloudCacheKeeps(answer, true)) and not(cloudCacheKeeps(answer, false)))
+
+pure def lawCachedAnswerAllowsUse(answer: CloudResponse, proofLive: bool): bool =
+  cloudCacheKeeps(answer, proofLive) implies finishCloudCheck(initial, answer, proofLive).phase == AuthorityValid
 
 pure def stepOnlyAnAuthorityResultFinishes(before: AuthorityCheck, via: str, after: AuthorityCheck): bool =
   (before.phase == AwaitingCloud and after.phase != AwaitingCloud) implies via == "finishCloudCheck"
@@ -55,24 +63,36 @@ pure def sometimesCloudIsUnavailable(check: AuthorityCheck): bool = check.phase 
 
 ### Grant validation checks envelope and owner before asking Cloud
 
-Require production delegation, the expected grant envelope and expiry, the sealed delegation bound to the same grant fields, and the expected phone. Validate the current owner and phone eligibility before asking Cloud. An answer that arrives at or after the grant expiry cannot authorize use.
+Require production delegation, the expected grant envelope, a grant expiry that is still in the future, the sealed delegation bound to the same grant fields, and the expected phone. Validate the current owner and phone eligibility before asking Cloud: the grant's person, when it names one, must still own the phone, and the phone must not be held, banned or suppressed. An answer that arrives at or after the grant expiry cannot authorize use. When the site issues a grant authority, the resource must be the app's standard or OpenAI MCP resource on production Cloud, and the grant expires at the earlier of the site session expiry and the Cloud identity expiry.
 
 ```quint
 pure def canCheckGrantEnvelope(check: AuthorityCheck): bool = check.phase == AwaitingProof
-pure def checkGrantEnvelope(check: AuthorityCheck, envelopeValid: bool): AuthorityCheck =
-  { ...check, phase: if (envelopeValid) AwaitingDelegation else AuthorityInvalid }
+pure def checkGrantEnvelope(check: AuthorityCheck, envelopeValid: bool, grantLive: bool): AuthorityCheck =
+  { ...check, phase: if (envelopeValid and grantLive) AwaitingDelegation else AuthorityInvalid }
 
 pure def canCheckGrantDelegation(check: AuthorityCheck): bool = check.phase == AwaitingDelegation
 pure def checkGrantDelegation(check: AuthorityCheck, delegationBound: bool): AuthorityCheck =
   { ...check, phase: if (delegationBound) AwaitingGrantOwner else AuthorityInvalid }
 
 pure def canCheckGrantOwner(check: AuthorityCheck): bool = check.phase == AwaitingGrantOwner
-pure def checkGrantOwner(check: AuthorityCheck, phoneEligible: bool): AuthorityCheck =
-  { ...check, phase: if (phoneEligible) AwaitingCloud else AuthorityInvalid }
+pure def checkGrantOwner(check: AuthorityCheck, ownerCurrent: bool, phoneEligible: bool): AuthorityCheck =
+  { ...check, phase: if (ownerCurrent and phoneEligible) AwaitingCloud else AuthorityInvalid }
 
 pure def grantResourceMatches(productionCloud: bool, resource: str, standardMcp: str, openAiMcp: str): bool =
   productionCloud and (resource == standardMcp or resource == openAiMcp)
 
 pure def grantExpiresAt(sessionExpiry: int, identityExpiry: int): int =
   if (sessionExpiry <= identityExpiry) sessionExpiry else identityExpiry
+
+pure def lawGrantNeverOutlivesSessionOrIdentity(sessionExpiry: int, identityExpiry: int): bool =
+  grantExpiresAt(sessionExpiry, identityExpiry) <= sessionExpiry and grantExpiresAt(sessionExpiry, identityExpiry) <= identityExpiry
+
+pure def lawGrantResourceNeedsProductionCloud(resource: str, standardMcp: str, openAiMcp: str): bool =
+  not(grantResourceMatches(false, resource, standardMcp, openAiMcp))
+
+pure def lawGrantNeedsCurrentOwner(phoneEligible: bool): bool =
+  checkGrantOwner(initial, false, phoneEligible).phase == AuthorityInvalid
+
+pure def lawExpiredGrantIsInvalid(envelopeValid: bool): bool =
+  checkGrantEnvelope(initial, envelopeValid, false).phase == AuthorityInvalid
 ```

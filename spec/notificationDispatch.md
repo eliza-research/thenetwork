@@ -18,6 +18,15 @@ type DigestFlow = { phase: DigestPhase }
 pure val initial: DigestFlow = { phase: DigestStarting }
 
 pure def inboxItemStillPending(seen: bool, notified: bool): bool = not(seen) and not(notified)
+
+pure def inboxItemExpired(hasExpiry: bool, expiresAt: int, at: int): bool =
+  hasExpiry and expiresAt <= at
+
+pure def inboxItemDigestible(seen: bool, notified: bool, hasExpiry: bool, expiresAt: int, at: int): bool =
+  inboxItemStillPending(seen, notified) and not(inboxItemExpired(hasExpiry, expiresAt, at))
+
+pure def lawExpiredItemLeavesTheDigest(seen: bool, notified: bool, expiresAt: int, at: int): bool =
+  (expiresAt <= at) implies not(inboxItemDigestible(seen, notified, true, expiresAt, at))
 pure def inboxItemAllowedForRecipient(requested: bool, proactiveAllowed: bool): bool = requested or proactiveAllowed
 
 pure def canRereadItems(digest: DigestFlow): bool = digest.phase == DigestStarting
@@ -62,9 +71,6 @@ The recorded item-set ID must still identify the queued digest. Every recorded i
 pure def canReadQueuedDigest(digest: DigestFlow): bool = digest.phase == DigestStarting
 pure def readQueuedDigest(digest: DigestFlow, sameDigest: bool): DigestFlow =
   { phase: if (sameDigest) ReadingQueuedItems else QueuedDigestObsolete }
-
-pure def inboxItemExpired(hasExpiry: bool, expiresAt: int, at: int): bool =
-  hasExpiry and expiresAt <= at
 
 pure def canRevalidateQueuedItems(digest: DigestFlow): bool = digest.phase == ReadingQueuedItems
 pure def revalidateQueuedItems(digest: DigestFlow, allPresent: bool, anyExpired: bool, anyUnseen: bool): DigestFlow =

@@ -41,6 +41,12 @@ pure def lawInvitationCountsAtWait(acceptedAt: int): bool =
 
 pure def lawTooFewInvitationsDoNotPause(count: int): bool =
   count < unansweredInviteLimit implies not(unansweredInvitePause(count))
+
+pure def unansweredInviteCountAfterInbound(count: int, inbound: bool): int =
+  if (inbound) 0 else count
+
+pure def lawInboundMessageEndsThePause(count: int): bool =
+  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, true)))
 ```
 
 ### Re-engagement requires current evidence of silence
@@ -71,7 +77,7 @@ pure def lawReplyStopsPendingReengagement(onlyWhenAsked: bool, used: bool, lastI
 
 ### Recruiting is an adult-only message at the time it is sent
 
-An introduction, a meeting message, a relay, a reviewed home-help consent card, a re-engagement offer, or a request to invite other people requires an adult recipient. Check the current age when sending, including a message held for a later send window.
+An introduction, a meeting message, a feedback request, a relay, a reviewed home-help consent card, a "worthwhile" prompt, a re-engagement offer, a request to invite other people, or a notice to an inviter that their invitee joined requires an adult recipient. Check the current age when sending, including a message held for a later send window.
 
 ```quint
 pure def outreachRequiresAdult(kind: str): bool =
@@ -88,7 +94,7 @@ pure def lawRecruitingRequiresAdult(kind: str): bool =
 
 ### An eligible join receipt can ride on a current reply
 
-Tell the inviter when a person joins through their attributed invitation. Share the first name and join status only. The account, consent, age and block checks still apply when the notice goes out. If the notice cannot go out by itself, carry it on an existing reply to a direct member message. A notice never rides a reply about an opportunity in which the invitee has a role (a participant or an alternate): it would name the invitee there before every yes, so it waits. A provider, an assistant submitting a profile, or the passage of time does not create a reply. Clear stale receipts after 30 days.
+Tell the inviter when a person joins through their attributed invitation. Share the first name and join status only. The account, consent, age and block checks still apply when the notice goes out. If the notice cannot go out by itself, carry it on an existing reply to a direct member message. A relay or a safety message is not such a reply and cannot carry the notice. A notice never rides a reply about an opportunity in which the invitee has a role (a participant or an alternate): it would name the invitee there before every yes, so it waits. A provider, an assistant submitting a profile, or the passage of time does not create a reply. Clear stale receipts after 30 days.
 
 ```quint
 pure val inviteJoinNoticeLifetimeMs: int = 2592000000
