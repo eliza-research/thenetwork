@@ -82,6 +82,7 @@ import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
+import { readGatheringInvitees } from "./monthly-gathering-priority.ts";
 import { handleMonthlyGatherings } from "./monthly-gatherings.ts";
 import { gatheringRsvpCommand, gatheringRsvpReplyCurrent, gatheringRsvpRoster, saveGatheringRsvp } from "./monthly-gathering-rsvp.ts";
 import { calendarPreferenceCommand } from "../../core/src/calendar-free-busy.ts";
@@ -3380,17 +3381,21 @@ export class NetworkService implements RuntimeHost {
       const user = this.reviewerOfRecord(req, auth.user);
       // A role for this app (role@app or role@*); admin for the app passes every check.
       const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
-      const roster = path.match(/^\/gatherings\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})\/roster$/);
-      if (scoped && roster) {
+      const gatheringRead = path.match(/^\/gatherings\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})\/(roster|priority)$/);
+      if (scoped && gatheringRead) {
         if (rt.app.id !== "ntwrk" || rt.city !== "nyc") return json({ ok: false, error: "not_found" }, 404);
         const no = need(["admin"]); if (no) return no;
         if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
         const rev = url.searchParams.get("revision") ?? "";
         const revision = Number(rev);
         if (!/^[1-9][0-9]*$/.test(rev) || revision > 2_147_483_647) return json({ ok: false, error: "invalid_revision" }, 400);
-        const id = roster[1]!;
-        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_gathering_roster", targetId: id, mode: "real", ok: true, app: rt.app.id });
-        const items = await rt.scoped(tx => gatheringRsvpRoster(tx, this.accountsFor(tx), rt.app, { id, revision }, this.clock.now()));
+        const id = gatheringRead[1]!;
+        const key = { id, revision };
+        const priority = gatheringRead[2] === "priority";
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles,
+          action: priority ? "read_gathering_priority" : "read_gathering_roster", targetId: id, mode: "real", ok: true, app: rt.app.id });
+        const items = priority ? await readGatheringInvitees(rt, tx => this.accountsFor(tx), key, () => this.clock.now())
+          : await rt.scoped(tx => gatheringRsvpRoster(tx, this.accountsFor(tx), rt.app, key, this.clock.now()));
         return items ? json({ ok: true, items }) : json({ ok: false, error: "not_found" }, 404);
       }
       if (scoped) {

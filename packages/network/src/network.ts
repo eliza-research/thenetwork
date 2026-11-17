@@ -68,6 +68,7 @@ import {
   acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
+import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
@@ -5483,6 +5484,48 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.repeatPreferencesAllow(category, participants) && participants.every(id => {
       const m = this.members.get(id);
       return !!m && this.eligible(id, exceptOpp) && canBeMatched(this.ageOf(m));
+    });
+  }
+
+  /** App-local facts for the current staff gathering read. No profile values or pair identities leave the engine. */
+  gatheringPriorityEvidence(now: number) {
+    if (this.app.id !== "ntwrk") return [];
+    const records = new Map((this.ctx.snapshot().members as MemberRecord[])
+      .filter(record => record.homeCity === "nyc").map(record => [record.id, record]));
+    const current = new Set<MemberId>();
+    for (const [id, record] of records) {
+      const member = this.members.get(id);
+      if (!member || member.stage !== "active" || member.optedOut || member.account || member.minor || member.minorSignal ||
+        member.minorReported || member.ageConflict || member.ageUnknown || !canBeMatched(this.ageOf(member)) || !canBeMatched(record.age) ||
+        record.state === "paused" || (record.accountStatus !== undefined && record.accountStatus !== "active") ||
+        !this.trust.ok(id) || this.reportHeld(id)) continue;
+      current.add(id);
+    }
+    const pastParticipation = this.lastParticipation(now);
+    const futureParticipation = new Set<MemberId>();
+    const offeredRepeats = new Map<string, Opp>();
+    for (const opportunity of this.opps.values()) {
+      if (opportunity.repeatFrom) offeredRepeats.set(opportunity.repeatFrom, opportunity);
+      if (opportunity.stage !== "scheduled" || opportunity.meetingAt === undefined || opportunity.meetingAt <= now) continue;
+      for (const id of opportunity.participants) if (opportunity.status.get(id) === "yes") futureParticipation.add(id);
+    }
+    const pendingRepeats = new Set<MemberId>();
+    for (const { source, pair, firstYes, secondYes } of this.repeatSources(now)) {
+      if (!firstYes || !secondYes || !pair.every(id => current.has(id)) || !this.repeatPreferencesAllow(source.category, pair) ||
+        this.blocked(...pair) || this.avoid.has(pairKey(...pair)) || (this.declined.get(pairKey(...pair)) ?? -Infinity) > now - 60 * DAY) continue;
+      const offer = offeredRepeats.get(source.id);
+      if (offer && ((offer.stage !== "review" && offer.stage !== "probing") || offer.participants.length !== 2 ||
+        !pair.every(id => offer.participants.includes(id) && offer.status.get(id) !== "no"))) continue;
+      for (const id of pair) pendingRepeats.add(id);
+    }
+    return [...current].flatMap(id => {
+      const record = records.get(id);
+      const member = this.members.get(id);
+      if (!record || !member || member.onlyWhenAsked || record.prefs?.onlyWhenAsked ||
+        !record.prefs?.categoriesOptIn?.includes("events") || !record.prefs?.formats?.includes("event")) return [];
+      return [{ memberId: id, eligible: true, newcomer: gatheringPriorityNewcomer(record.joinedAt, now),
+        isolated: gatheringPriorityIsolated(record.joinedAt, pastParticipation.get(id) ?? -1, futureParticipation.has(id), now),
+        pendingSecondEncounter: pendingRepeats.has(id) }];
     });
   }
 

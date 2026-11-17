@@ -2,6 +2,10 @@
 //@ backend dafny
 
 
+/** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */
+export const gatheringNewcomerMs: number = 604800000;
+/** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */
+export const gatheringIsolationMs: number = 2592000000;
 
 /** Story: Choose how to attend the monthly gathering / Only the exact approved gathering accepts a fresh RSVP (spec/monthlyGatheringRsvp.md) */
 //@ pure
@@ -76,8 +80,27 @@ export function lawGatheringAttendanceIsNotGroupingConsent(attending: boolean, c
 
 /** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */
 //@ pure
+export function gatheringPriorityNewcomer(joinedAt: number, now: number): boolean {
+  return 0 <= joinedAt && joinedAt <= now && exact_monthlyGatheringRsvp(now - joinedAt) <= gatheringNewcomerMs;
+}
+
+/** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */
+//@ pure
+export function gatheringPriorityIsolated(joinedAt: number, lastParticipationAt: number, hasUpcoming: boolean, now: number): boolean {
+  return 0 <= joinedAt && exact_monthlyGatheringRsvp(now - joinedAt) > gatheringNewcomerMs && !hasUpcoming && (lastParticipationAt < 0 || exact_monthlyGatheringRsvp(now - lastParticipationAt) > gatheringIsolationMs);
+}
+
+/** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */
+//@ pure
 export function gatheringInvitationPriority(eligible: boolean, newcomer: boolean, isolated: boolean, pendingSecondEncounter: boolean): number {
   return eligible ? exact_monthlyGatheringRsvp(exact_monthlyGatheringRsvp((newcomer ? 1 : 0) + (isolated ? 1 : 0)) + (pendingSecondEncounter ? 1 : 0)) : -1;
+}
+
+/** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */
+//@ pure
+export function lawGatheringNewcomerIsNotIsolated(joinedAt: number, lastParticipationAt: number, hasUpcoming: boolean, now: number): boolean {
+  //@ ensures \result === true
+  return !gatheringPriorityNewcomer(joinedAt, now) || !gatheringPriorityIsolated(joinedAt, lastParticipationAt, hasUpcoming, now);
 }
 
 /** Story: Choose how to attend the monthly gathering / Priority suggests whom staff should consider first (spec/monthlyGatheringRsvp.md) */

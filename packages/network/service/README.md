@@ -342,6 +342,10 @@ draft's `revision` and `decision` (`approve` or `reject`) to
 `POST /apps/ntwrk/gatherings/<id>/review`. Approval records the authenticated
 staff actor and rechecks the selected public venue and time.
 
+Before the gathering starts, `GET /apps/ntwrk/gatherings/<id>/priority?revision=<revision>`
+returns eligible member IDs in suggested invitation order. The order uses
+newcomer, recent participation and pending second encounter evidence.
+
 Eligible adults use the signed text conversation to send
 `RSVP GATHERING <id> <revision> YES`. They can add `WITH GROUPING` to let
 staff consider them for a small group. A later plain `YES` removes that

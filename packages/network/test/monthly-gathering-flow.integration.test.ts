@@ -43,6 +43,10 @@ test.skipIf(!pgAvailable)("monthly gathering approval enables private signed RSV
       { firstName: "Ari", age: 30, homeCity: "nyc", consent: { sms: true, wording: app.consent.text } });
     if (!joined.ok) throw new Error(`Fixture join refused: ${joined.error}`);
     const memberId = joined.membership.memberId;
+    for (const [index, text] of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      expect((await send(turn(`gathering-onboard-${index}`, text))).status).toBe(200);
+    }
     const startsAt = Date.UTC(2026, 10, 21, 17);
     const create = { month: "2026-11", venue: { kind: "curated", id: "mccarren-park" }, startsAt, endsAt: startsAt + HOUR, capacity: 8 };
     expect((await staff(base, "ntwrk-reviewer", create)).status).toBe(403);
@@ -51,6 +55,8 @@ test.skipIf(!pgAvailable)("monthly gathering approval enables private signed RSV
     expect(created.status).toBe(201);
     const { gathering: draft } = await created.json();
     expect(draft).toMatchObject({ app: "ntwrk", city: "nyc", status: "draft", revision: 0 });
+    const priority = `${base}/${draft.id}/priority?revision=1`;
+    expect((await staff(priority)).status).toBe(404);
     const yes = `RSVP GATHERING ${draft.id} 1 YES WITH GROUPING`;
     const waitForReview = await send(turn("gathering-draft", yes));
     expect(await waitForReview.json()).toMatchObject({ reason: "gathering_rsvp", replies: [] });
@@ -59,6 +65,8 @@ test.skipIf(!pgAvailable)("monthly gathering approval enables private signed RSV
     const approved = await staff(`${base}/${draft.id}/review`, undefined, { decision: "approve", revision: 0 });
     expect(approved.status).toBe(200);
     expect(await approved.json()).toMatchObject({ gathering: { id: draft.id, status: "approved", revision: 1 } });
+    expect((await staff(priority, "ntwrk-reviewer")).status).toBe(403);
+    expect(await (await staff(priority)).json()).toEqual({ ok: true, items: [memberId] });
     expect(await sql`select id from network.messages where direction='outbound' order by id`).toEqual(outboundBeforeReview);
 
     const wrongApp = await send(turn("gathering-friends", yes, "friends"));
@@ -73,6 +81,7 @@ test.skipIf(!pgAvailable)("monthly gathering approval enables private signed RSV
     const roster = `${base}/${draft.id}/roster?revision=1`;
     expect((await staff(roster, "friends-admin")).status).toBe(403);
     expect(await (await staff(roster)).json()).toEqual({ ok: true, items: [{ memberId, grouping: true }] });
+    expect((await (await staff(priority)).json()).items).not.toContain(memberId);
     expect(await sql`select direction, body from network.messages where type='gathering_rsvp' order by direction`).toEqual([
       { direction: "inbound", body: "Private gathering RSVP." }, { direction: "outbound", body: "Private gathering RSVP reply." },
     ]);

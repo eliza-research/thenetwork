@@ -60,7 +60,24 @@ pure def lawGatheringAttendanceIsNotGroupingConsent(attending: bool, currentlyEl
 
 Among current eligible members, give one priority point for each documented condition that applies: newcomer, isolated member, or a pending second encounter. Use a stable ID to break ties. Treat equal evidence equally. Keep priority private to staff. A score neither authorizes delivery nor reserves a seat. Use existing current, app-local engine evidence for each condition; do not infer a reason from private conversation text.
 
+Recommendations are for the exact approved future Network gathering in New York. Consider current local adults who have finished onboarding and accept event opportunities. Withhold members on watch, paused, or available only when they ask. Exclude every existing RSVP choice for the revision. Return no more IDs than gathering capacity.
+
+Use the first week after joining as the newcomer window. After that week, absence of an accepted participation in the past 30 days and the absence of a future booking provide the local isolation evidence. A pending second encounter needs bilateral repeat consent from an eligible recent pair. It can be awaiting its first offer, staff review, or probe response. A booked, declined, closed or previously completed repeat does not count.
+
 ```quint
+pure val gatheringNewcomerMs: int = 604800000
+pure val gatheringIsolationMs: int = 2592000000
+
+pure def gatheringPriorityNewcomer(joinedAt: int, now: int): bool =
+  0 <= joinedAt and joinedAt <= now and now - joinedAt <= gatheringNewcomerMs
+
+pure def gatheringPriorityIsolated(joinedAt: int, lastParticipationAt: int, hasUpcoming: bool, now: int): bool =
+  0 <= joinedAt and now - joinedAt > gatheringNewcomerMs and not(hasUpcoming) and
+    (lastParticipationAt < 0 or now - lastParticipationAt > gatheringIsolationMs)
+
+pure def lawGatheringNewcomerIsNotIsolated(joinedAt: int, lastParticipationAt: int, hasUpcoming: bool, now: int): bool =
+  gatheringPriorityNewcomer(joinedAt, now) implies not(gatheringPriorityIsolated(joinedAt, lastParticipationAt, hasUpcoming, now))
+
 pure def gatheringInvitationPriority(eligible: bool, newcomer: bool, isolated: bool, pendingSecondEncounter: bool): int =
   if (eligible) (if (newcomer) 1 else 0) + (if (isolated) 1 else 0) + (if (pendingSecondEncounter) 1 else 0) else -1
 
