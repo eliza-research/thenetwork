@@ -250,3 +250,32 @@
 {"text":"In 9th grade. I did competitive swimming then.","teen":false}
 {"text":"12th grade teacher, here.","teen":false}
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
+{"text":"I'm 18 in two weeks","teen":true,"age":17}
+{"text":"I'm 18 next month","teen":true,"age":17}
+{"text":"I'm 18 tomorrow","teen":true,"age":17}
+{"text":"I'm 18 soon","teen":true,"age":17}
+{"text":"I'm 18 in May","teen":true,"age":17}
+{"text":"I'm 18 next year","teen":true,"age":17}
+{"text":"I'm 18 in June","teen":true,"age":17}
+{"text":"I'm 18 this summer","teen":true,"age":17}
+{"text":"im 18 in two weeks","teen":true,"age":17}
+{"text":"I'm eighteen next month","teen":true,"age":17}
+{"text":"I'm 18 next week","teen":true,"age":17}
+{"text":"I'm 18 in a few weeks","teen":true,"age":17}
+{"text":"I'm 18 this week","teen":true,"age":17}
+{"text":"I'm 18 on Friday","teen":true,"age":17}
+{"text":"I'm 18 in two days","teen":true,"age":17}
+{"text":"I'm 18 in a week","teen":true,"age":17}
+{"text":"I'm 18 next Friday","teen":true,"age":17}
+{"text":"I'm 18 in December","teen":true,"age":17}
+{"text":"I'm 18 this year","teen":true,"age":17}
+{"text":"I'm 18 in 2 days","teen":true,"age":17}
+{"text":"I'm 18 in a couple weeks","teen":true,"age":17}
+{"text":"I'm just 18 next month","teen":true,"age":17}
+{"text":"I'm only 18 in two weeks","teen":true,"age":17}
+{"text":"I am 18 next month","teen":true,"age":17}
+{"text":"I'm 18 tonight","teen":true,"age":17}
+{"text":"I'm 18 in 2 hours","teen":true,"age":17}
+{"text":"I'm 18 in high school","teen":false,"age":18}
+{"text":"I'm 18 and loving it","teen":false,"age":18}
+{"text":"I'm 30 in two weeks","teen":false,"age":29}

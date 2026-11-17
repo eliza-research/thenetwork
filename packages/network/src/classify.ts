@@ -220,10 +220,15 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[1]!]! },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => atLeast13(AGE_WORDS[m[1]!]!) },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
-  // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
+  // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month",
+  // "I'm 16 in May": one less. The bare "I'm <age> <time>" form states the age the
+  // sender is about to reach, not the age they are now — but only when the tail is
+  // a time word ("in May", "next month", "tomorrow"): "I'm 18 in high school" is a
+  // current age, and "I'm 18 for 2 weeks" has already been 18 for 2 weeks.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
   { rx: new RegExp(`\\bi turn\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}(\\d{1,2}|${NUM_WORD})\\s+(?:in\\s+(?:(?:a\\s+few|a\\s+couple(?:\\s+of)?|\\d+|one|two|three|four|five|six|seven|eight|nine|ten|a|an)\\s+)?(?:weeks?|months?|days?|years?|hours?|minutes?|mins?)\\b|in\\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\\b|next\\s+(?:week|month|year|summer|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b|tomorrow\\b|tonight\\b|soon\\b|this\\s+(?:week|month|year|summer)\\b|on\\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b)`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
   { rx: /\bwhen i turn\s+(1[4-8]|sixteen|seventeen|eighteen)\b/, age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1 },
   // "15f here", "16 m", "15/f", "im 15f", "f15".
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:${ME}\\s+)?(1\\d|\\d)\\s*\\/?\\s*[fmx](?![a-z])${AGE_SEX_END}`), age: m => teenOrAdult(Number(m[1])) },
