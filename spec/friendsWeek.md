@@ -1,6 +1,6 @@
 # Friends weekly planning
 
-The weekly Friends planner uses this run state to assign reservations. The [crew model](models/plan_crew.md) and [plan model](models/plan_run.md) cover what happens after a proposal leaves the planner. The planner supplies eligible members and finished candidates in its ranked order. It computes availability, venue, travel, timing, and plan copy outside this state.
+The weekly Friends planner uses this run state to assign reservations. The [crew model](models/plan_crew.md) and [plan model](models/plan_run.md) cover what happens after a proposal leaves the planner. The planner supplies eligible members and finished candidates in its ranked order. It reserves an activity partner only after it finishes that candidate, so an unfinished candidate does not use the partner allowance. It computes availability, venue, travel, timing, and plan copy outside this state.
 
 ## Story: Find time with familiar people or meet someone nearby
 
@@ -112,13 +112,22 @@ Try the bounded candidate pool in its existing priority order. A table must reac
 pure def friendTableHasMinimumCandidates(compatibleCandidates: int, minimumInvitees: int): bool =
   compatibleCandidates >= minimumInvitees
 
-pure def lawFriendTableNeedsMoreThanOneCompatiblePeer(compatibleCandidates: int, minimumInvitees: int): bool =
-  (compatibleCandidates <= 2 and minimumInvitees >= 3) implies not(friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees))
+pure def lawFriendTableBelowMinimumIsRefused(compatibleCandidates: int, minimumInvitees: int): bool =
+  compatibleCandidates < minimumInvitees implies not(friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees))
+
+pure def friendTableTriesNextStarter(tableReserved: bool, startersLeft: int): bool =
+  not(tableReserved) and startersLeft > 0
+
+pure def lawFriendTableStopsAfterAReservedTable(startersLeft: int): bool =
+  not(friendTableTriesNextStarter(true, startersLeft))
+
+pure def lawFriendTableStopsWhenNoStarterIsLeft(tableReserved: bool): bool =
+  not(friendTableTriesNextStarter(tableReserved, 0))
 ```
 
 ### Activity partner reservations use a separate per-member allowance
 
-An activity partner reservation pairs two different members and uses one allowance for each. Only finished candidates use the allowance. A new plan or recurring reservation does not affect the partner allowance.
+An activity partner reservation pairs two different members and uses one allowance for each. A new plan or recurring reservation does not affect the partner allowance.
 
 ```quint
 type PartnerPair = { first: str, second: str }

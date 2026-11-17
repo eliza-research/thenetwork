@@ -23,9 +23,9 @@ export function peonCofounderIntentOf(w: World, id: MemberId): Intent | undefine
   const intent = member.intents.find(i => i.objective === cofounderIntentObjective
     && cofounderIntentEligible(i.app ?? "", "peon", i.category, i.details ?? "", standingIntentLive(i, w.now)));
   if (!intent) return undefined;
-  const contactOpen = !m.prefs.onlyWhenAsked && m.unansweredProactive < 2 && !member.inOpenOpportunity;
+  const contactOpen = !m.prefs.onlyWhenAsked && m.unansweredProactive < 2;
   return peonCofounderMayProfile(m.apps?.includes("peon") === true, isSeatId(id) || !!jobOf(w, id), true,
-    m.prefs.categoriesOptIn.includes("professional"), m.prefs.formats.includes("one_to_one"), contactOpen) ? intent : undefined;
+    m.prefs.categoriesOptIn.includes("professional"), m.prefs.formats.includes("one_to_one"), contactOpen, !member.inOpenOpportunity) ? intent : undefined;
 }
 
 export function peonCofounderMembership(w: World, id: MemberId): Membership | undefined {

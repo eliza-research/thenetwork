@@ -193,21 +193,21 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
           const known = values.flatMap(v => (v === undefined ? [] : [v]));
           const compatible = known.length === primary.length;
           const ov = compatible ? w.overlap([...primary, id], opts.window.start, opts.window.end, best.city) : null;
-          if (!alternateAllowed(primary.includes(id), compatible, !!ov && ov.city === best.city)) return [];
-          return [{ id, low: Math.min(...known), fit: affinity.get(id) ?? 0 }];
+          const sameCityOverlap = !!ov && ov.city === best.city;
+          if (!alternateAllowed(primary.includes(id), compatible, sameCityOverlap)) return [];
+          return [{ id, compatible, sameCityOverlap, low: Math.min(...known), fit: affinity.get(id) ?? 0 }];
         })
         .sort((x, y) => y.low - x.low || y.fit - x.fit || compareText(x.id, y.id));
       // In that order, an alternate is kept only with a pair value (the one pair gate) with every
       // alternate kept before it, so any backfill values every pair (spec/groupFormation.md).
       const wanted = Math.max(0, Math.trunc(opts.alternates));
-      const kept: MemberId[] = [];
+      formation = step(formation, { type: "openAlternates", alternateLimit: wanted });
       for (const alt of alternates) {
-        if (kept.length >= wanted) break;
+        if (formation.alternates.length >= wanted) break;
         const profile = graph.profiles.get(alt.id)!;
-        if (kept.every(other => w.match.value(profile, graph.profiles.get(other)!) >= 0)) kept.push(alt.id);
+        const pairedWithReserved = formation.alternates.every(other => w.match.value(profile, graph.profiles.get(other)!) >= 0);
+        formation = step(formation, { type: "reserveAlternate", member: alt.id, compatible: alt.compatible, sameCityOverlap: alt.sameCityOverlap, pairedWithReserved });
       }
-      formation = step(formation, { type: "openAlternates", alternateLimit: kept.length });
-      for (const id of kept) formation = step(formation, { type: "reserveAlternate", member: id });
       formation = step(formation, { type: "finishGroup" });
 
       const roles: Record<MemberId, Role> = {};

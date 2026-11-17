@@ -8,8 +8,8 @@ export interface SeatLedger { phase: LedgerPhase; occupied: string[] }
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "publishLedger" }
-  | { type: "observeCandidate"; candidate: string; occupies: boolean };
+  | { type: "observeCandidate"; candidate: string; occupies: boolean }
+  | { type: "publishLedger" };
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 export const initial: SeatLedger = { phase: "Collecting", occupied: ([] as string[]) };
@@ -30,6 +30,19 @@ export function interactionOccupies(disposition: string): boolean {
 //@ pure
 export function bookedOccupies(hasMeeting: boolean, closed: boolean): boolean {
   return hasMeeting && !closed;
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function canObserveCandidate(l: SeatLedger, candidate: string, occupies: boolean): boolean {
+  return l.phase === "Collecting" && occupies && !l.occupied.includes(candidate);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function observeCandidate(l: SeatLedger, candidate: string, occupies: boolean): SeatLedger {
+  //@ ensures (inv(l) && canObserveCandidate(l, candidate, occupies)) ==> stepPublishedOccupancyStaysFixed(l, \result)
+  return { ...l, occupied: l.occupied.concat([candidate].filter((set_x: string) => !l.occupied.includes(set_x))) };
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
@@ -59,15 +72,22 @@ export function sometimesPublishedWithCandidate(l: SeatLedger): boolean {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
-export function canObserveCandidate(l: SeatLedger, candidate: string, occupies: boolean): boolean {
-  return l.phase === "Collecting" && occupies && !l.occupied.includes(candidate);
+export function seatRecordOccupies(openOpportunity: boolean, disposition: string): boolean {
+  return openOpportunity || interactionOccupies(disposition);
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
-export function observeCandidate(l: SeatLedger, candidate: string, occupies: boolean): SeatLedger {
-  //@ ensures (inv(l) && canObserveCandidate(l, candidate, occupies)) ==> stepPublishedOccupancyStaysFixed(l, \result)
-  return { ...l, occupied: l.occupied.concat([candidate].filter((set_x: string) => !l.occupied.includes(set_x))) };
+export function lawOpenOpportunityOccupies(disposition: string): boolean {
+  //@ ensures \result === true
+  return seatRecordOccupies(true, disposition);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function lawEndedInteractionFreesOpening(openOpportunity: boolean): boolean {
+  //@ ensures \result === true
+  return seatRecordOccupies(openOpportunity, "declined") === openOpportunity;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
@@ -106,8 +126,8 @@ export function lawSlateRespectsRemaining(planned: number, remaining: number): b
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: SeatLedger, event: Event): boolean {
-  if (event.type === "publishLedger") return canPublishLedger(current);
   if (event.type === "observeCandidate") return canObserveCandidate(current, event.candidate, event.occupies);
+  if (event.type === "publishLedger") return canPublishLedger(current);
   return false;
 }
 
@@ -116,8 +136,8 @@ export function enabled(current: SeatLedger, event: Event): boolean {
 export function step(current: SeatLedger, event: Event): SeatLedger {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "publishLedger") return canPublishLedger(current) ? publishLedger(current) : current;
   if (event.type === "observeCandidate") return canObserveCandidate(current, event.candidate, event.occupies) ? observeCandidate(current, event.candidate, event.occupies) : current;
+  if (event.type === "publishLedger") return canPublishLedger(current) ? publishLedger(current) : current;
   return current;
 }
 
@@ -135,8 +155,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "publishLedger") return { type: "publishLedger" };
   if (raw.type === "observeCandidate" && typeof raw.candidate === "string" && typeof raw.occupies === "boolean") return { type: "observeCandidate", candidate: raw.candidate, occupies: raw.occupies };
+  if (raw.type === "publishLedger") return { type: "publishLedger" };
   return undefined;
 }
 

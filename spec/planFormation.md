@@ -8,16 +8,22 @@ The [plan flow model](models/plan_run.md) follows plans through review, replies,
 
 ### A public venue must fit the activity and the proposed number of people
 
-Consider venues in the requested city that host the activity, have room for a pair, and are open at the slot. Prefer a venue that has room for a group and enough people who meet its minimum age. The chosen venue or event limits the number the plan can invite.
+Consider venues in the requested city that host the activity, have room for a pair, and are open at the slot. Prefer a venue that has room for a group and enough people who meet its minimum age. The chosen venue or event limits the number the plan can invite. A plan goes on only when that limit is not less than the smaller of its minimum group and two.
 
 ```quint
-pure def venueCanHostActivity(isPublic: bool, sameCity: bool, supportsActivity: bool, capacity: int): bool =
-  isPublic and sameCity and supportsActivity and capacity >= 2
+pure def venueCanHostActivity(isPublic: bool, sameCity: bool, supportsActivity: bool, capacity: int, openAtSlot: bool): bool =
+  isPublic and sameCity and supportsActivity and capacity >= 2 and openAtSlot
 
 pure def venueCanHoldGroup(capacity: int, eligiblePeople: int, minimumGroup: int): bool =
   capacity >= minimumGroup and eligiblePeople >= minimumGroup
 
+pure def planInviteLimit(planMaximum: int, placeCapacity: int): int =
+  if (placeCapacity < planMaximum) placeCapacity else planMaximum
+
 pure def planCanFitPlace(maximumGroup: int, minimumPlace: int): bool = not(maximumGroup < minimumPlace)
+
+pure def lawPlaceCapsInvites(planMaximum: int, placeCapacity: int): bool =
+  not(planInviteLimit(planMaximum, placeCapacity) > placeCapacity) and not(planInviteLimit(planMaximum, placeCapacity) > planMaximum)
 ```
 
 ### Friends prefers a venue every primary invitee can reach

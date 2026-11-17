@@ -22,7 +22,7 @@ import {
 } from "../../core/src/generated/planDecision.ts";
 import {
   cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
-  planActivityWindowEnd, planCanFitPlace, planScoreQualifies, planSlotPairCanConnect, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
+  planActivityWindowEnd, planCanFitPlace, planInviteLimit, planScoreQualifies, planSlotPairCanConnect, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
@@ -344,8 +344,8 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
       if (wh.event) place = { name: wh.event.listing?.venue ?? wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
-        const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id), v.capacity === undefined ? Infinity : v.capacity)
-          && venueOpenForSlot(v, slot, a.durationMin, tz, att));
+        const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id),
+          v.capacity ?? Infinity, venueOpenForSlot(v, slot, a.durationMin, tz, att)));
         if (!vs.length) continue;
         const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
         const groupFits = (v: Venue) => venueCanHoldGroup(v.capacity ?? Infinity, pool.filter(id => ageOk(id, v.ageMin)).length, minG);
@@ -363,7 +363,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       const passes = (s: PlanScore | null | undefined): s is PlanScore => !!s && planScoreQualifies(s.min, s.score, pcfg.minMemberU, pcfg.threshold);
       // The chosen public place's capacity bounds both groups and partner fallbacks.
       const cap = wh.event?.capacity ?? place.capacity ?? Infinity;
-      const maxG = Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target, cap);
+      const maxG = planInviteLimit(Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target), cap);
       if (!planCanFitPlace(maxG, Math.min(minG, 2))) continue;
       const minInvite = Math.min(maxG, Math.max(minG, pcfg.minInvite));
       const limit = Math.max(1, pcfg.maxPlansPerCityRun);

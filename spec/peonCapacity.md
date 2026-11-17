@@ -21,6 +21,13 @@ pure def interactionOccupies(disposition: str): bool =
 
 pure def bookedOccupies(hasMeeting: bool, closed: bool): bool = hasMeeting and not(closed)
 
+pure def seatRecordOccupies(openOpportunity: bool, disposition: str): bool =
+  openOpportunity or interactionOccupies(disposition)
+
+pure def lawOpenOpportunityOccupies(disposition: str): bool = seatRecordOccupies(true, disposition)
+pure def lawEndedInteractionFreesOpening(openOpportunity: bool): bool =
+  seatRecordOccupies(openOpportunity, "declined") == openOpportunity
+
 pure def canObserveCandidate(l: SeatLedger, candidate: str, occupies: bool): bool =
   l.phase == Collecting and occupies and not(l.occupied.contains(candidate))
 

@@ -9,6 +9,8 @@ export interface StandingEvidence { points: number; reviewed: boolean }
 export interface StandingObservation { standing: number; updatedAt: number }
 
 /** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
+export const standingFacetScopes: string[] = ["agent_private", "opportunity_specific", "matchable", "shareable"];
+/** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
 export const standingFacetProvenances: string[] = ["said", "vouched", "connected_source", "inferred"];
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
 export const standingUnreviewedPercent: number = 50;
@@ -22,8 +24,6 @@ export const standingUncertaintyStep: number = 2;
 export const standingWeeklyStep: number = 5;
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 export const standingObservationWeekMs: number = 604800000;
-/** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
-export const standingFacetScopes: string[] = ["agent_private", "opportunity_specific", "matchable", "shareable"];
 
 /** Story: Estimate standing from facts, never from popularity / Standing exists only for an adult who consented to the lane (spec/memberStanding.md) */
 //@ pure
@@ -33,8 +33,21 @@ export function standingReadable(adult: boolean, consented: boolean): boolean {
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
 //@ pure
+export function standingHistoryUsable(hasHistory: boolean, evidenceStillPermits: boolean): boolean {
+  return hasHistory && evidenceStillPermits;
+}
+
+/** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
+//@ pure
 export function standingMayRetain(adult: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
   return standingReadable(adult, lanePermitted) && activeAccount;
+}
+
+/** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
+//@ pure
+export function lawWithdrawnEvidenceInvalidatesStanding(hasHistory: boolean): boolean {
+  //@ ensures \result === true
+  return !standingHistoryUsable(hasHistory, false);
 }
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */

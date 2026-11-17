@@ -1,6 +1,6 @@
 # Bounded candidate search
 
-One search finds the best candidates in one lane, partner side, and market within fixed limits on pair checks and index entries visited. The shell walks the standing window in tag postings, passes the value and canonical ordinal of each checked pair to the search machine, and supplies an upper bound on unchecked candidates. The [reciprocal pair value](pairValue.md) and [relationship lanes](matchLane.md) define the scoring rules. The [matching engine model](models/matching_engine.md) and [candidate pool model](models/candidate_pool.md) follow the results from retrieval to proposal. [Story F21](product/stories.md#story-f21--hear-when-nothing-fits) uses an empty or budgeted result as a recorded reason. [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction) uses the kept candidates.
+One search finds the best candidates in one lane, partner side, and market within fixed limits on pair checks and index entries visited. The shell walks the standing window in tag postings, passes the value and canonical ordinal of each checked pair to the search machine, and supplies an upper bound on unchecked candidates. The [reciprocal pair value](pairValue.md) and [relationship lanes](matchLane.md) define the scoring rules. The [matching engine model](models/matching_engine.md) and [candidate pool model](models/candidate_pool.md) follow the results from retrieval to proposal. [Story F21](product/stories.md#story-f21--hear-when-nothing-fits) uses an empty or budgeted result as a recorded reason. [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction) uses the kept candidates. The engine runs at most one search per profile in a run.
 
 ## Story: Search only where a pair can have a value
 
@@ -92,10 +92,15 @@ The shell walks the nonempty posting ranges of shared interests and of each side
 
 The upper bound counts only the utility terms the pack provides. The open ranges bound the searcher's affinity and complement hit counts. For the other direction the bound allows full coverage while a relevant range is open. Closeness and custom pack value count at their maximum when present. If the bound still allows an untagged pair after the tag ranges are exhausted, the shell can walk the whole window: the standing window inside each segment the member reaches. When the next tag range is at least as long as the whole window, the shell walks the whole window in its place: that costs no more touches and leaves no partner untouched. The lane floors apply as specified.
 
-Each visited posting or whole-window entry costs one touch, including a repeated visit to the same candidate. The shell stops visiting entries when their count reaches `searchTouchesPerCheck` times the lane's search budget. The search can still check candidates it has already touched.
+Each visited posting or whole-window entry costs one touch, including a repeated visit to the same candidate. The shell visits an entry only while `searchMayTouch` holds: it stops visiting entries when their count reaches `searchTouchesPerCheck` times the lane's search budget. The search can still check candidates it has already touched.
 
 ```quint
 pure val searchTouchesPerCheck: int = 8
+
+pure def searchMayTouch(touches: int, budget: int): bool = touches < searchTouchesPerCheck * budget
+
+pure def lawSearchTouchesStayWithinLimit(touches: int, budget: int): bool =
+  searchMayTouch(touches, budget) implies touches + 1 <= searchTouchesPerCheck * budget
 ```
 
 ## Story: Keep the best candidates within a fixed number of pair checks
@@ -226,13 +231,13 @@ pure def sometimesExact(s: CandidateSearch): bool = s.phase == Exact and s.unsee
 
 A search that cannot stop exactly closes as Budgeted when it reaches its check budget, or when the shell has spent its posting walk (`walkSpent`) and has no touched candidate left to check. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). It never fills the gap with a pair that has no pair value. A closed search does not change.
 
-One search makes at most `budget` pair checks (`alwaysChecksWithinBudget`). A run performs at most one search per profile. In addition to the touch limit, the shell locates its posting ranges with binary searches, sorts those ranges by length, and ranks each touched candidate at most once in a heap.
+One search makes at most `budget` pair checks (`alwaysChecksWithinBudget`). In addition to the touch limit, the shell locates its posting ranges with binary searches, sorts those ranges by length, and ranks each touched candidate at most once in a heap.
 
 ```quint
-pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool): bool =
-  s.phase == Scanning and (s.checks >= s.budget or walkSpent) and not(searchStopsExact(s, unseenBound))
+pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedLeft: bool): bool =
+  s.phase == Scanning and (s.checks >= s.budget or (walkSpent and not(touchedLeft))) and not(searchStopsExact(s, unseenBound))
 
-pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool): CandidateSearch =
+pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedLeft: bool): CandidateSearch =
   { ...s, phase: Budgeted, unseenBound: unseenBound }
 
 pure def stepClosedSearchStaysClosed(before: CandidateSearch, after: CandidateSearch): bool =

@@ -3,7 +3,7 @@
 // candidateSearch machine, which keeps the top `searchLimit` and certifies when nothing unchecked
 // can beat them.
 import {
-  enabled, initial, searchTouchesPerCheck, searchWindowHigh, searchWindowLow, step, unseenValueBound,
+  enabled, initial, searchMayTouch, searchWindowHigh, searchWindowLow, step, unseenValueBound,
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
 } from "../../../core/src/generated/candidateSearch.ts";
 import { lanePairValue, laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
@@ -166,12 +166,11 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const fullPack = hasPackValue ? pairValueScale : undefined;
   const pending = new CandidateHeap();
   const touched = new Set<number>();
-  const touchLimit = searchTouchesPerCheck * limits.searchBudget;
   let touches = 0, walked = 0, walkSpent = false;
   /** Touches the positions of `spans`; false when the touch limit stops it first. */
   const visit = (spans: readonly Span[], positionAt: (i: number) => number): boolean => {
     for (const { start, end } of spans) for (let i = start; i < end; i++) {
-      if (touches >= touchLimit) return false;
+      if (!searchMayTouch(touches, limits.searchBudget)) return false;
       touches++;
       const position = positionAt(i);
       if (touched.has(position)) continue;
@@ -205,7 +204,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       continue;
     }
     if (!top || search.checks >= limits.searchBudget) {
-      return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent }), touches);
+      return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent, touchedLeft: top !== undefined }), touches);
     }
     pending.pop();
     search = step(search, { type: "checkCandidate", value: pairValueOf(w, profile, top.other), ordinal: top.other.ordinal });

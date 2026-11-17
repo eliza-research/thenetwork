@@ -9,14 +9,15 @@
 Peon admits a peer to the [Cofounder lane](matchLane.md) from a current, explicit cofounder intent in that member's Peon membership. Job postings and general professional goals do not give this permission. Each peer must permit professional introductions and one-to-one meetings, have room for contact, and have no open opportunity. Peers must be in the same home market. The engine also applies its shared adult, hold, pause, block, and reciprocal fit rules.
 
 ```quint
-pure def peonCofounderMayProfile(appMember: bool, jobSeat: bool, currentIntent: bool, professionalOptIn: bool, acceptsOneToOne: bool, contactOpen: bool): bool =
-  appMember and not(jobSeat) and currentIntent and professionalOptIn and acceptsOneToOne and contactOpen
+pure def peonCofounderMayProfile(appMember: bool, jobSeat: bool, currentIntent: bool, professionalOptIn: bool, acceptsOneToOne: bool, contactOpen: bool, noOpenOpportunity: bool): bool =
+  appMember and not(jobSeat) and currentIntent and professionalOptIn and acceptsOneToOne and contactOpen and noOpenOpportunity
 
 pure def peonCofounderMayPair(firstEligible: bool, secondEligible: bool, sameMarket: bool): bool =
   firstEligible and secondEligible and sameMarket
 
-pure def lawCofounderRequiresTwoEligiblePeers(firstEligible: bool, secondEligible: bool, sameMarket: bool): bool =
-  peonCofounderMayPair(firstEligible, secondEligible, sameMarket) implies (firstEligible and secondEligible and sameMarket)
+pure def lawCofounderRequiresTwoEligiblePeers(appMember: bool, jobSeat: bool, currentIntent: bool, professionalOptIn: bool, acceptsOneToOne: bool, contactOpen: bool, noOpenOpportunity: bool, secondEligible: bool, sameMarket: bool): bool =
+  peonCofounderMayPair(peonCofounderMayProfile(appMember, jobSeat, currentIntent, professionalOptIn, acceptsOneToOne, contactOpen, noOpenOpportunity), secondEligible, sameMarket)
+    implies (appMember and not(jobSeat) and currentIntent and professionalOptIn and acceptsOneToOne and contactOpen and noOpenOpportunity and secondEligible and sameMarket)
 ```
 
 The bounded search reads same-app, matchable work context. Job-intake data stays in Hire. Only [permitted lane evidence](memberStanding.md) affects standing. A shared goal alone supplies no skill or offer. Both peers have to receive useful work from the other for a pair to pass.
