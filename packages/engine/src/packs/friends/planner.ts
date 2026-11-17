@@ -15,8 +15,8 @@
 //   3. same table again: 2 attendees who both would do it again (or a whole group when crews are
 //      off) are offered the same activity at the same time next week;
 //   4. new plans: open tables of neighbours. Each pass pools the members near a planning zone (then a
-//      borough) who fit one activity and are free at its time, and grows one table from the first
-//      seed in priority order that reaches the table minimum: it adds a member someone at the table
+//      borough) who fit one activity and are free at its time, and grows one table from the priority
+//      seed, trying others if every neighbour is blocked from that seed. It adds a member someone at the table
 //      would see again first, then the member who keeps the lowest pair value at the table highest.
 //      Every pair at the table (alternates too) reaches the Friend circle pair floor through the one
 //      pair gate, and the seated invitees pass circle admission (spec/groupFormation.md). Dinner and coffee
@@ -46,8 +46,8 @@ import { isMinor, memberReason, pairReason } from "../../filters.ts";
 import { sha256 } from "../../hash.ts";
 import { circleEvidence, type Circle } from "../../match/circles.ts";
 import { compareText } from "../../match/profile.ts";
-import { activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, type Crew, type Plan, type PlanEvidence, type PlanOutcomeRecord } from "../../plans.ts";
-import { World } from "../../world.ts";
+import { activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, venueOpenForSlot as venueOpen, type Crew, type Plan, type PlanEvidence, type PlanOutcomeRecord } from "../../plans.ts";
+import { pairKey, World } from "../../world.ts";
 import { activityById, type ActivityType, type Venue } from "../network/activities.ts";
 import { familiarCircle } from "./generators.ts";
 import { chooseVenue, FRIENDS_CITY, hood, NEIGHBORHOODS, transitMinutes, type Neighborhood } from "./geo.ts";
@@ -143,12 +143,6 @@ export interface FriendsWeekInput {
   lastPlannedAt?: ReadonlyMap<MemberId, number>;
 }
 export interface FriendsWeek { sessions: FriendsPlan[]; offers: { crew: Crew; first: FriendsPlan }[]; repeats: FriendsPlan[]; plans: FriendsPlan[]; partners: FriendsPlan[] }
-
-const venueOpen = (v: Venue, slot: TimeSlot, durMin: number, tz: string, att: AttentionConfig) => {
-  const lp = localParts(slot.start, tz);
-  const [o, c] = att.sendTime.weekendDays.includes((lp.weekday + 1) % 7) ? v.hours.weekend : v.hours.weekday;
-  return lp.hour >= o && lp.hour + durMin / 60 <= c;
-};
 
 /** The activity a pair shares that allows two (both fit; the first by id). */
 function pairActivity(w: World, a: MemberId, b: MemberId, pcfg: PlansConfig) {
@@ -401,7 +395,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const placeable = (w.pack.plans?.activities ?? []).filter(a => inp.venues.some(v => v.city === FRIENDS_CITY && v.activities.includes(a.id)));
 
   // spec/groupFormation.md, "A primary circle values every pair and keeps a narrow standing spread"
-  const friendLimits = { ...laneLimits("Friend"), circlePairFloor: Number(process.env.DIAG_FLOOR ?? 350) };
+  const friendLimits = laneLimits("Friend");
   /** Invitees and alternates of one open table: the first yes-sayers among them fill the seats. */
   const tableInvite = pcfg.size.max + pcfg.alternates;
   /**
@@ -411,10 +405,14 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
    * at the table, alternates too, reaches the Friend circle pair floor, so any yes-sayers who fill
    * the seats form a circle.
    */
-  const growTable = (order: readonly MemberId[], start: readonly MemberId[]): { members: MemberId[]; total: number; pairs: number } => {
-    const members = [...start];
+  const growTable = (order: readonly MemberId[], seed: MemberId): { members: MemberId[]; total: number; pairs: number } => {
+    const members = [seed];
     const lowest = new Map<MemberId, number>(), total = new Map<MemberId, number>(), warm = new Map<MemberId, boolean>();
-    const before = (x: MemberId, y: MemberId) => (!process.env.DIAG_NOWARM && warm.get(x) !== warm.get(y) ? warm.get(x)! : lowest.get(x) !== lowest.get(y) ? lowest.get(x)! > lowest.get(y)! : total.get(x)! > total.get(y)!);
+    const before = (x: MemberId, y: MemberId) => {
+      if (warm.get(x) !== warm.get(y)) return warm.get(x)!;
+      if (lowest.get(x) !== lowest.get(y)) return lowest.get(x)! > lowest.get(y)!;
+      return total.get(x)! > total.get(y)!;
+    };
     let counted = 0;
     while (members.length < tableInvite) {
       for (; counted < members.length; counted++) {
@@ -473,41 +471,33 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (free.length < minInvite) continue;
       const priority = (id: MemberId) => fitOf(id, a, universal) * timeFit(id);
       const order = [...free].sort((x, y) => (priority(y) - priority(x)) || compareText(x, y)).slice(0, FRIENDS_TABLE_POOL);
-      // The first seed in priority order whose table reaches minInvite (the pool bounds the tries).
-      let table: ReturnType<typeof growTable> | undefined;
-      const mode = process.env.DIAG_SEED ?? "one";
-      if (mode === "retry") for (const seed of order) {
-        const grown = growTable(order, [seed]);
-        if (grown.members.length >= minInvite) { table = grown; break; }
+      const prioritySeed = order[0]!;
+      const neighbours = order.slice(1);
+      // A block applies to the pair, so a seed blocked from everyone cannot prevent a table for the others.
+      const seeds = neighbours.every(id => w.blocked.has(pairKey(prioritySeed, id))) ? neighbours : [prioritySeed];
+      for (const seed of seeds) {
+        const table = growTable(order, seed);
+        if (table.members.length < minInvite) continue;
+        const first = chosen.map(i => ({ i, n: table.members.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (x.i - y.i))[0]!;
+        const start = slots[first.i]!.start;
+        const invited = table.members.slice(0, pcfg.size.max), alternates = table.members.slice(pcfg.size.max);
+        const plan: Plan = {
+          id: `plan_${sha256(`table|${a.id}|${start}|${[...invited].sort().join(",")}|${now}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id,
+          place: { name: a.label }, window: { start, end: start + a.durationMin * 60_000 }, invited, alternates, partner: false,
+          size: { min: pcfg.size.min, target: invited.length, max: pcfg.size.max }, quorum: pcfg.quorum.group,
+          probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
+          score: Math.round((1e4 * table.total) / (table.pairs * pairValueScale)) / 1e4, u: {}, familiar: {}, createdAt: now, category: "social",
+        };
+        // Venue: minimize the longest trip, then keep the options it is open for.
+        const fp = finish(plan, "new");
+        if (!fp || !seatedCircle(fp.invited)) continue;
+        const venue = venueById.get(fp.venueId!)!;
+        fp.options = chosen.map(i => slots[i]!).sort((x, y) => x.start - y.start)
+          .filter(o => venueOpen(venue, o, a.durationMin, tz, att)).map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
+        if (!reserve({ type: "reserveNewPlan", invited: fp.invited, alternates: fp.alternates, reserveAlternates: pol.openTable })) continue;
+        out.plans.push(fp);
+        break;
       }
-      if (mode === "one") { const g = growTable(order, [order[0]!]); if (g.members.length >= minInvite) table = g; }
-      if (mode === "pair" || mode === "firstpair") {
-        let bx: MemberId | undefined, by: MemberId | undefined, bv = -1;
-        for (let i = 0; i < (mode === "pair" ? order.length : 1); i++) for (let j = i + 1; j < order.length; j++) {
-          const v = valueOf(order[i]!, order[j]!);
-          if (v > bv) { bv = v; bx = order[i]; by = order[j]; }
-        }
-        if (bx && by && bv >= friendLimits.circlePairFloor) { const g = growTable(order, [bx, by]); if (g.members.length >= minInvite) table = g; }
-      }
-      if (!table) continue;
-      const first = chosen.map(i => ({ i, n: table.members.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (x.i - y.i))[0]!;
-      const start = slots[first.i]!.start;
-      const invited = table.members.slice(0, pcfg.size.max), alternates = table.members.slice(pcfg.size.max);
-      const plan: Plan = {
-        id: `plan_${sha256(`table|${a.id}|${start}|${[...invited].sort().join(",")}|${now}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id,
-        place: { name: a.label }, window: { start, end: start + a.durationMin * 60_000 }, invited, alternates, partner: false,
-        size: { min: pcfg.size.min, target: invited.length, max: pcfg.size.max }, quorum: pcfg.quorum.group,
-        probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
-        score: Math.round((1e4 * table.total) / (table.pairs * pairValueScale)) / 1e4, u: {}, familiar: {}, createdAt: now, category: "social",
-      };
-      // Venue: minimize the longest trip (finish() picks it for new plans), then the options it is open for.
-      const fp = finish(plan, "new");
-      if (!fp || (!process.env.DIAG_NOCIRCLE && !seatedCircle(fp.invited))) continue;
-      const venue = venueById.get(fp.venueId!)!;
-      fp.options = chosen.map(i => slots[i]!).sort((x, y) => x.start - y.start)
-        .filter(o => venueOpen(venue, o, a.durationMin, tz, att)).map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
-      if (!reserve({ type: "reserveNewPlan", invited: fp.invited, alternates: fp.alternates, reserveAlternates: pol.openTable })) continue;
-      out.plans.push(fp);
     }
   };
 

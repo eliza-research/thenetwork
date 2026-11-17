@@ -6,7 +6,7 @@ import { Mini, START } from "./mini.ts";
 
 const TZ = "America/New_York";
 
-test("friends: a fitting triangle whose strongest member has no window still seats the others who fit", () => {
+test("friends: a fitting triangle survives an unavailable or isolated seat candidate", () => {
   // spec/friendsWeek.md and spec/groupFormation.md: circles form among the members a table can seat.
   // d pairs best with a and b, so the triangle a-b-d is the strongest; c and d have a block between
   // them, so no circle holds all four. d has no window this week. Each member is in one circle per
@@ -37,6 +37,16 @@ test("friends: a fitting triangle whose strongest member has no window still sea
 
   expect(week.plans.some(p => ["a", "b", "c"].every(id => p.invited.includes(id)))).toBe(true);
   expect([...week.plans, ...week.partners].some(p => p.invited.includes("d") || p.alternates.includes("d"))).toBe(false);
+
+  // With the strongest window, d would seed the first table, but cannot pair with anyone else.
+  // The search must still try a different seed among the available members.
+  const available = new Map(evidence);
+  available.set("d", { memberId: "d", tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY, confidence: 1 } });
+  const isolated = new World({ ...input, edges: ["a", "b", "c"].map(to => ({ from: "d", to, type: "blocked", strength: 1, explicit: true, createdAt: START - DAY })) },
+    resolveConfig({ seed: 1, cities: ["nyc"] }), localEmbed, friendsPack);
+  const retried = planFriendsWeek(isolated, { now: START, tz: TZ, evidence: available, venues: [venue], crews: [], outcomes: [], offered: [] },
+    { ...DEFAULT_FRIENDS_POLICY, openTable: false }, FRIENDS_PLANS);
+  expect(retried.plans).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
 });
 
 // spec/planFormation.md, "Alternates must fit the entire offered group"
@@ -74,9 +84,13 @@ test("friends: alternates need a Friend pair value with everyone before they can
   });
   const evidence = new Map<MemberId, plans.PlanEvidence>([...available].map(id =>
     [id, { memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY } }]));
-  // e is near and unblocked. The search keeps e for a and b, but e and c share too little for a pair.
+  // c and e each fit a and b. They share too little to seat or retain both at one table.
   const newGroup = run(newWorld, evidence).plans;
-  expect(newGroup).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
+  expect(newGroup).toHaveLength(1);
+  expect(newGroup[0]!.invited).toHaveLength(3);
+  expect(newGroup[0]!.invited).toEqual(expect.arrayContaining(["a", "b"]));
+  expect(newGroup[0]!.invited.filter(id => id === "c" || id === "e")).toHaveLength(1);
+  expect(newGroup[0]!.alternates).toEqual([]);
 
   const repeatWorld = new World({
     ...snap, facets: snap.facets.map(f => f.id === "b:verified" ? { ...f, tags: [...f.tags, "friends:max_travel:1"] } : f),
