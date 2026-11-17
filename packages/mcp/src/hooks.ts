@@ -48,6 +48,8 @@ export interface PlatformHooks {
   phoneKey(e164: string): string;
   /** The person whose number has this keyed hash now, or null (no person, deleted, or on hold). */
   personForKey(phoneKey: string): Promise<string | null>;
+  /** Resolve a grant's canonical phone binding without collapsing a held number into an unowned one. */
+  grantOwner(phoneKey: string): Promise<{ personId: string | null; held: boolean }>;
   /** True when the grant's phone or person is banned now. Read at every use of a connector credential. */
   grantIsBanned(phoneKey: string, personId: string | null): Promise<boolean>;
   /** Internal canonical phone-age guard. No age is exposed to the agent. Missing support disables drafts. */
@@ -180,6 +182,13 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     phoneKey: e164 => p.accounts.phoneHash(e164),
     async personForKey(key) {
       return (await p.accounts.byPhoneHash(key))?.person.id ?? null;
+    },
+    async grantOwner(key) {
+      const phone = await p.store.findPhoneByHash(key);
+      if (!phone || p.accounts.phoneHash(phone.e164) !== key) return { personId: null, held: false };
+      if (phone.hold !== null) return { personId: null, held: true };
+      const person = await p.store.getPerson(phone.personId);
+      return { personId: person?.deletedAt === null ? person.id : null, held: false };
     },
     async grantIsBanned(key, personId) {
       return p.store.isBanned(key, personId ?? (await p.accounts.byPhoneHash(key))?.person.id ?? null);

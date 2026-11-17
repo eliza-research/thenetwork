@@ -32,7 +32,7 @@ import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpAp
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
 import { MemoryOAuthStore, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
-import { callTool, canCallTool, checkArgs, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
+import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
 export const LATEST_PROTOCOL = "2026-07-28";
@@ -748,7 +748,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       eligible: grantLive && await customSlopEligible(c, client, grant.personId, grant.phoneKey),
     });
     if (!grant || !canReadAuthority(checked)) return { grant, flow: checked };
-    const authority = tokenAuthority[await cloudGrantCurrent(grant)];
+    const authority = tokenAuthority[await grantAuthorityCurrent(grant)];
     return { grant, flow: stepToken(checked, { type: "readAuthority", credentialLive: !(credentialExpiry <= now()), authority }) };
   }
 
@@ -963,10 +963,22 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
-    const cloudStatus=await cloudGrantCurrent(grant);
-    if(t.expiresAt<=now())return "invalid";
-    if(cloudStatus!=="valid")return cloudStatus;
+    const authority = await grantAuthorityCurrent(grant);
+    if (t.expiresAt <= now() || grant.expiresAt <= now()) return "invalid";
+    if (authority !== "valid") return authority;
     return { token: t, grant, client };
+  }
+
+  async function grantAuthorityCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
+    // spec/connectorTools.md, "A grant that no longer belongs to the phone's person ends the connection"
+    const owner = await checkGrantOwner(o.platform, grant);
+    if (owner === "GrantOwnerUnavailable") return "unavailable";
+    if (owner === "GrantOwnerHeld") return "invalid";
+    if (owner === "GrantOwnerChanged") {
+      try { await revokeGrant(grant.id, now()); } catch { return "unavailable"; }
+      return "invalid";
+    }
+    return cloudGrantCurrent(grant);
   }
 
   async function cloudGrantCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
@@ -1105,8 +1117,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         }
         const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
-        if (r.kind === "invalid_grant") {
-          if (auth) await revokeGrant(auth.grant.id, now());
+        if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
+        if (r.kind === "invalid_grant" || r.kind === "grant_held") {
+          if (auth && r.kind === "invalid_grant") await revokeGrant(auth.grant.id, now());
           return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
         if (r.kind === "error") return result({ content: [{ type: "text", text: r.message }], isError: true });

@@ -338,6 +338,66 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     } finally { await people.close(); }
   }, 120_000);
 
+  test("the first member tool request after phone reassignment ends a limited grant and its refresh token", async () => {
+    // spec/connectorTools.md, "A grant that no longer belongs to the phone's person ends the connection"
+    await migrate(testUrl.toString(), { lockTimeout: "5s" });
+    const people = new PgPeopleStore(testUrl.toString());
+    const harness = setup({ store });
+    const web = createPublicApi({ store: people, otp: harness.provider, hashKey: "test-hash-key", sessionSecret: "test-session-secret",
+      now: () => harness.clock.t, env: { PLATFORM_ENV: "dev" }, minStartMs: 0, minVerifyMs: 0 });
+    const platform = platformHooks({ store: people, accounts: web.accounts, otp: web.otp, sessions: web.sessions, app: id => APPS[id], cookieName: id => `sid_${id}` });
+    const handler = createMcpHandler({ store, platform, now: () => harness.clock.t, minOtpStartMs: 0 });
+    const server = await serveHttp({ hostname: "127.0.0.1", port: 0,
+      async fetch(req) { return (await handler.fetch(req)) ?? new Response("not found", { status: 404 }); } });
+    const env = { ...harness, fetch: async (req: Request) => {
+      const url = new URL(req.url);
+      const headers = new Headers(req.headers);
+      headers.set("host", url.host);
+      return fetchWithHost(new URL(url.pathname + url.search, server.url), { method: req.method, headers, redirect: "manual",
+        ...(req.method === "GET" ? {} : { body: await req.arrayBuffer() }) });
+    } };
+    const host = "friends.help", phone = "+12125550187";
+    try {
+      const original = await web.accounts.createPerson(phone, "otp_sms", 36);
+      const issued = await connect(env, host, phone, { scope: "apps:read membership:read" });
+      expect(issued.tokenRes.status).toBe(200);
+      const oldAccess = await store.getToken(sha256hex(issued.token.access_token));
+      if (!oldAccess) throw new Error("missing issued access token");
+      const callOld = (tool: "prepare_signup" | "check_status", args: Record<string, unknown>) =>
+        call(env, `https://${host}/mcp`, tool, args, { token: issued.token.access_token });
+      expect((await callOld("prepare_signup", { firstName: "Ari" })).res.status).toBe(403);
+
+      await people.setPhoneHold(phone, "recycled_number", env.clock.t);
+      expect(await web.accounts.clearHold(phone, "new_owner")).toBe(true);
+      const current = await web.accounts.createPerson(phone, "otp_sms", 29);
+      expect(current.id).not.toBe(original.id);
+      const refused = await callOld("prepare_signup", { firstName: "Ari" });
+      expect(refused.res.status).toBe(401);
+      expect(refused.res.headers.get("www-authenticate")).toContain('error="invalid_token"');
+      expect(await store.getGrant(oldAccess.grantId)).toMatchObject({ revokedAt: env.clock.t });
+      const refresh = await tokenRequest(env, host, { grant_type: "refresh_token", refresh_token: issued.token.refresh_token, client_id: issued.client.client_id });
+      expect(refresh.body).toMatchObject({ error: "invalid_grant" });
+      expect(await store.getToken(sha256hex(issued.token.refresh_token))).toMatchObject({ revokedAt: env.clock.t });
+
+      env.clock.t += 60_000;
+      const reconnected = await connect(env, host, phone, { scope: "apps:read membership:read" });
+      expect(reconnected.tokenRes.status).toBe(200);
+      const currentAccess = await store.getToken(sha256hex(reconnected.token.access_token));
+      if (!currentAccess) throw new Error("missing replacement access token");
+      const currentStatus = () => call(env, `https://${host}/mcp`, "check_status", {}, { token: reconnected.token.access_token });
+      expect((await currentStatus()).res.status).toBe(200);
+      await people.setPhoneHold(phone, "recycled_number", env.clock.t);
+      expect((await currentStatus()).res.status).toBe(401);
+      expect(await store.getGrant(currentAccess.grantId)).toMatchObject({ revokedAt: null });
+      expect(await web.accounts.clearHold(phone, "same_owner")).toBe(true);
+      expect((await currentStatus()).res.status).toBe(200);
+      expect((await call(env, `https://${host}/mcp`, "app_info", { app: "friends" })).res.status).toBe(200);
+    } finally {
+      await server.stop(true);
+      await people.close();
+    }
+  }, 120_000);
+
   test("a code is taken once under a race; rate windows count and reset", async () => {
     const env = setup({ store });
     const c = await connect(env, "slop.date", PHONE_A);
