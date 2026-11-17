@@ -344,3 +344,9 @@
 {"text":"Saturday, 11am works","label":"yes","keys":["b"]}
 {"text":"next Saturday, 11am works!","label":"yes","keys":[]}
 {"text":"next Sat, 11am works","label":"yes","keys":[]}
+{"text":"next month works","label":"yes","keys":[]}
+{"text":"next year works","label":"yes","keys":[]}
+{"text":"next month is better","label":"yes","keys":[]}
+{"text":"can we do next month?","label":"yes","keys":[]}
+{"text":"next month please","label":"yes","keys":[]}
+{"text":"next year would be better","label":"yes","keys":[]}
