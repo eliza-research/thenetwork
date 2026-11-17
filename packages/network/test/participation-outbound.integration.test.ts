@@ -9,7 +9,7 @@ import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
-import { Mini } from "./mini.ts";
+import { Mini, type Spec } from "./mini.ts";
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
@@ -42,7 +42,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   };
   try {
     await service.start();
-    const members = [];
+    const members: Spec[] = [];
     for (const [index, e164] of phones.entries()) {
       const name = index === 0 ? "Ari" : "Blair";
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
