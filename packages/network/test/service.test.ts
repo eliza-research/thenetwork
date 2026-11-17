@@ -275,6 +275,43 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await runCount()).toBe(3);
   }, T);
 
+  // spec/standingIntent.md, "Changed matching evidence starts another standing intent search"
+  test("an earlier return to the matching market rechecks standing intents before the next day", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id not in ('a', 'b')`;
+    await sql`insert into network.presence (member_id, city, type, areas, from_at, to_at)
+      values ('b', 'sf', 'temporary', '{}', ${new Date(START - DAY)}, ${new Date(START + 30 * DAY)})`;
+    const clock = new SimClock(START);
+    const options: Partial<ServiceOptions> = { network: { seed: 1, maxNewPerDay: 1, plans: false, growth: false } };
+    const first = service(clock, "intent-presence", options);
+    expect((await staff(first, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const id of ["a", "b"]) {
+      for (const message of [ONBOARD[0]!, "I enjoy hiking, climbing, and cycling.", ...ONBOARD.slice(2)]) await say(first, clock, id, message);
+    }
+    const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
+    expect(await first.tick()).toBe(true);
+    expect(await runCount()).toBe(1);
+    expect((await (await staff(first, "rev-tok", "GET", "/review")).json()).items).toEqual([]);
+    await first.close();
+
+    const restarted = service(clock, "intent-presence-restarted", options);
+    await restarted.start();
+    const returnedAt = clock.now() + MINUTE;
+    await sql`update network.presence set to_at = ${new Date(returnedAt)} where member_id = 'b' and type = 'temporary'`;
+    clock.set(returnedAt);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    const queue = await (await staff(restarted, "rev-tok", "GET", "/review")).json();
+    const item = queue.items.find((row: { origin: string }) => row.origin === "engine");
+    expect(item).toBeDefined();
+    expect([...item.proposal.participants].sort()).toEqual(["a", "b"]);
+    expect((await sql`select id from network.messages where opportunity_id = ${item.oppId}`)).toHaveLength(0);
+
+    clock.advance(MINUTE);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+  }, T);
+
   // spec/emptyIntentFollowup.md, "A pending follow-up uses current permission and the same live statement"
   test("an aged intent without a match gets one eligible solo next step across restart", async () => {
     await reset();
@@ -343,7 +380,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   }, T);
 
   // spec/publicEventCatalog.md, "A successful complete scan replaces the previous source and expires if refresh stops"
-  test("publishes current public Parks events and rechecks standing intents through the production tick", async () => {
+  test.each(["current", "moved after queuing", "age lowered after queuing"] as const)("publishes public Parks events and checks matching through dispatch (%s)", async listingState => {
     await reset();
     await sql`update network.members set account_status = 'invited' where id <> 'a'`;
     const clock = new SimClock(START);
@@ -367,7 +404,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await s.tick()).toBe(true);
     expect(await runCount()).toBe(1);
     const fixture = {
-      guid: "2257118", title: "Outdoor climbing", categories: "Fitness | Climbing", location: "McCarren Park",
+      guid: "2257118", title: "Outdoor climbing 21+", categories: "Fitness | Climbing", location: "McCarren Park",
       starttime: "2026-10-07T18:00:00.000", endtime: "2026-10-07T19:00:00.000", coordinates: "40.7206,-73.9518",
       link: { url: "http://www.nycgovparks.org/events/2026/10/07/fitness" }, contact_phone: "unneeded value", description: "unneeded copy",
     };
@@ -383,7 +420,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const publishedAt = clock.now();
     const snapshot = await s.runtimeFor("ntwrk")!.scoped(tx => loadSnapshot(tx, clock.now(), { app: "ntwrk", city: "nyc" }));
     expect(snapshot.events).toEqual([{
-      id: "nyc-parks:2257118", title: "Outdoor climbing", city: "nyc", area: "Williamsburg",
+      id: "nyc-parks:2257118", title: "Outdoor climbing 21+", city: "nyc", area: "Williamsburg",
       start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23), tags: ["climbing", "fitness"], category: "hobby",
       listing: { venue: "McCarren Park", lat: 40.7206, lng: -73.9518, url: "https://www.nycgovparks.org/events/2026/10/07/fitness" },
     }]);
@@ -407,6 +444,15 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const invalidUtf8 = new TextEncoder().encode(JSON.stringify([{ ...fixture, title: "%" }]));
     invalidUtf8[invalidUtf8.indexOf("%".charCodeAt(0))] = 255;
     await expect(importPublicEvents(sql, clock, async () => new Response(invalidUtf8))).rejects.toThrow("UTF-8 JSON");
+    // spec/publicEventCatalog.md, "A source id identifies a single normalized listing in each scan"
+    const badScans = await Promise.allSettled([
+      importPublicEvents(sql, clock, async () => Response.json([{ guid: fixture.guid, starttime: fixture.starttime }, null])),
+      importPublicEvents(sql, clock, async () => Response.json([fixture, { ...fixture, location: "Transmitter Park" }])),
+    ]);
+    expect(badScans).toEqual([
+      { status: "rejected", reason: expect.objectContaining({ message: expect.stringContaining("complete event listing") }) },
+      { status: "rejected", reason: expect.objectContaining({ message: expect.stringContaining("conflicting listings") }) },
+    ]);
 
     const megabyteOfSpaces = new Uint8Array(1024 * 1024).fill(32);
     const oversized = new ReadableStream<Uint8Array>({ start(controller) {
@@ -470,12 +516,37 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const messages = () => sql<{ member_id: string; body: string; type: string; status: string }[]>`select member_id, body, type, status
       from network.messages where direction = 'outbound' and opportunity_id = ${replacement.oppId} order by ts, id`;
     expect(await messages()).toHaveLength(0);
+    const runtime = s.runtimeFor("ntwrk")!;
+    const adapter = runtime.adapter as BlooioAdapter;
+    if (listingState !== "current") await adapter.lineSafety("review", "fixture");
     expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve", revision: replacement.revision })).status).toBe(200);
     expect(await s.tick()).toBe(true);
     const first = (await messages()).filter(m => m.type === "probe");
     expect(first).toHaveLength(1);
     expect(first[0]!.body).toContain("Outdoor climbing");
     expect(first[0]!.body).not.toMatch(/\b(Ana|Ben)\b/);
+    if (listingState !== "current") {
+      const queued = async () => (await sql<{ id: string; status: string; attempts: number; next_attempt_at: Date }[]>`
+        select id,status,attempts,next_attempt_at from platform.outbound where opportunity_id=${replacement.oppId}`)[0];
+      const held = await queued();
+      expect(held).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+      clock.advance(MINUTE);
+      if (listingState === "moved after queuing") {
+        expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, starttime: "2026-10-07T19:00:00", endtime: "2026-10-07T20:00:00" }]))).toEqual({ published: true, events: 1 });
+      } else {
+        // spec/publicEventCatalog.md, "A queued event contact still needs the reviewed listing at final claim"
+        const otherParticipant = first[0]!.member_id === "a" ? "b" : "a";
+        await sql`update network.members set age = 20 where id = ${otherParticipant}`;
+      }
+      await adapter.lineSafety(undefined);
+      clock.set(held!.next_attempt_at.getTime() + MINUTE);
+      await runtime.deliver();
+      expect(await queued()).toMatchObject({ status: "suppressed_ineligible", attempts: 0 });
+      expect(delivered.some(request => request.idempotencyKey === `tn:${held!.id}`)).toBe(false);
+      expect(await sql`select 1 from platform.person_sends where msg_id=${held!.id}`).toEqual([]);
+      await s.close();
+      return;
+    }
     await say(s, clock, first[0]!.member_id, "A");
     expect(await s.tick()).toBe(true);
     const probes = (await messages()).filter(m => m.type === "probe");

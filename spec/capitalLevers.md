@@ -52,7 +52,7 @@ pure def lawVouchPeriodDropsOldEntries(entryAt: int, asOf: int, periodMs: int): 
 
 ### Earned organizing reach reserves the extra slots for low exposure
 
-The configured maximum caps the total reach. Slots above the baseline are reserved for members with low exposure. The shell computes completed session bands and applies any active abuse or fraud lock. For a Friends crew session, consider eligible candidates in order of least recent participation. A candidate can take a seat only with a current Friend pair value and no block or avoid rule with each retained crew member and each candidate already added. Skip incompatible candidates without using a seat.
+The configured maximum caps the total reach. Slots above the baseline are reserved for members with low exposure. A candidate takes one of these slots while a slot remains and the candidate fits. The shell computes completed session bands, applies any active abuse or fraud lock, and considers eligible candidates in order of least recent participation. For a Friends crew session, a seat needs a current Friend pair value and no block or avoid rule with each retained crew member and each candidate already added. Skip incompatible candidates without using a seat.
 
 ```quint
 type ReachAllowance = { max: int, reservedForLowExposure: int }
@@ -61,4 +61,12 @@ pure def reachFromBands(bands: int, base: int, perBand: int, maximum: int): Reac
   val reach = base + bands * perBand
   val capped = if (reach < maximum) reach else maximum
   { max: capped, reservedForLowExposure: if (capped > base) capped - base else 0 }
+
+pure def organizingReachSeatTaken(added: int, extra: int, seatFits: bool): bool = added < extra and seatFits
+
+pure def lawReachUsesOnlyReservedSlots(added: int, extra: int, seatFits: bool): bool =
+  organizingReachSeatTaken(added, extra, seatFits) implies added + 1 <= extra
+
+pure def lawReachNeverSeatsAnIncompatibleCandidate(added: int, extra: int): bool =
+  not(organizingReachSeatTaken(added, extra, false))
 ```

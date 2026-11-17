@@ -45,6 +45,26 @@ export function lawVouchPeriodDropsOldEntries(entryAt: number, asOf: number, per
 
 /** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
 //@ pure
+export function organizingReachSeatTaken(added: number, extra: number, seatFits: boolean): boolean {
+  return added < extra && seatFits;
+}
+
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
+//@ pure
+export function lawReachUsesOnlyReservedSlots(added: number, extra: number, seatFits: boolean): boolean {
+  //@ ensures \result === true
+  return !organizingReachSeatTaken(added, extra, seatFits) || exact_capitalLevers(added + 1) <= extra;
+}
+
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
+//@ pure
+export function lawReachNeverSeatsAnIncompatibleCandidate(added: number, extra: number): boolean {
+  //@ ensures \result === true
+  return !organizingReachSeatTaken(added, extra, false);
+}
+
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
+//@ pure
 export function reachFromBands(bands: number, base: number, perBand: number, maximum: number): ReachAllowance {
   const local_4 = exact_capitalLevers(base + exact_capitalLevers(bands * perBand));
   const local_5 = local_4 < maximum ? local_4 : maximum;

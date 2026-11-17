@@ -8,7 +8,7 @@ The [signed turn model](models/turn_consent.md) follows the consent ledger and t
 
 ### A worker runs only a committed claim
 
-Hold the sender's transaction lock and recheck the admission deadline before making a claim. A worker renews its lease every thirty seconds by default. An inactive processing row becomes unresolved after the two-minute lease. The unresolved row holds up ordinary messages for at most ten minutes. An ordinary pending row also holds up a new ordinary turn. Compliance skips those two wait conditions. A processing row still prevents a second concurrent claim for the same sender.
+Hold the sender's transaction lock and recheck the admission deadline before making a claim. Run a turn only after an open admission inserts the claim under that lock. Otherwise read the prior row. A worker renews its lease every thirty seconds by default. An inactive processing row becomes unresolved after the two-minute lease. The unresolved row holds up ordinary messages for at most ten minutes. An ordinary pending row also holds up a new ordinary turn. Compliance skips those two wait conditions. A processing row still prevents a second concurrent claim for the same sender.
 
 ```quint
 pure val processingLeaseMs: int = 120000
@@ -29,8 +29,12 @@ pure def mayStartClaimWrite(senderLock: bool, admissionOpen: bool): bool = sende
 pure def ordinaryTurnMustWait(compliance: bool): bool = not(compliance)
 
 pure def canRecordClaim(turn: SignedInbox): bool = turn.phase == Claiming
-pure def recordClaim(turn: SignedInbox, inserted: bool): SignedInbox =
-  { phase: if (inserted) RunningTurn else CheckingPrior }
+pure def recordClaim(turn: SignedInbox, inserted: bool, senderLock: bool, admissionOpen: bool): SignedInbox =
+  { phase: if (inserted and mayStartClaimWrite(senderLock, admissionOpen)) RunningTurn else CheckingPrior }
+
+pure def lawOnlyOpenClaimCanRun(inserted: bool, senderLock: bool, admissionOpen: bool): bool =
+  recordClaim(initial, inserted, senderLock, admissionOpen).phase == RunningTurn
+    implies (inserted and senderLock and admissionOpen)
 ```
 
 ### A replay must match a stored request
@@ -51,12 +55,18 @@ pure def lawChangedRequestConflicts(responseAvailable: bool, processing: bool): 
 
 ### Completion and compliance recovery depend on the stored row
 
-A worker returns its response only if the processing row was still claimable for completion. A failed ordinary turn goes unresolved. A failed compliance turn may preserve a committed consent event or reply if the row is still processing. If nothing committed, release the claim and allow a retry. A recovery write that fails leaves the turn unresolved. The shell retains its existing undo behavior and clears the lease timer when processing exits.
+A worker returns its response only if the processing row was still claimable for completion. A failed ordinary turn goes unresolved. A failed compliance turn may preserve a committed consent event or reply if the row is still processing. If nothing committed, release the claim and allow a retry. A recovery write that fails leaves the turn unresolved. The shell clears the lease timer when processing exits. It records the first-contact notice key in the same write as the completed reply that includes that exact notice.
 
 ```quint
 pure def canRecordCompletion(turn: SignedInbox): bool = turn.phase == RunningTurn
 pure def recordCompletion(turn: SignedInbox, saved: bool): SignedInbox =
   if (saved) { phase: Finished } else turn
+
+pure def firstContactNoticeInResponse(exactReplyIncluded: bool, underageDecline: bool): bool =
+  exactReplyIncluded and not(underageDecline)
+
+pure def lawDeclineCannotSpendFirstContactNotice(exactReplyIncluded: bool): bool =
+  not(firstContactNoticeInResponse(exactReplyIncluded, true))
 
 pure def canHandleFailure(turn: SignedInbox): bool = turn.phase == RunningTurn
 pure def handleFailure(turn: SignedInbox, compliance: bool): SignedInbox =
@@ -77,6 +87,18 @@ pure def stepRetryNeedsReleasedClaim(before: SignedInbox, via: str, after: Signe
 
 pure def sometimesCanReplay(turn: SignedInbox): bool = turn.phase == Replayed
 pure def sometimesCanRetryCompliance(turn: SignedInbox): bool = turn.phase == RetryCompliance
+```
+
+### A member command commits its result and its exact reply together
+
+When a member command requires an atomic reply, the service must collect exactly one direct reply of the required kind. If that reply is unavailable, roll back the command's writes. Once the reply and result commit, a subsequent runtime failure leaves the completed response available for an authorized replay. The shell binds the reply to the verified sender and applies each command's current replay policy.
+
+```quint
+pure def atomicMemberReplyMatches(expected: str, actual: str, count: int, directReply: bool): bool =
+  expected == actual and count == 1 and directReply
+
+pure def lawAtomicMemberReplyNeedsExactKind(expected: str, actual: str, count: int, directReply: bool): bool =
+  atomicMemberReplyMatches(expected, actual, count, directReply) implies (expected == actual and count == 1 and directReply)
 ```
 
 ### A completed signed row is later scrubbed and then removed

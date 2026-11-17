@@ -5,8 +5,8 @@
 
 /** Story: Meet another member who wants a cofounder / Two eligible peers must share a home market (spec/peonCofounder.md) */
 //@ pure
-export function peonCofounderMayProfile(appMember: boolean, jobSeat: boolean, currentIntent: boolean, professionalOptIn: boolean, acceptsOneToOne: boolean, contactOpen: boolean): boolean {
-  return appMember && !jobSeat && currentIntent && professionalOptIn && acceptsOneToOne && contactOpen;
+export function peonCofounderMayProfile(appMember: boolean, jobSeat: boolean, currentIntent: boolean, professionalOptIn: boolean, acceptsOneToOne: boolean, contactOpen: boolean, noOpenOpportunity: boolean): boolean {
+  return appMember && !jobSeat && currentIntent && professionalOptIn && acceptsOneToOne && contactOpen && noOpenOpportunity;
 }
 
 /** Story: Meet another member who wants a cofounder / Two eligible peers must share a home market (spec/peonCofounder.md) */
@@ -17,7 +17,7 @@ export function peonCofounderMayPair(firstEligible: boolean, secondEligible: boo
 
 /** Story: Meet another member who wants a cofounder / Two eligible peers must share a home market (spec/peonCofounder.md) */
 //@ pure
-export function lawCofounderRequiresTwoEligiblePeers(firstEligible: boolean, secondEligible: boolean, sameMarket: boolean): boolean {
+export function lawCofounderRequiresTwoEligiblePeers(appMember: boolean, jobSeat: boolean, currentIntent: boolean, professionalOptIn: boolean, acceptsOneToOne: boolean, contactOpen: boolean, noOpenOpportunity: boolean, secondEligible: boolean, sameMarket: boolean): boolean {
   //@ ensures \result === true
-  return !peonCofounderMayPair(firstEligible, secondEligible, sameMarket) || (firstEligible && secondEligible && sameMarket);
+  return !peonCofounderMayPair(peonCofounderMayProfile(appMember, jobSeat, currentIntent, professionalOptIn, acceptsOneToOne, contactOpen, noOpenOpportunity), secondEligible, sameMarket) || (appMember && !jobSeat && currentIntent && professionalOptIn && acceptsOneToOne && contactOpen && noOpenOpportunity && secondEligible && sameMarket);
 }

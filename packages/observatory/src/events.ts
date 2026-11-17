@@ -222,7 +222,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "trust": text = `Trust ${String(p.from).toUpperCase()} → ${String(p.to).toUpperCase()} (${human(p.why)})`; severity = p.to === "ok" ? "info" : "bad"; keep("from", "to", "why", "score"); break;
     case "abuse": text = `Abuse handled: ${(p.kinds as string[] | undefined)?.map(human).join(", ") ?? "?"}`; severity = "bad"; keep("risk"); break;
     case "safety_action": text = `Staff ${human(p.action)}${p.actor ? ` by ${p.actor}` : ""}${p.caseId ? ` (case ${p.caseId})` : ""}`; keep("action", "caseId", "actor", "held"); break;
-    case "guard_blocked": text = `Leak guard stopped a ${human(p.kind ?? "message")} (${(p.reasons as string[] | undefined)?.join(", ") ?? "leak"}): ${p.fallback ? "a generic version was sent" : "nothing sent"}`; severity = "warn"; keep("kind", "fallback"); if (Array.isArray(p.reasons)) detail.reasons = p.reasons.join(","); break;
+    case "guard_blocked": text = `Leak guard stopped a ${human(p.kind ?? "message")} (${(p.reasons as string[] | undefined)?.join(", ") ?? "leak"}): ${p.fallback ? "a generic replacement was prepared" : "no replacement"}`; severity = "warn"; keep("kind", "fallback"); if (Array.isArray(p.reasons)) detail.reasons = p.reasons.join(","); break;
     case "send_refused": text = `Send refused: ${human(p.kind)} (${human(p.reason)})`; severity = "warn"; keep("kind", "reason"); break;
     case "send_skipped": text = `Send skipped: ${human(p.kind)} (${human(p.reason)})`; keep("kind", "reason"); break;
     case "age_unknown": text = "No valid age: treated as under 18 until they say"; severity = "warn"; break;

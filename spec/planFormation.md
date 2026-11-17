@@ -8,16 +8,40 @@ The [plan flow model](models/plan_run.md) follows plans through review, replies,
 
 ### A public venue must fit the activity and the proposed number of people
 
-Consider venues in the requested city that host the activity, have room for a pair, and are open at the slot. Prefer a venue that has room for a group and enough people who meet its minimum age. The chosen venue or event limits the number the plan can invite.
+Consider venues in the requested city that host the activity, have room for a pair, and are open at the slot. Prefer a venue that has room for a group and enough people who meet its minimum age. The chosen venue or event limits the number the plan can invite. A plan goes on only when that limit is not less than the smaller of its minimum group and two.
 
 ```quint
-pure def venueCanHostActivity(isPublic: bool, sameCity: bool, supportsActivity: bool, capacity: int): bool =
-  isPublic and sameCity and supportsActivity and capacity >= 2
+pure def venueCanHostActivity(isPublic: bool, sameCity: bool, supportsActivity: bool, capacity: int, openAtSlot: bool): bool =
+  isPublic and sameCity and supportsActivity and capacity >= 2 and openAtSlot
 
 pure def venueCanHoldGroup(capacity: int, eligiblePeople: int, minimumGroup: int): bool =
   capacity >= minimumGroup and eligiblePeople >= minimumGroup
 
+pure def planInviteLimit(planMaximum: int, placeCapacity: int): int =
+  if (placeCapacity < planMaximum) placeCapacity else planMaximum
+
 pure def planCanFitPlace(maximumGroup: int, minimumPlace: int): bool = not(maximumGroup < minimumPlace)
+
+pure def lawPlaceCapsInvites(planMaximum: int, placeCapacity: int): bool =
+  not(planInviteLimit(planMaximum, placeCapacity) > placeCapacity) and not(planInviteLimit(planMaximum, placeCapacity) > planMaximum)
+```
+
+### A known trip must fit the member's travel limit
+
+For a generic plan, use the member's known neighborhood and the public venue
+or event area to estimate the one-way trip. When the estimate and the member's
+limit are known, use only venues within the limit for that member. This applies
+to primary participants and alternates. Unknown neighborhoods leave the travel
+estimate unknown. Of venues that can hold a group, favor those that fit more
+members, then shorter longest known trips. Keep the existing area and stable
+venue tie breaks. A public event uses its fixed location and the same limit.
+
+```quint
+pure def planTravelFits(hasEstimateAndLimit: bool, minutes: int, maximumMinutes: int): bool =
+  not(hasEstimateAndLimit) or minutes <= maximumMinutes
+
+pure def lawAPlanCannotExceedKnownTravelLimit(minutes: int, maximumMinutes: int): bool =
+  minutes > maximumMinutes implies not(planTravelFits(true, minutes, maximumMinutes))
 ```
 
 ### Friends prefers a venue every primary invitee can reach
@@ -32,9 +56,22 @@ pure def lawReachablePlanVenueWins(travelTieBreak: bool): bool =
   preferPlanVenue(true, false, travelTieBreak) and not(preferPlanVenue(false, true, travelTieBreak))
 ```
 
+### Check pairs inside the available slot pool
+
+For each activity and time, check each pair of distinct members in the ranked
+availability pool. The configured pool size bounds this work. Keep an edge only
+when the lane's current pair rules give it a value. Use those values for the
+group and partner searches. The checker may reuse the same pair's result
+within one planner run.
+
+```quint
+pure def planSlotPairCanConnect(pairWorth: int): bool =
+  pairWorth >= 0
+```
+
 ### Search for a qualifying group before an activity partner
 
-Search for a group when the capacity and the current pool meet the group minimums. Both the minimum score for any participant and the whole proposal score must meet their thresholds. If no group qualifies, look for a pair when partner plans are enabled, the activity allows pairs, and the place can hold two people.
+Search for a group when the capacity and the current pool meet the group minimums. Both the minimum score for any participant and the whole proposal score must meet their thresholds before the group reserves members. Check candidate sizes within the allowed range as the pair-compatible circle grows. Keep a qualifying smaller circle when adding someone would make the group fall below a threshold. Within each growth step, consider the other eligible extensions before choosing one. If the remaining members have no qualifying group in this search, look for a pair when partner plans are enabled, the activity allows pairs, and the place can hold two people.
 
 ```quint
 pure def searchForPlanGroup(available: int, minimumInvite: int, maximumGroup: int, minimumGroup: int): bool =
@@ -42,6 +79,13 @@ pure def searchForPlanGroup(available: int, minimumInvite: int, maximumGroup: in
 
 pure def planScoreQualifies(minimumScore: int, overallScore: int, memberFloor: int, planFloor: int): bool =
   minimumScore >= memberFloor and overallScore >= planFloor
+
+pure def planGroupCanReserve(coherent: bool, minimumScore: int, overallScore: int, memberFloor: int, planFloor: int): bool =
+  coherent and planScoreQualifies(minimumScore, overallScore, memberFloor, planFloor)
+
+pure def lawPlanGroupReservationRequiresBothScores(coherent: bool, minimumScore: int, overallScore: int, memberFloor: int, planFloor: int): bool =
+  planGroupCanReserve(coherent, minimumScore, overallScore, memberFloor, planFloor) implies
+    (coherent and minimumScore >= memberFloor and overallScore >= planFloor)
 
 pure def searchForPlanPartner(hasGroup: bool, partnerEnabled: bool, activityMinimum: int, capacity: int): bool =
   not(hasGroup) and partnerEnabled and activityMinimum <= 2 and capacity >= 2
@@ -119,4 +163,47 @@ pure def planActivityWindowEnd(startsAt: int, durationMinutes: int): int = start
 
 pure def lawPlanActivityWindowEndsAfterStart(startsAt: int, durationMinutes: int): bool =
   durationMinutes > 0 implies planActivityWindowEnd(startsAt, durationMinutes) > startsAt
+```
+
+### A standing window applies to the whole activity
+
+Resolve the standing window on the proposed start's local date. Count it as
+availability for the activity only if its weekday applies and it contains the
+complete activity interval. An activity can end at the window's end. A partial
+window supplies no positive standing evidence for the activity.
+
+```quint
+pure def planStandingWindowCoversSlot(windowStart: int, windowEnd: int, slotStart: int, slotEnd: int): bool =
+  windowStart <= slotStart and slotStart < slotEnd and slotEnd <= windowEnd
+```
+
+### The member's latest weekly answer takes precedence
+
+Record this week's windows from the member's own text answer to their weekly
+check-in. A clear answer that the whole week is busy records an empty week.
+An unclear answer leaves the earlier record in place. A recorded answer applies
+for seven days. When that period includes the activity's start, a stated window
+must contain the whole activity. Standing or learned availability cannot make
+an excluded activity eligible. Formation, rescheduling, and dispatch use the
+same rule for this record.
+
+```quint
+type WeeklyCheckinEvidence = KeepEarlier | RecordWindows | RecordUnavailable
+
+pure val weeklyCheckinEvidenceMs: int = 604800000
+
+pure def weeklyCheckinEvidence(directAnswer: bool, hasWindows: bool, wholeWeekBusy: bool): WeeklyCheckinEvidence =
+  if (not(directAnswer)) KeepEarlier
+  else if (hasWindows) RecordWindows
+  else if (wholeWeekBusy) RecordUnavailable
+  else KeepEarlier
+
+pure def statedPlanWindowAllows(statedAt: int, statedUntil: int, now: int, slotStart: int, coversSlot: bool): bool =
+  statedAt > now or statedUntil <= slotStart or coversSlot
+
+pure def lawUnclearWeeklyAnswerKeepsEarlier(directAnswer: bool): bool =
+  weeklyCheckinEvidence(directAnswer, false, false) == KeepEarlier
+
+pure def lawCurrentExcludedWindowStopsPlan(statedAt: int, statedUntil: int, now: int, slotStart: int): bool =
+  (statedAt <= now and statedUntil > slotStart) implies not(statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false))
 ```

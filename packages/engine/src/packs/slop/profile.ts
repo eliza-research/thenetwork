@@ -19,9 +19,11 @@
 // rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY, temporaryPresenceWindow } from "@thenetwork/core";
+import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
+import { pairKey } from "../../world.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
@@ -41,8 +43,8 @@ export interface History {
   dates: number; noShows: number; backouts: number;
   /** Distinct people whose feedback about this member was negative. */
   negativeFrom: number;
-  /** Members who blocked this member. */
-  blockedBy: number;
+  /** Distinct members who blocked this member after a recorded shared encounter. */
+  contextualBlocks: number;
   /** Last completed date (ms), and whether this member wanted to see that person again. */
   lastDateAt?: number; lastDateLiked?: boolean;
   /** Last time the member asked the agent for a date (the live want). */
@@ -226,7 +228,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   return out;
 }
 
-const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, blockedBy: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
+const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
 /** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */
@@ -242,8 +244,13 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   const out = new Map<MemberId, History>();
   const h = (id: MemberId) => { let x = out.get(id); if (!x) { x = emptyHistory(); out.set(id, x); } return x; };
   const now = input.now;
+  const firstEncounter = new Map<string, number>();
   for (const r of input.interactions ?? []) {
     if (r.at > now) continue;
+    if (r.participants.length === 2 && slopRecordedBlockContext(r.outcome)) {
+      const key = pairKey(C(r.participants[0]!), C(r.participants[1]!));
+      firstEncounter.set(key, Math.min(firstEncounter.get(key) ?? r.at, r.at));
+    }
     for (const id of r.acceptedBy ?? []) h(C(id)).yes++;
     if (r.outcome === "declined") for (const id of r.declinedBy ?? []) h(C(id)).no++;
     if (r.outcome === "cancelled") for (const id of r.declinedBy ?? []) h(C(id)).backouts++;
@@ -274,7 +281,17 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }
-  for (const e of input.edges) if (e.type === "blocked") h(C(e.to)).blockedBy++;
+  // spec/datingRadius.md, "Only encounter-backed blocks inform a member review"
+  const blockers = new Map<MemberId, Set<MemberId>>();
+  for (const e of input.edges) {
+    if (e.type !== "blocked") continue;
+    const from = C(e.from), to = C(e.to);
+    if (from === to || !slopContextualBlockAllowed(firstEncounter.get(pairKey(from, to)) ?? -1, e.createdAt, now)) continue;
+    const known = blockers.get(to) ?? new Set<MemberId>();
+    known.add(from);
+    blockers.set(to, known);
+  }
+  for (const [id, from] of blockers) h(id).contextualBlocks = from.size;
   for (const it of input.intents) if (it.category === "romance" && standingIntentLive(it, input.now)) {
     const y = h(C(it.memberId));
     y.lastAskAt = Math.max(y.lastAskAt ?? -Infinity, it.createdAt);

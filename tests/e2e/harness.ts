@@ -15,7 +15,8 @@ import { SimClock } from "../../packages/core/src/clock.ts";
 import { createBackend, ipOf, loadConfig } from "../../deploy/backend/backend.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
 import { createMcpHandler, platformHooks, type McpHandler } from "../../packages/mcp/src/index.ts";
-import { DryRunAdapter } from "../../packages/network/service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../../packages/network/service/channel.ts";
+import type { ChannelAdapter } from "../../packages/blooio/src/types.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../packages/network/service/service.ts";
 import { type AppId, type AppInfo, DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
@@ -89,7 +90,12 @@ export interface Stack {
 
 let stackSequence = 0;
 
-export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slopCity?: "sf"; extraNetwork?: "ntwrk:sf" } = {}): Promise<Stack> {
+export async function startStack(o: {
+  privateOpenAiApps?: readonly AppId[];
+  slopCity?: "sf";
+  extraNetwork?: "ntwrk:sf";
+  simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
+} = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   if (o.slopCity || o.extraNetwork) {
     const setup = new SQL({ url, max: 1 });
@@ -105,6 +111,7 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slop
   const clock = new SimClock(START);
   const env = { PLATFORM_ENV: "dev", PLATFORM_PROXY_SECRET: PROXY_SECRET, SERVICE_TURN_SECRET: TURN_SECRET };
   const otp = new FakeOtp();
+  const outbound = o.simulatedOutbound;
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
   const svc = await NetworkService.fromDatabase({
@@ -112,7 +119,8 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slop
     network: { seed: 1 }, log: () => {},
     // Every test browser is 127.0.0.1: the per-IP OTP limits (unit-tested in packages/platform) would stop the suite.
     publicApi: { otp, minStartMs: 0, minVerifyMs: 0, ipOf, hostMap, otpLimits: { perIpPerHour: 10_000, verifyPerIpPerHour: 10_000 } },
-    adapter: () => new DryRunAdapter(() => {}),
+    adapter: (_net, rt) => outbound ? new BlooioAdapter({ clock, provider: outbound.provider, from: outbound.line,
+      app: rt.app.id, city: rt.city, env, log: () => {}, liveGate: () => true }) : new DryRunAdapter(() => {}),
     // Photos on (a local folder): the age gate is tested end to end, with an adult control.
     photoStorage: new LocalDiskPhotoStorage(photoDir),
   });

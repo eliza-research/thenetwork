@@ -6,9 +6,11 @@ import friendsTokens from "@thenetwork/design-system/friends/tokens.json";
 import networkTokens from "@thenetwork/design-system/network/tokens.json";
 import peonTokens from "@thenetwork/design-system/peon/tokens.json";
 import slopTokens from "@thenetwork/design-system/slop/tokens.json";
-import { BrandMark, brandIdFor, landingLinks, privacyFor, termsFor } from "@thenetwork/ui";
+import { BrandMark, brandIdFor, Button, landingLinks, PageShell, privacyFor, termsFor } from "@thenetwork/ui";
 import { type AppKey, type Brand, accentTokens, brandFor } from "../../../packages/core/src/generated/brandIdentity.ts";
 import { type SitePage, siteHasPage } from "../../../packages/core/src/generated/sitePages.ts";
+import { buttonPageButtons, UPDATE_HANDOFF_ASSISTANTS } from "../../../packages/notify/src/links.ts";
+import { UPDATE_HANDOFF_TEMPLATE_REFERENCE } from "../../../packages/notify/src/reference.ts";
 import { landingDescriptionFor } from "../../../packages/ui/src/content/landing.ts";
 import { App, type SiteView } from "./App.tsx";
 import { type SiteData, pageNeedsScript, rootAttributes } from "./site.ts";
@@ -57,6 +59,8 @@ function pageText(brand: Brand, page: SitePage): { title: string; description: s
       return { title: `Not found · ${brand.name}`, description: "Page not found." };
     case "JoinPage":
       return { title: `Join · ${brand.name}`, description: `Join ${brand.name}.` };
+    case "UpdateHandoffPage":
+      return { title: `Open your update · ${brand.name}`, description: `Open your ${brand.name} update in your assistant.` };
     default: {
       const unknownPage: never = page;
       return unknownPage;
@@ -64,10 +68,28 @@ function pageText(brand: Brand, page: SitePage): { title: string; description: s
   }
 }
 
-function viewOf(app: AppKey, page: SitePage): SiteView {
+function viewOf(app: AppKey, page: SiteView["page"]): SiteView {
   if (page === "PrivacyPage") return { page, legal: privacyFor[app] };
   if (page === "TermsPage") return { page, legal: termsFor[app] };
   return { page };
+}
+
+/** The chooser has only explicit links and is never hydrated in the browser. */
+function UpdateHandoff({ brand }: { brand: Brand }) {
+  return (
+    <PageShell brand={brand}>
+      <div className="flex max-w-sm flex-col gap-6 pt-8">
+        <h1 className="text-3xl font-semibold tracking-tight">Open your update</h1>
+        <div className="grid gap-3">
+          {buttonPageButtons(UPDATE_HANDOFF_TEMPLATE_REFERENCE, UPDATE_HANDOFF_ASSISTANTS).map(({ href, label }) => (
+            <Button key={label} asChild size="lg" variant="outline" className="h-12 justify-start">
+              <a href={href} rel="noreferrer">{label}</a>
+            </Button>
+          ))}
+        </div>
+      </div>
+    </PageShell>
+  );
 }
 
 const escapeText = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -94,7 +116,7 @@ export const render: RenderPage = (app, page, input) => {
   };
   const html = renderToString(
     <StrictMode>
-      <App brand={brand} view={viewOf(app, page)} site={site} />
+      {page === "UpdateHandoffPage" ? <UpdateHandoff brand={brand} /> : <App brand={brand} view={viewOf(app, page)} site={site} />}
     </StrictMode>,
   );
   return { brandId: brandIdFor[app], head, rootAttributes: rootAttributes(page, brand, site), html, script: pageNeedsScript(page) };

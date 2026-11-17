@@ -98,8 +98,8 @@ async function publicVenueName(tx: SQL, input: GatheringInput, now: number): Pro
     const untilEnd = (endsAt - startsAt + startsAt % MINUTE) / MINUTE;
     return plans.venueOpenForSlot(venue, slot, untilEnd, CITY_TZ.nyc) ? venue.name : undefined;
   }
-  const event = (await readPublicEvents(tx, now, "nyc")).find(e => e.id === input.venue.id && e.start === startsAt && e.end === endsAt);
-  return event?.listing?.venue;
+  const [event] = await readPublicEvents(tx, now, "nyc", input.venue.id);
+  return event?.start === startsAt && event.end === endsAt ? event.listing?.venue : undefined;
 }
 
 async function gatheringVenue(tx: SQL, input: GatheringInput, now: number): Promise<string | undefined> {
@@ -118,10 +118,6 @@ export async function gatheringVenueStillCurrent(tx: SQL, row: StoredGatheringVe
   return await gatheringVenue(tx, gatheringInput(row), now) === row.venue_name;
 }
 
-/** The public catalog importer takes the same lock exclusively before replacing this source. */
-export async function lockGatheringListing(tx: SQL): Promise<void> {
-  await tx`select pg_advisory_xact_lock_shared(hashtext('thenetwork-public-events-nyc-parks'))`;
-}
 const failure = (error: string, status: number) => response({ ok: false, error }, status);
 
 async function auditGathering(tx: SQL, ctx: GatheringContext, at: number, id: string, action: "create_monthly_gathering" | "approve_monthly_gathering" | "reject_monthly_gathering", revision: number, ok: boolean) {

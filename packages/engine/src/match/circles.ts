@@ -7,6 +7,7 @@ import { compareText, type EntityId, type MatchProfile } from "./profile.ts";
 import type { MatchEdge } from "./search.ts";
 
 export interface Circle { readonly members: readonly EntityId[]; readonly evidence: CircleEvidence }
+type RankCircle = (circle: Circle) => number | undefined;
 
 /**
  * The admission evidence of a group (spec/groupFormation.md, CircleEvidence). A pair without a value
@@ -46,11 +47,12 @@ const byStrength = <T>(x: Ranked<T>, y: Ranked<T>): number => y.low - x.low || y
 /**
  * Circles for one lane. `edges` are that lane's edges (mutualEdges); a pair joins only with an edge
  * of value >= circlePairFloor. Each member is in at most one circle per run, and only while
- * `capacityLeft` is positive. Admission is the generated circleCoherent check.
+ * `capacityLeft` is positive. Admission is the generated circleCoherent check. A plan can also rank
+ * complete circles during growth so its activity and time floors apply before reservation.
  */
 export function buildCircles(
   edges: readonly MatchEdge[], profilesById: ReadonlyMap<EntityId, MatchProfile>, limits: LaneLimits,
-  capacityLeft: (profile: MatchProfile) => number,
+  capacityLeft: (profile: MatchProfile) => number, rankCircle?: RankCircle,
 ): Circle[] {
   if (limits.circleMaximum < 3) return [];
   const links = new Map<EntityId, Map<EntityId, number>>();
@@ -79,11 +81,25 @@ export function buildCircles(
   const open = (p: MatchProfile, group: readonly MatchProfile[]) =>
     !used.has(p.memberId) && capacityLeft(p) > 0 && !group.some(g => g.id === p.id || g.memberId === p.memberId);
   const band = limits.rules.parityBand;
+  const complete = (group: readonly MatchProfile[]): Circle | undefined => {
+    if (group.length < limits.circleMinimum) return;
+    const evidence = circleEvidence(group, (a, b) => links.get(a.id)?.get(b.id));
+    if (circleCoherent(evidence, limits.circleMinimum, limits.circleMaximum, limits.circlePairFloor, band))
+      return { members: group.map(profile => profile.id).sort(compareText), evidence };
+  };
+  const qualified = (group: readonly MatchProfile[]) => {
+    const circle = rankCircle && complete(group);
+    if (!circle) return;
+    const rank = rankCircle?.(circle);
+    if (rank === undefined || !Number.isFinite(rank)) return;
+    return { circle, rank };
+  };
   const circles: Circle[] = [];
   for (const seed of seeds) {
     const group: MatchProfile[] = [];
     for (const p of seed.item.flatMap(profileOf)) if (open(p, group)) group.push(p);
     if (group.length !== seed.item.length || !spreadAllowed(group, band)) continue;
+    let preferred = qualified(group);
     while (group.length < limits.circleMaximum) {
       const options: Ranked<MatchProfile>[] = [];
       for (const [id] of links.get(group[0].id) ?? []) {
@@ -93,14 +109,26 @@ export function buildCircles(
         const known = values.flatMap(v => (v === undefined ? [] : [v]));
         options.push({ item: candidate, low: Math.min(...known), total: known.reduce((t, v) => t + v, 0), key: id });
       }
-      const best = options.sort(byStrength)[0];
-      if (!best) break;
-      group.push(best.item);
+      options.sort(byStrength);
+      if (!options.length) break;
+      let next = options[0]!.item;
+      if (rankCircle && group.length + 1 >= limits.circleMinimum) {
+        let extension: ReturnType<typeof qualified>;
+        for (const { item } of options) {
+          const candidate = qualified([...group, item]);
+          if (candidate && (!extension || candidate.rank > extension.rank)) {
+            extension = candidate;
+            next = item;
+          }
+        }
+        if (extension && (!preferred || extension.rank > preferred.rank)) preferred = extension;
+      }
+      group.push(next);
     }
-    const evidence = circleEvidence(group, (a, b) => links.get(a.id)?.get(b.id));
-    if (!circleCoherent(evidence, limits.circleMinimum, limits.circleMaximum, limits.circlePairFloor, band)) continue;
-    for (const p of group) used.add(p.memberId);
-    circles.push({ members: group.map(p => p.id).sort(compareText), evidence });
+    const circle = rankCircle ? preferred?.circle : complete(group);
+    if (!circle) continue;
+    for (const id of circle.members) used.add(profilesById.get(id)!.memberId);
+    circles.push(circle);
   }
   return circles;
 }

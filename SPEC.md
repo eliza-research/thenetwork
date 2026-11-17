@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`674e50b1`](https://github.com/lalalune/vibestack/blob/674e50b1a2f4fa4b174b69a99691813b416a0361/SPEC.md).
+[`45cc5c35`](https://github.com/lalalune/vibestack/blob/45cc5c35d58b8dc18b0a57b116fde2386eef5528/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -37,7 +37,10 @@ with the reason.
 | `explore` | Bombadil explores the package's page, served by its `start` or `dev` script, and the properties of `test/bombadil.ts`, or Bombadil's defaults, hold in every state it reaches ([Exploring the page](#exploring-the-page)) | a stage above failed; a `-` line on a platform Bombadil has no executable for |
 | `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
-Types and proofs run concurrently; tests, traces and explore wait for both.
+Type checks and proofs start when every model is valid. They run alongside
+the simulations. When a simulation fails, they finish before the check
+returns and their results stay out of the report. Tests, traces and
+exploration wait for all three stages.
 
 ## Writing a spec
 
@@ -508,7 +511,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/674e50b1a2f4fa4b174b69a99691813b416a0361/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/45cc5c35d58b8dc18b0a57b116fde2386eef5528/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -539,7 +542,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/674e50b1a2f4fa4b174b69a99691813b416a0361/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/45cc5c35d58b8dc18b0a57b116fde2386eef5528/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
@@ -589,8 +592,10 @@ under `src/`.
   the package's files but its Markdown and Quint, its `tsconfig.json` and the
   configurations it extends, every file outside `node_modules` the compile
   read, the lock file and the compiler's bytes. A cached test pass follows
-  the files the tests read. Its inputs exclude Markdown under `spec/` and
-  the Quint copy in `gen/`, since the tests read the generated modules.
+  the files the tests read. Its inputs exclude Markdown under `spec/`, the
+  Quint copy and simulation traces under `gen/`, and the top-level guides.
+  Tests read the generated modules. Markdown fixtures that another
+  workspace package provides remain test inputs.
   A cached driver's pass also follows the events found by the simulator.
   Failed tests and `driver:` programs run every time.
   The specs are simulated at once.

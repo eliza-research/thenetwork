@@ -1,9 +1,11 @@
 // Canonical account erasure and Notify retention on real PostgreSQL; synthetic records only.
 import { setTimeout as sleep } from "node:timers/promises";
 import {afterAll, beforeAll, describe, expect, test} from "vitest";
+import {DAY} from "../../core/src/clock.ts";
 import {Accounts} from "../src/accounts.ts";
 import {APPS} from "../src/apps.ts";
 import {PgPeopleStore} from "../src/pg-store.ts";
+import {MemoryPeopleStore} from "../src/store.ts";
 import {PgNotifyStore} from "../../notify/src/pg-store.ts";
 import {dropDb, migratedDb, pgAvailable} from "./pg.ts";
 
@@ -15,6 +17,24 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     accounts = new Accounts(people, {hashKey: "synthetic-retention-fixture", now: () => now, apps: id => APPS[id]});
   }, 120_000);
   afterAll(async () => {await people?.close(); if (url) await dropDb(url);});
+
+  // spec/platformRetention.md, "Retain the STOP hint count for its full window"
+  test("rate cleanup retains each counter at its cutoff and removes older counters", async () => {
+    const stopHintCutoff = now - 30 * DAY;
+    const counters = [
+      { bucket: "ordinary:keep", lastAt: now, retained: true },
+      { bucket: "ordinary:expire", lastAt: now - 1, retained: false },
+      { bucket: "stop_hint:keep", lastAt: stopHintCutoff, retained: true },
+      { bucket: "stop_hint:expire", lastAt: stopHintCutoff - 1, retained: false },
+    ];
+    for (const store of [people, new MemoryPeopleStore()]) {
+      for (const { bucket, lastAt } of counters) await store.hit(bucket, DAY, lastAt);
+      await store.purge(now);
+      for (const { bucket, lastAt, retained } of counters) {
+        expect((await store.hit(bucket, DAY, lastAt)).count).toBe(retained ? 2 : 1);
+      }
+    }
+  });
 
   test("app leave preserves other apps and STOP; full erasure waits for admitted writes and fences late references", async () => {
     const person = await accounts.createPerson(phone, "inbound_message", 28);
@@ -129,6 +149,53 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     expect(await receipts()).toEqual([{ app_id: "slop", person_id: sender.id }]);
     expect(await incoming()).toHaveLength(0);
     expect(await people.sql`select id from platform.photos where id=${photo}`).toEqual([{ id: photo }]);
+  });
+
+  // spec/accountPrivacy.md, "Erasure follows the authorized person across a number change"
+  test("in-flight erasure follows the verified person and preserves a new owner of the original number", async () => {
+    const oldPhone = "+12125550176", movedPhone = "+12125550177", app = APPS.friends;
+    const holder = await accounts.join(app, { e164: oldPhone, personId: null }, {
+      firstName: "Original", age: 27, consent: { sms: true, wording: app.consent.text },
+    });
+    if (!holder.ok) throw new Error(`Fixture join refused: ${holder.error}`);
+    const original = { e164: oldPhone, personId: holder.membership.personId };
+    expect(await accounts.startNumberChange(app, original, movedPhone, async () => true)).toEqual({ ok: true });
+
+    let entered!: () => void, resume!: () => void;
+    const forgetting = new Promise<void>(resolve => { entered = resolve; });
+    const release = new Promise<void>(resolve => { resume = resolve; });
+    const erasing = new Accounts(people, { hashKey: "synthetic-retention-fixture", now: () => now, apps: id => APPS[id],
+      hooks: { onForget: async () => { entered(); await release; } },
+    });
+    const pending = erasing.deleteAll(original);
+    try {
+      await forgetting;
+      expect(await accounts.confirmNumberChange(original, async () => true)).toEqual({ ok: true, e164: movedPhone, personId: original.personId });
+      const joined = await accounts.join(app, { e164: oldPhone, personId: null }, {
+        firstName: "Current", age: 32, consent: { sms: true, wording: app.consent.text },
+      });
+      if (!joined.ok) throw new Error(`Replacement fixture join refused: ${joined.error}`);
+      if (joined.membership.personId === original.personId) throw new Error("The fixture did not reassign the original number");
+      resume();
+      await pending;
+
+      expect(await people.findPhone(oldPhone)).toMatchObject({ personId: joined.membership.personId });
+      expect(await accounts.optedIn(app.id, oldPhone)).toBe(true);
+      expect(await people.isSuppressed(accounts.phoneHash(oldPhone))).toBe(false);
+      expect(await people.ageFloor(accounts.phoneHash(oldPhone))).toBe(32);
+      expect(await people.getPerson(original.personId)).toMatchObject({ deletedAt: now });
+      expect(await people.memberships(original.personId)).toEqual([]);
+      expect(await people.findPhone(movedPhone)).toBeUndefined();
+      expect(await people.consentEvents(movedPhone, app.id)).toEqual([]);
+      expect(await people.isSuppressed(accounts.phoneHash(movedPhone))).toBe(true);
+      expect(await people.ageFloor(accounts.phoneHash(movedPhone))).toBe(27);
+      // The old identity cannot authorize a second erasure after the move and reassignment.
+      expect(await accounts.deleteAll(original)).toBe(false);
+      expect(await accounts.optedIn(app.id, oldPhone)).toBe(true);
+    } finally {
+      resume();
+      await pending;
+    }
   });
 
 });

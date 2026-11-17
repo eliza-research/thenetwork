@@ -3,6 +3,8 @@
 
 /** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 export interface DetailGate { lastTicket: number; closedThrough: number }
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+export type ConsoleDeliveryGuard = "DeliveryGuardUnrecorded" | "DeliveryGuardBlocked" | "DeliveryGuardReleased" | "DeliveryGuardChecked";
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 export type StaffPhotoView = "HidePhotos" | "ShowPhotoForm" | "ShowGallery";
 
@@ -88,6 +90,45 @@ export function lawStaffRevealNeedsCurrentSafety(sameView: boolean, signInCurren
   return !staffRevealMayDisclose(sameView, false, signInCurrent, grantTimeLeftMs);
 }
 
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function consoleDeliveryEvidenceAllowed(sameApp: boolean, sameMember: boolean, sameMessage: boolean, memberOutbound: boolean): boolean {
+  return sameApp && sameMember && sameMessage && memberOutbound;
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function consoleDeliveryGuard(exactEvidence: boolean, leakStopped: boolean, staffReleased: boolean, attempted: boolean): ConsoleDeliveryGuard {
+  return !exactEvidence ? "DeliveryGuardUnrecorded" : (leakStopped ? "DeliveryGuardBlocked" : (staffReleased ? "DeliveryGuardReleased" : (attempted ? "DeliveryGuardChecked" : "DeliveryGuardUnrecorded")));
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function consolePreparedBodyWithheld(guardResult: ConsoleDeliveryGuard, storedLeakStop: boolean): boolean {
+  return guardResult === "DeliveryGuardBlocked" || storedLeakStop;
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function lawUnmatchedDeliveryShowsNoLeakCheck(leakStopped: boolean, staffReleased: boolean, attempted: boolean): boolean {
+  //@ ensures \result === true
+  return consoleDeliveryGuard(false, leakStopped, staffReleased, attempted) === "DeliveryGuardUnrecorded";
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function lawUnattemptedDeliveryCannotShowChecked(exactEvidence: boolean, leakStopped: boolean, staffReleased: boolean): boolean {
+  //@ ensures \result === true
+  return consoleDeliveryGuard(exactEvidence, leakStopped, staffReleased, false) !== "DeliveryGuardChecked";
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function lawRecordedLeakStopWithholdsPreparedBody(guardResult: ConsoleDeliveryGuard): boolean {
+  //@ ensures \result === true
+  return consolePreparedBodyWithheld(guardResult, true);
+}
+
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function staffPhotoAllowed(rulePermitsRead: boolean, canSafety: boolean, liveAdult: boolean): boolean {
@@ -129,7 +170,7 @@ export function step(current: DetailGate, event: Event): DetailGate {
   //@ ensures inv(\result)
   if (event.type === "beginDetail") return beginDetail(current);
   if (event.type === "cancelDetails") return cancelDetails(current);
-  if (event.type === "finishDetail" && canFinishDetail(current, event.readTicket)) return finishDetail(current, event.readTicket);
+  if (event.type === "finishDetail") return canFinishDetail(current, event.readTicket) ? finishDetail(current, event.readTicket) : current;
   return current;
 }
 

@@ -21,18 +21,25 @@ pure def lawAWindowCannotContinueAtItsEnd(startAt: int, endAt: int): bool =
 
 ### STOP takes precedence over a participation setting
 
-STOP produces paused participation. An active pause window also produces paused participation. An active open window produces normal participation. Busy and traveling produce quiet participation while active. Otherwise keep the member's existing base setting.
+STOP produces paused participation. An active pause window also produces paused participation. An active open window produces normal participation. Busy and traveling produce quiet participation while active. An unrecognized window mode keeps the member's existing base setting.
 
 ```quint
 type ParticipationOverride = KeepBase | UseNormal | UseQuiet | UsePaused
+
+pure def participationWindowModeKnown(scheduledMode: str): bool =
+  List("open", "paused", "busy", "traveling").includes(scheduledMode)
 
 pure def participationOverride(optedOut: bool, windowActive: bool, scheduledMode: str): ParticipationOverride =
   if (optedOut) UsePaused
   else if (not(windowActive)) KeepBase
   else if (scheduledMode == "open") UseNormal
   else if (scheduledMode == "paused") UsePaused
-  else UseQuiet
+  else if (participationWindowModeKnown(scheduledMode)) UseQuiet
+  else KeepBase
 
 pure def lawStopAlwaysPauses(windowActive: bool, scheduledMode: str): bool =
   participationOverride(true, windowActive, scheduledMode) == UsePaused
+
+pure def lawUnknownModeKeepsBase(scheduledMode: str): bool =
+  not(participationWindowModeKnown(scheduledMode)) implies participationOverride(false, true, scheduledMode) == KeepBase
 ```

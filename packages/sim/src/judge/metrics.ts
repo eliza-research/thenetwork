@@ -13,7 +13,7 @@ export { gini };
 import { classifyYesNo, DAY, HOUR, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { CONNECTION, LANE_BUDGETS, PRD_BUDGETS } from "../../../network/src/outreach.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
-import type { LoggedMessage, LoggedPersona, PlanMeta, RunRecord } from "@thenetwork/core";
+import type { LoggedMessage, LoggedPersona, RunRecord } from "@thenetwork/core";
 
 /** Enjoyment at or above which a held meeting counts as a good outcome. One constant for every metric and harness that grades meetings. */
 export const GOOD_MEETING_ENJOYMENT = 0.6;
@@ -441,17 +441,18 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     // Carrier auto-replies: only a system message next to the member's own keyword (STOP/START/HELP).
     const carrier = !!m.system && (keywordTimes.get(to) ?? []).some(t => Math.abs(t - m.ts) <= 60_000);
     const probe = (meta.probe ?? undefined) as { key?: unknown; participants?: unknown } | undefined;
-    const plan = (meta.plan ?? undefined) as Partial<PlanMeta> | undefined;
-    // A plan probe asks before anyone is named, as a probe does.
-    const asksFirst = meta.type === "probe" || meta.type === "plan_probe" || !!probe;
-    const oppId = [meta.proposalId, probe?.key, plan?.planId].find((x): x is string => typeof x === "string" && !!x);
+    const plan = (meta.plan ?? undefined) as { planId?: unknown; id?: unknown; invited?: unknown; alternates?: unknown; participants?: unknown; hostId?: unknown } | undefined;
+    const isProbe = meta.type === "probe" || meta.type === "plan_probe" || !!probe;
+    const oppId = [meta.proposalId, probe?.key, plan?.planId, plan?.id].find((x): x is string => typeof x === "string" && !!x);
     if (oppId) {
       msgOpp.set(m.id, oppId);
       if (m.status === "delivered") l.lastOpp = oppId;
       addOpp(oppId, meta.participants); addOpp(oppId, probe?.participants);
+      addOpp(oppId, plan?.invited); addOpp(oppId, plan?.alternates); addOpp(oppId, plan?.participants); addOpp(oppId, [plan?.hostId]);
       // The recipient was contacted about it (a backfilled alternate joins the roster here).
       addRoster(oppId, [to]); addRoster(oppId, meta.participants); addRoster(oppId, probe?.participants);
-      if (asksFirst) probed.add(oppId);
+      addRoster(oppId, plan?.invited); addRoster(oppId, plan?.participants); addRoster(oppId, [plan?.hostId]);
+      if (isProbe) probed.add(oppId);
     }
     const relayFrom = typeof meta.relayFrom === "string" ? meta.relayFrom : undefined;
     const named = names.namesIn(m.body); named.delete(to);
@@ -479,7 +480,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (relayFrom && blocked.has(pairKey(relayFrom, to))) violate("blocked_pair_relayed", `${m.id}: ${relayFrom} -> ${to}`);
 
     // Consent: names before reveal, decliner identity, contact details before a swap.
-    if (asksFirst) {
+    if (isProbe) {
       const inOpp = oppId ? [...(oppMembers.get(oppId) ?? [])].filter(x => x !== to && names.namesScoped(m.body, x)) : [];
       const who = new Set([...named, ...inOpp]);
       if (who.size) violate("name_before_reveal", `probe ${m.id} to ${to} names ${[...who].join(",")}`);
@@ -506,7 +507,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     }
 
     // Review before contact.
-    if (m.status === "delivered" && (meta.type === "proposal" || meta.type === "probe" || probe)) unreviewed(oppId, `${String(meta.type ?? "probe")} message ${m.id} to ${to}`);
+    if (m.status === "delivered" && (meta.type === "proposal" || isProbe)) unreviewed(oppId, `${String(meta.type ?? "probe")} message ${m.id} to ${to}`);
 
     // STOP: attempted sends after STOP (until START) are violations even if the channel suppressed them.
     if (m.status === "suppressed_opted_out" || (l.optedOut && m.status === "delivered")) violate("send_after_stop", `${m.id} to ${to}`);

@@ -1,5 +1,6 @@
 // GENERATED from spec/probeDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, initial as opportunityLifecycle_initial, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, closesForMinor as opportunityLifecycle_closesForMinor, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, canStartProbing as opportunityLifecycle_canStartProbing, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, startProbing as opportunityLifecycle_startProbing, canReroll as opportunityLifecycle_canReroll, reroll as opportunityLifecycle_reroll, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected } from "./opportunityLifecycle.ts";
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 export type ProbePhase = "Queued" | "AwaitingReply" | "Available" | "Unavailable" | "OutsideProbe";
@@ -216,6 +217,19 @@ export function sometimesSettledNo(participant: ParticipantProbe): boolean {
   return participant.phase === "Unavailable";
 }
 
+/** Story: Hear about one reviewed opportunity at a time / A Slop answer follows acceptance of the exact question (spec/probeDispatch.md) */
+//@ pure
+export function slopProbeReplyCurrent(direct: boolean, transportAccepted: boolean, receivedAt: number, acceptedAt: number): boolean {
+  return direct && transportAccepted && receivedAt >= acceptedAt;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A Slop answer follows acceptance of the exact question (spec/probeDispatch.md) */
+//@ pure
+export function lawSlopProbeNeedsAcceptance(direct: boolean, receivedAt: number, acceptedAt: number): boolean {
+  //@ ensures \result === true
+  return !slopProbeReplyCurrent(direct, false, receivedAt, acceptedAt);
+}
+
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
 export function mayTryAlternate(alternatesRemain: boolean, replaced: number): boolean {
@@ -232,6 +246,19 @@ export function alternateAllowed(eligible: boolean, sameFirstName: boolean, conf
 //@ pure
 export function replacementRoute(probing: boolean, requesterOut: boolean, managerOut: boolean): ReplacementRoute {
   return !probing ? "IgnoreReplacement" : (requesterOut ? "CloseRequester" : (managerOut ? "CloseManager" : "FindAlternate"));
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
+export function groupMayRemainWithoutAlternate(group: boolean, remaining: number): boolean {
+  return group && opportunityLifecycle_groupCanContinue(remaining);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
+export function lawOneToOneClosesWithoutAlternate(remaining: number): boolean {
+  //@ ensures \result === true
+  return !groupMayRemainWithoutAlternate(false, remaining);
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
@@ -258,12 +285,12 @@ export function enabled(current: ParticipantProbe, event: Event): boolean {
 export function step(current: ParticipantProbe, event: Event): ParticipantProbe {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openTurn" && canOpenTurn(current, event.first, event.firstAvailable)) return openTurn(current, event.first, event.firstAvailable);
-  if (event.type === "usePriorIntent" && canUsePriorIntent(current, event.primed, event.contacted, event.needsTimes)) return usePriorIntent(current, event.primed, event.contacted, event.needsTimes);
-  if (event.type === "markUnavailable" && canMarkUnavailable(current)) return markUnavailable(current);
-  if (event.type === "recordReply" && canRecordReply(current)) return recordReply(current, event.agreed);
-  if (event.type === "offerOtherTimes" && canOfferOtherTimes(current, event.hasFreshTimes)) return offerOtherTimes(current, event.hasFreshTimes);
-  if (event.type === "expireProbe" && canExpireProbe(current, event.expired)) return expireProbe(current, event.expired, event.timeQuestion);
+  if (event.type === "openTurn") return canOpenTurn(current, event.first, event.firstAvailable) ? openTurn(current, event.first, event.firstAvailable) : current;
+  if (event.type === "usePriorIntent") return canUsePriorIntent(current, event.primed, event.contacted, event.needsTimes) ? usePriorIntent(current, event.primed, event.contacted, event.needsTimes) : current;
+  if (event.type === "markUnavailable") return canMarkUnavailable(current) ? markUnavailable(current) : current;
+  if (event.type === "recordReply") return canRecordReply(current) ? recordReply(current, event.agreed) : current;
+  if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes) ? offerOtherTimes(current, event.hasFreshTimes) : current;
+  if (event.type === "expireProbe") return canExpireProbe(current, event.expired) ? expireProbe(current, event.expired, event.timeQuestion) : current;
   return current;
 }
 

@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
 import { act, createElement } from "react";
-import type { ClockInfo, ObsDelta, ObsFeedItem, ObsOpportunity } from "../src/types.ts";
+import type { ClockInfo, ObsDelta, ObsFeedItem, ObsOpportunity, StaffPlanPreview } from "../src/types.ts";
 import { byRole, installDom } from "./dom.ts";
 
 const clock = (now: number): ClockInfo => ({ now, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false });
@@ -144,6 +144,71 @@ test("the console keeps the current view, live feed, and review draft", async ()
     globalThis.fetch = nativeFetch;
     restoreDom();
     await api.stop(true);
+    await window.happyDOM.close();
+  }
+});
+
+test("real plan approval waits for the visible revision on click and keyboard", async () => {
+  // spec/staffReview.md, "Plan approval in the console waits for the selected preview"
+  const window = new Window({ url: "http://127.0.0.1" });
+  const restore = installDom(window, { window, document: window.document, navigator: window.navigator,
+    location: window.location, history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage, IS_REACT_ACT_ENVIRONMENT: true });
+  const { createRoot } = await import("react-dom/client");
+  const { store } = await import("../web/store.ts");
+  const { ReviewQueue } = await import("../web/review.tsx");
+  const before = { app: store.app, mode: store.mode, me: store.me, env: store.env, clock: store.clock, opps: store.opps, ui: store.ui,
+    reviewPlanPreview: store.reviewPlanPreview, decide: store.decide };
+  const box = window.document.createElement("div");
+  window.document.body.append(box);
+  const root = createRoot(box as unknown as HTMLElement);
+  const now = Date.UTC(2026, 10, 19, 17);
+  const id = "exact-plan-preview";
+  const opportunity = (revision: number): ObsOpportunity => ({
+    id, kind: "group", source: "network", origin: "planner", generator: "plan", category: "social", city: "nyc",
+    objective: "A hike", score: 0.5, explanations: {}, exploration: false, participants: ["a", "b", "c"], alternates: ["d", "e"],
+    state: "IN_REVIEW", status: {}, enjoyment: {}, createdAt: now, updatedAt: now,
+    review: { queuedAt: now, deadline: now + 10_000 + revision, rerolls: revision },
+  });
+  const reply = (revision: number, name: string): StaffPlanPreview => ({
+    app: "friends", opportunityId: id, revision, deadline: opportunity(revision).review!.deadline,
+    activity: "Day hike", place: { name }, start: now + 80_000, end: now + 90_000, probeDeadline: now + 50_000, quorum: 3, maxSeats: 4,
+    alternates: ["e", "d"],
+  });
+  const first = Promise.withResolvers<StaffPlanPreview>(), second = Promise.withResolvers<StaffPlanPreview>();
+  const decisions: number[] = [];
+  const button = () => [...box.querySelectorAll("button")].find(b => b.textContent === "Approve")!;
+  const key = () => window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "a", bubbles: true }));
+  store.app = "friends";
+  store.mode = "real";
+  store.me = { id: "reviewer", roles: ["reviewer"], grants: [{ role: "reviewer", app: "friends" }], via: "token" };
+  store.env = { mode: "real", app: "friends", dataset: "local", label: "Real", capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: true, staffActions: true } };
+  store.clock = clock(now);
+  store.ui = { ...store.ui, focus: null, reviewView: "pending" };
+  store.opps = new Map([[id, opportunity(0)]]);
+  store.reviewPlanPreview = async (_id, revision) => ({ status: 200, data: { ok: true, preview: await (revision === 0 ? first.promise : second.promise) } });
+  store.decide = async o => { decisions.push(o.review!.rerolls!); return { ok: true }; };
+  try {
+    await act(async () => { root.render(createElement(ReviewQueue)); });
+    expect(button().disabled).toBe(true);
+    await act(async () => { button().click(); key(); });
+    expect(decisions).toEqual([]);
+    await act(async () => {
+      store.opps.set(id, opportunity(1));
+      root.render(createElement(ReviewQueue));
+    });
+    await act(async () => { first.resolve(reply(0, "Old park")); });
+    expect(button().disabled).toBe(true);
+    expect(box.textContent).not.toContain("Old park");
+    await act(async () => { second.resolve(reply(1, "Inwood Hill Park")); });
+    const facts = box.querySelector("section[aria-label='Plan under review']")!.textContent;
+    expect(facts).toMatch(/Inwood Hill Park.*Quorum 3.*1\. e, 2\. d/s);
+    expect(button().disabled).toBe(false);
+    await act(async () => { key(); });
+    expect(decisions).toEqual([1]);
+  } finally {
+    await act(async () => { root.unmount(); });
+    Object.assign(store, before);
+    restore();
     await window.happyDOM.close();
   }
 });

@@ -81,7 +81,7 @@ function wantRoles(text: string, category: Category | undefined, tags: readonly 
     : MENTOR_OFFERED.test(text) ? "MentorOfferRoute"
     : MENTOR_SOUGHT.test(text) ? "MentorSeekRoute"
     : "NoRoute";
-  const professional = category === "professional" || [...plainTags(tags), ...asked].some(isProfessionalTag);
+  const professional = category === "professional" || (category === undefined && [...plainTags(tags), ...asked].some(isProfessionalTag));
   const route = networkIntentRoute(category !== "romance" && category !== "growth", specific, professional);
   return route === "NoRoute" ? [] : [INTENT_ROLES[route]];
 }
@@ -107,14 +107,15 @@ function wantOf(text: string, details: string | undefined, category: Category | 
 
 interface RunCache {
   readonly intents: Map<string, Want>;
-  readonly goals: Map<MemberId, readonly Want[]>;
+  readonly goals: Map<MemberId, ReadonlyMap<string, Want>>;
   readonly tags: Map<MemberId, MemberTags>;
+  readonly friendTags: Map<MemberId, MemberTags>;
   readonly cofounderIntents: Map<MemberId, Intent | undefined>;
 }
 const caches = new WeakMap<World, RunCache>();
 const cacheOf = (w: World): RunCache => {
   let cache = caches.get(w);
-  if (!cache) { cache = { intents: new Map(), goals: new Map(), tags: new Map(), cofounderIntents: new Map() }; caches.set(w, cache); }
+  if (!cache) { cache = { intents: new Map(), goals: new Map(), tags: new Map(), friendTags: new Map(), cofounderIntents: new Map() }; caches.set(w, cache); }
   return cache;
 };
 
@@ -126,18 +127,19 @@ export function intentWant(w: World, intent: Intent): Want {
   return want;
 }
 
-function goalWants(w: World, memberId: MemberId): readonly Want[] {
+function goalWants(w: World, memberId: MemberId): ReadonlyMap<string, Want> {
   const cache = cacheOf(w);
   let wants = cache.goals.get(memberId);
   if (!wants) {
-    wants = (w.get(memberId)?.match ?? []).filter(f => f.kind === "goal").map(f => wantOf(f.value.replace(/^wants to /i, ""), undefined, undefined, f.tags));
+    wants = new Map((w.get(memberId)?.match ?? []).filter(f => f.kind === "goal")
+      .map(f => [f.id, wantOf(f.value.replace(/^wants to /i, ""), undefined, undefined, f.tags)]));
     cache.goals.set(memberId, wants);
   }
   return wants;
 }
 
 const memberWants = (w: World, memberId: MemberId): readonly Want[] =>
-  [...(w.get(memberId)?.intents ?? []).map(i => intentWant(w, i)), ...goalWants(w, memberId)];
+  [...(w.get(memberId)?.intents ?? []).map(i => intentWant(w, i)), ...goalWants(w, memberId).values()];
 
 export const wantHas = (want: Want, role: LaneRole): boolean => want.roles.some(r => r.lane === role.lane && r.side === role.side);
 
@@ -156,24 +158,33 @@ export function networkCofounderIntentOf(w: World, id: MemberId): Intent | undef
   return latest;
 }
 
-/** A member's matching tags from matchable or shareable facets and live wants (the same in every lane). */
-export function memberTags(w: World, memberId: MemberId): MemberTags {
+/** A member's matching tags from matchable or shareable facets and live wants. */
+export function memberTags(w: World, memberId: MemberId, lane?: MatchLane): MemberTags {
+  // spec/networkIntentLane.md, "One request can open one lane"
+  const friend = lane === "Friend";
   const cache = cacheOf(w);
-  const done = cache.tags.get(memberId);
+  const tagCache = friend ? cache.friendTags : cache.tags;
+  const done = tagCache.get(memberId);
   if (done) return done;
   const offers = new Set<string>(), seeks = new Set<string>(), interests = new Set<string>();
   const add = (into: Set<string>, tags: readonly string[]) => { for (const t of tags) into.add(t); };
+  const goals = friend ? goalWants(w, memberId) : undefined;
   for (const f of w.get(memberId)?.match ?? []) {
+    if (friend) {
+      const tagged = taggedRole(f.tags);
+      const goal = goals?.get(f.id);
+      if ((tagged && tagged.lane !== lane) || (goal && !wantHas(goal, FRIEND))) continue;
+    }
     if (OFFER_KINDS.has(f.kind)) add(offers, plainTags(f.tags));
     else if (SEEK_KINDS.has(f.kind)) add(seeks, plainTags(f.tags));
     else if (INTEREST_KINDS.has(f.kind)) add(interests, plainTags(f.tags));
   }
   for (const want of memberWants(w, memberId)) {
-    if (wantHas(want, COFOUNDER_PEER)) continue;
+    if (wantHas(want, COFOUNDER_PEER) || (friend && !wantHas(want, FRIEND))) continue;
     add(seeks, want.seeks); add(interests, want.interests); add(offers, want.pools);
   }
   const tags: MemberTags = { offers, seeks, interests };
-  cache.tags.set(memberId, tags);
+  tagCache.set(memberId, tags);
   return tags;
 }
 
@@ -216,7 +227,7 @@ function cofounderTags(w: World, id: MemberId): EntityTags {
 
 function tags(w: World, entity: MatchEntity): EntityTags {
   if (entity.lane === "Cofounder") return cofounderTags(w, entity.memberId);
-  const { offers, seeks, interests } = memberTags(w, entity.memberId);
+  const { offers, seeks, interests } = memberTags(w, entity.memberId, entity.lane);
   return { offers: [...offers], seeks: [...seeks], interests: [...interests] };
 }
 

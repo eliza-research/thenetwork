@@ -48,6 +48,10 @@ needs approval. Link the specific story or rule when you propose a change.
 - Run `pnpm run check` for the Vibestack spec and the project commands in
   section 6 for the application. The product owner compares each changed
   rule with its Quint and records approval with `pnpm run accept`.
+  When every model is valid, the checker runs type checks and proofs alongside
+  the simulations. It shares Node's compile cache with child processes and
+  reuses verification results for unchanged inputs. See the
+  [check stages and cache rules](SPEC.md#stages-of-pnpm-check).
 - For work on the generator, follow the [Vibestack contributor guide](tools/vibestack/CONTRIBUTING.md#changing-the-tools)
   and add a fixture for each new class of error it detects.
 - For a Vibestack browser property, cite the rule and run it on a locally

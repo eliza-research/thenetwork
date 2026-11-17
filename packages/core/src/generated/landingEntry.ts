@@ -31,10 +31,16 @@ export type Event =
 export const messagesEntryLabel: string = "Use in iMessage";
 /** Story: Start in Messages instead / The Messages entry writes `join <keyword>` to the shared line (spec/landingEntry.md) */
 export const joinMessagePrefix: string = "join ";
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+export const messageCopiedTemplate: string = "Message copied. Text it to {number} if iMessage did not open.";
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+export const textTheNumberTemplate: string = "Text “{message}” to {number}.";
 /** Story: Start in Messages instead / When Messages does not open in 1.5 seconds, the status line shows the number and the message (spec/landingEntry.md) */
 export const messagesWaitMs: number = 1500;
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingWordLimit: number = 45;
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+export const landingHeadingCount: number = 1;
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
 export const promptLead: string = "Read https://";
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
@@ -384,6 +390,12 @@ export function alwaysFallbackNeedsScript(s: Landing): boolean {
 
 /** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
 //@ pure
+export function messagesFallbackTemplate(copied: boolean): string {
+  return messagesFallbackStatus(copied) === "MessageCopied" ? messageCopiedTemplate : textTheNumberTemplate;
+}
+
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+//@ pure
 export function chooseMessages(s: Landing, copied: boolean): Landing {
   //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysCopyButtonNeedsScript(\result)
   //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysDeviceKnownOnlyWithScript(\result)
@@ -472,6 +484,18 @@ export function settleMessages(s: Landing, pageLeft: boolean): Landing {
 
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 //@ pure
+export function landingWordsAllowed(words: number): boolean {
+  return words >= 0 && words < landingWordLimit;
+}
+
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+//@ pure
+export function landingHeadingsAllowed(headings: number): boolean {
+  return headings === landingHeadingCount;
+}
+
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+//@ pure
 export function alwaysStatusNeedsScript(s: Landing): boolean {
   return !(!s.mounted) || s.status === "StatusEmpty";
 }
@@ -519,11 +543,11 @@ export function enabled(current: Landing, event: Event): boolean {
 export function step(current: Landing, event: Event): Landing {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "mount" && canMount(current, event.device)) return mount(current, event.device);
-  if (event.type === "pressCopy" && canPressCopy(current)) return pressCopy(current, event.copied);
-  if (event.type === "chooseAgent" && canChooseAgent(current, event.agent)) return chooseAgent(current, event.agent, event.copied);
-  if (event.type === "chooseMessages" && canChooseMessages(current)) return chooseMessages(current, event.copied);
-  if (event.type === "settleMessages" && canSettleMessages(current)) return settleMessages(current, event.pageLeft);
+  if (event.type === "mount") return canMount(current, event.device) ? mount(current, event.device) : current;
+  if (event.type === "pressCopy") return canPressCopy(current) ? pressCopy(current, event.copied) : current;
+  if (event.type === "chooseAgent") return canChooseAgent(current, event.agent) ? chooseAgent(current, event.agent, event.copied) : current;
+  if (event.type === "chooseMessages") return canChooseMessages(current) ? chooseMessages(current, event.copied) : current;
+  if (event.type === "settleMessages") return canSettleMessages(current) ? settleMessages(current, event.pageLeft) : current;
   return current;
 }
 

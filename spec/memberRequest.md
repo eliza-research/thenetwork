@@ -85,6 +85,15 @@ pure def requesterConfirmationAllowsRetry(asked: bool, elapsed: int): bool =
 pure def immediateRequestRetryReady(attempted: bool, attemptAge: int, asked: bool, confirmAge: int): bool =
   (not(attempted) or attemptAge > immediateRetryMs) and requesterConfirmationAllowsRetry(asked, confirmAge)
 
+pure def immediateRequestSearchAllowed(waiting: bool, eligible: bool, busy: bool,
+    attempted: bool, attemptAge: int, asked: bool, confirmAge: int): bool =
+  waiting and eligible and not(busy) and immediateRequestRetryReady(attempted, attemptAge, asked, confirmAge)
+
+pure def lawImmediateRetryNeedsEligibleWaitingMember(waiting: bool, eligible: bool, busy: bool,
+    attempted: bool, attemptAge: int, asked: bool, confirmAge: int): bool =
+  immediateRequestSearchAllowed(waiting, eligible, busy, attempted, attemptAge, asked, confirmAge)
+    implies (waiting and eligible and not(busy))
+
 pure def scheduledRequestRetryReady(people: bool, waiting: bool, age: int, attempted: bool, attemptAge: int, asked: bool, confirmAge: int): bool =
   people and waiting and not(age > scheduledRequestLifetimeMs) and
     not(attempted and attemptAge < scheduledRetryMs) and requesterConfirmationAllowsRetry(asked, confirmAge)

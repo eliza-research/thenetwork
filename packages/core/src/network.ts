@@ -119,6 +119,8 @@ export interface SimMessage {
 /** An inbound webhook payload as the Network sees it. */
 export interface InboundMessage {
   id: string; memberId: MemberId; body: string; ts: number; channel: ChannelKind; keyword?: Keyword;
+  /** The signed gateway's exact receive time, before normalization to the local clock. */
+  signedReceivedAt?: number;
   /** A tapback on an outbound message (SimMeta.reaction); `body` then carries the emoji. Never a keyword. */
   reaction?: Reaction;
   /**

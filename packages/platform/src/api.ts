@@ -17,10 +17,10 @@ import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } f
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
-  type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck,
+  type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCachePublication,
   grantExpiresAt, grantResourceMatches, initial as authorityInitial, step as stepAuthority,
 } from "../../core/src/generated/cloudAuthority.ts";
 import { productionCloudDelegation } from "./cloud-delegation.ts";
@@ -296,20 +296,28 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const { userId, organizationId, e164, expiresAt, stewardUserId, issuedAt } = claims;
     if (typeof userId !== "string" || !userId || typeof organizationId !== "string" || !organizationId
       || typeof e164 !== "string" || normalizePhone(e164) !== e164
-      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || !liveBeforeDeadline(now(), expiresAt)
+      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)
       || typeof stewardUserId !== "string" || !stewardUserId
-      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt) || issuedAt <= 0
-      || !cloudIssuedAtWithinSkew(issuedAt * 1000, now())) return;
+      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt)
+      || !cloudIdentityTimesValid(issuedAt * 1000, expiresAt, now())) return;
     return { ...claims, e164, issuedAt, expiresAt };
   }
   const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
   const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${dev ? "" : "; Secure"}`;
   const joinPrefillName = dev ? "cloud_join_prefill_peon" : "__Secure-cloud_join_prefill";
   const joinPrefillCookie = (value: string, age: number) => `${joinPrefillName}=${value}; Path=/api/me; HttpOnly; SameSite=Strict; Max-Age=${age}${dev ? "" : "; Secure"}`;
-  // A positive Cloud validation is reused for 60 seconds per session, so a Cloud blip or a page load does not
-  // cost a round trip on every request. A denial is never cached.
+  // Non-production can reuse positive validations for 60 seconds per session.
   const VALIDATION_TTL_MS = o.cloudValidationTtlMs ?? 60_000;
   const validated = new Map<string, number>();
+  const validationRounds = new Map<string, { pending: number }>();
+  function clearCloudValidation(sessionHash: string) {
+    validated.delete(sessionHash);
+    validationRounds.delete(sessionHash);
+  }
+  function publishCloudValidation(sessionHash: string, until: number) {
+    if (validated.size > 10_000) validated.clear();
+    validated.set(sessionHash, until);
+  }
   async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<CloudStatus> {
     const cloud = cloudFor(app);
     if (!cloud) return authorityStatus(stepAuthority(authorityInitial, {type: "useLocalSession", cloudToken: token.startsWith("cloud.")}));
@@ -324,17 +332,26 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     });
     if (check.fromCache) return authorityStatus(check);
     if (!canFinishCloudCheck(check) || !identity || typeof expiresAt !== "number") {
-      validated.delete(sessionHash);
+      clearCloudValidation(sessionHash);
       return "invalid";
     }
+    const round = productionCloud ? undefined : validationRounds.get(sessionHash) ?? { pending: 0 };
+    if (round) {
+      round.pending++;
+      validationRounds.set(sessionHash, round);
+    }
     const {kind: _kind, ...proof} = identity;
-    const answer = cloudResponse[await validate(cloud, proof)];
-    const status = authorityStatus(stepAuthority(check, {type: "finishCloudCheck", answer, proofLive: !(expiresAt <= now())}));
-    if (status === "valid") {
-      if (validated.size > 10_000) validated.clear();
-      validated.set(sessionHash, now() + VALIDATION_TTL_MS);
-    } else validated.delete(sessionHash);
-    return status;
+    try {
+      const answer = cloudResponse[await validate(cloud, proof)];
+      const at = now();
+      const status = authorityStatus(stepAuthority(check, {type: "finishCloudCheck", answer, proofLive: expiresAt > at}));
+      const publication = cloudCachePublication(productionCloud, status === "valid", !!round && validationRounds.get(sessionHash) === round);
+      if (publication === "PublishCloudValidation") publishCloudValidation(sessionHash, at + VALIDATION_TTL_MS);
+      else if (publication === "ClearCloudValidation") clearCloudValidation(sessionHash);
+      return status;
+    } finally {
+      if (round && --round.pending === 0 && validationRounds.get(sessionHash) === round) validationRounds.delete(sessionHash);
+    }
   }
   async function validate(cloud: NonNullable<typeof cloudAuth>, identity: Record<string, unknown>): Promise<CloudStatus> {
     if (productionDelegation) return productionDelegation.validate(identity.app as AppId, identity);
@@ -381,7 +398,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if (a.token.startsWith("cloud.")) {
         const {kind: _kind, ...identity} = unseal("cloud-identity", cookies.get(identityName(appId)))!;
         const sessionHash = tokenHash(a.token, sessionSecret);
-        validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+        const previousUntil = a.session.rotatedFrom ? validated.get(a.session.rotatedFrom) : undefined;
+        if (!productionCloud && previousUntil !== undefined && previousUntil > now()) publishCloudValidation(sessionHash, previousUntil);
         response.headers.append("set-cookie", identityCookie(appId, seal("cloud-identity", {...identity, sessionHash}), age));
       }
     };
@@ -510,7 +528,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const { identity, session: { token, session } } = result;
           const age = Math.max(0, Math.floor((session.expiresAt-now())/1000));
           const sessionHash = tokenHash(token, sessionSecret);
-          validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+          if (!productionCloud) publishCloudValidation(sessionHash, now() + VALIDATION_TTL_MS);
           const delegatedIdentity = seal("cloud-identity", {...identity, app: appId, sessionHash});
           const responseHeaders = new Headers({location: result.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
           responseHeaders.append("set-cookie", pendingCookie("", 0));
@@ -761,12 +779,13 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/me/delete":
         return withSession(async (who, a) => {
           if ((b.scope === "app" || b.scope === "all") && (await accounts.held(who.e164))) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
-          if (b.scope === "app") { await accounts.leave(app, who); return json(200, { ok: true }); }
+          if (b.scope === "app") return await accounts.leave(app, who) ? json(200, { ok: true })
+            : json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
           if (b.scope === "all") {
             // Step-up: a cookie from an older login cannot delete everything. A Cloud session starts at the Cloud
             // phone proof's issuedAt, so a new Cloud sign-in (the site's reauth path) is the fresh step-up there.
             if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
-            await accounts.deleteAll(who);
+            if (!await accounts.deleteAll(who)) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
             return json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
           }
           return json(400, { ok: false, error: "invalid" });

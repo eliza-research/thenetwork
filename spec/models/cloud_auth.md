@@ -8,7 +8,7 @@ An Eliza Cloud member needs to authorize their own access to The Network.
 
 Check grant ownership and expiry, ban checks, auth mode, and validation cache behavior. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. This standalone model also covers app configuration, concurrent requests, and storage-level interactions.
+The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback permits up to 30 seconds of future issue time. The production delegation parser checks the issue time before the callback rule runs. It requires an issue time no later than the local clock, as do grant and profile proof checks. This standalone model compares a request's start with the latest cache invalidation to represent the runtime's in-flight validation rounds. It also covers app configuration and storage-level interactions.
 
 Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -26,8 +26,8 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //                                               its `validated` cache, auth(), authenticatedSiteSession,
 //                                               cloudGrantAuthority, validateCloudGrant
 //   packages/platform/src/cloud-delegation.ts   productionCloudDelegation.exchange / validate
-//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (skew, one-hour proof life)
-//   packages/core/src/svc/proof-window.ts       proofWindowOk, used by the four Cloud-issued profile proofs
+//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (no future issue time, one-hour proof life)
+//   packages/core/src/svc/profile-review-*.ts  owner, source, withdrawal and disconnect proof windows
 //   packages/platform/src/sessions.ts           create, authenticate (no rotation for a Cloud session), revoke
 //   packages/platform/src/accounts.ts           createPerson + bindSessions (a person-less session ends)
 //
@@ -82,14 +82,11 @@ module cloud_auth {
   pure val APPS = Set("slop", "ntwrk")
   pure val PHONES = Set("X", "Y")
   pure val HUMANS = Set("alice", "bob")
-  // The proofs that Cloud issues with its own clock. "login" and "grant" are parsed with
-  // CLOUD_CLOCK_SKEW_MS (network-delegation.ts:41, api.ts:438 and 684). The four profile proofs are parsed
-  // with proofWindowOk (proof-window.ts:10), which allows no skew: profile-review-owner.ts:55,
-  // profile-review-source.ts:68, profile-review-withdrawal.ts:49, profile-review-disconnect.ts:54.
-  pure val PROOF_KINDS = Set("login", "grant", "owner", "source", "withdrawal", "disconnect")
-  pure def skewAllowed(kind: str): int = if (kind == "login" or kind == "grant") CLOUD_SKEW else 0
-  // The Cloud clock is ahead of ours by one of these offsets (seconds).
-  pure val OFFSETS = Set(0, 20, 45)
+  // Only the staging login identity omits the production delegation check before the callback.
+  pure val PROOF_KINDS = Set("staging-login", "production-delegation", "grant", "owner", "source", "withdrawal", "disconnect")
+  pure def skewAllowed(kind: str): int = if (kind == "staging-login") CLOUD_SKEW else 0
+  // Cloud issue time relative to the local time, in seconds.
+  pure val OFFSETS = Set(-1, 0, 20, 30, 31)
 
   pure def imin(a: int, b: int): int = if (a < b) a else b
 
@@ -131,10 +128,11 @@ module cloud_auth {
   type Flight = {
     reqs: int -> Req,
     nextReq: int,
-    seq: int,                  // event counter: Cloud answers and delivered denials
+    seq: int,                  // event counter for Cloud answers and cache invalidations
     deniedAns: int -> int,     // ghost, per session: the event number of the newest Cloud denial a request delivered
-    deniedAt: int -> int,      // per session: the event number at which that denial was delivered (the fix reads it)
+    invalidatedAt: int -> int, // per session: the event number of the latest cache invalidation
   }
+  type ProofClockCheck = { kind: str, offset: int, accepted: bool }
   type Ghost = {
     cloudLogins: int,
     staleLogin: bool,          // a Cloud sign-in for a human who does not hold the number now
@@ -150,8 +148,7 @@ module cloud_auth {
     bannedGrantValid: bool,    // a grant validation that began after the ban answered valid
     lateBanGrantValid: bool,   // a grant validation in flight when the ban committed answered valid
     otpRefusedOnCloud: bool,   // an OTP session was refused on an app that is now Cloud
-    skewRefused: Set[str],     // proof kinds refused although the Cloud clock was within CLOUD_SKEW
-    skewSeen: Set[str],        // proof kinds that arrived with a non-zero Cloud clock offset
+    proofClockChecks: Set[ProofClockCheck],
   }
 
   // ------------------------------------------------------------------ state
@@ -215,12 +212,12 @@ module cloud_auth {
     },
     sess' = { rows: Map(), nextSid: 1 },
     cache' = Map(),
-    flight' = { reqs: Map(), nextReq: 1, seq: 0, deniedAns: Map(), deniedAt: Map() },
+    flight' = { reqs: Map(), nextReq: 1, seq: 0, deniedAns: Map(), invalidatedAt: Map() },
     ghost' = {
       cloudLogins: 0, staleLogin: false, freshAccepts: 0, cacheAccepts: 0, prodCacheAccept: false,
       revokedCacheAccept: false, wrongModeAccept: false, wrongModeLogin: false, foreignAct: false,
       expiredAccept: false, grantsValid: 0, bannedGrantValid: false, lateBanGrantValid: false,
-      otpRefusedOnCloud: false, skewRefused: Set(), skewSeen: Set(),
+      otpRefusedOnCloud: false, proofClockChecks: Set(),
     },
   }
 
@@ -244,7 +241,7 @@ module cloud_auth {
     cfg' = cfgNamed(n),
     world' = world, sess' = sess,
     cache' = Map(),
-    flight' = { ...flight, reqs: Map() },
+    flight' = { ...flight, reqs: Map(), invalidatedAt: Map() },
     ghost' = ghost,
   }
 
@@ -292,7 +289,7 @@ module cloud_auth {
                         .put(sid, { app: a, phone: p, human: h, person: world.person.get(p), proof: pid, kind: "cloud",
                                     created: now, expires: imin(now + SESSION_TTL, now + PROOF_LIFE), revoked: false }),
                 nextSid: sid + 1 },
-      cache' = cache.put(sid, { until: now + VALIDATION_TTL, answered: flight.seq + 1 }),
+      cache' = if (cfg.prod) cache else cache.put(sid, { until: now + VALIDATION_TTL, answered: flight.seq + 1 }),
       flight' = { ...flight, seq: flight.seq + 1 },
       ghost' = { ...ghost, cloudLogins: ghost.cloudLogins + 1,
                  staleLogin: ghost.staleLogin or world.holder.get(p) != h,
@@ -328,7 +325,8 @@ module cloud_auth {
       if (invalidNow) all {
         sess' = if (path == "auth") { ...sess, rows: sess.rows.set(sid, { ...s, revoked: true }) } else sess,
         cache' = if (badIdentity) cache.keys().filter(k => k != sid).mapBy(k => cache.get(k)) else cache,
-        flight' = flight,
+        flight' = if (badIdentity and not(cfg.prod)) { ...flight, seq: flight.seq + 1,
+                    invalidatedAt: flight.invalidatedAt.put(sid, flight.seq + 1) } else flight,
         world' = world,
         ghost' = { ...ghost, otpRefusedOnCloud: ghost.otpRefusedOnCloud or (cloudApp and s.kind == "otp") },
       } else if (noCloudValid or cacheHit) all {
@@ -373,33 +371,35 @@ module cloud_auth {
     }
   }
 
-  // api.ts:278-283: the end of cloudSessionStatus, then the caller. An expired proof is "invalid" (278).
-  // "valid" writes the cache entry (281); anything else deletes it (282). Then:
+  // The end of cloudSessionStatus, then the caller. An expired proof is "invalid".
+  // A positive result may publish only in the non-production cache and only if its round is current.
+  // Denial, expiry or unavailability clears the positive cache and invalidates its in-flight round. Then:
   //  auth():                   "invalid" revokes the row (320), "unavailable" answers 503 (319, 706),
   //                            "valid" runs sessions.authenticate (321).
   //  authenticatedSiteSession: "invalid" answers undefined and does NOT revoke the row (665).
   //  cloudGrantAuthority:      "valid" and a live row give the grant authority (675-679).
-  // `genFix` is the proposed fix of W3-671 (a generation counter): a positive answer is stored only when
-  // no denial for the session was delivered after this request began. The code today is genFix = false.
-  action reqEndWith(rid: int, genFix: bool): bool = {
+  action reqEnd(rid: int): bool = {
     val r = flight.reqs.get(rid)
     val s = sess.rows.get(r.sess)
     val status = if (proofExpired(world, s.proof, now)) "invalid" else r.answer
-    val store = status == "valid" and (not(genFix) or lookup(flight.deniedAt, r.sess, NONE) < r.startSeq)
+    val currentRound = lookup(flight.invalidatedAt, r.sess, NONE) <= r.startSeq
+    val store = not(cfg.prod) and status == "valid" and currentRound
+    val clear = not(cfg.prod) and status != "valid"
     val cloudDenial = r.answer == "invalid"
+    val newerDenial = cloudDenial and r.answerSeq > lookup(flight.deniedAns, r.sess, NONE)
     val accept = status == "valid" and rowLive(s, now)
     all {
       flight.reqs.keys().contains(rid),
       r.grant == NONE,
       r.answer != "",
       cache' = if (store) cache.put(r.sess, { until: now + VALIDATION_TTL, answered: r.answerSeq })
-               else if (status == "valid") cache
-               else cache.keys().filter(k => k != r.sess).mapBy(k => cache.get(k)),
+               else if (clear) cache.keys().filter(k => k != r.sess).mapBy(k => cache.get(k))
+               else cache,
       flight' = { ...flight,
                   reqs: flight.reqs.keys().filter(k => k != rid).mapBy(k => flight.reqs.get(k)),
-                  seq: if (cloudDenial) flight.seq + 1 else flight.seq,
-                  deniedAns: if (cloudDenial) flight.deniedAns.put(r.sess, r.answerSeq) else flight.deniedAns,
-                  deniedAt: if (cloudDenial) flight.deniedAt.put(r.sess, flight.seq + 1) else flight.deniedAt },
+                  seq: if (clear) flight.seq + 1 else flight.seq,
+                  deniedAns: if (newerDenial) flight.deniedAns.put(r.sess, r.answerSeq) else flight.deniedAns,
+                  invalidatedAt: if (clear) flight.invalidatedAt.put(r.sess, flight.seq + 1) else flight.invalidatedAt },
       sess' = if (status == "invalid" and r.path == "auth") { ...sess, rows: sess.rows.set(r.sess, { ...s, revoked: true }) } else sess,
       world' = if (accept and r.path == "grant") grantFrom(world, s) else world,
       ghost' = if (accept) acceptGhost(ghost, s, false) else ghost,
@@ -407,12 +407,10 @@ module cloud_auth {
     }
   }
 
-  action reqEnd(rid: int): bool = reqEndWith(rid, false)
-
   // ------------------------------------------------------------------ Cloud MCP grants (validateCloudGrant)
 
   // api.ts:681-694 validateCloudGrant before the Cloud call: the authority is bound to app, resource and
-  // phone, issuedAt within the skew, not expired; grant.personId is null or the number's owner (693); the
+  // phone, issuedAt no later than the local clock, not expired; grant.personId is null or the number's owner; the
   // number is not held, banned or suppressed. A refusal answers "invalid" at once (no request in flight).
   // mcp handler.ts:775-786 cloudGrantCurrent checks the ban first as well.
   action grantBegin(gid: int): bool = {
@@ -507,15 +505,12 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ Cloud-issued proof clock skew (SD-308)
 
-  // A proof of `kind` arrives from Cloud, issued on a Cloud clock `off` seconds ahead of ours, with a
-  // lifetime inside the parser's maximum. The parser accepts it when issuedAt <= now + skewAllowed(kind)
-  // (network-delegation.ts:41 for login and grant; proof-window.ts:10 for the profile proofs).
+  // A proof arrives with an issue time `off` seconds from the local clock. Assume the correct envelope
+  // and a live expiry so the action represents only the parser's issue-time decision.
   action proofArrives(kind: str, off: int): bool = {
     val accepted = off <= skewAllowed(kind)
     all {
-      ghost' = { ...ghost,
-                 skewSeen: if (off > 0) ghost.skewSeen.union(Set(kind)) else ghost.skewSeen,
-                 skewRefused: if (not(accepted) and off <= CLOUD_SKEW) ghost.skewRefused.union(Set(kind)) else ghost.skewRefused },
+      ghost' = { ...ghost, proofClockChecks: ghost.proofClockChecks.union(Set({ kind: kind, offset: off, accepted: accepted })) },
       now' = now, cfg' = cfg, world' = world, sess' = sess, cache' = cache, flight' = flight,
     }
   }
@@ -559,17 +554,13 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ invariants
 
-  // W3-671 / W3-373. api.ts:264-265: "A positive Cloud validation is reused for 60 seconds per session
-  // ... A denial is never cached." So a live cache entry never comes from a Cloud answer that is older
-  // than a Cloud denial for the same session that a request already delivered. VIOLATED by the code
-  // (staging-local and dev only): a late positive answer overwrites the denial (Q trace in
-  // quint-findings/cloud_auth.md, run test w3_671LateValidTest).
+  // A cache invalidation ends the current validation round. A live cache entry cannot come from a
+  // Cloud answer older than a denial that the same session already received.
   val denialNeverCached = cache.keys().forall(k =>
     cache.get(k).until <= now or cache.get(k).answered > lookup(flight.deniedAns, k, NONE))
 
-  // api.ts:275 and auth_edge `unavailableNoAccess`: in a production Cloud mode every request asks Cloud;
-  // no request is accepted from the cache.
-  val prodNoCacheAccept = not(ghost.prodCacheAccept)
+  // In production every request asks Cloud and leaves the cache empty.
+  val prodNoCacheAccept = not(ghost.prodCacheAccept) and (cfg.prod implies cache.keys().size() == 0)
 
   // W3-125. api.ts:193 cloudFor, 270, 273, 465, 483, 405, 414: each app has one auth mode at a time. A
   // login path runs only on an app of its mode, and a session is accepted only on an app of its mode
@@ -589,11 +580,12 @@ module cloud_auth {
   // api.ts:274, 278, 685, 696 and network-delegation.ts:41: an expired proof never authorizes a request.
   val expiredNeverAccepted = not(ghost.expiredAccept)
 
-  // W3-134 / SD-308. cloud-delegation.ts:7-8 ("Cloud issues issuedAt on its own clock") and api.ts:101-102:
-  // a Cloud-issued proof whose Cloud clock is at most CLOUD_SKEW ahead of ours is accepted. svc-auth.ts
-  // accepts 60 s of skew on the same responses. VIOLATED by the four profile proof parsers (proofWindowOk
-  // allows 0 s): run test w3_134SkewTest.
-  val cloudProofSkewTolerated = ghost.skewRefused == Set()
+  // The staging callback uses the 30-second window in cloudSignIn.md. Production exchange and
+  // validation parseNetworkDelegation first. The MCP grant envelope and profile proof windows
+  // also require a current issue time. The service signature window is a separate check.
+  val cloudProofClockRules = ghost.proofClockChecks.forall(check =>
+    if (check.kind == "staging-login") check.accepted == (check.offset <= CLOUD_SKEW)
+    else check.accepted == (check.offset <= 0))
 
   // W3-373 (the rotation write of api.ts:330): a Cloud session ends before sessions.ts:53 would rotate it.
   val cloudSessionNeverRotates = sess.rows.keys().forall(k =>
@@ -607,7 +599,7 @@ module cloud_auth {
     cloudActsForHolder,
     bannedGrantRefused,
     expiredNeverAccepted,
-    cloudProofSkewTolerated,
+    cloudProofClockRules,
     cloudSessionNeverRotates,
   }
 
@@ -617,15 +609,14 @@ module cloud_auth {
   val witness_freshAccept = ghost.freshAccepts == 0
   // Outside production a request is accepted from the cache.
   val witness_cacheAccept = ghost.cacheAccepts == 0
-  // By design (api.ts:264): a revocation that no request has seen yet is accepted from the cache for up
-  // to VALIDATION_TTL. This is not the W3-671 defect (no denial was delivered).
+  // Outside production a cached validation lasts up to VALIDATION_TTL before its next authority check.
   val witness_revokedWithinTtl = not(ghost.revokedCacheAccept)
   val witness_grantValid = ghost.grantsValid == 0
   val witness_lateBanGrantValid = not(ghost.lateBanGrantValid)
   // W3-125: after a switch to a Cloud mode an OTP session is refused on that app.
   val witness_otpRefusedOnCloud = not(ghost.otpRefusedOnCloud)
-  // A Cloud clock ahead of ours by less than the skew is seen (login, grant or profile proofs).
-  val witness_skewSeen = ghost.skewSeen == Set()
+  // A future-dated proof reaches the issue-time gate.
+  val witness_skewSeen = ghost.proofClockChecks.forall(check => check.offset <= 0)
 
   // ------------------------------------------------------------------ run tests (concrete traces)
 
@@ -639,42 +630,24 @@ module cloud_auth {
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 1 and ghost.cloudLogins == 1 and safety)
 
-  // W3-671 (code, staging-local or dev): request A's validate() is in flight; Cloud revokes the
-  // delegation; request B (authenticatedSiteSession: the MCP authorize page) gets "invalid" and deletes
-  // the cache entry, but does not revoke the row (api.ts:665); A's late "valid" writes the entry again
-  // (api.ts:281). Request C is then accepted from the cache with no Cloud call, after a denial.
-  run w3_671LateValidTest =
-    initWith("staging-local")
-      .then(cloudLogin("alice", "slop"))
-      .then(tick(61))
-      .then(reqBegin(1, "auth"))                 // A, rid 1
-      .then(cloudAnswer(1, true))                // Cloud says valid for A
-      .then(cloudRevoke(1))                      // Cloud revokes the delegation
-      .then(reqBegin(1, "site"))                 // B, rid 2
-      .then(cloudAnswer(2, true))                // Cloud denies B
-      .then(reqEnd(2))                           // B deletes the entry; the row stays live
-      .expect(not(cache.keys().contains(1)) and denialNeverCached)
-      .then(reqEnd(1))                           // A's late valid writes the entry
-      .expect(cache.keys().contains(1) and not(denialNeverCached))
-      .then(reqBegin(1, "auth"))                 // C: accepted from the cache
-      .expect(ghost.cacheAccepts == 1 and ghost.revokedCacheAccept and not(denialNeverCached))
-
-  // The proposed fix (generation counter): A's answer is not stored, because a denial arrived after A
-  // began. C then asks Cloud again.
-  run w3_671FixTest =
+  // An unavailable validation ends the current cache round. A later round can refresh normally.
+  run stagingCacheRoundOrderingTest =
     initWith("staging-local")
       .then(cloudLogin("alice", "slop"))
       .then(tick(61))
       .then(reqBegin(1, "auth"))
       .then(cloudAnswer(1, true))
-      .then(cloudRevoke(1))
       .then(reqBegin(1, "site"))
-      .then(cloudAnswer(2, true))
-      .then(reqEndWith(2, true))
-      .then(reqEndWith(1, true))
-      .expect(not(cache.keys().contains(1)) and denialNeverCached)
+      .then(cloudAnswer(2, false))
+      .then(reqEnd(2))
+      .then(reqEnd(1))
+      .expect(not(cache.keys().contains(1)) and safety)
       .then(reqBegin(1, "auth"))
-      .expect(ghost.cacheAccepts == 0 and flight.reqs.keys() == Set(3) and denialNeverCached)
+      .expect(ghost.cacheAccepts == 0 and flight.reqs.keys() == Set(3) and safety)
+      .then(cloudAnswer(3, true))
+      .then(reqEnd(3))
+      .then(reqBegin(1, "auth"))
+      .expect(ghost.cacheAccepts == 1 and flight.reqs.keys().size() == 0 and safety)
 
   // Production has no such window: the same trace accepts nothing from the cache (api.ts:275).
   run w3_671ProductionTest =
@@ -823,16 +796,19 @@ module cloud_auth {
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and expiredNeverAccepted)
 
-  // W3-134 / SD-308: a Cloud clock 20 s ahead. The login and grant parsers accept the proof (30 s skew);
-  // the profile-review owner proof is refused (proofWindowOk allows 0 s).
+  // W3-134 / SD-308: only the staging callback allows a proof issued ahead of the local clock.
   run w3_134SkewTest =
     initWith("off")
-      .then(proofArrives("login", 20))
-      .then(proofArrives("grant", 20))
-      .expect(cloudProofSkewTolerated)
-      .then(proofArrives("owner", 20))
-      .expect(not(cloudProofSkewTolerated) and ghost.skewRefused == Set("owner"))
-      .then(proofArrives("login", 45))
-      .expect(ghost.skewRefused == Set("owner"))
+      .then(proofArrives("staging-login", 30))
+      .then(proofArrives("staging-login", 31))
+      .then(proofArrives("production-delegation", 1))
+      .then(proofArrives("grant", 1))
+      .then(proofArrives("owner", 1))
+      .then(proofArrives("source", 1))
+      .then(proofArrives("withdrawal", 1))
+      .then(proofArrives("disconnect", 1))
+      .then(proofArrives("production-delegation", 0))
+      .then(proofArrives("grant", 0))
+      .expect(cloudProofClockRules and ghost.proofClockChecks.size() == 10)
 }
 ```

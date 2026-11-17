@@ -129,7 +129,7 @@ pure def lawCliqueShareIsHighest(neighbours: int, circleSize: int): bool =
 
 ### An alternate can join the primary group in its city
 
-An alternate must be outside the primary group and available in its city. Consider alternates by rank. The engine keeps a candidate only when it has a pair value with every primary participant and previously reserved alternate that the lane pairs them with. Skip a candidate who fails that check and keep looking until the alternate limit is reached. The service checks current eligibility when it uses a replacement.
+An alternate must be outside the primary group and available in its city. Consider alternates by rank. The engine keeps a candidate only when it has a pair value with every primary participant and previously reserved alternate that the lane pairs them with. Skip a candidate who fails that check and keep looking until the alternate limit is reached. A candidate is reserved as an alternate at most once. The service checks current eligibility when it uses a replacement.
 
 ```quint
 pure val memberValues = Set("c", "d", "e")
@@ -143,10 +143,14 @@ pure def canOpenAlternates(g: Formation, alternateLimit: int): bool =
 pure def openAlternates(g: Formation, alternateLimit: int): Formation =
   { ...g, phase: RankingAlternates, alternateLimit: alternateLimit }
 
-pure def canReserveAlternate(g: Formation, member: str): bool =
-  g.phase == RankingAlternates and g.alternates.length() < g.alternateLimit and not(g.primary.includes(member))
+pure def canReserveAlternate(g: Formation, member: str, compatible: bool, sameCityOverlap: bool, pairedWithReserved: bool): bool = and {
+  g.phase == RankingAlternates,
+  g.alternates.length() < g.alternateLimit,
+  not(g.alternates.includes(member)),
+  alternateAllowed(g.primary.includes(member), compatible and pairedWithReserved, sameCityOverlap),
+}
 
-pure def reserveAlternate(g: Formation, member: str): Formation =
+pure def reserveAlternate(g: Formation, member: str, compatible: bool, sameCityOverlap: bool, pairedWithReserved: bool): Formation =
   { ...g, alternates: g.alternates.append(member) }
 
 pure def canFinishGroup(g: Formation): bool = g.phase == RankingAlternates

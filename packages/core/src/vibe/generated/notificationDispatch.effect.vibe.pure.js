@@ -5,13 +5,19 @@ export const initial = M.initial;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function inboxItemAllowedForRecipient(requested, proactiveAllowed) { return M.inboxItemAllowedForRecipient(requested, proactiveAllowed); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemStillPending(seen, notified) { return M.inboxItemStillPending(seen, notified); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export function inboxItemAllowedForRecipient(requested, proactiveAllowed) { return M.inboxItemAllowedForRecipient(requested, proactiveAllowed); }
+export function inboxItemExpired(hasExpiry, expiresAt, at) { return M.inboxItemExpired(hasExpiry, expiresAt, at); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at) { return M.inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function canRereadItems(digest) { return M.canRereadItems(digest); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged) { return M.rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export function canRereadItems(digest) { return M.canRereadItems(digest); }
+export function lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at) { return M.lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged) { return M.lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
@@ -31,8 +37,6 @@ export function sometimesQueuesDigest(digest) { return M.sometimesQueuesDigest(d
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export function sometimesCancelsDigest(digest) { return M.sometimesCancelsDigest(digest); }
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
-export function inboxItemExpired(hasExpiry, expiresAt, at) { return M.inboxItemExpired(hasExpiry, expiresAt, at); }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
 export function canReadQueuedDigest(digest) { return M.canReadQueuedDigest(digest); }
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
 export function readQueuedDigest(digest, sameDigest) { return M.readQueuedDigest(digest, sameDigest); }
@@ -44,6 +48,12 @@ export function revalidateQueuedItems(digest, allPresent, anyExpired, anyUnseen)
 export function sometimesKeepsQueuedDigest(digest) { return M.sometimesKeepsQueuedDigest(digest); }
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
 export function sometimesSuppressesQueuedDigest(digest) { return M.sometimesSuppressesQueuedDigest(digest); }
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) @throws {never} */
+export function queuedDigestClaimAllowed(sameRecipient, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable) { return M.queuedDigestClaimAllowed(sameRecipient, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable); }
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) @throws {never} */
+export function lawUnreadableQueuedLinkCannotSend(sameRecipient, boundLink, appScoped, referenceLive) { return M.lawUnreadableQueuedLinkCannotSend(sameRecipient, boundLink, appScoped, referenceLive); }
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) @throws {never} */
+export function lawForeignQueuedDigestCannotSend(threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable) { return M.lawForeignQueuedDigestCannotSend(threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

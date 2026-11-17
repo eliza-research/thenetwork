@@ -69,7 +69,8 @@ module identity_sagas {
   type PersonRow = { exists: bool, live: bool, hash: str }
   // app "*" is a global event (app_id null). seq orders events with the same time (order by at, id).
   type Ev = { ph: str, app: str, out: bool, at: int, seq: int }
-  type BanRow = { scope: str, person: int, hash: str }
+  // Model the identifier of a staff decision by the person, scope and initially observed hash.
+  type BanRow = { scope: str, person: int, hash: str, observed: str }
   // A STOP the gateway received; it is written to the ledger by a later action (stopCommit).
   type StopMsg = { ph: str, at: int, owner: int, h: str }
 
@@ -89,6 +90,7 @@ module identity_sagas {
     grants: Set[(int, str)],              // live MCP OAuth grants of (person, app)
     cloudGrant: Set[str],                 // live (not revoked) Cloud-origin oauth.grants rows by phone_key
     bans: Set[BanRow],                    // platform.bans
+    completedBans: Set[BanRow],           // platform.bans.projection_completed_at
     suppression: Set[str],                // platform.suppression
     floors: Set[str],                     // platform.age_floor rows
     ledger: Set[Ev],                      // platform.consent_events
@@ -104,7 +106,7 @@ module identity_sagas {
 
   type Sagas = {
     ban: { pc: int, p: int, scope: str, hashes: Set[str], left: Set[str], marked: Set[str] },
-    leave: { pc: int, p: int, app: str, ph: str, hasM: bool, failListener: bool },
+    leave: { pc: int, p: int, app: str, ph: str, hasM: bool, gen: int, failListener: bool },
     del: { pc: int, p: int, ph: str, left: Set[str] },
     ch: { pc: int, ph: str, p: int, left: Set[str] },
     mv: { pc: int, p: int, src: str, dst: str },
@@ -133,8 +135,6 @@ module identity_sagas {
     moveFailedAfterCode: bool,            // a number change with a used code and passed checks did not move
     exportGap: bool,                      // an export left out the member's own photos or stated facts
     u13Stopped: Set[(int, str)],          // an under-13 decline stopped half way (SD-011, module join_age)
-    delHitOther: Set[int],                // a live person whose phone row the delete everything of another person removed (Q-identity_sagas-4)
-    banJoinRace: Set[(int, str)],         // a join of app a while a ban of the person had read its members and not yet written its rows (Q-identity_sagas-3)
     noticed: Set[int],                    // persons who got the one-time Eliza notice
     banDone: int, banRefused: int, leaveDone: int, delDone: int, newOwnerDone: int, sameOwnerDone: int,
     moveDone: int, u13Done: int, stopsCommitted: int, rejoins: int,
@@ -238,20 +238,20 @@ module identity_sagas {
   // The apps where the person has a membership row (a delete fires the trigger for these rows).
   pure def rowApps(w0: World, p: int): Set[str] = APPS.filter(a => w0.mem.get((p, a)) != "none")
 
-  // pg-store.ts store.deleteAll in one transaction. Since 5b6566a (Q-identity_sagas-2) it reads the
-  // person's number now under the person lock and clears that number too; since a0c33d8 (SD-092) it
-  // deletes the line counters of the numbers. matching_runs and eliza_notices are not touched here.
+  // spec/accountPrivacy.md: store.deleteAll uses the authorized person and their current number under the person lock.
+  // An unbound request can only touch an unowned number. The modeled phone cleanup also clears line counters.
   pure def storeDeleteAll(w0: World, p: int, ph: str): World = {
-    val cur = if (p != 0 and w0.people.get(p).hash != "") phoneOf(w0, p) else ""
-    val numbers = Set(ph, cur).exclude(Set(""))
+    val cur = if (p != 0) phoneOf(w0, p) else if (not(w0.phones.get(ph).exists)) ph else ""
+    val numbers = Set(cur).exclude(Set(""))
     val w1 = if (p != 0) dropReceipts(w0, p, rowApps(w0, p)) else w0
     {
       ...w1,
       suppression: w1.suppression.union(numbers),
+      floors: if (p != 0) w1.floors.union(numbers) else w1.floors,
       ledger: w1.ledger.filter(e => not(numbers.contains(e.ph))),
       lineRows: w1.lineRows.exclude(numbers),
       mem: if (p != 0) w1.mem.keys().mapBy(k => if (k._1 == p) "none" else w1.mem.get(k)) else w1.mem,
-      phones: PHONES.mapBy(x => if (x == ph or (p != 0 and w1.phones.get(x).exists and w1.phones.get(x).owner == p)) NO_PHONE else w1.phones.get(x)),
+      phones: PHONES.mapBy(x => if (numbers.contains(x)) NO_PHONE else w1.phones.get(x)),
       people: if (p != 0) w1.people.set(p, { ...w1.people.get(p), live: false }) else w1.people,
     }
   }
@@ -291,16 +291,21 @@ module identity_sagas {
   pure def banUnfinishedIn(w0: World, p: int): bool = APPS.exists(a =>
     Set("active", "paused", "onboarding").contains(w0.mem.get((p, a))) or w0.net.get((p, a)) == "active")
 
-  // The guards of service.ts ban: a Network member, no_phone, and already_banned only for a ban that
-  // reached every step (e361184).
+  pure def banScopeRows(w0: World, p: int, scope: str): Set[BanRow] = {
+    val matching = w0.bans.filter(b => if (scope == "person") b.scope == "person" and b.person == p
+      else w0.people.get(p).hash != "" and b.hash == w0.people.get(p).hash)
+    w0.bans.filter(b => matching.exists(m => m.scope == b.scope and m.person == b.person and m.observed == b.observed))
+  }
+
+  // A recorded ban can resume until the runtime projection receipt commits.
   pure def banGuard(w0: World, p: int, scope: str): str = {
     val hashes = if (w0.people.get(p).hash == "") Set() else Set(w0.people.get(p).hash)
     val member = APPS.exists(a => NET_LIVE.contains(w0.net.get((p, a))))
-    val already = if (scope == "person") codeBanned(w0, "", p) else hashes.forall(h => codeBanned(w0, h, 0))
+    val rows = banScopeRows(w0, p, scope)
     if (not(member)) "not_member"
     else if (scope == "phone" and hashes == Set()) "no_phone"
-    else if (already and not(banUnfinishedIn(w0, p))) "already_banned"
-    else if (already) "finish"
+    else if (rows != Set() and rows.subseteq(w0.completedBans)) "already_banned"
+    else if (rows != Set()) "finish"
     else "start"
   }
 
@@ -342,31 +347,24 @@ module identity_sagas {
   // `restricted`; fixed in 709be0b). Another saga of the person that runs (leave, under-13 decline,
   // delete everything) is exempt too: each one ends the memberships it touches, and retryCompletes checks
   // the retry of a stopped one.
-  // `bannedNotMatchable` leaves out one state: a Network member that the person got by a join between the
-  // ban's member read and its ban rows (new finding Q-identity_sagas-3, not fixed: g.banJoinRace). The
-  // full rule, `bannedNotMatchableFull`, is out of `safety`.
-  def bannedNotMatchableExcept(skip: Set[(int, str)]): bool = g.banDecided.forall(p =>
+  // Q-identity_sagas-3: discover runtime targets after the ban rows commit, including an interleaved join.
+  val bannedNotMatchable = g.banDecided.forall(p =>
     busy(p) or (g.banPending.contains(p) and banRetryOk(p)) or g.delPending.contains(p) or APPS.forall(a =>
-      (w.net.get((p, a)) != "active" or skip.contains((p, a))) and not(Set("active", "paused", "onboarding").contains(w.mem.get((p, a))))))
-  val bannedNotMatchable = bannedNotMatchableExcept(g.banJoinRace)
-  val bannedNotMatchableFull = bannedNotMatchableExcept(Set())
+      w.net.get((p, a)) != "active" and not(Set("active", "paused", "onboarding").contains(w.mem.get((p, a))))))
 
   // implicit-sweep.md 3.5 and platform-identity.md 5.1 `recoverable`: a saga that stopped half way can be
   // finished by the retry the code offers. Reproduced SD-005 (ban; fixed in e361184), SD-016 (clearHold
   // new_owner; fixed in 2f0dbed) and SD-029 (leave: the text retry no longer routed to a member; fixed in
   // a3d1797). A ban that stopped after its last write is done (nothing is left to retry).
-  // `retryCompletes` leaves out the persons whose phone row a delete everything of another person removed
-  // (new finding Q-identity_sagas-4, not fixed: g.delHitOther); `retryCompletesFull` is out of `safety`.
-  def retryCompletesExcept(skip: Set[int]): bool =
+  // Q-identity_sagas-4: an accepted erasure follows its person and preserves a later owner of the old number.
+  val retryCompletes =
     g.banPending.forall(p => busy(p) or banRetryOk(p) or not(banUnfinishedIn(w, p)) or g.delPending.contains(p))
     and g.leavePending.forall(k => (s.leave.pc > 0 and s.leave.p == k._1 and s.leave.app == k._2) or leaveRetryOk(k._1, k._2)
       // Another saga (an under-13 decline, delete everything, a ban) already ended the membership and the
       // Network member is not active (a ban that ran with the leave writes `restricted` on it): nothing is left.
-      or not(LIVE_MEM.contains(w.mem.get(k)) or w.net.get(k) == "active") or skip.contains(k._1))
+      or not(LIVE_MEM.contains(w.mem.get(k)) or w.net.get(k) == "active"))
     and g.chPending.forall(ph => (s.ch.pc > 0 and s.ch.ph == ph) or chRetryOk(ph))
-    and g.delPending.forall(p => (s.del.pc > 0 and s.del.p == p) or delRetryOk(p) or skip.contains(p))
-  val retryCompletes = retryCompletesExcept(g.delHitOther)
-  val retryCompletesFull = retryCompletesExcept(Set())
+    and g.delPending.forall(p => (s.del.pc > 0 and s.del.p == p) or delRetryOk(p))
 
   // platform-identity.md 2.4 `no-pair-divergence` and the leave comment at accounts.ts:420: an active
   // membership has its Network member, except while a saga runs or waits for a retry that the code
@@ -523,9 +521,8 @@ module identity_sagas {
 
   // Rules this code still breaks for defects outside this branch's fixes (not in `safety`; see above):
   // banCoversOldNumbers (SD-492, founder decision), forgetRevokesGrants (SD-089, module oauth_mcp),
-  // pairAgrees (SD-011, module join_age), and the new findings Q-identity_sagas-3 (bannedNotMatchableFull)
-  // and Q-identity_sagas-4 (retryCompletesFull).
-  val knownOpen = and { banCoversOldNumbers, forgetRevokesGrants, pairAgrees, bannedNotMatchableFull, retryCompletesFull }
+  // pairAgrees (SD-011, module join_age).
+  val knownOpen = and { banCoversOldNumbers, forgetRevokesGrants, pairAgrees }
 
   // ------------------------------------------------------------------ witnesses (must be reachable)
   val witness_banDone = g.banDone == 0
@@ -543,7 +540,7 @@ module identity_sagas {
   // ------------------------------------------------------------------ init
   pure val SAGAS0: Sagas = {
     ban: { pc: 0, p: 0, scope: "", hashes: Set(), left: Set(), marked: Set() },
-    leave: { pc: 0, p: 0, app: "", ph: "", hasM: false, failListener: false },
+    leave: { pc: 0, p: 0, app: "", ph: "", hasM: false, gen: 0, failListener: false },
     del: { pc: 0, p: 0, ph: "", left: Set() },
     ch: { pc: 0, ph: "", p: 0, left: Set() },
     mv: { pc: 0, p: 0, src: "", dst: "" },
@@ -570,6 +567,7 @@ module identity_sagas {
       grants: Set((1, "slop"), (1, "peon")),
       cloudGrant: if (cloudA) Set("A") else Set(),
       bans: Set(),
+      completedBans: Set(),
       suppression: if (suppB) Set("B") else Set(),
       floors: Set("A"),
       ledger: Set({ ph: "A", app: "slop", out: false, at: 0, seq: 1 }, { ph: "A", app: "peon", out: false, at: 0, seq: 2 }),
@@ -588,7 +586,7 @@ module identity_sagas {
       newOwnerDecided: Set(), revivedForOther: false, erasedPhones: Set(), erasedPersons: Set(), selfDeleted: Set(),
       forgotten: Set(), personStop: Set(), holderStop: Set(),
       everVerified: PIDS.mapBy(q => if (q == 1) Set("A") else Set()),
-      photosAtBan: Set(), wrongHuman: false, misrouted: false, moveFailedAfterCode: false, exportGap: false, u13Stopped: Set(), banJoinRace: Set(), delHitOther: Set(),
+      photosAtBan: Set(), wrongHuman: false, misrouted: false, moveFailedAfterCode: false, exportGap: false, u13Stopped: Set(),
       noticed: Set(1),
       banDone: 0, banRefused: 0, leaveDone: 0, delDone: 0, newOwnerDone: 0, sameOwnerDone: 0,
       moveDone: 0, u13Done: 0, stopsCommitted: 0, rejoins: 0,
@@ -710,7 +708,6 @@ module identity_sagas {
         selfDeleted: g.selfDeleted.exclude(Set(ph)).exclude(if (revived) g.everVerified.get(q) else Set()), u13Stopped: g.u13Stopped.exclude(Set((q, a))),
         personStop: g.personStop.exclude(Set(q)), holderStop: g.holderStop.exclude(Set((h, ph))),
         rejoins: if (existing == "removed" or revived) g.rejoins + 1 else g.rejoins,
-        banJoinRace: if (s.ban.pc == 1 and s.ban.p == q and not(s.ban.left.contains(a))) g.banJoinRace.union(Set((q, a))) else g.banJoinRace,
         last: if (revived) "join (revived a tombstone)" else "join", args: [ph, a],
       })
     }
@@ -807,7 +804,6 @@ module identity_sagas {
   action banStart(p: int, scope: str): bool = {
     val hashes = if (w.people.get(p).hash == "") Set() else Set(w.people.get(p).hash)
     val gd = banGuard(w, p, scope)
-    val left = APPS.filter(a => LIVE_MEM.contains(w.mem.get((p, a))) or NET_LIVE.contains(w.net.get((p, a))))
     all {
       s.ban.pc == 0,
       gd != "not_member",                             // personOfMember
@@ -815,7 +811,7 @@ module identity_sagas {
       if (gd == "already_banned")
         set3(w, { ...s, ban: { ...s.ban, scope: scope } }, { ...g, banRefused: g.banRefused + 1, last: "ban start: refused already_banned (scope)", args: [scope] })
       else
-        set3(w, { ...s, ban: { pc: if (gd == "finish") 2 else 1, p: p, scope: scope, hashes: hashes, left: left, marked: Set() } },
+        set3(w, { ...s, ban: { pc: if (gd == "finish") 2 else 1, p: p, scope: scope, hashes: hashes, left: Set(), marked: Set() } },
           { ...g, banPending: g.banPending.union(Set(p)),
             last: if (gd == "finish") "ban start: rows are in, the retry finishes the ban (scope)" else "ban start: audit requested, hashes read (scope)", args: [scope] }),
     }
@@ -827,32 +823,34 @@ module identity_sagas {
     all {
       b.pc > 0,
       if (b.pc == 1) {
-        // The ban rows with the hashes read at the start. Since 20f421e (SD-056) ban() locks the person row
-        // and also bans the person's number now when it differs from the hash the caller read.
-        val rows = if (b.scope == "person") Set({ scope: "person", person: p, hash: firstOf(b.hashes) })
-                   else b.hashes.map(h => { scope: "phone", person: p, hash: h })
+        // The number move and ban persistence share a person-phone lock (SD-056).
+        val observed = firstOf(b.hashes)
+        val rows = if (b.scope == "person") Set({ scope: "person", person: p, hash: observed, observed: observed })
+                   else b.hashes.map(h => { scope: "phone", person: p, hash: h, observed: h })
         val nowHash = w.people.get(p).hash
-        val moved = if (nowHash != "" and rows.exists(x => x.hash != "" and x.hash != nowHash)) Set({ scope: b.scope, person: p, hash: nowHash }) else Set()
+        val moved = if (nowHash != "" and observed != "" and observed != nowHash)
+          Set({ scope: b.scope, person: p, hash: nowHash, observed: observed }) else Set()
         set3({ ...w, bans: w.bans.union(rows).union(moved) }, { ...s, ban: { ...b, pc: 2 } },
           { ...g, banDecided: g.banDecided.union(Set(p)), photosAtBan: g.photosAtBan.union(w.photos.filter(k => k._1 == p)), last: "ban: rows inserted", args: [] })
       } else if (b.pc == 2) {
-        set3({ ...w, suppression: w.suppression.union(b.hashes) }, { ...s, ban: { ...b, pc: 3 } }, { ...g, last: "ban: hashes suppressed", args: [] })
+        val hashes = banScopeRows(w, p, b.scope).map(row => row.hash).exclude(Set(""))
+        set3({ ...w, suppression: w.suppression.union(b.hashes).union(hashes) }, { ...s, ban: { ...b, pc: 3 } }, { ...g, last: "ban: hashes suppressed", args: [] })
       } else if (b.pc == 3) {
         set3({ ...w, ratings: w.ratings.exclude(Set(p)) }, { ...s, ban: { ...b, pc: 4 } }, { ...g, last: "ban: ratings dropped", args: [] })
       } else if (b.pc == 4) {
-        // updateMembership(from: onboarding, active, paused) -> restricted (709be0b).
+        // The canonical ban is already visible to enrollment. Read targets from current memberships.
+        val left = APPS.filter(app => LIVE_MEM.contains(w.mem.get((p, app))) or NET_LIVE.contains(w.net.get((p, app))))
         set3({ ...w, mem: w.mem.keys().mapBy(k => if (k._1 == p and Set("onboarding", "active", "paused").contains(w.mem.get(k))) "restricted" else w.mem.get(k)) },
-          { ...s, ban: { ...b, pc: 5 } }, { ...g, last: "ban: memberships restricted", args: [] })
+          { ...s, ban: { ...b, pc: 5, left: left } }, { ...g, last: "ban: current memberships restricted", args: [] })
       } else if (b.pc == 5 and b.left.contains(a) and not(b.marked.contains(a))) {
-        // markBanned in a unit (the Network holds the member).
-        set3({ ...w, netBanned: w.netBanned.union(Set((p, a))) },
-          { ...s, ban: { ...b, marked: b.marked.union(Set(a)) } }, { ...g, last: "ban: network member held (app)", args: [a] })
+        // The runtime holds and restricts the exact member in one transaction.
+        set3({ ...w, netBanned: w.netBanned.union(Set((p, a))), net: w.net.set((p, a), "restricted") },
+          { ...s, ban: { ...b, marked: b.marked.union(Set(a)) } }, { ...g, last: "ban: network hold and restriction committed (app)", args: [a] })
       } else if (b.pc == 5 and b.left.contains(a)) {
-        // Last step for this member (e361184): account_status = 'restricted' (no status filter).
-        set3({ ...w, net: w.net.set((p, a), "restricted") },
-          { ...s, ban: { ...b, left: b.left.exclude(Set(a)) } }, { ...g, last: "ban: network member restricted (app)", args: [a] })
+        set3(w, { ...s, ban: { ...b, left: b.left.exclude(Set(a)) } }, { ...g, last: "ban: app projection finished", args: [a] })
       } else if (b.pc == 5 and b.left == Set()) {
-        set3(w, { ...s, ban: { ...b, pc: 0 } }, { ...g, banPending: g.banPending.exclude(Set(p)), banDone: g.banDone + 1, last: "ban: audit result, done", args: [] })
+        set3({ ...w, completedBans: w.completedBans.union(banScopeRows(w, p, b.scope)) }, { ...s, ban: { ...b, pc: 0 } },
+          { ...g, banPending: g.banPending.exclude(Set(p)), banDone: g.banDone + 1, last: "ban: projection receipt and audit result", args: [] })
       } else blocked,
     }
   }
@@ -877,13 +875,13 @@ module identity_sagas {
         set3(addEv(forgetUnit(w0, target, a), ph, a, true, w.now), s,
           { ...g, forgotten: g.forgotten.union(Set((target, a, w.gen.get((target, a))))), last: "leave by a legacy member", args: [a] })
       else
-        set3(w0, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: LIVE_MEM.contains(w0.mem.get((p, a))) or w0.mem.get((p, a)) == "invited", failListener: false } },
-          { ...g, leavePending: if (LIVE_MEM.contains(w0.mem.get((p, a)))) g.leavePending.union(Set((p, a))) else g.leavePending,
+        set3(w0, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: LIVE_MEM.contains(w0.mem.get((p, a))) or w0.mem.get((p, a)) == "invited", gen: w0.gen.get((p, a)), failListener: false } },
+          { ...g,
             last: "leave by text (app, phone)", args: [a, ph] }),
     }
   }
 
-  // By the API (api.ts:626-629): refused only when held. No ban check.
+  // The API authenticates the person and the phone. App leave also accepts a banned member.
   action leaveApi(ph: str, a: str, failListener: bool): bool = {
     val p = personFor(w, ph)
     all {
@@ -892,8 +890,8 @@ module identity_sagas {
       // A site session lives 30 days (sessions.ts SESSION_TTL_MS) and its login marked the number seen.
       not(stale(w, ph)),
       w.phones.get(ph).exists,
-      set3(w, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: p != 0 and w.mem.get((p, a)) != "none" and w.mem.get((p, a)) != "removed", failListener: failListener } },
-        { ...g, leavePending: if (p != 0 and LIVE_MEM.contains(w.mem.get((p, a)))) g.leavePending.union(Set((p, a))) else g.leavePending,
+      set3(w, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: p != 0 and w.mem.get((p, a)) != "none" and w.mem.get((p, a)) != "removed", gen: w.gen.get((p, a)), failListener: failListener } },
+        { ...g,
           last: "leave by the API", args: [a] }),
     }
   }
@@ -904,13 +902,19 @@ module identity_sagas {
     val a = l.app
     all {
       l.pc > 0,
-      if (l.pc == 1) {
-        // addConsent opted_out, then return when there is no person or membership (accounts.ts:425-426).
+      if (l.pc == 1 and (w.phones.get(l.ph).hold or personFor(w, l.ph) != p or w.gen.get((p, a)) != l.gen))
+        set3(w, { ...s, leave: { ...l, pc: 0 } }, { ...g, last: "leave: binding changed before consent", args: [] })
+      else if (l.pc >= 2 and w.gen.get((p, a)) != l.gen)
+        set3(w, { ...s, leave: { ...l, pc: 0 } }, { ...g, leavePending: g.leavePending.exclude(Set((p, a))), last: "leave: membership replaced after consent", args: [] })
+      else if (l.pc == 1) {
+        // The store checks the captured binding when it appends consent. Signed message time and
+        // verification times are modelled as the generation check here, and are exact in accountPrivacy.md.
         val done = p == 0 or not(l.hasM)
         // The opt-out record of the person's own request (like a STOP: stopCommit), so the number is no
         // longer "erased until it writes again" (noPlainPhoneAfterDelete).
         set3(addEv(w, l.ph, a, true, w.now), { ...s, leave: { ...l, pc: if (done) 0 else 2 } },
-          { ...g, erasedPhones: g.erasedPhones.exclude(Set(l.ph)), last: "leave: opted_out written", args: [] })
+          { ...g, leavePending: if (not(done)) g.leavePending.union(Set((p, a))) else g.leavePending,
+            erasedPhones: g.erasedPhones.exclude(Set(l.ph)), last: "leave: opted_out written", args: [] })
       } else if (l.pc == 2) {
         // onForget: photos first; a banned person's photos stay (8e96df9, SD-275, SD-256).
         val banned = personBanned(w, p)
@@ -951,21 +955,20 @@ module identity_sagas {
     all {
       d.pc > 0,
       if (d.pc == 1)
-        set3({ ...w, floors: w.floors.union(Set(d.ph)) }, { ...s, del: { ...d, pc: 2 } }, { ...g, last: "delete: age floor kept", args: [] })
+        set3(w, { ...s, del: { ...d, pc: 2 } }, { ...g, last: "delete: verified owner", args: [] })
       else if (d.pc == 2 and d.left.contains(a))
         // onForget per membership: photos (kept for a banned person: 8e96df9, SD-178), the forget unit, the listeners.
         set3({ ...forgetUnit(w, p, a), photos: if (personBanned(w, p)) w.photos else w.photos.exclude(Set((p, a))), grants: w.grants.exclude(Set((p, a))) },
           { ...s, del: { ...d, left: d.left.exclude(Set(a)) } },
           { ...g, forgotten: g.forgotten.union(Set((p, a, w.gen.get((p, a))))), last: "delete: forget path for", args: [a] })
       else if (d.pc == 2 and d.left == Set())
-        // store.deleteAll with the session's number; it also clears the person's number now (5b6566a).
+        val numbers = Set(phoneOf(w, p)).exclude(Set(""))
         set3(storeDeleteAll(w, p, d.ph), { ...s, del: { ...d, pc: 0 } },
-          { ...g, delHitOther: if (w.phones.get(d.ph).exists and w.phones.get(d.ph).owner != p and w.people.get(w.phones.get(d.ph).owner).live)
-                                 g.delHitOther.union(Set(w.phones.get(d.ph).owner)) else g.delHitOther,
+          { ...g,
             // The person is gone; a later revival of the tombstone is a new start for the notice ghost.
             noticed: g.noticed.exclude(Set(p)),
-            delPending: g.delPending.exclude(Set(p)), leavePending: g.leavePending.filter(k => k._1 != p), erasedPhones: g.erasedPhones.union(Set(d.ph, phoneOf(w, p)).exclude(Set(""))),
-            erasedPersons: g.erasedPersons.union(Set(p)), selfDeleted: g.selfDeleted.union(Set(d.ph, phoneOf(w, p)).exclude(Set(""))),
+            delPending: g.delPending.exclude(Set(p)), leavePending: g.leavePending.filter(k => k._1 != p), erasedPhones: g.erasedPhones.union(numbers),
+            erasedPersons: g.erasedPersons.union(Set(p)), selfDeleted: g.selfDeleted.union(numbers),
             delDone: g.delDone + 1, last: "delete: store.deleteAll committed, done", args: [] })
       else blocked,
     }
@@ -1208,33 +1211,29 @@ module identity_sagas {
       .then(banStart(1, "person"))
       .expect(g.banRefused == 1)
 
-  // e361184: a stop between markBanned and the status write leaves the member `active`; the retry runs.
+  // The hold and restriction have committed. A crash before completion leaves a resumable ban.
   run banCrashAfterMarkTest =
     init0
       .then(banStart(1, "phone"))
       .then(banStep("slop")).then(banStep("slop")).then(banStep("slop")).then(banStep("slop"))
       .then(banStep("slop"))
       .then(crash("ban"))
-      .expect(w.netBanned.contains((1, "slop")) and w.net.get((1, "slop")) == "active" and banRetryOk(1) and retryCompletes)
+      .expect(w.netBanned.contains((1, "slop")) and w.net.get((1, "slop")) == "restricted" and banRetryOk(1) and retryCompletes)
 
-  // Q-identity_sagas-3 (new, not fixed): the person left peon; a ban reads the members (slop only); the
-  // person joins peon again before the ban rows; the ban restricts both memberships but not the new
-  // Network member of peon, which stays active.
+  // Q-identity_sagas-3: a new Peon membership commits before the ban. The projection includes it.
   run banJoinRaceTest =
     init0
       .then(leaveText("A", "peon")).then(leaveStep).then(leaveStep).then(leaveStep).then(leaveStep).then(leaveStep)
       .then(banStart(1, "person"))
       .then(join("A", "peon"))
       .then(banStep("slop")).then(banStep("slop")).then(banStep("slop")).then(banStep("slop"))
-      .then(banStep("slop")).then(banStep("slop")).then(banStep("slop"))
-      .expect(g.banDone == 1 and w.mem.get((1, "peon")) == "restricted" and w.net.get((1, "peon")) == "active"
-              and not(bannedNotMatchableFull) and bannedNotMatchable)
+      .then(banStep("slop")).then(banStep("slop")).then(banStep("peon")).then(banStep("peon")).then(banStep("slop"))
+      .expect(g.banDone == 1 and w.mem.get((1, "peon")) == "restricted" and w.net.get((1, "peon")) == "restricted"
+              and bannedNotMatchable)
 
-  // Q-identity_sagas-4 (new, not fixed): delete everything starts with a session on A; the person moves to
-  // B; the same human joins peon on A as a new person (A is nobody's number now). The store delete removes
-  // the phone row of A by its e164 and suppresses A: the new person has no number, and a leave they had
-  // started cannot be retried.
-  run deleteHitsOtherPersonTest =
+  // Q-identity_sagas-4: deletion starts on A, the person moves to B, and another account joins on A.
+  // Erasure applies to B and the second account can retry its own leave.
+  run deletePreservesReassignedNumberTest =
     init0
       .then(delStart("A"))
       .then(mvStart(1, "B")).then(mvStep).then(mvStep)
@@ -1242,8 +1241,18 @@ module identity_sagas {
       .then(leaveApi("A", "peon", false)).then(leaveStep).then(leaveStep)
       .then(crash("leave"))
       .then(delStep("slop")).then(delStep("slop")).then(delStep("peon")).then(delStep("slop"))
-      .expect(g.delDone == 1 and w.people.get(2).live and phoneOf(w, 2) == "" and w.suppression.contains("A")
-              and g.delHitOther == Set(2) and not(retryCompletesFull) and retryCompletes)
+      .expect(g.delDone == 1 and not(w.people.get(1).live) and w.people.get(2).live and phoneOf(w, 2) == "A"
+              and not(w.suppression.contains("A")) and w.suppression.contains("B") and retryCompletes)
+
+  // The admitted phone binding and the selected membership must still match at the consent write.
+  run leavePreservesReassignedNumberTest =
+    init0
+      .then(leaveApi("A", "slop", false))
+      .then(mvStart(1, "B")).then(mvStep).then(mvStep)
+      .then(join("A", "slop"))
+      .then(leaveStep)
+      .expect(s.leave.pc == 0 and g.leaveDone == 0 and phoneOf(w, 2) == "A" and w.mem.get((2, "slop")) == "active"
+              and not(w.ledger.exists(e => e.ph == "A" and e.app == "slop" and e.out)))
 
   // A ban with no crash: every membership restricted, the Network holds both members.
   run banCompletesTest =
@@ -1385,7 +1394,7 @@ module identity_sagas {
       .then(delStart("A"))
       .then(mvStep)
       .then(delStep("slop")).then(delStep("slop")).then(delStep("peon")).then(delStep("slop"))
-      .expect(g.delDone == 1 and w.suppression.contains("B") and w.suppression.contains("A") and not(w.ledger.exists(e => e.ph == "B"))
+      .expect(g.delDone == 1 and w.suppression.contains("B") and not(w.suppression.contains("A")) and not(w.ledger.exists(e => e.ph == "B"))
               and deleteKeepsSafety and noPlainPhoneAfterDelete)
 
   // SD-026 (fixed in a75f361): a legacy row for A; the member moves to B; A goes to h2; h2's text reaches nobody.

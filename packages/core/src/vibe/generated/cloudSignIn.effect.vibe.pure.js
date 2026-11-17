@@ -21,6 +21,8 @@ export function cloudIssuedAtWithinSkew(issuedAtMs, asOf) { return M.cloudIssued
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudSessionStartedAt(issuedAtMs, asOf) { return M.cloudSessionStartedAt(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf) { return M.cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function lawSessionStartIsNeverFuture(issuedAtMs, asOf) { return M.lawSessionStartIsNeverFuture(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function canRecordExchange(signIn) { return M.canRecordExchange(signIn); }
@@ -30,6 +32,12 @@ export function recordExchange(signIn, exchangeAccepted) { return M.recordExchan
 export function canCheckIdentity(signIn) { return M.canCheckIdentity(signIn); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function checkIdentity(signIn, identityAvailable, identityValid) { return M.checkIdentity(signIn, identityAvailable, identityValid); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf) { return M.lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs, asOf) { return M.lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs, asOf); }
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) @throws {never} */
+export function lawStoredSessionEndsByIdentityExpiry(createdAt, startedAt, ttl, maxAge, identityExpiry) { return M.lawStoredSessionEndsByIdentityExpiry(createdAt, startedAt, ttl, maxAge, identityExpiry); }
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) @throws {never} */
 export function canCheckPhone(signIn) { return M.canCheckPhone(signIn); }
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) @throws {never} */

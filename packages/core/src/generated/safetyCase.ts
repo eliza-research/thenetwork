@@ -135,6 +135,39 @@ export function holdAuthority(actorPresent: boolean, reportMatches: boolean): St
   return !actorPresent ? "ActorRequired" : (!reportMatches ? "UnknownReport" : "AllowedAction");
 }
 
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function immediateDangerReply(directText: boolean, currentDanger: boolean): boolean {
+  return directText && currentDanger;
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function emergencyCheckInReport(exactReceipt: boolean, attributedReport: boolean): boolean {
+  return exactReceipt && attributedReport;
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function lawEmergencyReplyRequiresOwnText(currentDanger: boolean): boolean {
+  //@ ensures \result === true
+  return !immediateDangerReply(false, currentDanger);
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function lawEmergencyReplyRequiresCurrentDanger(directText: boolean): boolean {
+  //@ ensures \result === true
+  return !immediateDangerReply(directText, false);
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function lawEmergencyCheckInNeedsReceipt(attributedReport: boolean): boolean {
+  //@ ensures \result === true
+  return !emergencyCheckInReport(false, attributedReport);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {
@@ -152,6 +185,32 @@ export function reportRestrictsMatching(reportPhase: ReportPhase, metBefore: boo
 export function lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: boolean, reportMatches: boolean): boolean {
   //@ ensures \result === true
   return reportAfterDecision("ReportDismissed", decision, sameMember, reportMatches) === "ReportDismissed";
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function archivedReportHoldAllowed(exactSubject: boolean, matchingRestriction: boolean): boolean {
+  return exactSubject && matchingRestriction;
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawArchivedHoldRequiresExactSubject(matchingRestriction: boolean): boolean {
+  //@ ensures \result === true
+  return !archivedReportHoldAllowed(false, matchingRestriction);
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
+  return ordinaryLeave && reportRestrictsMatching(reportPhase, metBefore, urgent);
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function lawOnlyOpenReportsCarry(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean): boolean {
+  //@ ensures \result === true
+  return !carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) || reportPhase === "ReportOpen";
 }
 
 /** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
@@ -188,10 +247,10 @@ export function enabled(current: SafetyCase, event: Event): boolean {
 export function step(current: SafetyCase, event: Event): SafetyCase {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordCaseEvent" && canRecordCaseEvent(current)) return recordCaseEvent(current, event.liftEvent, event.decayEvent);
-  if (event.type === "markCaseHeld" && canMarkCaseHeld(current)) return markCaseHeld(current);
-  if (event.type === "markCaseLifted" && canMarkCaseLifted(current)) return markCaseLifted(current);
-  if (event.type === "closeCase" && canCloseCase(current)) return closeCase(current);
+  if (event.type === "recordCaseEvent") return canRecordCaseEvent(current) ? recordCaseEvent(current, event.liftEvent, event.decayEvent) : current;
+  if (event.type === "markCaseHeld") return canMarkCaseHeld(current) ? markCaseHeld(current) : current;
+  if (event.type === "markCaseLifted") return canMarkCaseLifted(current) ? markCaseLifted(current) : current;
+  if (event.type === "closeCase") return canCloseCase(current) ? closeCase(current) : current;
   return current;
 }
 

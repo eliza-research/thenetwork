@@ -7,6 +7,8 @@
 // keeps only keyed hashes (the audit record).
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import { NetworkService } from "../../network/service/service.ts";
 import { APPS } from "../src/apps.ts";
@@ -125,6 +127,44 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect((await store.findPhone(A))).toBeDefined();
   }, T);
 
+  // spec/phoneChange.md, "A challenge needs a send slot and a persisted request"
+  test("the fourth daily change request sends no code and keeps the third request pending", async () => {
+    const t = setup();
+    const oldNumber = "+12125550268";
+    const targets = ["+12125550269", "+12125550270", "+12125550271"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    for (const phone of targets) {
+      expect(await browser.call("POST", "/api/me/phone/start", { phone })).toEqual({ status: 200, body: { ok: true } });
+    }
+    expect(await browser.call("POST", "/api/me/phone/start", { phone: "+12125550272" })).toEqual({
+      status: 429, body: { ok: false, error: "rate_limited" },
+    });
+    expect(t.sends).toEqual([oldNumber, ...targets]);
+    const owner = await store.findPhone(oldNumber);
+    if (!owner) throw new Error("The member is missing");
+    expect(await store.pendingPhoneChange(owner.personId)).toMatchObject({ newE164: targets[2] });
+  }, T);
+
+  // spec/phoneChange.md, "A live pending request needs a valid code"
+  test("a clock rollback leaves the new code available until its request starts", async () => {
+    const t = setup();
+    const [oldNumber, newNumber] = ["+12125550273", "+12125550274"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    t.tick(MIN);
+    expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
+    const input = { code: t.codes.get(newNumber) };
+    t.tick(-1);
+    expect(await browser.call("POST", "/api/me/phone/confirm", input)).toEqual({
+      status: 409, body: { ok: false, error: "no_pending_change" },
+    });
+    t.tick(1);
+    expect((await browser.call("POST", "/api/me/phone/confirm", input)).status).toBe(200);
+  }, T);
+
   // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
   test("a provider verification that finishes after the pending move expires leaves the number unchanged", async () => {
     const t = setup();
@@ -153,6 +193,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
   test("a released number cannot route to the former member through an old channel alias", async () => {
     const t = setup();
     const [oldNumber, newNumber, legacyNumber] = ["+12125550265", "+12125550266", "+12125550267"];
+    const secret = "synthetic-number-change-leave-secret";
     const browser = t.browser();
     await browser.login(oldNumber);
     expect((await t.join(browser)).status).toBe(200);
@@ -165,13 +206,14 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     await sql`insert into network.channel_identities (member_id,app_id,channel,address,is_primary)
       values (${member.memberId},'slop','sms',${oldNumber},true),(${legacyMember},'slop','sms',${legacyNumber},true)`;
     const service = new NetworkService({ url, clock: { now: t.now }, networks: [{ id: "slop:nyc", matchingEnabled: false }],
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, photoStorage: null, log: () => {} });
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, photoStorage: null, log: () => {} });
     try {
       await service.start();
       const runtime = service.runtimeFor("slop")!;
       await runtime.identities();
       expect(await service.memberApps(oldNumber)).toMatchObject([{ memberId: member.memberId }]);
       expect(runtime.memberOf(oldNumber)).toBe(member.memberId);
+      const oldOwnerLeaveAt = t.now();
       expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
       expect((await browser.call("POST", "/api/me/phone/confirm", { code: t.codes.get(newNumber) })).status).toBe(200);
       await runtime.identities();
@@ -196,6 +238,32 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
       await runtime.identities();
       expect((await service.memberApps(oldNumber)).map(route => route.memberId)).toEqual([nextMember.memberId]);
       expect(runtime.memberOf(oldNumber)).toBe(nextMember.memberId);
+
+      const signedLeave = async (messageId: string, at: number) => {
+        const input: TurnRequest = { app: "slop", channel: "blooio", messageId, from: oldNumber, to: null,
+          transport: "imessage", text: "leave slop", receivedAt: at };
+        const body = JSON.stringify(input);
+        const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(t.now() / 1000) });
+        const response = await service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }));
+        expect(response.status).toBe(200);
+        return response.json();
+      };
+      const delayed = await signedLeave("former-owner-leave", oldOwnerLeaveAt);
+      expect(delayed.consent).toBeUndefined();
+      expect(await store.getMembership(nextOwner.personId, "slop")).toMatchObject({ state: "active" });
+      expect(await service.accounts.optedIn("slop", oldNumber)).toBe(true);
+      expect(await service.accounts.leave(APPS.slop, { e164: oldNumber, personId: owner.personId })).toBe(false);
+      expect(await store.getMembership(nextOwner.personId, "slop")).toMatchObject({ state: "active" });
+
+      // Retry after the Network record was erased and the platform membership write did not finish.
+      await sql`delete from network.members where app_id='slop' and id=${nextMember.memberId}`;
+      await runtime.identities();
+      expect(runtime.memberOf(oldNumber)).toBeUndefined();
+      const fresh = await signedLeave("current-owner-leave", t.now());
+      expect(fresh).toMatchObject({ consent: { state: "opted_out", scope: "app", app: "slop", at: t.now() } });
+      expect(await store.getMembership(nextOwner.personId, "slop")).toMatchObject({ state: "removed" });
+      expect(await service.accounts.optedIn("slop", newNumber)).toBe(true);
+      expect(await store.getMembership(owner.personId, "slop")).toMatchObject({ state: "active" });
     } finally { await service.close(); }
   }, T);
 

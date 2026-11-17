@@ -190,11 +190,11 @@ export function enabled(current: RetryRun, event: Event): boolean {
 export function step(current: RetryRun, event: Event): RetryRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "configure" && canConfigure(current, event.attemptLimit)) return configure(current, event.attemptLimit, event.unbounded);
-  if (event.type === "stopBeforeAttempt" && canStopBeforeAttempt(current)) return stopBeforeAttempt(current);
-  if (event.type === "preflight" && canPreflight(current)) return preflight(current, event.cancelled, event.expired);
-  if (event.type === "acceptReply" && canAcceptReply(current)) return acceptReply(current);
-  if (event.type === "rejectReply" && canRejectReply(current)) return rejectReply(current, event.terminal);
+  if (event.type === "configure") return canConfigure(current, event.attemptLimit) ? configure(current, event.attemptLimit, event.unbounded) : current;
+  if (event.type === "stopBeforeAttempt") return canStopBeforeAttempt(current) ? stopBeforeAttempt(current) : current;
+  if (event.type === "preflight") return canPreflight(current) ? preflight(current, event.cancelled, event.expired) : current;
+  if (event.type === "acceptReply") return canAcceptReply(current) ? acceptReply(current) : current;
+  if (event.type === "rejectReply") return canRejectReply(current) ? rejectReply(current, event.terminal) : current;
   return current;
 }
 

@@ -11,6 +11,7 @@ export interface Venue extends LatLng {
   id: string; name: string; neighborhood: string; borough: Borough;
   kind: "park" | "library" | "plaza" | "market" | "museum" | "waterfront" | "courts" | "cafe_district";
   tags: string[];
+  bookingUrl?: string;
 }
 
 const N = (name: string, borough: Borough, lat: number, lng: number): Neighborhood => ({ name, borough, lat, lng });
@@ -40,13 +41,13 @@ export const NEIGHBORHOODS: Neighborhood[] = [
 ];
 export const NEIGHBORHOOD = new Map(NEIGHBORHOODS.map(n => [n.name, n]));
 
-const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], lat: number, lng: number, tags: string[]): Venue =>
-  ({ id, name, neighborhood, borough: NEIGHBORHOOD.get(neighborhood)?.borough ?? "Manhattan", kind, lat, lng, tags });
+const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], lat: number, lng: number, tags: string[], bookingUrl?: string): Venue =>
+  ({ id, name, neighborhood, borough: NEIGHBORHOOD.get(neighborhood)?.borough ?? "Manhattan", kind, lat, lng, tags, ...(bookingUrl ? { bookingUrl } : {}) });
 export const VENUES: Venue[] = [
   V("prospect-long-meadow", "Prospect Park, Long Meadow", "Park Slope", "park", 40.6602, -73.969, ["outdoors", "running", "picnic", "walk", "social"]),
   V("grand-army-greenmarket", "Grand Army Plaza Greenmarket", "Prospect Heights", "market", 40.6741, -73.97, ["food", "cooking", "market", "social"]),
   V("bpl-central", "Brooklyn Public Library, Central", "Prospect Heights", "library", 40.6724, -73.9682, ["books", "quiet", "writing", "study", "professional"]),
-  V("brooklyn-museum", "Brooklyn Museum", "Prospect Heights", "museum", 40.6712, -73.9636, ["arts", "museums", "film"]),
+  V("brooklyn-museum", "Brooklyn Museum", "Prospect Heights", "museum", 40.6712, -73.9636, ["arts", "museums", "film"], "https://secure.brooklynmuseum.org/"),
   V("mccarren-park", "McCarren Park", "Williamsburg", "park", 40.7206, -73.9518, ["running", "sports", "outdoors", "social"]),
   V("domino-park", "Domino Park", "Williamsburg", "waterfront", 40.7145, -73.9686, ["outdoors", "walk", "social", "photography"]),
   V("transmitter-park", "Transmitter Park", "Greenpoint", "waterfront", 40.7273, -73.9606, ["outdoors", "walk", "quiet"]),

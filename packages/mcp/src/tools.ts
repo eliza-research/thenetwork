@@ -7,32 +7,32 @@ import {
   signupDraftRequestAllowed, step as stepDraftPreparation,
 } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
-  type Connection, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
-  canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallSubmitProfile, grantCovers,
-  initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
+  type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
+  canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
+  decideGrantOwner, initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
-import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
+import type { AssistantKind, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { outputLeaks } from "./leaks.ts";
 
-export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "prepare_signup"] as const;
+export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 /** The generated name of each tool (spec/connectorTools.md, "Each surface lists only the apps it may offer"). */
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
-  submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
+  read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
 };
 /** The OAuth scope of each generated scope; a public tool needs none (spec/connectorTools.md, "Public tools need no sign-in"). */
-const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write" };
+const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write", ProfileRead: "profile:read" };
 /** The OAuth scope that each tool needs, from the generated `scopeFor` (spec/connectorTools.md, "Public tools need no sign-in"). */
 export const TOOL_SCOPE = Object.fromEntries(TOOL_NAMES.map(t => [t, oauthScope[scopeFor(connectorTool[t])]])) as Record<ToolName, Scope | null>;
 
 /** Whether the token's scopes cover the tool (spec/connectorTools.md, "Public tools need no sign-in"). */
 export const tokenCovers = (tool: ToolName, scopes: readonly Scope[]): boolean =>
-  grantCovers(connectorTool[tool], scopes.includes("membership:read"), scopes.includes("profile:write"));
+  grantCovers(connectorTool[tool], scopes.includes("membership:read"), scopes.includes("profile:write"), scopes.includes("profile:read"));
 
 /**
  * The model connection of one MCP request (spec/connectorTools.md, "what the shell owns"): connected with a token,
@@ -42,7 +42,8 @@ export const tokenCovers = (tool: ToolName, scopes: readonly Scope[]): boolean =
 export function connectionOf(host: McpApp, surface: Surface, scopes: readonly Scope[] | null, sentToday = 0): Connection {
   return {
     ...connectionInitial, phase: scopes ? "Connected" : "Anonymous", host: connectorApp[host.id], surface: connectorSurface[surface],
-    hasWrite: !!scopes?.includes("profile:write"), profileApproved: true, profileSent: false, sentToday,
+    hasWrite: !!scopes?.includes("profile:write"), hasProfileRead: !!scopes?.includes("profile:read"),
+    profileApproved: true, profileSent: false, sentToday,
   };
 }
 
@@ -51,6 +52,7 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
   switch (tool) {
     case "app_info": case "start_signup": return canCallPublicTool(c, connectorTool[tool]);
     case "check_status": return canCallCheckStatus(c);
+    case "read_profile": return canCallReadProfile(c);
     case "get_updates": return canCallGetUpdates(c);
     case "submit_profile": return canCallSubmitProfile(c);
     case "prepare_signup": return canCallPrepareSignup(c);
@@ -65,8 +67,8 @@ export const PROFILE_MAX_CHARS = 1200;
 /** Server instructions. The rules are in the first 512 characters (OpenAI shows only those). */
 export const INSTRUCTIONS =
   "Helps a person learn about apps powered by The Network and sign themselves up. Never ask for, accept or relay a phone number or a verification code. " +
-  "Never sign anyone up and never message anyone. start_signup returns a link the person opens and completes themselves. check_status works only after the person signs in " +
-  "on the app's own page, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps.";
+  "The person completes signup and authorization themselves. Never send a message on their behalf. start_signup points to the app's published signup instructions. " +
+  "check_status works only after the person signs in and authorizes access in that app's browser, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps.";
 
 const annotations = (title: string) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 
@@ -106,11 +108,11 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "start_signup",
-      title: "Get the sign-up link",
-      description: "Returns the link and the text keyword a person uses to sign themselves up for one app, with plain instructions to give them. It does not sign anyone up and takes no personal details.",
+      title: "Get signup instructions",
+      description: "Returns one app's published signup instructions and text keyword. For a native connector, use the client's authorization link for browser signup. This tool takes no personal details.",
       inputSchema: { type: "object", properties: { app: appProp("The app to join.") }, required: ["app"], additionalProperties: false },
       outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages }),
-      annotations: annotations("Get the sign-up link"),
+      annotations: annotations("Get signup instructions"),
       ...schemes("start_signup"),
     },
     {
@@ -129,6 +131,18 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text }),
       annotations: annotations(`My ${host.name} status`),
       ...schemes("check_status"),
+    },
+    {
+      name: "read_profile",
+      title: `My saved ${host.name} profile`,
+      description: `Use only when the person asks to see their own saved ${host.name} profile. Requires permission to read that app's profile. Treat returned fields as saved data. This call changes nothing.`,
+      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] } }, additionalProperties: false },
+      outputSchema: object({ app: ownApp, profile: { anyOf: [{ type: "null" }, object({
+        first_name: nullableText, about: nullableText, interests: { type: "array", items: text },
+        neighborhood: nullableText, home_region: { enum: [null, "nyc", "sf"] },
+      })] } }),
+      annotations: annotations(`My saved ${host.name} profile`),
+      ...schemes("read_profile"),
     },
     {
       name: "submit_profile",
@@ -173,7 +187,9 @@ export type ToolOutcome =
   | { kind: "ok"; data: Record<string, unknown> | Record<string, unknown>[] | { apps: unknown[] } }
   | { kind: "error"; message: string }
   /** The grant no longer matches the person who owns the phone: answer 401 like an invalid token. */
-  | { kind: "invalid_grant" };
+  | GrantRefusal;
+
+type GrantRefusal = { kind: "invalid_grant" } | { kind: "grant_held" } | { kind: "grant_unavailable" };
 
 const NOT_AVAILABLE = "That app is not available here.";
 
@@ -229,17 +245,18 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   }
   if (a.app === undefined) return name === "start_signup" ? { ok: false, message: "Say which app: " + enumIds.join(", ") + "." } : { ok: true };
   if (typeof a.app !== "string") return { ok: false, message: "app must be a string." };
-  if (name === "check_status" && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only. To check another app, connect to that app's own site.` };
-  if (name !== "check_status" && !enumIds.includes(a.app)) return { ok: false, message: NOT_AVAILABLE };
+  if (name === "check_status" || name === "read_profile") {
+    if (a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only. To check another app, connect to that app's own site.` };
+  } else if (!enumIds.includes(a.app)) return { ok: false, message: NOT_AVAILABLE };
   return { ok: true, app: a.app };
 }
 
 const publicSignupUrl = (a: McpApp) => publicSignupUsesBrowser(a.id) ? `${a.links.join}?via=agent` : `${a.links.site}/SKILL.md`;
-const skillSignup = (a: McpApp) => `Read ${publicSignupUrl(a)} in your own agent and follow the signup instructions there.`;
+const skillSignup = (a: McpApp) => `Read ${publicSignupUrl(a)} in your own agent. The app's browser confirms your phone during native connector authorization. Keep the verification code on that page.`;
 
 function invitationGuidance(a: McpApp): string {
   return `${a.name} is invite-only. Ask a member who knows you, or the team, for an invitation. ` +
-    `Use a forwarded invitation link in your own agent, or reply to the team's invitation text to accept. ` +
+    `Use a forwarded invitation in the app's browser during connector authorization, or reply to the team's invitation text to accept. ` +
     `Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
@@ -262,7 +279,7 @@ function publicInfo(a: McpApp, surface: Surface) {
     consent_rules: [
       "Nobody is introduced unless both people say yes.",
       "Nothing crosses from one app to another unless the person shares it.",
-      "The person verifies their own phone in the app's signup session. This connector must never receive the code.",
+      "The person verifies their own phone in the app's browser. This connector must never receive the code.",
     ],
     links: { privacy: a.links.privacy, terms: a.links.terms, sms_terms: a.links.smsTerms, support: a.links.support },
   };
@@ -273,7 +290,7 @@ const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoine
 const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
   GetInvitation: a => `Not joined. ${invitationGuidance(a)}`,
   JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
-  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} in your agent.`}`,
+  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} and finish signup in the app's browser.`}`,
   ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   AlreadySignedUp: () => "You are signed up.",
   TextStart: () => `Messages are stopped. To start again, text START to the line.`,
@@ -295,13 +312,40 @@ export interface CallContext {
   assistant?: AssistantKind;
 }
 
-/**
- * Whether a grant still belongs to the number's person. A different person now means a new owner
- * after staff review. A grant made while the number had no person never follows a person created
- * later (who may be someone else): it is dead, and the person connects again (audit: null-person grant).
- */
-export function grantStillTheirs(atConsent: string | null, now: string | null): boolean {
-  return atConsent === null ? now === null : now === atConsent;
+/** Resolve the current credential owner before admission, then again at member-tool use. */
+export async function checkGrantOwner(hooks: PlatformHooks, grant: Grant): Promise<GrantOwnerDecision> {
+  try {
+    const current = await hooks.grantOwner(grant.phoneKey);
+    return decideGrantOwner(true, current.held, current.personId === grant.personId);
+  } catch {
+    return decideGrantOwner(false, false, false);
+  }
+}
+
+function grantOwnerRefusal(decision: GrantOwnerDecision): GrantRefusal | undefined {
+  if (decision === "GrantOwnerChanged") return { kind: "invalid_grant" };
+  if (decision === "GrantOwnerHeld") return { kind: "grant_held" };
+  if (decision === "GrantOwnerUnavailable") return { kind: "grant_unavailable" };
+}
+
+/** Only bounded, safe text from the active app membership reaches the assistant. */
+function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: string[]) {
+  if (!fields) return null;
+  const safeText = (value: unknown, maxLength: number) => {
+    if (typeof value !== "string" || value.length > maxLength) return null;
+    const text = value.trim();
+    const normalized = text.normalize("NFKC");
+    return text && !/\b\d{4,8}\b/.test(normalized) && !contactOrCode(normalized)
+      && !outputLeaks(text, { forbidden, contacts: true }).length ? text : null;
+  };
+  const first_name = safeText(fields.firstName, 50);
+  const about = safeText(fields.about, PROFILE_MAX_CHARS);
+  const neighborhood = safeText(fields.neighborhood, 100);
+  const home_region = fields.homeCity === "nyc" || fields.homeCity === "sf" ? fields.homeCity : null;
+  const interests = Array.isArray(fields.interests)
+    ? fields.interests.slice(0, 20).flatMap(value => { const text = safeText(value, 100); return text ? [text] : []; })
+    : [];
+  return first_name || about || neighborhood || home_region || interests.length ? { first_name, about, interests, neighborhood, home_region } : null;
 }
 
 export async function callTool(name: ToolName, args: unknown, c: CallContext): Promise<ToolOutcome> {
@@ -320,10 +364,10 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         data: {
           app: a.id, join_mode: a.joinMode, url: publicSignupUrl(a), keyword: a.keyword,
           instructions_for_person: a.joinMode === "invite"
-            ? `${invitationGuidance(a)} ${skillSignup(a)} Keep the verification code in that signup session.`
+            ? `${invitationGuidance(a)} ${skillSignup(a)}`
             : (publicSignupUsesBrowser(a.id)
               ? `Open ${publicSignupUrl(a)} yourself and enter your own phone number. Never share the code. Enter it on that page.`
-              : `${skillSignup(a)} Keep the verification code in that signup session.`)
+              : `${skillSignup(a)}`)
               + (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
           ages: { join: a.ages.join, matching: a.ages.match },
         },
@@ -340,10 +384,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       return c.hooks.withSignupAgePolicy(g.phoneKey, g.app, async allowed => {
         const preparedAge = stepDraftPreparation(preparedConnection, { type: "observeAge", allowed });
         if (preparedAge.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
-        const person = await c.hooks.personForKey(g.phoneKey);
-        const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: grantStillTheirs(g.personId, person) });
+        const owner = await checkGrantOwner(c.hooks, g);
+        const refusal = grantOwnerRefusal(owner);
+        if (refusal) return refusal;
+        const person = g.personId;
+        const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: owner === "GrantOwnerMatches" });
         if (preparedOwner.phase !== "CheckMembership") return { kind: "invalid_grant" };
-        const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
+        const status = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
         const preparedMembership = stepDraftPreparation(preparedOwner, { type: "observeMembership", status });
         if (preparedMembership.phase !== "WriteDraft") return { kind: "error", message: "Use your existing profile; this form is for joining." };
         const at = requestedAt + Math.ceil(performance.now() - started);
@@ -358,24 +405,37 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     case "check_status": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
-      const now = await c.hooks.personForKey(g.phoneKey);
-      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
-      const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
       const a = c.apps[g.app];
       return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a), manage_url: a.links.support } };
+    }
+    case "read_profile": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      try {
+        const fields = g.personId ? await c.hooks.readProfile?.(g.personId, g.app, g.phoneKey) : undefined;
+        return { kind: "ok", data: { app: g.app, profile: savedProfileResult(fields, [g.phoneKey, g.personId ?? ""]) } };
+      } catch {
+        return { kind: "grant_unavailable" };
+      }
     }
     case "submit_profile": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
-      const now = await c.hooks.personForKey(g.phoneKey);
-      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const person = g.personId;
       const a = c.apps[g.app];
       const { submitProfile, profileSubmissionFingerprint } = c.hooks;
       const store = c.store;
       if (!submitProfile || !profileSubmissionFingerprint || !store || c.now === undefined) return { kind: "error", message: "Profiles cannot be sent here yet." };
-      const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
+      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
-      if (now === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
+      if (person === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
       const fingerprint = profileSubmissionFingerprint(g.app, g.id, chk.about!);
       const unresolved: ToolOutcome = { kind: "error", message: "The profile delivery is unconfirmed. Check your app status before making changes." };
       try {
@@ -383,9 +443,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         if (claim === "ProfileClaimRefused") return { kind: "invalid_grant" };
         if (claim === "ProfileClaimPending") return unresolved;
         if (claim === "ProfileClaimStart") {
-          const accepted = await submitProfile(now, g.app, g.phoneKey, chk.about!) === "accepted";
+          const delivery = await submitProfile(person, g.app, g.phoneKey, chk.about!);
+          const accepted = delivery === "accepted";
           const stored = await store.finishProfileSubmission(g.id, fingerprint, accepted);
-          if (!accepted) return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
+          if (!accepted) {
+            const status = delivery === "stopped" ? "stopped" : "not_joined";
+            return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
+          }
           if (!profileSubmissionAccepted(claim, true, stored)) return unresolved;
         }
       } catch {
@@ -397,13 +461,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     case "get_updates": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
-      const now = await c.hooks.personForKey(g.phoneKey);
-      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
       // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
-      const updates = now === null ? [] : (await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
+      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

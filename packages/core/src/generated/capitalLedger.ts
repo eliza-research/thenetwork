@@ -204,9 +204,9 @@ export function enabled(current: CapitalEventFlow, event: Event): boolean {
 export function step(current: CapitalEventFlow, event: Event): CapitalEventFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordLedgerAppend" && canRecordLedgerAppend(current)) return recordLedgerAppend(current);
-  if (event.type === "validateLedgerEvent" && canValidateLedgerEvent(current)) return validateLedgerEvent(current, event.valid);
-  if (event.type === "checkLedgerSource" && canCheckLedgerSource(current)) return checkLedgerSource(current, event.duplicate, event.inOrder);
+  if (event.type === "recordLedgerAppend") return canRecordLedgerAppend(current) ? recordLedgerAppend(current) : current;
+  if (event.type === "validateLedgerEvent") return canValidateLedgerEvent(current) ? validateLedgerEvent(current, event.valid) : current;
+  if (event.type === "checkLedgerSource") return canCheckLedgerSource(current) ? checkLedgerSource(current, event.duplicate, event.inOrder) : current;
   return current;
 }
 

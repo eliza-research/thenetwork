@@ -1,7 +1,7 @@
 import { createCipheriv, createSecretKey, hkdfSync, randomBytes } from "node:crypto";
 import {
-  seedInvitationBatchDecision, seedInvitationBatchSizeAllowed, seedInvitationCitySupported, seedInvitationExpiresAt,
-  seedInvitationMayDecline, seedInvitationMayRedeem, seedInvitationRecipientCurrent, seedInvitationVouchSizeAllowed,
+  seedInvitationBatchDecision, seedInvitationBatchReplayLive, seedInvitationBatchSizeAllowed, seedInvitationCitySupported,
+  seedInvitationExpiresAt, seedInvitationMayDecline, seedInvitationMayRedeem, seedInvitationRecipientCurrent,
 } from "../../core/src/generated/seedInvitation.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { AppId } from "./apps.ts";
@@ -84,6 +84,7 @@ export class SeedInvitations {
     const issuedAt = this.now();
     if (issuedAt < 0 || !REQUEST_ID.test(requestId) || !seedInvitationBatchSizeAllowed(entries.length)) return { kind: "unavailable" };
     const normalized = entries.map(entry => ({ ...entry, e164: normalizePhone(entry.e164), vouchNote: entry.vouchNote.trim() }));
+    const vouchBytes = normalized.map(entry => Buffer.byteLength(entry.vouchNote));
     const facts = {
       // The app-scoped staff handler checks role and configured cities before calling this store.
       appAdmin: true,
@@ -91,9 +92,11 @@ export class SeedInvitations {
       validCity: normalized.every(entry => seedInvitationCitySupported(entry.homeCity)),
       validRecipients: normalized.every(entry => entry.e164 !== undefined),
       uniqueRecipients: new Set(normalized.map(entry => entry.e164)).size === normalized.length,
-      privateVouches: normalized.every(entry => seedInvitationVouchSizeAllowed(Buffer.byteLength(entry.vouchNote))),
+      entryCount: normalized.length,
+      shortestVouchBytes: Math.min(...vouchBytes),
+      longestVouchBytes: Math.max(...vouchBytes),
     };
-    if (seedInvitationBatchDecision({ ...facts, batchNew: true, sameBatch: false }) !== "IssueSeedBatch") return { kind: "unavailable" };
+    if (seedInvitationBatchDecision({ ...facts, batchNew: true, sameBatch: false, batchLive: true }) !== "IssueSeedBatch") return { kind: "unavailable" };
     const batchId = `sib_${this.digest("seed_invitation_batch", [app, issuerId, requestId])}`;
     const bodyHash = this.digest("seed_invitation_batch_input", [batchId, normalized.map(({ e164, homeCity, vouchNote }) => [e164, homeCity, vouchNote])]);
     const expiresAt = seedInvitationExpiresAt(issuedAt);
@@ -104,7 +107,8 @@ export class SeedInvitations {
       where app_id=${app} and id=${batchId}`;
     if (!original || original.issuer_id !== issuerId) return { kind: "unavailable" };
     if (original.body_hash !== bodyHash) return { kind: "conflict" };
-    const decision = seedInvitationBatchDecision({ ...facts, batchNew: !!created, sameBatch: original.issued_at.getTime() <= issuedAt && original.expires_at.getTime() > issuedAt });
+    const batchLive = seedInvitationBatchReplayLive(original.issued_at.getTime(), original.expires_at.getTime(), issuedAt);
+    const decision = seedInvitationBatchDecision({ ...facts, batchNew: !!created, sameBatch: true, batchLive });
     if (decision === "RejectSeedBatch") return { kind: "unavailable" };
 
     const links = normalized.map(({ homeCity }, ordinal) => ({

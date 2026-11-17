@@ -31,8 +31,43 @@ test("the generic planner checks availability through the end of a four-hour hik
   expect(run(makeEvidence(4, 2))).toEqual([]);
   expect(run(makeEvidence(4), (id, slot) => id === "a" && slot.end > start + 3 * HOUR && slot.start < hike.end)).toEqual([]);
 
+  // spec/planFormation.md, "A standing window applies to the whole activity"
+  const makeStanding = (endHour: number) => new Map(ids.map((id): [string, plans.PlanEvidence] => [id, {
+    memberId: id, tz, quietHours: [22, 8],
+    standing: [{ byDay: [6], startHour: 10, endHour, source: "conversation", statedAt: START }],
+  }]));
+  expect(run(makeStanding(14))).toMatchObject([{ activityId: "day_hike", window: hike, invited: expect.arrayContaining(ids) }]);
+  expect(run(makeStanding(12))).toEqual([]);
+
+  const updatedWeek = makeStanding(14);
+  for (const member of updatedWeek.values()) member.stated = { windows: [], at: START, until: START + 7 * DAY, confidence: 0.5 };
+  expect(run(updatedWeek)).toEqual([]);
+  for (const member of updatedWeek.values()) member.stated = { windows: [], at: START, until: start };
+  expect(run(updatedWeek)).toMatchObject([{ activityId: "day_hike", window: hike, invited: expect.arrayContaining(ids) }]);
+
   const event: NetworkEvent = { id: "guided-walk", title: "Ranger-guided hike", city: "nyc", category: "social", tags: ["hiking"], start, end: start + HOUR };
   const eventWorld = new World({ ...snapshot, events: [event] }, cfg, localEmbed);
   const published = plans.planProposals(eventWorld, { now: START, city: "nyc", tz, venues: [], evidence: makeEvidence(1, 1) });
   expect(published).toMatchObject([{ eventId: event.id, window: { start, end: event.end }, invited: expect.arrayContaining(ids) }]);
+});
+
+test("the Network offers a public hike only to adults who can reach the reviewed venue within their travel limit", async () => {
+  const local = ["a", "b", "c", "d"];
+  const ids = [...local, "e"];
+  const mini = new Mini(ids.map(id => ({ id, name: id, age: 30, area: id === "e" ? "St. George" : "Inwood", interests: ["hiking"] })),
+    { review: "human", plans: true, matchingEnabled: true });
+  mini.members.find(member => member.id === "e")!.prefs.maxTravelMinutes = 15;
+  await mini.onboard(...ids);
+  const state = mini.net.exportState();
+  const start = Date.UTC(2026, 9, 10, 14);
+  const window = { start, end: start + 4 * HOUR };
+  for (const member of state.members) member.stated = { windows: [window], at: START, until: START + 7 * DAY };
+  mini.net.importState(state);
+
+  await mini.run(HOUR);
+  const hike = mini.net.reviewQueue().find(item => item.origin === "planner");
+  expect(hike?.proposal.participants.slice().sort()).toEqual(local);
+  const plan = mini.net.exportState().opps.find(opp => opp.id === hike?.oppId)?.plan;
+  expect(plan).toMatchObject({ venueId: "inwood-hill", window, alternates: [] });
+  expect(mini.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });

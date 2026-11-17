@@ -25,21 +25,34 @@ export function interruptionFeedbackAskDue(ageMs: number, eligible: boolean, ope
 
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 //@ pure
+export function interruptionFeedbackUsesFollowupSlot(survey: boolean, timingFollowup: boolean): boolean {
+  return survey && timingFollowup;
+}
+
+/** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
+//@ pure
 export function lawSurveyNeedsDelivery(sampleBucket: number, directReply: boolean, pendingSurvey: boolean): boolean {
   //@ ensures \result === true
   return !interruptionFeedbackSample(sampleBucket, false, directReply, pendingSurvey);
 }
 
-/** Story: Tell the Network whether an invitation was worth a text / A direct answer measures the interruption once (spec/interruptionFeedback.md) */
+/** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 //@ pure
-export function interruptionFeedbackReply(direct: boolean, exactCode: boolean, surveyCurrent: boolean, reachedMember: boolean): boolean {
-  return direct && exactCode && surveyCurrent && reachedMember;
+export function lawSurveyUsesOnlyAnAvailableFollowupSlot(survey: boolean, timingFollowup: boolean): boolean {
+  //@ ensures \result === true
+  return !interruptionFeedbackUsesFollowupSlot(survey, timingFollowup) || timingFollowup;
 }
 
 /** Story: Tell the Network whether an invitation was worth a text / A direct answer measures the interruption once (spec/interruptionFeedback.md) */
 //@ pure
 export function interruptionFeedbackCurrent(ageMs: number, eligible: boolean): boolean {
   return eligible && ageMs >= 0 && ageMs < interruptionAnswerMs;
+}
+
+/** Story: Tell the Network whether an invitation was worth a text / A direct answer measures the interruption once (spec/interruptionFeedback.md) */
+//@ pure
+export function interruptionFeedbackReply(direct: boolean, exactCode: boolean, surveyCurrent: boolean, reachedMember: boolean): boolean {
+  return direct && exactCode && surveyCurrent && reachedMember;
 }
 
 /** Story: Tell the Network whether an invitation was worth a text / A direct answer measures the interruption once (spec/interruptionFeedback.md) */

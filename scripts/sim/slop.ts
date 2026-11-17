@@ -37,7 +37,7 @@ import type { EngineInput, EngineProposal } from "../../packages/engine/src/type
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
@@ -182,6 +182,33 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     const m = slopMetrics({ world, flows, matcher: "median-even" });
     // The true median of [10, 10, 30, 30] is (10 + 30) / 2 = 20, not the upper-middle element 30.
     expect(m.timeToFirstDate.medianDays).toBe(20);
+  });
+  await b.run("metrics: scammer median reach counts distinct real recipients whose identities were revealed", () => {
+    const [first, second, third, alice, bob, harasser] = generateSlopPersonas({ seed: 41, perCity: 12 }).filter(isSafe);
+    const world = createSlopWorld({ seed: 41, weeks: 4, personas: [first!, second!, third!,
+      { ...alice!, hidden: { ...alice!.hidden, adversary: "romance_scammer" } },
+      { ...bob!, hidden: { ...bob!.hidden, adversary: "romance_scammer" } },
+      { ...harasser!, hidden: { ...harasser!.hidden, adversary: "harasser" } },
+    ] });
+    const pair = (key: string, first: MemberId, partner: MemberId, revealed = true): FlowRecord => ({
+      key, week: 1, first, partner, city: "nyc", activity: "coffee", options: [],
+      stage: revealed ? "backout" : "first_no", firstYes: revealed, mutualYes: revealed,
+      revealed, filterViolation: false, harms: [], declaredMinor: false,
+    });
+    // Alice reached one real member, Bob two. An even cohort crosses the maximum of one.
+    const reveals = [pair("a1", alice!.id, first!.id), pair("b1", first!.id, bob!.id), pair("b2", bob!.id, second!.id)];
+    const evaluate = (flows: FlowRecord[]) => {
+      const run = { world, flows, matcher: "scammer-reach" };
+      const metrics = slopMetrics(run);
+      const extra = extraOf(run, metrics);
+      const arm = { arm: run.matcher, seeds: [world.seed], metrics: [metrics], extra: [extra] };
+      return gates3(arm, arm).find(g => g.name === "Scammer median reach");
+    };
+    const expected = { name: "Scammer median reach", target: "<= 1", value: 1.5, pass: false };
+    expect(evaluate(reveals)).toEqual(expected);
+    expect(evaluate([...reveals, pair("a1-again", alice!.id, first!.id),
+      pair("a-probe-only", alice!.id, third!.id, false), pair("a-harasser", alice!.id, harasser!.id)])).toEqual(expected);
+    expect(evaluate(reveals.slice(1))).toEqual({ ...expected, value: 1, pass: true });
   });
 
   // ---- conformance: core rules, then the stated filters and the never-shared rating -------------------

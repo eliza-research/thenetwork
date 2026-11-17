@@ -88,25 +88,13 @@ export function canConfigureAssignment(s: AssignmentRun, totalRounds: number, ba
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
 //@ pure
 export function isMarked(flags: Record<string, boolean>, key: string): boolean {
-  return ("$" + key) in flags ? get_slopAssignment(flags, "$" + key) : false;
+  return lookup0_slopAssignment(flags, key, false);
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
 //@ pure
 export function memberCount(counts: Record<string, number>, member: string): number {
-  return ("$" + member) in counts ? get_slopAssignment(counts, "$" + member) : 0;
-}
-
-/** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
-//@ pure
-export function canReservePair(s: AssignmentRun, pairKey: string, memberA: string, memberB: string, withinBackupDegree: boolean): boolean {
-  return s.phase === "InRound" && !isMarked(s.usedPairs, pairKey) && !isMarked(s.usedInRound, memberA) && !isMarked(s.usedInRound, memberB) && memberCount(s.memberCounts, memberA) < s.round && memberCount(s.memberCounts, memberB) < s.round && (s.round <= s.baseRounds || withinBackupDegree);
-}
-
-/** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
-//@ pure
-export function incrementMember(counts: Record<string, number>, member: string): Record<string, number> {
-  return ({ ...counts, ["$" + member]: exact_slopAssignment(memberCount(counts, member) + 1) } as Record<string, number>);
+  return lookup1_slopAssignment(counts, member, 0);
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
@@ -141,6 +129,18 @@ export function sometimesBackupRound(s: AssignmentRun): boolean {
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
 //@ pure
+export function canReservePair(s: AssignmentRun, pairKey: string, memberA: string, memberB: string, withinBackupDegree: boolean): boolean {
+  return s.phase === "InRound" && !isMarked(s.usedPairs, pairKey) && !isMarked(s.usedInRound, memberA) && !isMarked(s.usedInRound, memberB) && memberCount(s.memberCounts, memberA) < s.round && memberCount(s.memberCounts, memberB) < s.round && (s.round <= s.baseRounds || withinBackupDegree);
+}
+
+/** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
+//@ pure
+export function incrementMember(counts: Record<string, number>, member: string): Record<string, number> {
+  return ({ ...counts, ["$" + member]: exact_slopAssignment(memberCount(counts, member) + 1) } as Record<string, number>);
+}
+
+/** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md) */
+//@ pure
 export function reservePair(s: AssignmentRun, pairKey: string, memberA: string, memberB: string, withinBackupDegree: boolean): AssignmentRun {
   //@ ensures (inv(s) && canReservePair(s, pairKey, memberA, memberB, withinBackupDegree)) ==> alwaysRoundWithinAllocation(\result)
   //@ ensures (inv(s) && canReservePair(s, pairKey, memberA, memberB, withinBackupDegree)) ==> alwaysProposalCountIsNonnegative(\result)
@@ -149,6 +149,26 @@ export function reservePair(s: AssignmentRun, pairKey: string, memberA: string, 
   //@ ensures (inv(s) && canReservePair(s, pairKey, memberA, memberB, withinBackupDegree)) ==> stepFinishedStaysFinished(s, \result)
   const local_0 = incrementMember(s.memberCounts, memberA);
   return { ...s, proposed: exact_slopAssignment(s.proposed + 1), usedPairs: ({ ...s.usedPairs, ["$" + pairKey]: true } as Record<string, boolean>), usedInRound: ({ ...({ ...s.usedInRound, ["$" + memberA]: true } as Record<string, boolean>), ["$" + memberB]: true } as Record<string, boolean>), memberCounts: incrementMember(local_0, memberB) };
+}
+
+/** Story: Measure how many Slop members scammers reach / Count each real recipient once after a reveal (spec/slopAssignment.md) */
+//@ pure
+export function slopScammerContactCounts(revealed: boolean, realRecipient: boolean): boolean {
+  return revealed && realRecipient;
+}
+
+/** Story: Measure how many Slop members scammers reach / An even cohort averages its two middle reach counts (spec/slopAssignment.md) */
+//@ pure
+export function slopScammerMedianReachTwice(orderedReach: number[]): number {
+  const local_1 = orderedReach.length;
+  return local_1 === 0 ? 0 : exact_slopAssignment((0 <= quotient_slopAssignment(exact_slopAssignment(local_1 - 1), 2) && quotient_slopAssignment(exact_slopAssignment(local_1 - 1), 2) < orderedReach.length ? orderedReach[quotient_slopAssignment(exact_slopAssignment(local_1 - 1), 2)] : 0) + (0 <= quotient_slopAssignment(local_1, 2) && quotient_slopAssignment(local_1, 2) < orderedReach.length ? orderedReach[quotient_slopAssignment(local_1, 2)] : 0));
+}
+
+/** Story: Measure how many Slop members scammers reach / An even cohort averages its two middle reach counts (spec/slopAssignment.md) */
+//@ pure
+export function lawSlopSingleScammerKeepsReach(contactCount: number): boolean {
+  //@ ensures \result === true
+  return slopScammerMedianReachTwice(([contactCount] as number[])) === exact_slopAssignment(2 * contactCount);
 }
 
 /** Do the rules allow this event in this state? */
@@ -166,10 +186,10 @@ export function enabled(current: AssignmentRun, event: Event): boolean {
 export function step(current: AssignmentRun, event: Event): AssignmentRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "configureAssignment" && canConfigureAssignment(current, event.totalRounds, event.baseRounds)) return configureAssignment(current, event.totalRounds, event.baseRounds);
-  if (event.type === "openRound" && canOpenRound(current)) return openRound(current);
-  if (event.type === "closeRound" && canCloseRound(current)) return closeRound(current);
-  if (event.type === "reservePair" && canReservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree)) return reservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree);
+  if (event.type === "configureAssignment") return canConfigureAssignment(current, event.totalRounds, event.baseRounds) ? configureAssignment(current, event.totalRounds, event.baseRounds) : current;
+  if (event.type === "openRound") return canOpenRound(current) ? openRound(current) : current;
+  if (event.type === "closeRound") return canCloseRound(current) ? closeRound(current) : current;
+  if (event.type === "reservePair") return canReservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree) ? reservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree) : current;
   return current;
 }
 
@@ -219,14 +239,30 @@ export function initialHolds(): AssignmentRun {
   return initial;
 }
 
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup0_slopAssignment(m: Record<string, boolean>, k: string, otherwise: boolean): boolean {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup1_slopAssignment(m: Record<string, number>, k: string, otherwise: number): number {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_slopAssignment(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
 }
 
-/** What a map holds for a key, which it must hold. */
-export function get_slopAssignment<K extends string | number, T>(m: Record<K, T>, key: K): T {
-  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
-  return m[key];
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_slopAssignment(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
 }

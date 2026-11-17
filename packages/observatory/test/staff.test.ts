@@ -64,6 +64,24 @@ beforeAll(async () => {
 afterAll(async () => { await obs?.stop(); await rm(dir, { recursive: true, force: true }); });
 
 describe("staff roles, audit and PII reveal", () => {
+  test("reading safety cases and reports requires an audit for the selected app", async () => {
+    const viewer = await (await as(TOK.safety, "/api/me?app=friends")).json() as StaffUser;
+    const read = () => as(TOK.safety, "/api/safety?app=friends");
+    expect((await read()).status).toBe(200);
+    const rows = await obs.audit.list({ actions: ["read_safety"], apps: ["friends"] });
+    expect(rows).toEqual([expect.objectContaining({ actor: viewer.id, app: "friends", ok: true })]);
+
+    const write = obs.audit.write;
+    obs.audit.write = async () => { throw new Error("fixture: safety audit unavailable"); };
+    try {
+      const refused = await read();
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toEqual({ error: "audit log unavailable: request refused" });
+    } finally {
+      obs.audit.write = write;
+    }
+  }, T);
+
   test("tokens map to roles; the old OBSERVATORY_TOKEN is an admin; a wrong token is refused", async () => {
     const me = async (tok: string) => (await (await as(tok, "/api/me")).json()) as StaffUser;
     expect((await me(TOK.reviewer)).roles).toEqual(["reviewer"]);

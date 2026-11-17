@@ -14,8 +14,9 @@ boundaries. The raw link, phone number and vouch text remain outside it.
 An authenticated app admin with a stable operator identity can create
 one batch of distinct recipients. Each invitation has a valid recipient
 number, an intended supported cohort city, and private vouch evidence.
-Accept one to 100 entries per request and up to 500 UTF-8 bytes of
-vouch text per entry. Record the exact app and issuing operator. Protect
+Accept one to 100 entries per request and one to 500 UTF-8 bytes of
+trimmed vouch text per entry. Check both the shortest and longest vouch
+in the normalized batch. Record the exact app and issuing operator. Protect
 the private vouch evidence in storage. Use the ordinary invitation
 lifetime of 30 days. Return a separate link for each recipient to the
 operator. This operation creates invitations and an audit entry.
@@ -26,7 +27,7 @@ invitation allowance.
 import memberInvitation as MemberInvite from "./memberInvitation"
 
 type SeedInvitationPhase = SeedUnissued | SeedIssued | SeedRedeemed | SeedClosed
-type SeedInvitation = { phase: SeedInvitationPhase, issuedAt: int }
+type SeedInvitation = { phase: SeedInvitationPhase, issuedAt: int, vouchRetained: bool }
 type SeedBatchDecision = IssueSeedBatch | ReplaySeedBatch | RejectSeedBatch
 type SeedBatchFacts = {
   appAdmin: bool,
@@ -34,19 +35,23 @@ type SeedBatchFacts = {
   validCity: bool,
   validRecipients: bool,
   uniqueRecipients: bool,
-  privateVouches: bool,
+  entryCount: int,
+  shortestVouchBytes: int,
+  longestVouchBytes: int,
   batchNew: bool,
-  sameBatch: bool
+  sameBatch: bool,
+  batchLive: bool
 }
 
-pure val initial: SeedInvitation = { phase: SeedUnissued, issuedAt: 0 }
+pure val initial: SeedInvitation = { phase: SeedUnissued, issuedAt: 0, vouchRetained: false }
 pure val seedInvitationBatchLimit: int = 100
 pure val seedInvitationVouchByteLimit: int = 500
 pure val issuedAtValues = Set(-1, 0, 1, 100)
 pure val nowValues = Set(-1, 0, 1, 100, 2592000000, 2592000100)
 pure val eligibleBatch: SeedBatchFacts = {
   appAdmin: true, stableActor: true, validCity: true, validRecipients: true,
-  uniqueRecipients: true, privateVouches: true, batchNew: true, sameBatch: false
+  uniqueRecipients: true, entryCount: 2, shortestVouchBytes: 1, longestVouchBytes: 500,
+  batchNew: true, sameBatch: false, batchLive: true
 }
 
 pure val batchValues = Set(eligibleBatch,
@@ -55,9 +60,14 @@ pure val batchValues = Set(eligibleBatch,
   { ...eligibleBatch, validCity: false },
   { ...eligibleBatch, validRecipients: false },
   { ...eligibleBatch, uniqueRecipients: false },
-  { ...eligibleBatch, privateVouches: false },
+  { ...eligibleBatch, entryCount: 0 },
+  { ...eligibleBatch, entryCount: 101 },
+  { ...eligibleBatch, shortestVouchBytes: 0 },
+  { ...eligibleBatch, longestVouchBytes: 501 },
+  { ...eligibleBatch, shortestVouchBytes: 500, longestVouchBytes: 1 },
   { ...eligibleBatch, batchNew: false, sameBatch: false },
-  { ...eligibleBatch, batchNew: false, sameBatch: true })
+  { ...eligibleBatch, batchNew: false, sameBatch: true },
+  { ...eligibleBatch, batchNew: false, sameBatch: true, batchLive: false })
 
 pure def seedInvitationCitySupported(city: str): bool = city == "nyc" or city == "sf"
 
@@ -69,10 +79,18 @@ pure def seedInvitationExpiresAt(issuedAt: int): int = issuedAt + MemberInvite::
 
 pure def seedInvitationBatchAuthorized(batch: SeedBatchFacts): bool =
   batch.appAdmin and batch.stableActor and batch.validCity and batch.validRecipients
-    and batch.uniqueRecipients and batch.privateVouches
+    and batch.uniqueRecipients and seedInvitationBatchSizeAllowed(batch.entryCount)
+    and seedInvitationVouchSizeAllowed(batch.shortestVouchBytes)
+    and seedInvitationVouchSizeAllowed(batch.longestVouchBytes)
+    and batch.shortestVouchBytes <= batch.longestVouchBytes
 
 pure def lawSeedInvitationIssueNeedsOperator(batch: SeedBatchFacts): bool =
   seedInvitationBatchAuthorized(batch) implies (batch.appAdmin and batch.stableActor)
+
+pure def lawSeedInvitationBatchStaysInSizeLimits(batch: SeedBatchFacts): bool =
+  seedInvitationBatchAuthorized(batch) implies
+    (seedInvitationBatchSizeAllowed(batch.entryCount) and batch.shortestVouchBytes >= 1
+      and batch.shortestVouchBytes <= batch.longestVouchBytes and batch.longestVouchBytes <= seedInvitationVouchByteLimit)
 ```
 
 ### A retry can return only the original live batch
@@ -86,10 +104,13 @@ with different contents or an expired batch is unavailable. Keep
 recipient account status out of staff responses.
 
 ```quint
+pure def seedInvitationBatchReplayLive(issuedAt: int, expiresAt: int, now: int): bool =
+  issuedAt >= 0 and issuedAt <= now and now < expiresAt
+
 pure def seedInvitationBatchDecision(batch: SeedBatchFacts): SeedBatchDecision =
   if (not(seedInvitationBatchAuthorized(batch))) RejectSeedBatch
   else if (batch.batchNew) IssueSeedBatch
-  else if (batch.sameBatch) ReplaySeedBatch
+  else if (batch.sameBatch and batch.batchLive) ReplaySeedBatch
   else RejectSeedBatch
 
 pure def canIssueSeedInvitation(invite: SeedInvitation, batch: SeedBatchFacts, issuedAt: int): bool =
@@ -97,7 +118,7 @@ pure def canIssueSeedInvitation(invite: SeedInvitation, batch: SeedBatchFacts, i
 
 pure def issueSeedInvitation(invite: SeedInvitation, batch: SeedBatchFacts, issuedAt: int): SeedInvitation =
   if (canIssueSeedInvitation(invite, batch, issuedAt))
-    { phase: SeedIssued, issuedAt: issuedAt }
+    { phase: SeedIssued, issuedAt: issuedAt, vouchRetained: true }
   else invite
 
 pure def lawExistingSeedInvitationBatchCannotIssue(batch: SeedBatchFacts): bool =
@@ -105,7 +126,7 @@ pure def lawExistingSeedInvitationBatchCannotIssue(batch: SeedBatchFacts): bool 
 
 pure def lawSeedInvitationBatchReplayRequiresExactBatch(batch: SeedBatchFacts): bool =
   (seedInvitationBatchDecision(batch) == ReplaySeedBatch) implies
-    (not(batch.batchNew) and batch.sameBatch and seedInvitationBatchAuthorized(batch))
+    (not(batch.batchNew) and batch.sameBatch and batch.batchLive and seedInvitationBatchAuthorized(batch))
 
 pure def sometimesSeedInvitationIssued(invite: SeedInvitation): bool = invite.phase == SeedIssued
 ```
@@ -124,6 +145,7 @@ save provenance with that membership in one transaction. The recipient
 chooses their own home city. The cohort city and vouch are provenance,
 independent of the recipient's profile, permissions, rank and matching.
 An existing membership is neither disclosed to staff nor overwritten.
+Redemption clears the private vouch material of the invitation.
 
 ```quint
 type SeedRecipientFacts = {
@@ -165,7 +187,7 @@ pure def canRedeemSeedInvitation(invite: SeedInvitation, recipient: SeedRecipien
 
 pure def redeemSeedInvitation(invite: SeedInvitation, recipient: SeedRecipientFacts, redemption: SeedRedemptionFacts): SeedInvitation =
   if (canRedeemSeedInvitation(invite, recipient, redemption))
-    { ...invite, phase: SeedRedeemed }
+    { ...invite, phase: SeedRedeemed, vouchRetained: false }
   else invite
 
 pure def lawSeedInvitationRequiresVerifiedAppRecipient(recipient: SeedRecipientFacts): bool =
@@ -181,26 +203,29 @@ pure def lawSeedInvitationRedemptionRequiresNewEligibleJoin(redemption: SeedRede
 pure def sometimesSeedInvitationRedeemed(invite: SeedInvitation): bool = invite.phase == SeedRedeemed
 ```
 
-### Decline, suppression and expiry end the invitation
+### Decline and expiry close the invitation
 
 The exact confirmed recipient may decline an open invitation. The
 shared-line STOP and existing safety controls continue to apply.
-A declined, suppressed, banned, or expired recipient cannot use the
-invitation. Clear private vouch material when the invitation is declined
-or its 30-day retention ends. A terminal invitation cannot issue or
-redeem again.
+Current suppression or a ban blocks redemption through the eligibility
+check. Clear private vouch material on a verified decline or when the
+30-day retention ends. A terminal invitation cannot issue or redeem again.
 
 ```quint
 pure def seedInvitationMayDecline(exactRecipient: bool, open: bool): bool = exactRecipient and open
 
-pure def canCloseSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool, suppressedOrBanned: bool): bool =
+pure def canCloseSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool): bool =
   invite.phase == SeedIssued and
-    (seedInvitationMayDecline(exactDecline, true) or suppressedOrBanned or now >= seedInvitationExpiresAt(invite.issuedAt))
+    (seedInvitationMayDecline(exactDecline, seedInvitationBatchReplayLive(invite.issuedAt, seedInvitationExpiresAt(invite.issuedAt), now))
+      or now >= seedInvitationExpiresAt(invite.issuedAt))
 
-pure def closeSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool, suppressedOrBanned: bool): SeedInvitation =
-  if (canCloseSeedInvitation(invite, now, exactDecline, suppressedOrBanned))
-    { ...invite, phase: SeedClosed }
+pure def closeSeedInvitation(invite: SeedInvitation, now: int, exactDecline: bool): SeedInvitation =
+  if (canCloseSeedInvitation(invite, now, exactDecline))
+    { ...invite, phase: SeedClosed, vouchRetained: false }
   else invite
+
+pure def alwaysOnlyIssuedSeedInvitationKeepsVouch(invite: SeedInvitation): bool =
+  invite.vouchRetained == (invite.phase == SeedIssued)
 
 pure def alwaysIssuedSeedInvitationHasTimestamp(invite: SeedInvitation): bool =
   invite.phase != SeedUnissued implies invite.issuedAt >= 0

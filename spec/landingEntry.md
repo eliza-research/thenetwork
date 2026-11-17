@@ -245,12 +245,18 @@ pure def joinKeyword(app: AppKey): str = brandFor(app).keyword
 
 ### The device decides whether the entry opens Messages or shows the number
 
-Without the page script the browser follows the link and nothing else occurs. With the page script, a press on the entry first starts to copy the join message. On a phone or a Mac the page waits for Messages to open. On another desktop the page does not follow the link. It shows the number and the message at once: "Message copied. Text it to <number> if iMessage did not open." when the copy works, or "Text "<message>" to <number>." when it fails. While the page waits for Messages, it ignores a new press on the entry. Without the page script, each press follows the link again.
+Without the page script the browser follows the link and nothing else occurs. With the page script, a press on the entry first starts to copy the join message. On a phone or a Mac the page waits for Messages to open. On another desktop the page does not follow the link. It shows the number and the message at once: "Message copied. Text it to <number> if iMessage did not open." when the copy works, or "Text “<message>” to <number>." when it fails. The page puts the shared line number in place of `{number}` and the join message in place of `{message}`. While the page waits for Messages, it ignores a new press on the entry. Without the page script, each press follows the link again.
 
 ```quint
 pure def messagesOpensHere(device: DeviceKind): bool = device == Phone or device == MacDesktop
 
 pure def messagesFallbackStatus(copied: bool): StatusLine = if (copied) MessageCopied else TextTheNumber
+
+pure val messageCopiedTemplate = "Message copied. Text it to {number} if iMessage did not open."
+pure val textTheNumberTemplate = "Text “{message}” to {number}."
+
+pure def messagesFallbackTemplate(copied: bool): str =
+  if (messagesFallbackStatus(copied) == MessageCopied) messageCopiedTemplate else textTheNumberTemplate
 
 pure def canChooseMessages(s: Landing): bool = s.messages != MessagesWaiting
 
@@ -301,7 +307,7 @@ pure def sometimesDesktopShowsNumberAtOnce(s: Landing): bool = s.messages == Mes
 
 ### The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links
 
-The page shows these items in this order: the brand mark, the headline, the prompt, the Copy button, the agent row, the Messages entry, the status line, and the Privacy and Terms links. The headline is the one heading. The page has fewer than 45 words. It never shows a sign-in link, a settings link, a member dashboard, a safety notice, compliance text or an explanation block. [Brand identity](./brandIdentity.md) controls which app names the page can show. The status line stays empty until the page script has something to say.
+The page shows these items in this order: the brand mark, the headline, the prompt, the Copy button, the agent row, the Messages entry, the status line, and the Privacy and Terms links. The headline is the one heading, so the page has exactly one heading. The page has fewer than 45 words. It never shows a sign-in link, a settings link, a member dashboard, a safety notice, compliance text or an explanation block. [Brand identity](./brandIdentity.md) controls which app names the page can show. The status line stays empty until the page script has something to say.
 
 ```quint
 type LandingItem = BrandMarkItem | HeadlineItem | PromptItem | CopyButtonItem | AgentRowItem |
@@ -309,6 +315,11 @@ type LandingItem = BrandMarkItem | HeadlineItem | PromptItem | CopyButtonItem | 
   SignInItem | SettingsItem | DashboardItem | SafetyNoticeItem | ComplianceItem | ExplainerItem
 
 pure val landingWordLimit = 45
+pure val landingHeadingCount = 1
+
+pure def landingWordsAllowed(words: int): bool = words >= 0 and words < landingWordLimit
+
+pure def landingHeadingsAllowed(headings: int): bool = headings == landingHeadingCount
 
 pure val landingItems: List[LandingItem] = List(BrandMarkItem, HeadlineItem, PromptItem, CopyButtonItem,
   AgentRowItem, MessagesItem, StatusItem, PrivacyLinkItem, TermsLinkItem)

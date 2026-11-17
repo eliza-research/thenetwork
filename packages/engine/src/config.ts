@@ -2,6 +2,7 @@
 // covered by the config hash logged with each run (ME-004). Thresholds are applied (ME-009).
 import type { Category, City, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR, initialInviteBudget, minorInitialInviteBudget, planInviteBudget } from "@thenetwork/core";
+import { emptyIntentDefaultWaitDays } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import type { Effort, ItemKind } from "./types.ts";
 
@@ -173,7 +174,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   selection: { maxProposalsPerCity: 120, runLoadPenalty: 0.08, exposureFloorShare: 0.25, exposureDebtWeight: 0.05, exposureDebtCap: 3 },
   inviteTtlMs: 48 * HOUR, sameDayInviteTtlMs: 3 * HOUR,
   newcomerDays: 14,
-  emptyStateDays: 10,
+  emptyStateDays: emptyIntentDefaultWaitDays,
   // High-risk vocabulary (F14/F15 safety rules). Matched on whole words (with plurals), so
   // "kids" never fires on "kid-friendly"... unless a rule below says so. Kept deliberately
   // small: generic words about children, money or health are handled by the context rules in

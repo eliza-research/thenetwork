@@ -145,8 +145,8 @@ export function enabled(current: IntentManagement, event: Event): boolean {
 export function step(current: IntentManagement, event: Event): IntentManagement {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "authorizeIntentCommand" && canAuthorizeIntentCommand(current)) return authorizeIntentCommand(current, event.allowed, event.command);
-  if (event.type === "chooseOwnedIntent" && canChooseOwnedIntent(current)) return chooseOwnedIntent(current, event.matches, event.live, event.paused);
+  if (event.type === "authorizeIntentCommand") return canAuthorizeIntentCommand(current) ? authorizeIntentCommand(current, event.allowed, event.command) : current;
+  if (event.type === "chooseOwnedIntent") return canChooseOwnedIntent(current) ? chooseOwnedIntent(current, event.matches, event.live, event.paused) : current;
   return current;
 }
 

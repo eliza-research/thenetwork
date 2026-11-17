@@ -22,11 +22,17 @@ pure def standingReadable(adult: bool, consented: bool): bool = adult and consen
 
 ### Standing history requires current account and lane authority
 
-The shell keeps history only for an adult with an active account and current permission in that app and lane. It removes history when that authority ends. Before using the history in a match, the shell checks that the evidence behind it still permits matching. A correction, removal, or scope reduction that withdraws that evidence invalidates the old estimate before matching, even within the weekly interval. With current authority and fresh evidence, the shell can start a new observation.
+The shell keeps history only for an adult with an active account and current permission in that app and lane. It removes history when that authority ends. A saved estimate is usable in a match only while every evidence item it was computed from is still a current source that permits matching. A correction, removal, or scope reduction that withdraws that evidence invalidates the old estimate before matching, even within the weekly interval. With current authority and fresh evidence, the shell can start a new observation.
 
 ```quint
 pure def standingMayRetain(adult: bool, activeAccount: bool, lanePermitted: bool): bool =
   standingReadable(adult, lanePermitted) and activeAccount
+
+pure def standingHistoryUsable(hasHistory: bool, evidenceStillPermits: bool): bool =
+  hasHistory and evidenceStillPermits
+
+pure def lawWithdrawnEvidenceInvalidatesStanding(hasHistory: bool): bool =
+  not(standingHistoryUsable(hasHistory, false))
 
 pure def lawStandingRetentionRequiresAuthority(adult: bool, activeAccount: bool, lanePermitted: bool): bool =
   (not(adult) or not(activeAccount) or not(lanePermitted)) implies

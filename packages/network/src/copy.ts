@@ -24,6 +24,7 @@ export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the
 /** The copy brand of an app in the registry: "The Network" reads "the Network" inside a sentence. */
 export const brandOf = (app: { name: string; brand: { agentName: string } }): CopyBrand => ({ agent: app.brand.agentName, name: app.name.replace(/^The /, "the ") });
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const REPORT_SAFETY_HINT = " If you're ever in danger, call 911 first.";
 
 /** Every member-facing text for one app. No text asks a member to reply "cancel" (a bare CANCEL is STOP). */
 export function copyFor(b: CopyBrand) {
@@ -52,7 +53,7 @@ export function copyFor(b: CopyBrand) {
   /** Plans buddy: asking for plans is not consent to meet a stranger, so both people are asked first. */
   plansBuddyProbe: (venue: string, when: string, area: string | undefined, times?: string) =>
     `Quick check, no names yet: someone ${area ? `near ${area}` : "nearby"} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
-  /** The one re-engagement after 14 days of silence (F28). */
+  /** The one re-engagement after 30 days of silence (F28). */
   reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these?",
   requestConfirm: (why: string, when: string, times?: string) => times
     ? `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it? I could do ${times}; tell me which works, or no.`
@@ -146,9 +147,10 @@ export function copyFor(b: CopyBrand) {
   noInjection: "I can't help with that.",
   giveSpace: "I won't pass that along. If someone hasn't replied, please give them space.",
   blocked: "Done. You won't be matched with them, and they won't be told.",
+  immediateDanger: "If you're in immediate danger, call local emergency services now. In the U.S., call 911.",
   /** A report about someone the member did not meet through the Network, or a name that matches nobody: no claim about who they are. */
-  reportUnmatched: "Thanks for telling me. I couldn't match that name to someone you met through me. If you're ever in danger, call 911 first.",
-  reported: "Thanks for telling me. I've blocked them for you and flagged this for the safety team. If you're ever in danger, call 911 first.",
+  reportUnmatched: (immediateDanger = false) => `Thanks for telling me. I couldn't match that name to someone you met through me.${immediateDanger ? "" : REPORT_SAFETY_HINT}`,
+  reported: (immediateDanger = false) => `Thanks for telling me. I've blocked them for you and flagged this for the safety team.${immediateDanger ? "" : REPORT_SAFETY_HINT}`,
   /** A block by a name that is not someone they met through the Network: the same words whether or not the name is a member's (no membership oracle). */
   blockUnmatched: "I couldn't match that name to someone you met through me. If they're a member, they won't be matched with you, and they won't be told.",
   /** "block him" or a name two of their counterparts share: which one. Only names of people the member was introduced to. */

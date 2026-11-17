@@ -637,6 +637,146 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       "content-type": "application/json", ...await svcSign(signedInvitationSecret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) }),
     } }));
   };
+  test("the prepared Peon signup text joins Peon on the shared signed line", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const { s } = service(clock, {
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }, { id: "peon:nyc", matchingEnabled: false }],
+    });
+    await s.start();
+    const signed = invitationTurn(s, clock);
+    const turn = async (messageId: string, from: string, text: string) => {
+      const response = await signed({ messageId, from, text, to: LINE, channel: "blooio", transport: "sms", receivedAt: clock.now() });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    // spec/textEnrollment.md, "A prepared Peon signup names its app on a separate first line"
+    const phone = newPhone();
+    const profile = "My name is Ari. I am 29 years old. I am looking for remote engineering work.";
+    const accepted = await turn("prepared-peon-profile", phone, `join peon\n${profile}`);
+    expect(accepted).toMatchObject({ outcome: "handled", app: "peon", reason: "joined" });
+    expect(await s.memberApps(phone)).toEqual([expect.objectContaining({ app: "peon" })]);
+    expect(await consentOf(phone, "peon")).toBe("opted_in");
+
+    const ordinaryPhone = newPhone();
+    expect(await turn("ordinary-peon-mention", ordinaryPhone, `${profile} A friend also told me to join peon.`))
+      .toMatchObject({ outcome: "handled", app: "ntwrk", reason: "joined" });
+    expect(await s.memberApps(ordinaryPhone)).toEqual([expect.objectContaining({ app: "ntwrk" })]);
+
+    const childPhone = newPhone();
+    expect(await turn("prepared-peon-too-young", childPhone, `join peon\r\n${profile.replace("29 years", "12 years")}`))
+      .toMatchObject({ outcome: "handled", app: "peon", reason: "under_age" });
+    expect(await s.memberApps(childPhone)).toEqual([]);
+  }, T);
+  test("a committed age correction follows its owner when the old number is reassigned", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const opts = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } };
+    const { s } = service(clock, opts);
+    const { s: second } = service(clock, { ...opts, instance: "age-reassignment" });
+    await s.start();
+    await second.start();
+    const oldNumber = newPhone(), newNumber = newPhone();
+    const app = APPS[FR];
+    const consent = { sms: true, wording: app.consent.text } as const;
+    const first = await s.accounts.join(app, { e164: oldNumber, personId: null }, {
+      firstName: "Ari", age: 25, consent,
+    });
+    if (!first.ok) throw new Error(`Fixture signup failed: ${first.error}`);
+    const owner = { e164: oldNumber, personId: first.membership.personId };
+    expect(await second.accounts.startNumberChange(app, owner, newNumber, async () => true)).toEqual({ ok: true });
+    const rt = s.runtimeFor(FR)!;
+    const run = rt.unitOfWork.bind(rt);
+    let successor: string | undefined;
+    rt.unitOfWork = async (fn, scheduling) => {
+      const result = await run(fn, scheduling);
+      if (!successor && (await s.people.getPerson(owner.personId))?.lowestAge === 15) {
+        const moved = await second.accounts.confirmNumberChange(owner, async () => true);
+        if (!moved.ok) throw new Error(`Fixture number change failed: ${moved.error}`);
+        const joined = await second.accounts.join(app, { e164: oldNumber, personId: null }, {
+          firstName: "Eli", age: 30, consent,
+        });
+        if (!joined.ok) throw new Error(`Fixture reassignment failed: ${joined.error}`);
+        successor = joined.membership.personId;
+      }
+      return result;
+    };
+    const response = await invitationTurn(s, clock)({
+      messageId: "committed-age-before-reassignment", text: "I am 15 years old.", from: oldNumber,
+      app: FR, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(),
+    });
+    expect(response.status).toBe(200);
+    expect(successor).toBeDefined();
+    expect(successor).not.toBe(owner.personId);
+    expect(await s.accounts.personFor(newNumber)).toMatchObject({ id: owner.personId, lowestAge: 15 });
+    expect(await s.accounts.personFor(oldNumber)).toMatchObject({ id: successor, lowestAge: 30 });
+    expect(await s.people.ageFloor(s.accounts.phoneHash(oldNumber))).toBe(30);
+    expect(await s.people.ageFloor(s.accounts.phoneHash(newNumber))).toBe(15);
+  }, T);
+
+  test.each([{ before: 25, after: 15 }, { before: 15, after: 12 }])("a signed age correction from $before to $after survives interrupted projection", async ({ before, after }) => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const opts = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } };
+    const { s } = service(clock, opts);
+    await s.start();
+    const e164 = newPhone();
+    for (const appId of [FR, "slop"] as const) {
+      const app = APPS[appId];
+      expect(await s.accounts.join(app, { e164, personId: null }, {
+        firstName: "Ari", age: before, consent: { sms: true, wording: app.consent.text },
+      })).toMatchObject({ ok: true });
+    }
+    const person = (await s.accounts.personFor(e164))!;
+    const phoneHash = s.accounts.phoneHash(e164);
+    const friends = (await memberOf(FR, e164))!;
+    const slop = (await memberOf("slop", e164))!;
+    let interrupted = false;
+    s.accounts.projectRecordedAge = async () => { interrupted = true; throw new Error("fixture: interruption before age projection"); };
+    const response = await invitationTurn(s, clock)({
+      messageId: `age-crash-${after}`, text: `I am ${after} years old.`, from: e164, app: FR,
+      to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(),
+    });
+    expect(response.status).toBe(409);
+    expect(interrupted).toBe(true);
+    expect(await sql`select lowest_age from platform.people where id=${person.id}::uuid`).toEqual([{ lowest_age: after }]);
+    expect(await sql`select lowest_age from platform.age_floor where phone_hash=${phoneHash}`).toEqual([{ lowest_age: after }]);
+    expect(await sql`select age from platform.matching_ages_slop where member_id=${slop.id}`).toEqual([{ age: after }]);
+    if (after === 15) return;
+    expect(await s.people.getMembership(person.id, "slop")).toMatchObject({ state: "active" });
+    expect(await sql`select account_status from network.members where id=${friends.id}`).toEqual([{ account_status: "removed" }]);
+
+    const optsIn = () => count(sql`select count(*)::int as n from platform.consent_events where e164=${e164} and source='keyword:start'`);
+    const slopTurn = (messageId: string, text: string): TurnRequest => ({ messageId, text, from: e164, app: "slop", to: null,
+      channel: "blooio", transport: "imessage", receivedAt: clock.now() });
+    const beforeCleanup = await invitationTurn(s, clock)(slopTurn("underage-stale-membership-start", "START"));
+    expect(await optsIn()).toBe(0);
+    expect(await beforeCleanup.json()).toMatchObject({ outcome: "handled", reason: "under_age", accountEligible: false, memberId: null });
+    clock.advance(11 * MINUTE); // The interrupted turn no longer holds ordinary messages.
+    const message = await invitationTurn(s, clock)(slopTurn("underage-stale-membership-message", "Tell me what you remember about me."));
+    expect(await message.json()).toMatchObject({ outcome: "handled", reason: "under_age", accountEligible: false, memberId: null });
+    expect(await sql`select 1 from network.messages where app_id='slop' and id='in:blooio:underage-stale-membership-message'`).toEqual([]);
+    const help = await invitationTurn(s, clock)(slopTurn("underage-stale-membership-help", "HELP"));
+    expect(await help.json()).toMatchObject({ outcome: "handled", replies: [APPS.slop.brand.help], memberId: null });
+
+    await s.close();
+    const { s: resumed } = service(clock, opts);
+    await resumed.start();
+    await resumed.inboxTick();
+    await resumed.inboxTick();
+    expect(await sql`select app_id,state,first_name,profile from platform.memberships where person_id=${person.id}::uuid order by app_id`)
+      .toEqual([{ app_id: "friends", state: "removed", first_name: null, profile: {} }, { app_id: "slop", state: "removed", first_name: null, profile: {} }]);
+    expect(await sql`select app_id,account_status,name from network.members where id in (${friends.id},${slop.id}) order by app_id`)
+      .toEqual([{ app_id: "friends", account_status: "removed", name: null }, { app_id: "slop", account_status: "removed", name: null }]);
+    expect(await sql`select app_id,state from platform.consent_events where e164=${e164} and source='join_declined' order by app_id`)
+      .toEqual([{ app_id: "friends", state: "opted_out" }, { app_id: "slop", state: "opted_out" }]);
+    const afterCleanup = await invitationTurn(resumed, clock)(slopTurn("underage-removed-membership-start", "START"));
+    expect(await optsIn()).toBe(0);
+    expect(await afterCleanup.json()).toMatchObject({ outcome: "handled", reason: "under_age", accountEligible: false, memberId: null });
+  }, T);
+
   const confirmInvitationVouch = async (send: ReturnType<typeof invitationTurn>, request: TurnRequest, evidence: string) => {
     const asked = await send(request);
     expect(asked.status).toBe(200);

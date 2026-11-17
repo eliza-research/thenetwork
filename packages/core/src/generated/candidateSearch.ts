@@ -16,7 +16,7 @@ export type Event =
   | { type: "beginSearch"; limit: number; budget: number }
   | { type: "checkCandidate"; value: number; ordinal: number }
   | { type: "closeExact"; unseenBound: number }
-  | { type: "closeBudgeted"; unseenBound: number; walkSpent: boolean };
+  | { type: "closeBudgeted"; unseenBound: number; walkSpent: boolean; touchedLeft: boolean };
 
 /** Story: Search only where a pair can have a value / The posting walk covers or bounds every partner in the window (spec/candidateSearch.md) */
 export const searchTouchesPerCheck: number = 8;
@@ -105,6 +105,19 @@ export function lawUnseenBoundSound(side: pairValue_PairSide, other: pairValue_P
   return !(side.utility <= utilityBound && other.utility <= otherUtilityBound && side.exchange <= exchangeBound && other.exchange <= otherExchangeBound) || pairValue_pairValue(side, other, offset, rules) <= unseenValueBound(utilityBound, otherUtilityBound, exchangeBound, otherExchangeBound, rules);
 }
 
+/** Story: Search only where a pair can have a value / The posting walk covers or bounds every partner in the window (spec/candidateSearch.md) */
+//@ pure
+export function searchMayTouch(touches: number, budget: number): boolean {
+  return touches < exact_candidateSearch(searchTouchesPerCheck * budget);
+}
+
+/** Story: Search only where a pair can have a value / The posting walk covers or bounds every partner in the window (spec/candidateSearch.md) */
+//@ pure
+export function lawSearchTouchesStayWithinLimit(touches: number, budget: number): boolean {
+  //@ ensures \result === true
+  return !searchMayTouch(touches, budget) || exact_candidateSearch(touches + 1) <= exact_candidateSearch(searchTouchesPerCheck * budget);
+}
+
 /** Story: Keep the best candidates within a fixed number of pair checks / A search starts once with a positive limit and a budget no smaller than the limit (spec/candidateSearch.md) */
 //@ pure
 export function canBeginSearch(s: CandidateSearch, limit: number, budget: number): boolean {
@@ -144,6 +157,18 @@ export function alwaysChecksWithinBudget(s: CandidateSearch): boolean {
 //@ pure
 export function candidateRanksAbove(candidate: RankedCandidate, other: RankedCandidate): boolean {
   return candidate.value > other.value || (candidate.value === other.value && candidate.ordinal < other.ordinal);
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function stepEachCheckCountsOnce(before: CandidateSearch, via: string, after: CandidateSearch): boolean {
+  return via === "checkCandidate" ? after.checks === exact_candidateSearch(before.checks + 1) : after.checks === before.checks;
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function sometimesDroppedCandidate(s: CandidateSearch): boolean {
+  return s.bestDropped >= 0;
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
@@ -198,18 +223,6 @@ export function alwaysKeptOrdinalsDistinct(s: CandidateSearch): boolean {
 //@ pure
 export function alwaysKeptBeatDropped(s: CandidateSearch): boolean {
   return !s.kept.some((c: RankedCandidate) => !(c.value >= s.bestDropped));
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function stepEachCheckCountsOnce(before: CandidateSearch, via: string, after: CandidateSearch): boolean {
-  return via === "checkCandidate" ? after.checks === exact_candidateSearch(before.checks + 1) : after.checks === before.checks;
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function sometimesDroppedCandidate(s: CandidateSearch): boolean {
-  return s.bestDropped >= 0;
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
@@ -284,18 +297,18 @@ export function alwaysExactBeatsUnseen(s: CandidateSearch): boolean {
 
 /** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
-export function closeBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean): CandidateSearch {
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysIdleSearchIsEmpty(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysChecksWithinBudget(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptWithinLimit(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptValuesAreRealPairs(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysDroppedOnlyWhenFull(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptOrdinalsDistinct(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptBeatDropped(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptRankAboveDropped(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysExactBeatsUnseen(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> stepEachCheckCountsOnce(s, "closeBudgeted", \result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> stepClosedSearchStaysClosed(s, \result)
+export function closeBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean, touchedLeft: boolean): CandidateSearch {
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysIdleSearchIsEmpty(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysChecksWithinBudget(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysKeptWithinLimit(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysKeptValuesAreRealPairs(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysDroppedOnlyWhenFull(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysKeptOrdinalsDistinct(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysKeptBeatDropped(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysKeptRankAboveDropped(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> alwaysExactBeatsUnseen(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> stepEachCheckCountsOnce(s, "closeBudgeted", \result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent, touchedLeft)) ==> stepClosedSearchStaysClosed(s, \result)
   return { ...s, phase: "Budgeted", unseenBound: unseenBound };
 }
 
@@ -313,8 +326,8 @@ export function sometimesBudgeted(s: CandidateSearch): boolean {
 
 /** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
-export function canCloseBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean): boolean {
-  return s.phase === "Scanning" && (s.checks >= s.budget || walkSpent) && !searchStopsExact(s, unseenBound);
+export function canCloseBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean, touchedLeft: boolean): boolean {
+  return s.phase === "Scanning" && (s.checks >= s.budget || (walkSpent && !touchedLeft)) && !searchStopsExact(s, unseenBound);
 }
 
 /** Do the rules allow this event in this state? */
@@ -323,7 +336,7 @@ export function enabled(current: CandidateSearch, event: Event): boolean {
   if (event.type === "beginSearch") return canBeginSearch(current, event.limit, event.budget);
   if (event.type === "checkCandidate") return canCheckCandidate(current, event.ordinal);
   if (event.type === "closeExact") return canCloseExact(current, event.unseenBound);
-  if (event.type === "closeBudgeted") return canCloseBudgeted(current, event.unseenBound, event.walkSpent);
+  if (event.type === "closeBudgeted") return canCloseBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft);
   return false;
 }
 
@@ -332,10 +345,10 @@ export function enabled(current: CandidateSearch, event: Event): boolean {
 export function step(current: CandidateSearch, event: Event): CandidateSearch {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginSearch" && canBeginSearch(current, event.limit, event.budget)) return beginSearch(current, event.limit, event.budget);
-  if (event.type === "checkCandidate" && canCheckCandidate(current, event.ordinal)) return checkCandidate(current, event.value, event.ordinal);
-  if (event.type === "closeExact" && canCloseExact(current, event.unseenBound)) return closeExact(current, event.unseenBound);
-  if (event.type === "closeBudgeted" && canCloseBudgeted(current, event.unseenBound, event.walkSpent)) return closeBudgeted(current, event.unseenBound, event.walkSpent);
+  if (event.type === "beginSearch") return canBeginSearch(current, event.limit, event.budget) ? beginSearch(current, event.limit, event.budget) : current;
+  if (event.type === "checkCandidate") return canCheckCandidate(current, event.ordinal) ? checkCandidate(current, event.value, event.ordinal) : current;
+  if (event.type === "closeExact") return canCloseExact(current, event.unseenBound) ? closeExact(current, event.unseenBound) : current;
+  if (event.type === "closeBudgeted") return canCloseBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft) ? closeBudgeted(current, event.unseenBound, event.walkSpent, event.touchedLeft) : current;
   return current;
 }
 
@@ -356,7 +369,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "beginSearch" && Number.isSafeInteger(raw.limit) && Number.isSafeInteger(raw.budget)) return { type: "beginSearch", limit: raw.limit, budget: raw.budget };
   if (raw.type === "checkCandidate" && Number.isSafeInteger(raw.value) && Number.isSafeInteger(raw.ordinal)) return { type: "checkCandidate", value: raw.value, ordinal: raw.ordinal };
   if (raw.type === "closeExact" && Number.isSafeInteger(raw.unseenBound)) return { type: "closeExact", unseenBound: raw.unseenBound };
-  if (raw.type === "closeBudgeted" && Number.isSafeInteger(raw.unseenBound) && typeof raw.walkSpent === "boolean") return { type: "closeBudgeted", unseenBound: raw.unseenBound, walkSpent: raw.walkSpent };
+  if (raw.type === "closeBudgeted" && Number.isSafeInteger(raw.unseenBound) && typeof raw.walkSpent === "boolean" && typeof raw.touchedLeft === "boolean") return { type: "closeBudgeted", unseenBound: raw.unseenBound, walkSpent: raw.walkSpent, touchedLeft: raw.touchedLeft };
   return undefined;
 }
 

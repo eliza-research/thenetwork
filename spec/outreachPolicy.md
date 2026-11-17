@@ -18,7 +18,7 @@ pure val personDailyCap: int = 3
 
 ### Count a sent invitation at terminal expiry or after 72 hours
 
-Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current inbound message clears the member's unanswered entries. The existing one-time re-engagement retains its ordinary time limit. A stored entry from before delivery tracking uses its original recorded time.
+Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current message from the member's thread clears their unanswered entries, resets the thread counters, and updates the last engagement time. An assistant's profile submission can teach the profile or complete interview intake. It leaves the outreach pause, unanswered entries, thread counters, and response windows in place. A stored entry from before delivery tracking uses its original recorded time.
 
 ```quint
 pure val unansweredInviteWaitMs: int = 72 * 3600000
@@ -41,6 +41,39 @@ pure def lawInvitationCountsAtWait(acceptedAt: int): bool =
 
 pure def lawTooFewInvitationsDoNotPause(count: int): bool =
   count < unansweredInviteLimit implies not(unansweredInvitePause(count))
+
+pure def unansweredInviteCountAfterInbound(count: int, inbound: bool): int =
+  if (inbound) 0 else count
+
+pure def outreachEngagementSource(source: str): bool = source == "thread"
+
+pure def lawInboundMessageEndsThePause(count: int): bool =
+  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, outreachEngagementSource("thread"))))
+
+pure def lawAssistantProfileKeepsUnanswered(count: int): bool =
+  unansweredInviteCountAfterInbound(count, outreachEngagementSource("mcp")) == count
+```
+
+### Re-engagement requires current evidence of silence
+
+An adult who is in only-when-asked mode can receive one re-engagement after at least thirty days since their last inbound or outgoing ask. Require a held top-quartile opportunity from the last seven days. Check again when the send window opens. At dispatch, use the saved send and member state to check that the same pause and recent evidence still exist, that the last ask is the staged send, and that no new inbound has reset the silence. Ordinary consent and send checks still apply.
+
+```quint
+pure val reengagementSilenceMs: int = 30 * 86400000
+pure val reengagementHighValueMs: int = 7 * 86400000
+pure val reengagementDeliveryPrefix: str = "reengagement:"
+
+pure def reengagementEvidenceCurrent(onlyWhenAsked: bool, heldHighAt: int, now: int): bool =
+  onlyWhenAsked and heldHighAt > 0 and heldHighAt <= now and now - heldHighAt <= reengagementHighValueMs
+
+pure def reengagementMayStage(onlyWhenAsked: bool, lastInbound: int, lastAsk: int, heldHighAt: int, now: int): bool =
+  reengagementEvidenceCurrent(onlyWhenAsked, heldHighAt, now) and now - lastInbound >= reengagementSilenceMs and now - lastAsk >= reengagementSilenceMs
+
+pure def reengagementMayDispatch(onlyWhenAsked: bool, used: bool, lastInbound: int, lastAsk: int, heldHighAt: int, stagedAt: int, now: int): bool =
+  reengagementEvidenceCurrent(onlyWhenAsked, heldHighAt, now) and used and stagedAt <= now and lastAsk == stagedAt and stagedAt - lastInbound >= reengagementSilenceMs
+
+pure def lawReplyStopsPendingReengagement(onlyWhenAsked: bool, used: bool, lastInbound: int, lastAsk: int, heldHighAt: int, stagedAt: int, now: int): bool =
+  lastInbound >= stagedAt implies not(reengagementMayDispatch(onlyWhenAsked, used, lastInbound, lastAsk, heldHighAt, stagedAt, now))
 ```
 
 ## Story: Keep minors out of introductions and recruiting
@@ -49,12 +82,12 @@ pure def lawTooFewInvitationsDoNotPause(count: int): bool =
 
 ### Recruiting is an adult-only message at the time it is sent
 
-An introduction, a meeting message, a relay, a reviewed home-help consent card, or a request to invite other people requires an adult recipient. Check the current age when sending, including a message held for a later send window.
+An introduction, a meeting message, a relay, a reviewed home-help consent card, a re-engagement offer, or a request to invite other people requires an adult recipient. Check the current age when sending, including a message held for a later send window.
 
 ```quint
 pure def outreachRequiresAdult(kind: str): bool =
   kind == "probe" or kind == "reveal" or kind == "nudge" or kind == "scheduling" or
-  kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice" or kind == "home_help_consent" or kind == "worthwhile"
+  kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice" or kind == "home_help_consent" or kind == "worthwhile" or kind == "reengage"
 
 pure def lawRecruitingRequiresAdult(kind: str): bool =
   kind == "growth" implies outreachRequiresAdult(kind)

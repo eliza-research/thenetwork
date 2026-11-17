@@ -166,13 +166,13 @@ export function enabled(current: Restore, event: Event): boolean {
 export function step(current: Restore, event: Event): Restore {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkName" && canCheckName(current)) return checkName(current, event.name, event.validName);
-  if (event.type === "checkVersion" && canCheckVersion(current)) return checkVersion(current, event.versionOne);
-  if (event.type === "checkManifest" && canCheckManifest(current)) return checkManifest(current, event.manifest);
-  if (event.type === "checkTarget" && canCheckTarget(current)) return checkTarget(current, event.targetExists);
-  if (event.type === "recordCreation" && canRecordCreation(current)) return recordCreation(current);
-  if (event.type === "recordDump" && canRecordDump(current)) return recordDump(current);
-  if (event.type === "recordCounts" && canRecordCounts(current)) return recordCounts(current, event.countsAgree);
+  if (event.type === "checkName") return canCheckName(current) ? checkName(current, event.name, event.validName) : current;
+  if (event.type === "checkVersion") return canCheckVersion(current) ? checkVersion(current, event.versionOne) : current;
+  if (event.type === "checkManifest") return canCheckManifest(current) ? checkManifest(current, event.manifest) : current;
+  if (event.type === "checkTarget") return canCheckTarget(current) ? checkTarget(current, event.targetExists) : current;
+  if (event.type === "recordCreation") return canRecordCreation(current) ? recordCreation(current) : current;
+  if (event.type === "recordDump") return canRecordDump(current) ? recordDump(current) : current;
+  if (event.type === "recordCounts") return canRecordCounts(current) ? recordCounts(current, event.countsAgree) : current;
   return current;
 }
 

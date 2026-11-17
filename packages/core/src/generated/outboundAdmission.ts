@@ -8,6 +8,10 @@ export interface ConversationAdmission { decision: Admission; reengage: boolean 
 
 /** Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan (spec/outboundAdmission.md) */
 export const bookedCancellationPrefix: string = "booked-cancellation:";
+/** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
+export const peerContactTypes: string[] = ["probe", "plan_probe", "scheduling", "proposal", "reminder"];
+/** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
+export const peerContactSeatStatuses: string[] = ["pending", "checking", "available", "accepted", "confirmed", "attended"];
 
 /** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
@@ -70,6 +74,26 @@ export function queuedProbePolicy(proactiveProbe: boolean, paused: boolean, cate
 export function lawPausedProbeCannotProceed(categoryAllowed: boolean): boolean {
   //@ ensures \result === true
   return queuedProbePolicy(true, true, categoryAllowed) === "RecipientIneligible";
+}
+
+/** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
+//@ pure
+export function queuedPeerContactPolicy(rosterBlocked: boolean, rosterRestricted: boolean): Admission {
+  return rosterBlocked || rosterRestricted ? "RecipientIneligible" : "Proceed";
+}
+
+/** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
+//@ pure
+export function lawBlockedRosterCannotProceed(rosterRestricted: boolean): boolean {
+  //@ ensures \result === true
+  return queuedPeerContactPolicy(true, rosterRestricted) !== "Proceed";
+}
+
+/** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
+//@ pure
+export function lawRestrictedRosterCannotProceed(rosterBlocked: boolean): boolean {
+  //@ ensures \result === true
+  return queuedPeerContactPolicy(rosterBlocked, true) !== "Proceed";
 }
 
 /** Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out (spec/outboundAdmission.md) */

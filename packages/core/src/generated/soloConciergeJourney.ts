@@ -47,6 +47,18 @@ export function eligibleListings(catalog: PublishedCatalog, who: Audience): Publ
 
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
+export function hasAnswer(a: CollectedAnswer): boolean {
+  return a.tag === "NoAnswer" ? false : true;
+}
+
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
+//@ pure
+export function answerListsAre(a: CollectedAnswer, listings: PublicListing[]): boolean {
+  return a.tag === "Answered" ? equal_soloConciergeJourney(a.listings, listings) : false;
+}
+
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
+//@ pure
 export function answerFor(s: SoloConciergeJourney, who: Audience): CollectedAnswer {
   return who === "AdultMember" ? s.adultAnswer : s.youngerAnswer;
 }
@@ -72,25 +84,25 @@ export function alwaysSoloDoesNotRecruit(s: SoloConciergeJourney): boolean {
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function alwaysTheYoungerMemberOnlyReceivesAllAges(s: SoloConciergeJourney): boolean {
-  return equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "NoAnswer" } as CollectedAnswer)) || equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "Answered", listings: ([] as PublicListing[]) } as CollectedAnswer)) || equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "Answered", listings: (["NatureWalk"] as PublicListing[]) } as CollectedAnswer));
+  return !hasAnswer(s.youngerAnswer) || answerListsAre(s.youngerAnswer, ([] as PublicListing[])) || answerListsAre(s.youngerAnswer, (["NatureWalk"] as PublicListing[]));
 }
 
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesRecommendsThreeEventsToTheAdult(s: SoloConciergeJourney): boolean {
-  return equal_soloConciergeJourney(s.adultAnswer, ({ tag: "Answered", listings: (["NatureWalk", "ArtTour", "HistoryTour"] as PublicListing[]) } as CollectedAnswer));
+  return answerListsAre(s.adultAnswer, (["NatureWalk", "ArtTour", "HistoryTour"] as PublicListing[]));
 }
 
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesRecommendsAnAllAgesEvent(s: SoloConciergeJourney): boolean {
-  return equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "Answered", listings: (["NatureWalk"] as PublicListing[]) } as CollectedAnswer));
+  return answerListsAre(s.youngerAnswer, (["NatureWalk"] as PublicListing[]));
 }
 
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesReportsNoFittingEvents(s: SoloConciergeJourney): boolean {
-  return equal_soloConciergeJourney(s.adultAnswer, ({ tag: "Answered", listings: ([] as PublicListing[]) } as CollectedAnswer));
+  return answerListsAre(s.adultAnswer, ([] as PublicListing[]));
 }
 
 /** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
@@ -126,7 +138,7 @@ export function sometimesRefusesAStaleAnswer(s: SoloConciergeJourney): boolean {
 /** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md) */
 //@ pure
 export function canRetryIdeas(s: SoloConciergeJourney, who: Audience): boolean {
-  return !equal_soloConciergeJourney(answerFor(s, who), ({ tag: "NoAnswer" } as CollectedAnswer));
+  return hasAnswer(answerFor(s, who));
 }
 
 /** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md) */
@@ -135,8 +147,8 @@ export function retryIdeas(s: SoloConciergeJourney, who: Audience): ConciergeSte
   //@ ensures (inv(s) && canRetryIdeas(s, who)) ==> alwaysSoloDoesNotRecruit(\result.state)
   //@ ensures (inv(s) && canRetryIdeas(s, who)) ==> alwaysTheYoungerMemberOnlyReceivesAllAges(\result.state)
   const local_2: CollectedAnswer = answerFor(s, who);
-  const local_3 = equal_soloConciergeJourney(local_2, ({ tag: "Answered", listings: eligibleListings(s.catalog, who) } as CollectedAnswer));
-  const local_4: ConciergeReplay = soloConcierge_soloReplyReplayAllowed(!equal_soloConciergeJourney(local_2, ({ tag: "NoAnswer" } as CollectedAnswer)), local_3) ? "ReplayedAnswer" : "RefusedStaleAnswer";
+  const local_3 = answerListsAre(local_2, eligibleListings(s.catalog, who));
+  const local_4: ConciergeReplay = soloConcierge_soloReplyReplayAllowed(hasAnswer(local_2), local_3) ? "ReplayedAnswer" : "RefusedStaleAnswer";
   return { state: ({ ...s, lastReplay: local_4 } as SoloConciergeJourney), out: ([({ tag: "ReplayObserved", result: local_4 } as ConciergeEffect)] as ConciergeEffect[]) };
 }
 
@@ -154,9 +166,9 @@ export function enabled(current: SoloConciergeJourney, event: Event): boolean {
 export function step(current: SoloConciergeJourney, event: Event): ConciergeStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "publishCatalog" && canPublishCatalog(current, event.catalog)) return publishCatalog(current, event.catalog);
-  if (event.type === "askForIdeas" && canAskForIdeas(current, event.who)) return askForIdeas(current, event.who);
-  if (event.type === "retryIdeas" && canRetryIdeas(current, event.who)) return retryIdeas(current, event.who);
+  if (event.type === "publishCatalog") return canPublishCatalog(current, event.catalog) ? publishCatalog(current, event.catalog) : { state: current, out: ([] as ConciergeEffect[]) };
+  if (event.type === "askForIdeas") return canAskForIdeas(current, event.who) ? askForIdeas(current, event.who) : { state: current, out: ([] as ConciergeEffect[]) };
+  if (event.type === "retryIdeas") return canRetryIdeas(current, event.who) ? retryIdeas(current, event.who) : { state: current, out: ([] as ConciergeEffect[]) };
   return { state: current, out: ([] as ConciergeEffect[]) };
 }
 

@@ -5,13 +5,19 @@ export declare const initial: DigestFlow;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export declare function inv(current: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemStillPending(seen: boolean, notified: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export declare function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean;
+export declare function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function inboxItemDigestible(seen: boolean, notified: boolean, hasExpiry: boolean, expiresAt: number, at: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function canRereadItems(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number, recipientAvailable: boolean, destinationChanged: boolean): DigestFlow;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export declare function canRereadItems(digest: DigestFlow): boolean;
+export declare function lawExpiredItemLeavesTheDigest(seen: boolean, notified: boolean, expiresAt: number, at: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function lawMissingRecipientCancels(plannedCount: number, remainingCount: number, destinationChanged: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
@@ -31,8 +37,6 @@ export declare function sometimesQueuesDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export declare function sometimesCancelsDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
-export declare function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean;
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
 export declare function canReadQueuedDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
 export declare function readQueuedDigest(digest: DigestFlow, sameDigest: boolean): DigestFlow;
@@ -44,6 +48,12 @@ export declare function revalidateQueuedItems(digest: DigestFlow, allPresent: bo
 export declare function sometimesKeepsQueuedDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) @throws {never} */
 export declare function sometimesSuppressesQueuedDigest(digest: DigestFlow): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) @throws {never} */
+export declare function queuedDigestClaimAllowed(sameRecipient: boolean, threadCopy: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean, allAssistantsReadable: boolean): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) @throws {never} */
+export declare function lawUnreadableQueuedLinkCannotSend(sameRecipient: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) @throws {never} */
+export declare function lawForeignQueuedDigestCannotSend(threadCopy: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean, allAssistantsReadable: boolean): boolean;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: DigestFlow, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

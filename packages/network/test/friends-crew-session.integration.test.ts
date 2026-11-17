@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
-import { DAY, type Facet, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, fromLocal, type Facet, type InitialInviteReceipt, type MemberId } from "@thenetwork/core";
 import { FRIENDS_PLANS, friendsPack, localEmbed, plans, resolveConfig, World, type EngineInput } from "@thenetwork/engine";
 import { CapitalLedger, ledgerReader } from "../src/capital.ts";
+import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
 
@@ -34,6 +35,114 @@ test("friends: a crew session is pair-gated on Friend profiles, and a block betw
 
   const blocked = new World({ ...snapshot, edges: [{ from: "b", to: "c", type: "blocked", strength: 1, explicit: true, createdAt: START - DAY }] }, cfg, localEmbed, friendsPack);
   expect(plans.crewSessionPlan(blocked, crew, START, place)).toBeNull();
+});
+
+// spec/crewOffer.md, "A new recurring session uses a current public venue"
+test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew checks its recorded venue before review: %s", async availability => {
+  const activity = "coffee_crawl";
+  const venue = PLAN_VENUES.find(v => v.activities.includes(activity));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const ids = ["a", "b", "c"];
+  const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
+    interests: ["coffee", "climbing"],
+  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard(...ids);
+  const start = availability === "closes_during_session" ? fromLocal(2026, 10, 10, venue.hours.weekend[1] - 1, "America/New_York") : Date.UTC(2026, 9, 10, 16);
+  const crew: plans.Crew = { id: "crew_availability", activityId: activity,
+    venueId: availability === "removed" ? "removed-public-venue" : venue.id, city: "nyc", members: ids,
+    cadenceDays: 7, hostRotation: ids, sessions: [], handedOff: false, slot: { start } };
+  const state = w.net.exportState();
+  state.plans!.crews.push(crew);
+  w.net.importState(state);
+  w.clock.advance(DAY);
+  await w.net.tick(w.clock.now());
+
+  const result = w.net.exportState();
+  const session = result.opps.find(o => o.plan?.crewId === crew.id);
+  const retained = result.plans?.crews.find(c => c.id === crew.id);
+  if (availability === "open") expect(session).toMatchObject({ stage: "review", participants: ids, plan: { venueId: venue.id, quorum: 3 } });
+  else expect(session).toBeUndefined();
+  expect(retained?.members).toEqual(ids);
+  expect(retained?.sessions).toHaveLength(availability === "open" ? 1 : 0);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+});
+
+// spec/friendsWeek.md, "A Friends repeat uses its own completed table and a fresh review"
+test.each(["current", "staged_booking", "old_revision", "unverified_history"] as const)("the weekly Friends repeat needs exact settled attendance: %s", async evidence => {
+  const activity = "coffee_crawl";
+  const venue = PLAN_VENUES.find(v => v.activities.includes(activity));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const ids = ["a", "b", "c"];
+  const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
+    interests: ["coffee", "climbing"],
+  })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+    plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard(...ids);
+
+  const at = Date.UTC(2026, 9, 10, 16);
+  const now = Date.UTC(2026, 9, 15, 15);
+  const future = at + 7 * DAY;
+  const source = w.net["submitPlan"]({ id: "original-table", city: "nyc", activityId: activity, venueId: venue.id,
+    place: { name: venue.name, area: venue.area }, window: { start: at, end: at + 90 * 60_000 },
+    invited: ids, alternates: [], hostId: "a", partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
+    probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
+  }, at - DAY);
+  const state = w.net.exportState();
+  const completed = state.opps.find(o => o.id === source.id)!;
+  completed.stage = "done";
+  completed.meetingAt = at;
+  completed.status = ids.map(id => [id, "yes"]);
+  completed.bookedAt = Object.fromEntries(ids.map(id => [id, at - HOUR]));
+  if (evidence === "unverified_history") {
+    completed.finalized = true;
+    completed.post = Object.fromEntries(ids.map(id => [id, { came: true, again: true, otherNoShow: false, named: [] }]));
+    for (const id of ids) state.interactions.push({ id: `${source.id}:fb:${id}`, kind: "group", category: "social",
+      participants: ids, at: at + 4 * HOUR, outcome: "completed", contributors: [] });
+  }
+  for (const member of state.members) member.stated = { at: now - 1, until: future + DAY, windows: [{ start: future, end: future + 3 * HOUR }] };
+  w.net.importState(state);
+  if (evidence !== "unverified_history") {
+    const receipts = new Map<string, InitialInviteReceipt>();
+    for (const id of ids) {
+      receipts.set(meetingFeedbackKey(source.id, id, 0), { kind: "accepted", at: at + 3 * HOUR });
+      if (evidence !== "staged_booking" || id !== "c") {
+        receipts.set(bookingNoticeReceiptKey(source.id, id, 0), { kind: "accepted", at: at - HOUR });
+      }
+    }
+    w.net.init({ ...w.ctx(), initialInviteReceipt: id => receipts.get(id) });
+    w.clock.set(at + 4 * HOUR);
+    for (const id of ids) await w.say(id, "We all came. It was great. I'd do it again.");
+    await w.net.tick(w.clock.now());
+    const afterFeedback = w.net.exportState();
+    const settled = afterFeedback.opps.find(o => o.id === source.id)!;
+    expect(settled).toMatchObject({ finalized: true, feedbackFrom: ids });
+    if (evidence === "old_revision") {
+      settled.scheduleRevision = 1;
+      w.net.importState(afterFeedback);
+    }
+    w.restart();
+  }
+  w.clock.set(now);
+
+  await w.net.tick(now);
+  const proposed = w.net.exportState().opps.find(o => o.plan?.repeatOf === completed.id);
+  if (evidence !== "current") {
+    expect(proposed).toBeUndefined();
+    return;
+  }
+  expect(proposed).toMatchObject({ generator: "friends_repeat", stage: "review", participants: ids,
+    plan: { activityId: activity, venueId: venue.id, hostId: "b", alternates: [], quorum: 3, window: { start: future } } });
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+
+  const blocked = w.net.exportState();
+  blocked.blocks.push("a|b");
+  w.net.importState(blocked);
+  expect(w.net.review(proposed!.id, "approve", { reviewer: "sim_staff" })).toBe(false);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });
 
 // spec/capitalLevers.md, "Earned organizing reach reserves the extra slots for low exposure"

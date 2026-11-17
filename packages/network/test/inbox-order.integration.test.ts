@@ -11,7 +11,7 @@ import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.t
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
 import type { TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
-import { Inbox } from "../service/inbox.ts";
+import { Inbox, type InboundTurn } from "../service/inbox.ts";
 
 const user = process.env.USER ?? "postgres";
 const db = `network_inbox_${randomUUID().replaceAll("-", "")}`;
@@ -188,15 +188,27 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     expect((await sql`select status from platform.inbound where id = 'msg:blooio:l1'`)[0].status).toBe("done");
   });
 
-  test("work a failed turn committed outside its own transactions is undone (the one-time notice row), so a retry gets it again", async () => {
+  test("the first-contact key and completed reply commit together", async () => {
     const from = "+12125557106";
     const { box } = inbox(new Set());
-    const undone: string[] = [];
-    const r = await box.signed(turnReq(from, "n1", "hi, who is this?"), "h-n1", async t => {
-      (t.onFail ??= []).push(async () => { undone.push("eliza_notice"); });
-      throw new Error("join failed after the notice");
-    });
-    expect(r.status).toBe(409);
-    expect(undone).toEqual(["eliza_notice"]);
+    const phoneHash = "first-contact-fixture";
+    const run = async (turn: InboundTurn) => {
+      const reply = { id: `notice:${turn.id}`, body: "First contact notice", kind: "compliance" as const };
+      turn.firstContactNotice = { phoneHash, replyId: reply.id };
+      await sql.begin(tx => box.collect(tx, [reply]));
+      return handled([reply]);
+    };
+    await sql`alter table platform.eliza_notices add constraint reject_fixture_notice check (phone_hash <> 'first-contact-fixture')`;
+    try {
+      expect((await box.signed(turnReq(from, "n1", "hi, who is this?"), "h-n1", run)).status).toBe(409);
+      expect(await sql`select status,response from platform.inbound where id='msg:blooio:n1'`).toEqual([{ status: "unresolved", response: null }]);
+      expect(await sql`select 1 from platform.eliza_notices where phone_hash=${phoneHash}`).toHaveLength(0);
+    } finally {
+      await sql`alter table platform.eliza_notices drop constraint reject_fixture_notice`;
+    }
+    clock.advance(11 * 60_000);
+    expect((await box.signed(turnReq(from, "n2", "hello again"), "h-n2", run)).status).toBe(200);
+    expect(await sql`select 1 from platform.inbound where id='msg:blooio:n2' and status='done'`).toHaveLength(1);
+    expect(await sql`select 1 from platform.eliza_notices where phone_hash=${phoneHash}`).toHaveLength(1);
   });
 });

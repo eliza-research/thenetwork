@@ -118,6 +118,45 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
 }, 60_000);
 
+test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {
+  const phone = "+12125550173", app = APPS.friends;
+  const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
+    firstName: "Remy", age: 31, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Travel fixture signup failed: ${joined.error}`);
+  const rt = service.runtimeFor(app.id)!;
+  const original = rt.unitOfWork.bind(rt);
+  const request = turn("travel-committed-before-runtime-stop", phone,
+    "I will be in San Francisco from 2026-11-29 until 2026-12-02.", app.id);
+  let stopped = false;
+  rt.unitOfWork = async (fn, scheduling) => {
+    const result = await original(fn, scheduling);
+    if (result === "travel_presence") {
+      stopped = true;
+      throw new Error("Fixture runtime stopped after its save");
+    }
+    return result;
+  };
+  let response: Response;
+  try {
+    response = await post(request);
+  } finally {
+    rt.unitOfWork = original;
+  }
+  expect(stopped).toBe(true);
+  const saved = await sql`select city from network.presence where app_id=${app.id}
+    and member_id=${joined.membership.memberId} and type='temporary'`;
+  expect(saved).toEqual([{ city: "sf" }]);
+  expect(response.status).toBe(200);
+  const reply = await response.json();
+  expect(reply).toMatchObject({ app: "friends", reason: "travel_presence", replies: [expect.stringContaining("Saved in friends.help")] });
+  const replay = await post(request);
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toEqual(reply);
+  expect(await sql`select city from network.presence where app_id=${app.id}
+    and member_id=${joined.membership.memberId} and type='temporary'`).toEqual(saved);
+}, 15_000);
+
 // spec/standingIntentManagement.md, "Reconcile older saved controls during the first normal save"
 test("reconciles legacy intent controls for the current app and owner once and preserves timestamps", async () => {
   const phone = "+12125550165", inactivePhone = "+12125550166";

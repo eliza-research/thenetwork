@@ -3,6 +3,8 @@
 
 /** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
 export type StandingIntentPhase = "IntentLive" | "IntentExpired" | "IntentPaused" | "IntentClosed" | "IntentInactive";
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
+export type StandingPresencePhase = "IgnorePresence" | "FuturePresence" | "CurrentPresence";
 
 /** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
 export const learnedIntentDays: number = 60;
@@ -59,8 +61,28 @@ export function canQueueEngineOpportunity(queuedToday: number, dailyCap: number)
 
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
 //@ pure
+export function standingPresencePhase(eligibleMember: boolean, hasStart: boolean, startsAt: number, hasEnd: boolean, endsAt: number, asOf: number): StandingPresencePhase {
+  return !eligibleMember || (hasStart && hasEnd && startsAt >= endsAt) || (hasEnd && endsAt <= asOf) ? "IgnorePresence" : (hasStart && asOf < startsAt ? "FuturePresence" : "CurrentPresence");
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
+//@ pure
 export function standingIntentRecheckDue(previous: string, evidence: string, liveIntents: number, queuedToday: number, dailyCap: number): boolean {
   return previous !== evidence && liveIntents > 0 && canQueueEngineOpportunity(queuedToday, dailyCap);
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
+//@ pure
+export function lawEndedPresenceDoesNotContribute(eligibleMember: boolean, hasStart: boolean, startsAt: number, endsAt: number): boolean {
+  //@ ensures \result === true
+  return standingPresencePhase(eligibleMember, hasStart, startsAt, true, endsAt, endsAt) === "IgnorePresence";
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
+//@ pure
+export function lawStartingTripChangesEvidence(startsAt: number, endsAt: number): boolean {
+  //@ ensures \result === true
+  return !(startsAt < endsAt) || (standingPresencePhase(true, true, startsAt, true, endsAt, exact_standingIntent(startsAt - 1)) === "FuturePresence" && standingPresencePhase(true, true, startsAt, true, endsAt, startsAt) === "CurrentPresence");
 }
 
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
@@ -74,4 +96,10 @@ export function lawUnchangedEvidenceDoesNotRecheck(evidence: string, liveIntents
 //@ pure
 export function standingIntentCandidateInScope(scoped: boolean, matchesIntent: boolean, eventFitsIntent: boolean): boolean {
   return !scoped || matchesIntent || eventFitsIntent;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_standingIntent(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

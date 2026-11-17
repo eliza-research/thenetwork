@@ -12,13 +12,13 @@ import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
 
-const scenes = ["fresh consent", "expired delivery"] as const;
+const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability", "expired generic invite"] as const;
 
-test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its reviewed replacement (%s)", async scene => {
+test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current admission (%s)", async scene => {
   // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
   // spec/bookedGroupReplacement.md, "A replacement uses a current reviewed alternate and a viable slot"
   // spec/bookedGroupReplacement.md, "The next plan needs fresh review and all three separate acceptances"
-  const url = await migratedDb(scene === "fresh consent" ? "booked_group_replacement" : "booked_group_replacement_expired");
+  const url = await migratedDb(`booked_group_${scene.replaceAll(" ", "_")}`);
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 16, 19));
   const app = APPS.friends;
@@ -106,7 +106,8 @@ test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its r
     const ids = members.map(member => member.id);
     const [ari, blair, charlie, drew, elliot] = ids;
     if (!ari || !blair || !charlie || !drew || !elliot) throw new Error("The five fixture members did not join");
-    const invited = [ari, blair, charlie];
+    const checksDisclosure = scene === "withdrawn identity";
+    const invited = checksDisclosure ? [ari, blair, charlie, elliot] : [ari, blair, charlie];
     const freshRoster = [ari, blair, elliot];
     const now = clock.now();
     const fixture = new Mini(members, { app: app.id, plans: false, growth: false });
@@ -116,8 +117,9 @@ test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its r
     const plan: plans.Plan = {
       id: "booked_group_replacement_original", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
       place: { name: "Inwood Hill Park", area: "Inwood" }, window: { start: now + 5 * DAY, end: now + 5 * DAY + 4 * HOUR },
-      invited, alternates: [drew, elliot], partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
-      probeDeadline: now + 3 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
+      invited, alternates: checksDisclosure ? [] : [drew, elliot], partner: false, size: { min: 3, target: invited.length, max: invited.length }, quorum: 3,
+      probeDeadline: now + (scene === "expired generic invite" ? 2 * HOUR : 3 * DAY),
+      score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
     await runtime().unitOfWork(net => {
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members.map(member => ({ ...member, stated })) });
@@ -127,12 +129,105 @@ test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its r
     if (!original) throw new Error("The original plan did not reach staff review");
     expect(original.proposal.participants).toEqual(invited);
     expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+    if (scene === "changed queued availability" || scene === "expired generic invite") await adapter.queue.setLineSafety("review");
     expect((await approve(original)).status).toBe(200);
-    expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual(people.slice(0, 3).map(person => person.e164));
+    if (scene === "expired generic invite") {
+      // The queued messages still have delivery time left, but the reviewed probe deadline has arrived.
+      const waiting = await messages(original.oppId, "plan_probe");
+      expect(waiting).toHaveLength(3);
+      expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+      clock.set(plan.probeDeadline);
+      await adapter.queue.setLineSafety(undefined);
+      await runtime().deliver();
+      expect((await booking(original.oppId))?.stage).toBe("probing");
+      for (const row of waiting) expect(await adapter.queue.statusOf(row.id)).toBe("suppressed_ineligible");
+      expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+      return;
+    }
+    if (scene === "changed queued availability") {
+      // spec/planDispatch.md, "Recheck the member's current availability before contacting them"
+      const waiting = await messages(original.oppId, "plan_probe");
+      expect(waiting).toHaveLength(3);
+      expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+      const changedAt = clock.now() + 1;
+      clock.set(changedAt);
+      await runtime().unitOfWork(net => {
+        const saved = net.exportState();
+        const member = saved.members.find(candidate => candidate.id === ari)!;
+        member.stated = { at: changedAt, until: now + 7 * DAY,
+          windows: [{ start: plan.window.end + HOUR, end: plan.window.end + 5 * HOUR }] };
+        net.importState(saved);
+      });
+      clock.set(changedAt + HOUR);
+      await adapter.queue.setLineSafety(undefined);
+      await runtime().deliver();
+      const [withheld] = await sql`select outbound.status,outbound.attempts from platform.outbound outbound join network.messages msg
+        on msg.app_id=outbound.app_id and msg.id=outbound.id and msg.member_id=outbound.member_id
+        where outbound.app_id=${app.id} and outbound.member_id=${ari} and msg.opportunity_id=${original.oppId} and msg.type='plan_probe'`;
+      expect(withheld).toEqual({ status: "suppressed_ineligible", attempts: 0 });
+      expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual([people[1].e164, people[2].e164]);
+      expect((await booking(original.oppId))?.planRun?.answers[ari]).toBe("pending");
+      await runtime().tick();
+      const reconciled = await booking(original.oppId);
+      expect(reconciled?.planRun?.answers).toMatchObject({ [ari]: "no", [elliot]: "pending" });
+      expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual([people[1].e164, people[2].e164, people[4].e164]);
+      return;
+    }
+    const probed = people.filter((_, index) => invited.includes(ids[index]!));
+    expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual(probed.map(person => person.e164));
     const firstOriginalYes = turn("original-ari-yes", people[0].e164, "yes");
     const firstOriginalReply = await answer(firstOriginalYes);
     await answer(turn("original-blair-yes", people[1].e164, "yes"));
-    await answer(turn("original-charlie-yes", people[2].e164, "yes"));
+    if (checksDisclosure) await adapter.lineSafety("review");
+    const bookedYes = turn("original-charlie-yes", people[2].e164, "yes");
+    const bookedReply = await answer(bookedYes);
+    if (checksDisclosure) {
+      // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
+      // The reviewed fourth invitee accepts after booking. Their collected reply still names Charlie.
+      const lateYes = turn("original-elliot-late-yes", people[4].e164, "yes");
+      const late = await post(TURN_PATH, lateYes.messageId, lateYes);
+      expect(late.status).toBe(200);
+      expect(await late.json()).toMatchObject({ outcome: "handled", replies: [expect.stringContaining("Charlie")] });
+      expect(await booking(original.oppId)).toMatchObject({ stage: "scheduled", bookedTold: expect.arrayContaining(invited) });
+      const unchanged = await post(TURN_PATH, bookedYes.messageId, bookedYes);
+      expect(unchanged.status).toBe(200);
+      expect(await unchanged.json()).toEqual(bookedReply);
+      // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
+      // The exact notice includes Ari and Blair even though it is returned to Elliot.
+      const [block] = await sql<{ from_person: string; to_person: string }[]>`insert into platform.person_blocks (from_person,to_person,origin_app,at)
+        select a.person_id,b.person_id,'ntwrk',${new Date(clock.now())} from platform.memberships a, platform.memberships b
+        where a.app_id=${app.id} and a.member_id=${ari} and b.app_id=${app.id} and b.member_id=${blair} returning from_person,to_person`;
+      if (!block) throw new Error("Fixture could not commit the cross-app block");
+      const refused = await post(TURN_PATH, lateYes.messageId, lateYes);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ error: "turn_opportunity_blocked", retryable: false });
+      await sql`delete from platform.person_blocks where from_person=${block.from_person} and to_person=${block.to_person}`;
+      const [held] = await sql`select queued.id,queued.body,queued.status,queued.attempts,msg.booking_roster_member_ids from network.messages msg
+        join platform.outbound queued on queued.app_id=msg.app_id and queued.id=msg.id and queued.member_id=msg.member_id
+        where msg.app_id=${app.id} and msg.opportunity_id=${original.oppId} and msg.type='proposal' and msg.member_id=${ari}`;
+      expect(held).toMatchObject({ body: expect.stringContaining("Charlie"), attempts: 0, status: "retry_scheduled",
+        booking_roster_member_ids: [ari, blair, charlie] });
+      await answer(turn("booked-charlie-steps-out", people[2].e164, "I can't make it."));
+      const remaining = await booking(original.oppId);
+      expect(remaining).toMatchObject({ stage: "scheduled" });
+      expect(remaining?.status.filter(([, status]) => status === "yes").map(([id]) => id).sort()).toEqual([...freshRoster].sort());
+      await adapter.lineSafety(undefined);
+      clock.advance(HOUR);
+      await runtime().deliver();
+      const [settled] = await sql`select status,attempts from platform.outbound where id=${held.id}`;
+      const replay = await post(TURN_PATH, lateYes.messageId, lateYes);
+      expect({ ...settled, providers: calls.filter(call => call.idempotencyKey === `tn:${held.id}`).length, replay: replay.status })
+        .toEqual({ status: "suppressed_ineligible", attempts: 0, providers: 0, replay: 409 });
+      expect(await replay.json()).toMatchObject({ error: "turn_booking_changed" });
+      const person = await service.accounts.personFor(people[2].e164);
+      expect(await service.accounts.leave(app, { e164: people[2].e164, personId: person!.id })).toBe(true);
+      const [erased] = await sql`select msg.body,msg.booking_roster_member_ids,queued.body as queued_body from network.messages msg
+        join platform.outbound queued on queued.app_id=msg.app_id and queued.id=msg.id where msg.id=${held.id}`;
+      expect(erased).toEqual({ body: "Booking notice erased.", booking_roster_member_ids: null, queued_body: null });
+      const [cleared] = await sql`select response,replies from platform.inbound where id=${`msg:blooio:${lateYes.messageId}`}`;
+      expect(cleared).toEqual({ response: null, replies: [] });
+      return;
+    }
     expect(await booking(original.oppId)).toMatchObject({ stage: "scheduled", bookedTold: expect.arrayContaining(invited) });
 
     clock.advance(DAY);

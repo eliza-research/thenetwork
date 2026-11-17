@@ -33,7 +33,7 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import {
-  canReservePartner, type Event as WeekEvent, friendTableHasMinimumCandidates, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
+  canReservePartner, type Event as WeekEvent, friendTableHasMinimumCandidates, friendTableTriesNextStarter, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
   recurringAvailable, step as stepWeek,
 } from "../../../../core/src/generated/friendsWeek.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
@@ -146,6 +146,8 @@ export interface FriendsWeekInput {
   outcomes: readonly PlanOutcomeRecord[];
   /** Crews already offered (formed or not): never re-offered. */
   offered: readonly Crew[];
+  /** Serving can reject a repeat before its seats are reserved for the week. */
+  repeatAllowed?: (plan: FriendsPlan) => boolean;
   lastPlannedAt?: ReadonlyMap<MemberId, number>;
 }
 export interface FriendsWeek { sessions: FriendsPlan[]; offers: { crew: Crew; first: FriendsPlan }[]; repeats: FriendsPlan[]; plans: FriendsPlan[]; partners: FriendsPlan[] }
@@ -406,12 +408,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: activityWindow(start, a.durationMin),
-        invited: ids, alternates, partner,
+        invited: ids, alternates, partner, repeatOf: o.planId,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: circleScore(circle), u: {}, familiar: {}, createdAt: now, category: "social",
       };
       const fp = finish(base, "repeat");
-      if (!fp || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
+      if (!fp || inp.repeatAllowed?.(fp) === false
+        || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
       out.repeats.push(fp);
     }
   }
@@ -509,8 +512,9 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const priority = (id: MemberId) => fitOf(id, a, universal) * timeFit(id);
       const order = [...free].sort((x, y) => (priority(y) - priority(x)) || compareText(x, y)).slice(0, FRIENDS_TABLE_POOL);
       // spec/friendsWeek.md, "An unsuccessful starting member leaves the rest of the table candidates available"
-      for (const seed of order) {
-        const table = growTable(order, seed);
+      let reserved = false;
+      for (let next = 0; friendTableTriesNextStarter(reserved, order.length - next); next++) {
+        const table = growTable(order, order[next]!);
         if (!friendTableHasMinimumCandidates(table.members.length, minInvite)) continue;
         const first = chosen.map(i => ({ i, n: table.members.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (x.i - y.i))[0]!;
         const window = slots[first.i]!;
@@ -531,7 +535,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
           .filter(o => venueOpen(venue, o, a.durationMin, tz, att));
         if (!reserve({ type: "reserveNewPlan", invited: fp.invited, alternates: fp.alternates, reserveAlternates: pol.openTable })) continue;
         out.plans.push(fp);
-        break;
+        reserved = true;
       }
     }
   };

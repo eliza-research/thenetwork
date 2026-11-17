@@ -5,12 +5,13 @@
 export type OpportunityPhase = "InReview" | "Probing" | "Scheduled" | "Done" | "Closed";
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 export interface OpportunityLifecycle { phase: OpportunityPhase; approved: boolean }
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 export type UnlinkedCancellation = "NoCancellation" | "NoMatchingBooking" | "AskWhichBooking" | "CancelMatchingBooking";
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "startProbing"; approvalRecorded: boolean; eligible: boolean }
+  | { type: "reroll"; replacementFound: boolean }
   | { type: "book"; hasConsent: boolean }
   | { type: "complete"; feedbackDue: boolean }
   | { type: "close" };
@@ -26,6 +27,18 @@ export function inv(current: OpportunityLifecycle): boolean {
 
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
+export function stepRerollRequiresNewApproval(before: OpportunityLifecycle, via: string, after: OpportunityLifecycle): boolean {
+  return !(via === "reroll") || (before.phase === "InReview" && !after.approved);
+}
+
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
+//@ pure
+export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
+  return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
+}
+
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
+//@ pure
 export function canStartProbing(proposal: OpportunityLifecycle, approvalRecorded: boolean, eligible: boolean): boolean {
   return proposal.phase === "InReview" && approvalRecorded && eligible;
 }
@@ -34,14 +47,24 @@ export function canStartProbing(proposal: OpportunityLifecycle, approvalRecorded
 //@ pure
 export function startProbing(proposal: OpportunityLifecycle, approvalRecorded: boolean, eligible: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canStartProbing(proposal, approvalRecorded, eligible)) ==> alwaysContactStagesRequireApproval(\result)
+  //@ ensures (inv(proposal) && canStartProbing(proposal, approvalRecorded, eligible)) ==> stepRerollRequiresNewApproval(proposal, "startProbing", \result)
   //@ ensures (inv(proposal) && canStartProbing(proposal, approvalRecorded, eligible)) ==> stepTerminalOpportunityCannotReopen(proposal, \result)
   return { phase: "Probing", approved: true };
 }
 
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
-export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
-  return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
+export function canReroll(proposal: OpportunityLifecycle): boolean {
+  return proposal.phase === "InReview";
+}
+
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
+//@ pure
+export function reroll(proposal: OpportunityLifecycle, replacementFound: boolean): OpportunityLifecycle {
+  //@ ensures (inv(proposal) && canReroll(proposal)) ==> alwaysContactStagesRequireApproval(\result)
+  //@ ensures (inv(proposal) && canReroll(proposal)) ==> stepRerollRequiresNewApproval(proposal, "reroll", \result)
+  //@ ensures (inv(proposal) && canReroll(proposal)) ==> stepTerminalOpportunityCannotReopen(proposal, \result)
+  return { phase: replacementFound ? "InReview" : "Closed", approved: false };
 }
 
 /** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
@@ -60,6 +83,7 @@ export function canBook(proposal: OpportunityLifecycle, hasConsent: boolean): bo
 //@ pure
 export function book(proposal: OpportunityLifecycle, hasConsent: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canBook(proposal, hasConsent)) ==> alwaysContactStagesRequireApproval(\result)
+  //@ ensures (inv(proposal) && canBook(proposal, hasConsent)) ==> stepRerollRequiresNewApproval(proposal, "book", \result)
   //@ ensures (inv(proposal) && canBook(proposal, hasConsent)) ==> stepTerminalOpportunityCannotReopen(proposal, \result)
   return { ...proposal, phase: "Scheduled" };
 }
@@ -103,26 +127,33 @@ export function lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecy
   return !bookedReplyCurrent(proposal, accepted) || (proposal.phase === "Scheduled" && accepted);
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, matching: number): UnlinkedCancellation {
-  return !ownText || !explicit || activeBookedSlot ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
+export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, namedStart: boolean, matching: number): UnlinkedCancellation {
+  return !ownText || !explicit || (activeBookedSlot && !namedStart) ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
 export function upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
   return onRoster && bookedReplyCurrent(proposal, accepted) && startKnown && startAt > now;
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function lawUnlinkedCancellationNeedsOneMatch(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, matching: number): boolean {
+export function lawUnlinkedCancellationNeedsOneMatch(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, namedStart: boolean, matching: number): boolean {
   //@ ensures \result === true
-  return !(unlinkedCancellation(ownText, explicit, activeBookedSlot, matching) === "CancelMatchingBooking") || (ownText && explicit && !activeBookedSlot && matching === 1);
+  return !(unlinkedCancellation(ownText, explicit, activeBookedSlot, namedStart, matching) === "CancelMatchingBooking") || (ownText && explicit && (namedStart || !activeBookedSlot) && matching === 1);
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawNamedCancellationCanSelectWithPendingReply(activeBookedSlot: boolean): boolean {
+  //@ ensures \result === true
+  return unlinkedCancellation(true, true, activeBookedSlot, true, 1) === "CancelMatchingBooking";
+}
+
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
 export function lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
   //@ ensures \result === true
@@ -152,6 +183,7 @@ export function canComplete(proposal: OpportunityLifecycle, feedbackDue: boolean
 //@ pure
 export function complete(proposal: OpportunityLifecycle, feedbackDue: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canComplete(proposal, feedbackDue)) ==> alwaysContactStagesRequireApproval(\result)
+  //@ ensures (inv(proposal) && canComplete(proposal, feedbackDue)) ==> stepRerollRequiresNewApproval(proposal, "complete", \result)
   //@ ensures (inv(proposal) && canComplete(proposal, feedbackDue)) ==> stepTerminalOpportunityCannotReopen(proposal, \result)
   return { ...proposal, phase: "Done" };
 }
@@ -166,6 +198,7 @@ export function canClose(proposal: OpportunityLifecycle): boolean {
 //@ pure
 export function close(proposal: OpportunityLifecycle): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canClose(proposal)) ==> alwaysContactStagesRequireApproval(\result)
+  //@ ensures (inv(proposal) && canClose(proposal)) ==> stepRerollRequiresNewApproval(proposal, "close", \result)
   //@ ensures (inv(proposal) && canClose(proposal)) ==> stepTerminalOpportunityCannotReopen(proposal, \result)
   return { ...proposal, phase: "Closed" };
 }
@@ -211,6 +244,7 @@ export function lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, 
 //@ pure
 export function enabled(current: OpportunityLifecycle, event: Event): boolean {
   if (event.type === "startProbing") return canStartProbing(current, event.approvalRecorded, event.eligible);
+  if (event.type === "reroll") return canReroll(current);
   if (event.type === "book") return canBook(current, event.hasConsent);
   if (event.type === "complete") return canComplete(current, event.feedbackDue);
   if (event.type === "close") return canClose(current);
@@ -222,10 +256,11 @@ export function enabled(current: OpportunityLifecycle, event: Event): boolean {
 export function step(current: OpportunityLifecycle, event: Event): OpportunityLifecycle {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "startProbing" && canStartProbing(current, event.approvalRecorded, event.eligible)) return startProbing(current, event.approvalRecorded, event.eligible);
-  if (event.type === "book" && canBook(current, event.hasConsent)) return book(current, event.hasConsent);
-  if (event.type === "complete" && canComplete(current, event.feedbackDue)) return complete(current, event.feedbackDue);
-  if (event.type === "close" && canClose(current)) return close(current);
+  if (event.type === "startProbing") return canStartProbing(current, event.approvalRecorded, event.eligible) ? startProbing(current, event.approvalRecorded, event.eligible) : current;
+  if (event.type === "reroll") return canReroll(current) ? reroll(current, event.replacementFound) : current;
+  if (event.type === "book") return canBook(current, event.hasConsent) ? book(current, event.hasConsent) : current;
+  if (event.type === "complete") return canComplete(current, event.feedbackDue) ? complete(current, event.feedbackDue) : current;
+  if (event.type === "close") return canClose(current) ? close(current) : current;
   return current;
 }
 
@@ -244,6 +279,7 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "startProbing" && typeof raw.approvalRecorded === "boolean" && typeof raw.eligible === "boolean") return { type: "startProbing", approvalRecorded: raw.approvalRecorded, eligible: raw.eligible };
+  if (raw.type === "reroll" && typeof raw.replacementFound === "boolean") return { type: "reroll", replacementFound: raw.replacementFound };
   if (raw.type === "book" && typeof raw.hasConsent === "boolean") return { type: "book", hasConsent: raw.hasConsent };
   if (raw.type === "complete" && typeof raw.feedbackDue === "boolean") return { type: "complete", feedbackDue: raw.feedbackDue };
   if (raw.type === "close") return { type: "close" };

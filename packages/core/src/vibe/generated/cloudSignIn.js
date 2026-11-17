@@ -1,6 +1,7 @@
 // Generated from spec/cloudSignIn.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/cloudSignIn.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { sessionDeadline as webSession_sessionDeadline } from "./webSession.js";
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export const cloudClockSkewMs = exact_cloudSignIn(30 * 1000);
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
@@ -38,12 +39,17 @@ export function lawAnExpiredHandoffIsNeverLive(expiresAt) {
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudIssuedAtWithinSkew(issuedAtMs, asOf) {
-    return issuedAtMs <= exact_cloudSignIn(asOf + cloudClockSkewMs);
+    return issuedAtMs > 0 && issuedAtMs <= exact_cloudSignIn(asOf + cloudClockSkewMs);
 }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudSessionStartedAt(issuedAtMs, asOf) {
     return issuedAtMs <= asOf ? issuedAtMs : asOf;
+}
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf) {
+    return cloudIssuedAtWithinSkew(issuedAtMs, asOf) && liveBeforeDeadline(asOf, expiresAtMs);
 }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
@@ -73,6 +79,24 @@ export function checkIdentity(signIn, identityAvailable, identityValid) {
     //@ ensures (inv(signIn) && canCheckIdentity(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
     const local_1 = identityAvailable && identityValid;
     return { ...signIn, identityAccepted: local_1, phase: !identityAvailable ? "CloudUnavailable" : (local_1 ? "AwaitingPhone" : "DenySignIn") };
+}
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf) {
+    //@ ensures \result === true
+    return !cloudIdentityTimesValid(issuedAtMs, asOf, asOf);
+}
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs, asOf) {
+    //@ ensures \result === true
+    return !cloudIdentityTimesValid(0, expiresAtMs, asOf);
+}
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
+//@ pure
+export function lawStoredSessionEndsByIdentityExpiry(createdAt, startedAt, ttl, maxAge, identityExpiry) {
+    //@ ensures \result === true
+    return webSession_sessionDeadline(createdAt, startedAt, ttl, maxAge, true, identityExpiry) <= identityExpiry;
 }
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
 //@ pure
@@ -141,16 +165,16 @@ export function enabled(current, event) {
 export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
-    if (event.type === "checkHandoff" && canCheckHandoff(current))
-        return checkHandoff(current, event.handoffFacts);
-    if (event.type === "recordExchange" && canRecordExchange(current))
-        return recordExchange(current, event.exchangeAccepted);
-    if (event.type === "checkIdentity" && canCheckIdentity(current))
-        return checkIdentity(current, event.identityAvailable, event.identityValid);
-    if (event.type === "checkPhone" && canCheckPhone(current))
-        return checkPhone(current, event.phoneAllowed);
-    if (event.type === "recordSession" && canRecordSession(current))
-        return recordSession(current);
+    if (event.type === "checkHandoff")
+        return canCheckHandoff(current) ? checkHandoff(current, event.handoffFacts) : current;
+    if (event.type === "recordExchange")
+        return canRecordExchange(current) ? recordExchange(current, event.exchangeAccepted) : current;
+    if (event.type === "checkIdentity")
+        return canCheckIdentity(current) ? checkIdentity(current, event.identityAvailable, event.identityValid) : current;
+    if (event.type === "checkPhone")
+        return canCheckPhone(current) ? checkPhone(current, event.phoneAllowed) : current;
+    if (event.type === "recordSession")
+        return canRecordSession(current) ? recordSession(current) : current;
     return current;
 }
 /**

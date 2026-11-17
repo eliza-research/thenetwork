@@ -107,8 +107,41 @@ test("a non-member gets the one-time notice, then the join flow; the number is s
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
 
+test("a worker that loses its first-contact claim cannot spend the one-time notice", async () => {
+  const phone = "+12125550209";
+  const staleId = "takeover-notice-abandoned";
+  const realInbound = service.inbound.bind(service);
+  let collected!: () => void;
+  const staged = new Promise<void>(resolve => { collected = resolve; });
+  let continueWorker!: () => void;
+  const waiting = new Promise<void>(resolve => { continueWorker = resolve; });
+  service.inbound = async (event, options) => {
+    const result = await realInbound(event, options);
+    if (event.kind === "message" && event.messageId === staleId) {
+      collected();
+      await waiting;
+    }
+    return result;
+  };
+  const first = post(turn(phone, "hi", { id: staleId }));
+  try {
+    await staged;
+    const [row] = await sql`select replies,status from platform.inbound where id=${`msg:blooio:${staleId}`}`;
+    expect(row).toMatchObject({ status: "processing", replies: expect.arrayContaining([expect.objectContaining({ body: ELIZA_NOTICE })]) });
+    clock.advance(11 * MINUTE);
+    const recovered = await say(phone, "still here?");
+    expect(recovered.replies[0]).toBe(ELIZA_NOTICE);
+  } finally {
+    continueWorker();
+    service.inbound = realInbound;
+    expect((await first).status).toBe(409);
+  }
+  expect((await say(phone, "hello again")).replies).not.toContain(ELIZA_NOTICE);
+}, 15_000);
+
 test("an under-13 first contact gets only the kind decline, and nothing is stored", async () => {
   const phone = "+12125550202";
+  const noticesBefore = (await noticeRows()).length;
   const r = await say(phone, "Sam, 12");
   expect(r.reason).toBe("under_age");
   expect(r.replies).toEqual([APPS.ntwrk.brand.underAge]);
@@ -116,7 +149,10 @@ test("an under-13 first contact gets only the kind decline, and nothing is store
   const again = await say(phone, "hi");
   expect(again.reason).not.toBe("onboarding_asked");
   expect(again.accountEligible).toBe(false);
-  expect((await noticeRows()).length).toBe(1);
+  const restart = await say(phone, "START");
+  expect(restart).toMatchObject({ reason: "under_age", replies: [APPS.ntwrk.brand.underAge], accountEligible: false });
+  expect(await sql`select 1 from platform.consent_events where e164=${phone} and source='keyword:start'`).toEqual([]);
+  expect((await noticeRows()).length).toBe(noticesBefore);
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
 

@@ -11,6 +11,8 @@ export type RescheduleDraft = {
   expiresAt: number;
   roster: MemberId[];
   offered: MemberId[];
+  /** Only in-process callers without a separate delivery queue use these delivery times. */
+  deliveredAt?: Record<MemberId, number>;
   accepted: MemberId[];
 };
 
@@ -62,7 +64,8 @@ export function rescheduleMemberRef(draft: RescheduleDraft, memberId: MemberId):
 
 export const RESCHEDULE_QUEUE_PREFIX = "reschedule:";
 export const rescheduleOfferKey = (draft: RescheduleDraft, memberId: MemberId): string => `${RESCHEDULE_QUEUE_PREFIX}offer:${draft.ref}:${memberId}`;
-export const rescheduleUpdateKey = (oppId: string, revision: number, memberId: MemberId): string => `${RESCHEDULE_QUEUE_PREFIX}updated:${oppId}:r${revision}:${memberId}`;
+export const rescheduleUpdatePrefix = (oppId: string): string => `${RESCHEDULE_QUEUE_PREFIX}updated:${oppId}:r`;
+export const rescheduleUpdateKey = (oppId: string, revision: number, memberId: MemberId): string => `${rescheduleUpdatePrefix(oppId)}${revision}:${memberId}`;
 
 export function sameRescheduleRoster(left: readonly MemberId[], right: readonly MemberId[]): boolean {
   return left.length === right.length && left.every((member, index) => member === right[index]);

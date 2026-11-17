@@ -203,11 +203,11 @@ export function enabled(current: HomeHelpRecipientConsent, event: Event): boolea
 export function step(current: HomeHelpRecipientConsent, event: Event): HomeHelpRecipientConsent {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "stageNotice" && canStageNotice(current, event.reviewedNow)) return stageNotice(current, event.reviewedNow);
-  if (event.type === "recordNoticeSent" && canRecordNoticeSent(current, event.deliveryAllowed, event.exactReceipt)) return recordNoticeSent(current, event.deliveryAllowed, event.exactReceipt);
-  if (event.type === "chooseHomeHelp" && canChooseHomeHelp(current, event.responseAllowed, event.exactActor)) return chooseHomeHelp(current, event.responseAllowed, event.exactActor, event.wantsHelp);
-  if (event.type === "withdrawHomeHelp" && canWithdrawHomeHelp(current, event.exactActor)) return withdrawHomeHelp(current, event.exactActor);
-  if (event.type === "invalidateHomeHelp" && canInvalidateHomeHelp(current, event.planInvalidated)) return invalidateHomeHelp(current, event.planInvalidated);
+  if (event.type === "stageNotice") return canStageNotice(current, event.reviewedNow) ? stageNotice(current, event.reviewedNow) : current;
+  if (event.type === "recordNoticeSent") return canRecordNoticeSent(current, event.deliveryAllowed, event.exactReceipt) ? recordNoticeSent(current, event.deliveryAllowed, event.exactReceipt) : current;
+  if (event.type === "chooseHomeHelp") return canChooseHomeHelp(current, event.responseAllowed, event.exactActor) ? chooseHomeHelp(current, event.responseAllowed, event.exactActor, event.wantsHelp) : current;
+  if (event.type === "withdrawHomeHelp") return canWithdrawHomeHelp(current, event.exactActor) ? withdrawHomeHelp(current, event.exactActor) : current;
+  if (event.type === "invalidateHomeHelp") return canInvalidateHomeHelp(current, event.planInvalidated) ? invalidateHomeHelp(current, event.planInvalidated) : current;
   return current;
 }
 

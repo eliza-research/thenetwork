@@ -30,10 +30,13 @@ import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwo
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
+import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
+import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
-import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
-import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
-import { RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { lateArrivalRosterReady, lateArrivalText, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
+import { bookingNoticeReceived, canResolveAttendance, feedbackDelayMs, meetingFeedbackCandidate, restoreAttendance, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
+import { isLateArrivalPairBooking, parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
+import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
@@ -41,17 +44,21 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
+import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
+import { appTagFacet } from "../src/apphooks.ts";
+import { hireSeatCurrent, readHireEvidence } from "../src/peon-hire-dispatch.ts";
+import { lockPeerOpportunityContact } from "./peer-opportunity-admission.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
-import { effectiveParticipation, intentOf, loadSnapshot } from "./snapshot.ts";
+import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { BlooioAdapter, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
@@ -62,6 +69,11 @@ import { currentGatheringRepeatSources, gatheringMatchSourceCurrent, lockGatheri
 import { gatheringRepeatContactAllowed } from "../../core/src/generated/gatheringRepeatDelivery.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
+import { recordedChatAge } from "../../core/src/generated/memberAge.ts";
+import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
+import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { atomicMemberReplyMatches } from "../../core/src/generated/signedInbox.ts";
+import type { RecordedMemberAge } from "../../platform/src/store.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -80,6 +92,12 @@ import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
 interface GatheringRepeatMessage { id: string; opportunity_id: string; type: string; body: string }
+interface HireContact { id: string; opportunity_id: string; type: "probe" | "proposal"; body: string }
+interface StoredSendReceipt {
+  id: string; member_id: string | null; opportunity_id: string | null; type: string | null;
+  outbound_member_id: string | null; status: string; sent_at: Date | null; accepted_at: Date | null;
+}
+const cofounderRevealDeliveryId = (id: string) => `${cofounderDeliveryIdPrefix}reveal:${id}`;
 
 export type StagedMemberInvitation =
   | { status: "review"; review: HeldMemberInvitation }
@@ -88,20 +106,21 @@ export type StagedMemberInvitation =
 
 const gatheringPrivateBody = { gathering_rsvp: "Private gathering RSVP", gathering_followup: "Private gathering follow-up" };
 const gatheringMessage = (type?: string): type is keyof typeof gatheringPrivateBody => !!type && Object.hasOwn(gatheringPrivateBody, type);
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type === "inbox_updates" || type === "peon_candidate_search" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
+const privateAtomicRequests: Partial<Record<AtomicReplyReason, string>> = {
+  profile_fact_edit: "Private profile fact request.",
+  calendar_invite: "Private calendar invite request.",
+  peon_candidate_search: "Private job search request.",
+  gathering_rsvp: `${gatheringPrivateBody.gathering_rsvp}.`,
+  gathering_followup: `${gatheringPrivateBody.gathering_followup}.`,
+};
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
   privateInviteTurn?: true;
   privateHomeHelpTurn?: true;
-  atomicHomeHelpReceipt?: true;
-  atomicCofounderReply?: true;
-  atomicProfileFactReply?: true;
-  atomicParticipationReply?: true;
-  atomicCalendarReply?: true;
-  atomicGatheringReply?: keyof typeof gatheringPrivateBody;
-  atomicInvitationDeliveryReply?: true;
+  atomicReply?: AtomicReplyReason;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
   legacyIntentState?: NetworkState;
@@ -121,8 +140,11 @@ export interface Unit {
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
+  ages: StatedAge[];
+  recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [] });
+type StatedAge = { memberId: MemberId; age: number };
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -153,6 +175,8 @@ export interface RuntimeHost {
   delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
   /** The current inbox records still authorize an immutable queued notification. */
   notificationCurrent?(id: string): Promise<boolean>;
+  notificationHandoffUrl?(id: string, body: string): Promise<string | undefined>;
+  notificationClaimCurrent?(tx: SQL, row: QueueRow): Promise<boolean>;
   /** After a tick that ran on this instance (the review SLA alerts, the weekly bias monitor). Errors are logged; the tick still counts. */
   afterTick?(rt: NetworkRuntime): Promise<void>;
 }
@@ -200,12 +224,11 @@ export class NetworkRuntime {
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
   private committed: Outbound[] = [];
-  /** Ages members stated in the units since the service last took them (takeAges). */
-  private statedAges: { memberId: MemberId; age: number; explicit: boolean; declined: boolean }[] = [];
-  /** The ages this member stated (and whether the Network declined them), taken once. */
-  takeAges(memberId: MemberId) {
-    const mine = this.statedAges.filter(a => a.memberId === memberId);
-    this.statedAges = this.statedAges.filter(a => a.memberId !== memberId);
+  /** Committed observations waiting for their follow-up projection. */
+  private recordedAges: (RecordedMemberAge & { memberId: MemberId })[] = [];
+  takeRecordedAges(memberId: MemberId): RecordedMemberAge[] {
+    const mine = this.recordedAges.filter(a => a.memberId === memberId);
+    this.recordedAges = this.recordedAges.filter(a => a.memberId !== memberId);
     return mine;
   }
   /** Who the inbound message being handled came from: sends to them are direct replies. */
@@ -235,8 +258,11 @@ export class NetworkRuntime {
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
-      // An age a member stated (network-consent-12): the service writes it to the person after the unit.
-      onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
+      onAgeStated: (memberId, age, o) => {
+        if (profileAgeCounts(o.explicit, o.declined, canBeMatched(age))) {
+          this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined) });
+        }
+      },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
       memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
@@ -273,6 +299,14 @@ export class NetworkRuntime {
     return this.host.notificationCurrent ? this.host.notificationCurrent(id) : false;
   }
 
+  notificationHandoffUrl(id: string, body: string): Promise<string | undefined> {
+    return this.host.notificationHandoffUrl?.(id, body) ?? Promise.resolve(undefined);
+  }
+
+  async notificationClaimCurrent(tx: SQL, row: QueueRow): Promise<boolean> {
+    return this.host.notificationClaimCurrent ? this.host.notificationClaimCurrent(tx, row) : false;
+  }
+
   /** Consent at send time for one queued message: the platform consent ledger (and bans), then the member's own opt-out. */
   async optedOut(id: string, memberId: MemberId | undefined, to: string): Promise<boolean> {
     // The platform consent ledger, suppression and bans by address: also for a direct text to a non-member.
@@ -299,9 +333,10 @@ export class NetworkRuntime {
   async relayParties(ids: MemberId[], tx?: SQL): Promise<Map<MemberId, RelayCanonical>> {
     const out = new Map<MemberId, RelayCanonical>();
     if (!ids.length) return out;
-    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,
+    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,(authority.staff_held or authority.report_held) as safety_held,
       (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164
-      from network.members m where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
+      from network.members m left join platform.matching_ages authority on authority.app_id=m.app_id and authority.member_id=m.id
+      where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
     const rows = (tx ? await read(tx) : await this.scoped(read)) as Row[];
     const accounts = tx ? this.host.accountsFor?.(tx) ?? this.host.accounts : this.host.accounts;
     for (const id of ids) {
@@ -311,29 +346,48 @@ export class NetworkRuntime {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
         if (binding?.membership.memberId === id) { bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person)); }
       }
-      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" });
+      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" || r.safety_held === true });
     }
     return out;
   }
 
-  /** Recheck a booked group logistics notice after asynchronous queue gates. */
+  /** Recheck a booked meeting logistics notice after asynchronous queue gates. */
   async groupLateArrivalAdmission(tx: SQL, row: { id: string; app: string; kind: string; text: string; memberId?: MemberId | null; oppId?: string }): Promise<RecipientCheck> {
     const refused: RecipientCheck = { ok: false, reason: "group_late_arrival_changed" };
     const delivery = parseLateArrivalDeliveryId(row.id);
     const app = this.app.id;
-    if (!delivery || row.app !== app || delivery.app !== app || row.kind !== "transactional" || row.text !== lateArrivalNotice
+    if (!delivery || row.app !== app || delivery.app !== app || row.kind !== "transactional"
       || row.memberId !== delivery.to || row.oppId !== delivery.oppId) return refused;
     const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${app} for share`;
-    if (!saved || !storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now())) return refused;
+    const opp = saved?.state.opps.find(o => o.id === delivery.oppId);
+    if (!saved || !opp || opp.stage !== "scheduled" || opp.meetingAt !== delivery.meetingAt
+      || (opp.scheduleRevision ?? 0) !== delivery.revision) return refused;
+    const notice = lateArrivalText(isLateArrivalPairBooking(opp));
+    if (row.text !== notice) return refused;
+    const receipts = await this.bookingNoticeReceipts(tx, opp, this.clock.now());
+    const received = (id: MemberId) => receipts.has(id);
+    if (!storedLateArrivalCurrent(saved.state, delivery, this.clock.now(), received)) return refused;
     const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
-      and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${lateArrivalNotice}`;
+      and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${notice}`;
     if (!message || await this.canonicalPairBlocked(tx, delivery.from, delivery.to)) return refused;
     const parties = await this.relayParties([delivery.from, delivery.to], tx);
     if (![delivery.from, delivery.to].every(id => {
       const party = parties.get(id);
       return party?.adult && !party.optedOut && !party.held;
     })) return refused;
-    return storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now()) ? { ok: true } : refused;
+    return storedLateArrivalCurrent(saved.state, delivery, this.clock.now(), received) ? { ok: true } : refused;
+  }
+
+  private async bookingNoticeReceipts(tx: SQL, opp: NetworkState["opps"][number], now: number): Promise<Map<MemberId, number>> {
+    const receipts = new Map<MemberId, number>();
+    const roster = [...new Set(opp.participants)].filter(id => opp.bookedAt?.[id] !== undefined
+      && opp.status.some(([member, status]) => member === id && status === "yes"));
+    for (const id of roster) {
+      const receipt = await currentBookingReceipt(tx, this.app.id, opp.id, id, opp.scheduleRevision ?? 0, opp.lane ?? null);
+      const sentAt = receipt?.sent_at?.getTime();
+      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) receipts.set(id, sentAt);
+    }
+    return receipts;
   }
 
   /** Admit the exact reviewed introduction against current database state on the actual send. */
@@ -371,6 +425,133 @@ export class NetworkRuntime {
     const active = cofounderPairCurrent(first !== second, true, true, eligible);
     const bothAccepted = opp.participants.every(id => opp.status.some(([key, status]) => key === id && status === "yes") && opp.contacted.includes(id));
     return cofounderDeliveryAllowed(active, opp.review?.decision === "approve", revealing, bothAccepted) ? { ok: true } : refused;
+  }
+
+  private peonHireContacts(tx: SQL, memberId: MemberId, ids: readonly string[]) {
+    return tx<HireContact[]>`select id,opportunity_id,type,body from network.messages
+      where app_id='peon' and member_id=${memberId} and id in ${tx([...ids])} and direction='outbound'
+        and opportunity_id is not null and type in ('probe','proposal') order by opportunity_id,id`;
+  }
+
+  /** The carrier's claim already locks the exact peer roster in state/person order. */
+  private async peonHireContactCurrent(tx: SQL, contact: HireContact, memberId: MemberId, body: string): Promise<boolean> {
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id='peon' for share`;
+    const opp = saved?.state.opps.find(item => item.id === contact.opportunity_id);
+    if (!opp) return false;
+    if (!opp.seat) return true;
+    const { seat, participants, review } = opp;
+    const candidate = participants.find(id => id !== seat.manager);
+    if (contact.body !== body || !candidate || participants.length !== 2 || !participants.includes(seat.manager)
+      || !participants.includes(memberId) || !this.matchingAllowed || !saved?.state.matchingEnabled) return false;
+    const now = this.clock.now(), reveal = contact.type === "proposal", statuses = new Map(opp.status);
+    const phase = reveal ? opp.stage === "scheduled" && now < (opp.meetingAt ?? 0) && opp.bookedTold?.includes(memberId) === true
+      : opp.stage === "probing" && now < opp.deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
+    const accepted = (id: MemberId) => statuses.get(id) === (reveal ? "yes" : "available") && opp.contacted.includes(id);
+    const humanReview = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
+    if (!hireContactAllowed(true, humanReview, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;
+    if (await this.canonicalPairBlocked(tx, candidate, seat.manager)) return false;
+    const parties = await this.relayParties(participants, tx);
+    if (!participants.every(id => {
+      const party = parties.get(id);
+      return party?.adult === true && !party.held && !party.optedOut && storedInviteNoticePartyCurrent(saved.state, id);
+    })) return false;
+    const [intents, facets] = await Promise.all([
+      tx`select * from network.intents where app_id='peon' and member_id in ${tx(participants)} order by member_id,id`,
+      tx`select * from network.facets where app_id='peon' and member_id in ${tx(participants)} and status<>'rejected'
+        and ${automatedFacetPredicate(tx)} order by member_id,id`,
+    ]);
+    return hireSeatCurrent(seat, readHireEvidence({ intents: intents.map(intentOf), facets: facets.map(facetOf) }, seat, candidate, now, false));
+  }
+
+  async peonHireAdmission(tx: SQL, row: Pick<QueueRow, "id" | "app" | "memberId" | "oppId" | "text">): Promise<RecipientCheck> {
+    if (this.app.id !== "peon" || row.app !== "peon" || !row.memberId || !row.oppId) return { ok: true };
+    const [contact] = await this.peonHireContacts(tx, row.memberId, [row.id]);
+    const current = !contact || (contact.opportunity_id === row.oppId && await this.peonHireContactCurrent(tx, contact, row.memberId, row.text));
+    return current ? { ok: true } : { ok: false, reason: "peon_search_changed" };
+  }
+
+  async peonHireRepliesCurrent(tx: SQL, memberId: MemberId, ids: readonly string[], bodies: readonly string[]): Promise<boolean> {
+    if (this.app.id !== "peon" || !ids.length) return true;
+    for (const contact of await this.peonHireContacts(tx, memberId, ids)) {
+      await lockPeerOpportunityContact(tx, this.app.id, this.pg.id, memberId, contact.id);
+      if (!await this.peonHireContactCurrent(tx, contact, memberId, bodies[ids.indexOf(contact.id)] ?? "")) return false;
+    }
+    return true;
+  }
+
+  private async slopContact(tx: SQL, row: QueueRow) {
+    if (this.app.id !== "slop" || row.app !== this.app.id || !row.oppId || !row.memberId) return;
+    const [contact] = await tx<{ type: "probe" | "proposal"; body: string }[]>`select msg.type,msg.body from network.messages msg
+      where msg.app_id=${row.app} and msg.id=${row.id} and msg.opportunity_id=${row.oppId}
+        and msg.member_id=${row.memberId} and msg.direction='outbound' and msg.type in ('probe','proposal')`;
+    return contact;
+  }
+
+  /** Lock the exact reviewed pair before the queue takes its usual one-recipient locks. */
+  async lockSlopPairAdmission(tx: SQL, row: QueueRow): Promise<void> {
+    if (!await this.slopContact(tx, row)) return;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state
+      where id=${this.pg.id} and app_id=${row.app} for share`;
+    const opp = saved?.state.opps.find(item => item.id === row.oppId);
+    if (!opp || opp.participants.length !== 2 || !opp.participants.includes(row.memberId!)) return;
+    await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+      where member.app_id=${row.app} and member.id in ${tx(opp.participants)} order by person.id for update of person`;
+    await tx`select id from network.members where app_id=${row.app} and id in ${tx(opp.participants)} order by id for update`;
+  }
+
+  /** Recheck both live Slop profiles after the asynchronous gates, in the queue's claim transaction. */
+  async slopPairAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck> {
+    const contact = await this.slopContact(tx, row);
+    if (!contact) return { ok: true };
+    const refused: RecipientCheck = { ok: false, reason: "slop_pair_changed" };
+    const check = this.wiring.hooks?.hardDatingPairCurrent;
+    if (!check || contact.body !== row.text) return refused;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${row.app}`;
+    const state = saved?.state;
+    const opp = state?.opps.find(item => item.id === row.oppId);
+    if (!state || !opp || opp.category !== "romance" || opp.participants.length !== 2 || !opp.participants.includes(row.memberId!)) return refused;
+    const [first, second] = opp.participants as [MemberId, MemberId];
+    const reveal = contact.type === "proposal";
+    const now = this.clock.now();
+    const stageCurrent = reveal ? opp.stage === "scheduled" : opp.stage === "probing" && opp.contacted.includes(row.memberId!)
+      && opp.status.some(([memberId, status]) => memberId === row.memberId && status === "probing");
+    const approved = stageCurrent && opp.review?.decision === "approve" && !opp.review.invalidated;
+    const accepted = opp.participants.every(id => opp.status.some(([memberId, status]) => memberId === id && status === "yes"));
+    if (!slopPairContactAllowed(approved, first !== second, reveal, accepted)) return refused;
+    if (!opp.participants.every(id => storedInviteNoticePartyCurrent(state, id) && !state.trust?.some(t => t.id === id && t.level !== "ok"))) return refused;
+    const pair = [first, second].sort().join("|");
+    if (state.blocks.includes(pair) || state.avoid.includes(pair) || await this.canonicalPairBlocked(tx, first, second)) return refused;
+    for (const party of (await this.relayParties(opp.participants, tx)).values()) if (!party.adult || party.held || party.optedOut) return refused;
+
+    const [members, facets, presence, blocks] = await Promise.all([
+      tx`select m.id,m.name,m.home_city,m.prefs,m.participation_state,m.participation_window,m.joined_at,m.unanswered_proactive,a.age
+        from network.members m join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
+        where m.app_id=${row.app} and m.id in ${tx(opp.participants)} and m.account_status='active' and not m.opted_out order by m.id`,
+      tx`select * from network.facets where app_id=${row.app} and member_id in ${tx(opp.participants)} and status<>'rejected'
+        and ${automatedFacetPredicate(tx)} order by member_id,id`,
+      tx`select * from network.presence where app_id=${row.app} and member_id in ${tx(opp.participants)} order by member_id,city,type`,
+      // Mirror the snapshot's direct edges plus its canonical person blocks for these subjects.
+      tx`select from_id,to_id,created_at from network.edges where app_id=${row.app} and type='blocked' and to_id in ${tx(opp.participants)}
+        union all
+        select f.id,t.id,pb.at from platform.person_blocks pb
+          join network.members f on f.person_id=pb.from_person and f.app_id=${row.app}
+          join network.members t on t.person_id=pb.to_person and t.app_id=${row.app}
+          where t.id in ${tx(opp.participants)} and not exists (
+            select 1 from network.edges e where e.app_id=${row.app} and e.from_id=f.id and e.to_id=t.id and e.type='blocked')
+        order by from_id,to_id`,
+    ]);
+    const input: Parameters<typeof check>[0] = {
+      now, members: members.map(m => ({ id: m.id, name: m.name, homeCity: m.home_city, prefs: m.prefs, age: m.age,
+        state: effectiveParticipation(m as Parameters<typeof effectiveParticipation>[0], now).state,
+        joinedAt: m.joined_at?.getTime() ?? 0, unansweredProactive: m.unanswered_proactive })),
+      facets: [...facets.map(facetOf), ...state.members.filter(m => opp.participants.includes(m.id))
+        .flatMap(m => (m.appTags ?? []).map(tag => appTagFacet(m.id, tag)))],
+      presence: presence.map(presenceOf), intents: [], recentProposals: [],
+      edges: blocks.map(e => ({ from: e.from_id, to: e.to_id, type: "blocked", strength: 1, explicit: true, createdAt: e.created_at.getTime() })),
+      recentAsks: state.asks, feedback: state.feedback, interactions: state.interactions,
+    };
+    const prepared = this.wiring.hooks?.engineInput?.(input) ?? input;
+    return check(prepared, opp.participants) ? { ok: true } : refused;
   }
 
   /**
@@ -655,6 +836,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
+        if (u.recordedAges) this.recordedAges.push(...u.recordedAges);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
@@ -663,36 +845,146 @@ export class NetworkRuntime {
     };
   }
 
+  /** Resolve each plan invitation and exact Slop or Hire reply from its provider record. */
+  private async refreshProbeReplyReceipts(state: NetworkState | undefined): Promise<Set<string>> {
+    const exactPlanIds = new Set<string>();
+    if (!state) return exactPlanIds;
+    const open = new Map(state.opps.filter(opp => !opp.plan && opp.stage === "probing"
+      && ((this.app.id === "slop" && opp.category === "romance") || (this.app.id === "peon" && !!opp.seat))).map(opp => [opp.id, opp]));
+    const pending = state.members.flatMap(member => {
+      const slot = member.awaiting;
+      const opp = slot?.kind === "probe" && slot.oppId ? open.get(slot.oppId) : undefined;
+      if (!slot || !opp) return [];
+      if (!opp.status.some(([id, status]) => id === member.id && status === "probing")) return [];
+      const formerInvite = opp.timeRetry?.includes(member.id) ? undefined
+        : member.pendingAsks.find(invite => invite.kind === "probe" && invite.opportunityId === opp.id);
+      return [{ key: probeReplyReceiptKey(opp.id, member.id, slot), id: slot.probeReceiptId ?? formerInvite?.deliveryId ?? null,
+        member_id: member.id, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: false }];
+    });
+    const members = new Map(state.members.map(member => [member.id, member]));
+    for (const opp of state.opps) {
+      if (!opp.plan || !opp.planRun || (opp.stage !== "probing" && opp.stage !== "scheduled")) continue;
+      for (const memberId of opp.participants) {
+        const member = members.get(memberId);
+        const question = member?.awaiting;
+        const sentAt = opp.sentAt?.[memberId] ?? (question?.kind === "probe" && question.oppId === opp.id ? question.at : undefined);
+        if (opp.planRun.answers[memberId] !== "pending" || sentAt === undefined) continue;
+        const slot = planProbeReceiptSlot(opp.id, sentAt, member);
+        const replacement = opp.replacementFor ? replacementProbeKey(opp.id, memberId) : undefined;
+        const id = replacement ?? slot.probeReceiptId ?? null;
+        if (id) exactPlanIds.add(id);
+        pending.push({ key: replacement ?? probeReplyReceiptKey(opp.id, memberId, slot), id,
+          member_id: memberId, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: true });
+      }
+    }
+    if (!pending.length) return exactPlanIds;
+    const rows = await this.scoped(tx => tx<{
+      key: string; id: string; plan: boolean; matched: number; status: string; outbound_member_id: string | null;
+      sent_at: Date | null; ended_at: Date | null; provider_message_id: string | null; in_doubt: boolean | null; ts: Date;
+    }[]>`select probe.key,probe.plan,m.id,count(*) over (partition by probe.key)::int as matched,
+        coalesce(o.status,m.status) as status,o.member_id as outbound_member_id,o.sent_at,o.ended_at,o.provider_message_id,o.in_doubt,m.ts
+      from jsonb_to_recordset(${pending}::jsonb) as probe(key text,id text,member_id text,opportunity_id text,opened_at timestamptz,plan boolean)
+      join network.messages m on m.app_id=${this.app.id} and m.member_id=probe.member_id and m.opportunity_id=probe.opportunity_id
+        and m.direction='outbound' and (case when probe.plan then m.type='plan_probe' else m.type in ('probe','scheduling') end)
+        and (m.id=probe.id or (probe.id is null and m.ts=probe.opened_at))
+      left join platform.outbound o on o.app_id=m.app_id and o.id=m.id and o.member_id=m.member_id
+        and (not probe.plan or (o.opportunity_id=m.opportunity_id and o.kind='proactive'))`);
+    for (const row of rows) {
+      if (row.plan) exactPlanIds.add(row.id);
+      if (row.matched !== 1) continue;
+      const acceptedAt = row.outbound_member_id && /^(accepted|sent|delivered|read)$/.test(row.status) ? row.sent_at
+        : this.adapter.name === "dry_run" && row.status === "dry_run" ? row.ts : undefined;
+      const receipt: InitialInviteReceipt | undefined = acceptedAt ? { kind: "accepted", at: acceptedAt.getTime() }
+        : row.plan && row.outbound_member_id && row.ended_at && row.sent_at === null && row.provider_message_id === null
+          && row.in_doubt === false && row.status !== "failed_unknown" && row.status !== "parked_leak_review" && NOT_SENT.test(row.status)
+          ? { kind: "not_sent" } : undefined;
+      if (!receipt) continue;
+      this.initialInviteReceipts.set(row.key, receipt);
+      // The attention ledger may be tracking the same invitation by its raw message ID.
+      if (row.plan) this.initialInviteReceipts.set(row.id, receipt);
+    }
+    return exactPlanIds;
+  }
+
   /** Read receipts for exact committed sends whose acceptance is still unresolved in Network state. */
   private async refreshInitialInviteReceipts(state: NetworkState | undefined) {
     this.initialInviteReceipts.clear();
-    const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
+    const exactPlanIds = await this.refreshProbeReplyReceipts(state);
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
+    const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
+      type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
+    const now = this.clock.now();
+    const bookingReceiptsNeeded = (state?.opps ?? []).filter(opp => {
+      if (opp.seat || opp.meetingAt === undefined) return false;
+      const elapsed = now - opp.meetingAt;
+      if (opp.stage === "scheduled" && opp.review?.decision === "approve" && !opp.review.invalidated
+        && lateArrivalRosterReady(isLateArrivalPairBooking(opp), new Set(opp.participants).size) && lateArrivalWindow(-elapsed)) return true;
+      if (opp.stage !== "done" && !(opp.stage === "scheduled" && elapsed >= feedbackDelayMs)) return false;
+      const everyoneResponded = opp.participants.every(id => !opp.status.some(([member, status]) => member === id && status === "yes") || !!opp.post?.[id]);
+      return canResolveAttendance(restoreAttendance(!!opp.finalized), elapsed >= settlementDelayMs, everyoneResponded);
+    });
+    if (bookingReceiptsNeeded.length) await this.scoped(async tx => {
+      for (const opp of bookingReceiptsNeeded) for (const [id, at] of await this.bookingNoticeReceipts(tx, opp, now)) {
+        this.initialInviteReceipts.set(bookingNoticeReceiptKey(opp.id, id, opp.scheduleRevision), { kind: "accepted", at });
+      }
+    });
+    for (const opp of state?.opps ?? []) {
+      if (opp.stage === "done" && opp.meetingAt !== undefined) {
+        for (const [memberId, status] of opp.status) {
+          if (status !== "yes") continue;
+          // An unresolved settlement can still use an earlier exact receipt when a worker's tick runs late.
+          const needsSettlementReceipt = !opp.finalized && !opp.post?.[memberId];
+          const canAnswer = meetingFeedbackCandidate(true, true, opp.feedbackFrom.includes(memberId), now - opp.meetingAt);
+          if (!needsSettlementReceipt && !canAnswer) continue;
+          const key = meetingFeedbackKey(opp.id, memberId, opp.scheduleRevision);
+          exactReplies.set(key, { key, memberId, oppId: opp.id, type: "feedback_request" });
+        }
+      }
+      const draft = opp.reschedule;
+      if (!draft || opp.stage !== "scheduled") continue;
+      for (const memberId of draft.offered) {
+        const key = rescheduleOfferKey(draft, memberId);
+        exactReplies.set(opp.lane === "Cofounder" ? cofounderRevealDeliveryId(key) : key, { key, memberId, oppId: opp.id, type: "scheduling" });
+      }
+    }
     const gatheringIds: string[] = [];
     const ids = (state?.members ?? []).flatMap(member => {
-      const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []);
+      const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined
+        && !exactPlanIds.has(invite.deliveryId) ? [invite.deliveryId] : []);
       const awaiting = member.awaiting;
-      // An unrelated inbound clears the unanswered ledger, but the exact open replacement question can still be answered.
-      if (awaiting?.kind === "probe" && awaiting.oppId && replacements.has(awaiting.oppId)) pending.push(replacementProbeKey(awaiting.oppId, member.id));
+      if (awaiting?.kind === "booked" && awaiting.oppId && awaiting.bookedCheckIn) {
+        const key = bookedReminderKey("day-of-checkin", awaiting.oppId, member.id, awaiting.bookedCheckIn.revision);
+        exactReplies.set(key, { key, memberId: member.id, oppId: awaiting.oppId, type: "reminder" });
+      }
+      if (awaiting?.kind === "crew" && awaiting.crewOfferReceiptId) {
+        const key = awaiting.crewOfferReceiptId;
+        exactReplies.set(key, { key, memberId: member.id, oppId: null, type: "crew_offer" });
+      }
       const repeat = awaiting?.kind === "probe" && awaiting.oppId ? gathering.get(awaiting.oppId) : undefined;
       if (repeat) gatheringIds.push(gatheringRepeatProbeKey(repeat.id, member.id, !!repeat.timeRetry?.includes(member.id)));
       const survey = member.interruptionSurvey;
       if (survey?.sentAt !== undefined) pending.push(interruptionFeedbackKey(this.app.id, member.id, survey.opportunityId));
       return pending;
     });
-    if (!ids.length && !gatheringIds.length) return;
-    const rows = await this.scoped(tx => tx`select m.id, coalesce(o.status, m.status) as status,
+    if (!ids.length && !gatheringIds.length && !exactReplies.size) return;
+    const rows = await this.scoped(tx => tx<StoredSendReceipt[]>`select m.id,m.member_id,m.opportunity_id,m.type,o.member_id as outbound_member_id,o.sent_at,
+      coalesce(o.status, m.status) as status,
       case when o.id is null then m.ts else o.sent_at end as accepted_at
       from network.messages m left join platform.outbound o on o.app_id = m.app_id and o.id = m.id
       where m.app_id=${this.app.id} and m.direction='outbound' and (
         (m.id=any(${tx.array(ids, "TEXT")}) and m.proactive) or
-        (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')))`);
+        (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')) or
+        (m.id=any(${tx.array([...exactReplies.keys()], "TEXT")}) and m.type in ('scheduling','reminder','feedback_request','crew_offer')))`);
     for (const row of rows) {
-      const status = row.status as string;
-      if (row.accepted_at != null && /^(accepted|sent|delivered|read)$/.test(status)) {
-        this.initialInviteReceipts.set(row.id as string, { kind: "accepted", at: new Date(row.accepted_at as string).getTime() });
-      } else if (status !== "parked_leak_review" && (status === "dry_run" || NOT_SENT.test(status))) {
-        this.initialInviteReceipts.set(row.id as string, { kind: "not_sent" });
+      const exact = exactReplies.get(row.id);
+      if (exact && (row.type !== exact.type || row.member_id !== exact.memberId || row.outbound_member_id !== exact.memberId
+        || row.opportunity_id !== exact.oppId)) continue;
+      // Replies to check-ins, feedback prompts, crew offers and reschedule offers require exact acceptance.
+      const acceptedAt = exact ? row.sent_at : row.accepted_at;
+      if (acceptedAt && /^(accepted|sent|delivered|read)$/.test(row.status)) {
+        this.initialInviteReceipts.set(exact?.key ?? row.id, { kind: "accepted", at: acceptedAt.getTime() });
+      } else if (!exact && row.status !== "parked_leak_review" && (row.status === "dry_run" || NOT_SENT.test(row.status))) {
+        this.initialInviteReceipts.set(row.id, { kind: "not_sent" });
       }
     }
   }
@@ -767,7 +1059,8 @@ export class NetworkRuntime {
         const oppId = meta.proposalId ?? meta.probe?.key;
         const cofounderContact = !!oppId && this.net.opps.get(oppId)?.lane === "Cofounder"
           && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal");
-        const id = cofounderContact ? `${cofounderDeliveryIdPrefix}${meta.type === "proposal" || baseId.startsWith(RESCHEDULE_QUEUE_PREFIX) ? "reveal" : "probe"}:${baseId}`
+        const id = cofounderContact ? (meta.type === "proposal" || baseId.startsWith(RESCHEDULE_QUEUE_PREFIX)
+          ? cofounderRevealDeliveryId(baseId) : `${cofounderDeliveryIdPrefix}probe:${baseId}`)
           : meta.privateInviteVouch && !meta.approvedInviteLink ? `invite-vouch:${baseId}` : baseId;
         const turn = this.host.inboundTurn?.();
         const causal = !cofounderContact && turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
@@ -791,6 +1084,7 @@ export class NetworkRuntime {
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           ...(approvedPhotos ? { approvedPhotos } : {}), ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
+          ...(type === "proposal" && meta.booked && meta.participants?.length ? { bookingRoster: [...meta.participants] } : {}),
           type, oppId, proactive: !!meta.proactive, system: false, ts: t,
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
@@ -816,7 +1110,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | keyof typeof gatheringPrivateBody, publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation_vouch" | AtomicReplyReason, publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -875,6 +1169,18 @@ export class NetworkRuntime {
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
     await u.memberCommand?.(tx);
+    if (u.ages.length) {
+      const store = new PgPeopleStore(tx);
+      const accounts = this.host.accounts;
+      u.recordedAges = [];
+      for (const observation of u.ages) {
+        const e164 = this.addressOf(observation.memberId);
+        if (!accounts || !e164) continue;
+        const recorded = await store.recordMemberAge(app, observation.memberId, e164,
+          accounts.phoneHash(e164), observation.age, this.clock.now());
+        if (recorded) u.recordedAges.push({ ...recorded, memberId: observation.memberId });
+      }
+    }
     const personIds = new Map<string, string>();
     if (u.forget.size) {
       const rows = await tx`select person.id,member.id as member_id from platform.people person
@@ -902,11 +1208,10 @@ export class NetworkRuntime {
       await reconcileLegacyIntentRows(tx, app, this.cities, u.legacyIntentState, this.clock.now(), inactive);
     }
     if (u.inbound && ok(u.inbound.member_id as string)) {
+      const privateRequest = u.atomicReply && privateAtomicRequests[u.atomicReply];
       const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
         : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" }
-          : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" }
-            : u.atomicCalendarReply ? { body: "Private calendar invite request.", type: "calendar_invite" }
-              : u.atomicGatheringReply ? { body: `${gatheringPrivateBody[u.atomicGatheringReply]}.`, type: u.atomicGatheringReply } : {};
+          : privateRequest ? { body: privateRequest, type: u.atomicReply } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -923,7 +1228,7 @@ export class NetworkRuntime {
     // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
-      const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedPublicEventLink(s.oppId, s.memberId, s.body) : undefined;
+      const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedBookingLink(s.oppId, s.memberId, s.body, s.id) : undefined;
       const staged = u.memberInvitation;
       const reviewToken = s.type === "member_invitation_review" && staged?.status === "review" && staged.review.inviterMemberId === s.memberId
         ? inviteReviewContactToken(s.body, staged.review.id) : undefined;
@@ -932,7 +1237,8 @@ export class NetworkRuntime {
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);
-        if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls" || privateMemberMessage(s.type)) {
+        if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls"
+          || privateMemberMessage(s.type) || (u.atomicReply && s.type === u.atomicReply)) {
           // This result was authorized for the signed reply only.
           u.sends = u.sends.filter(message => message.id !== s.id);
           this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
@@ -940,42 +1246,16 @@ export class NetworkRuntime {
       }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
-    let replyReason: AtomicReplyReason | undefined;
-    if (u.atomicInvitationDeliveryReply) {
-      if (!captured.some(send => send.type === "member_invitation_delivery")) throw new Error("Invitation delivery reply was not collected");
-      replyReason = "member_invitation_delivery";
+    const staged = u.memberInvitation;
+    const replyReason = staged ? (staged.status === "issued" ? "member_invitation" : "member_invitation_review") : u.atomicReply;
+    const [reply] = captured;
+    if (replyReason && !atomicMemberReplyMatches(replyReason, reply?.type ?? "", captured.length, reply?.kind === "reply")) {
+      throw new Error(`Atomic ${replyReason} reply was not collected`);
     }
-    if (u.atomicHomeHelpReceipt) {
-      if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
-      replyReason = "bounded_home_help";
-    }
-    if (u.atomicProfileFactReply) {
-      if (!captured.some(send => send.type === "profile_fact_edit")) throw new Error("Profile fact reply was not collected");
-      replyReason = "profile_fact_edit";
-    }
-    if (u.atomicParticipationReply) {
-      if (!captured.some(send => send.type === "participation_controls")) throw new Error("Participation settings reply was not collected");
-      replyReason = "participation_controls";
-    }
-    if (u.atomicCalendarReply) {
-      if (!captured.some(send => send.type === "calendar_invite")) throw new Error("Calendar invite reply was not collected");
-      replyReason = "calendar_invite";
-    }
-    if (u.atomicGatheringReply) {
-      if (!captured.some(send => send.type === u.atomicGatheringReply)) throw new Error("Gathering reply was not collected");
-      replyReason = u.atomicGatheringReply;
-    }
-    if (u.atomicCofounderReply) {
-      if (!captured.some(send => send.type === "cofounder_intent")) throw new Error("Cofounder intent reply was not collected");
-      replyReason = "cofounder_intent";
-    }
-    if (u.memberInvitation) {
-      const staged = u.memberInvitation;
-      replyReason = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
+    if (staged) {
       const inviterId = staged.status === "issued" ? staged.referral.inviterMemberId : staged.review.inviterMemberId;
-      const reply = captured.find(s => s.type === replyReason && s.memberId === inviterId && ok(s.memberId));
       // The invitation outcome and its allowance must roll back together if the exact reply was withheld.
-      if (!reply || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
+      if (reply?.memberId !== inviterId || !ok(inviterId) || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
       await this.host.saveMemberInvitation(tx, this, staged);
     }
     if (captured.length) {
@@ -986,11 +1266,14 @@ export class NetworkRuntime {
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
       body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
         : s.type === "calendar_invite" ? "Private calendar invite reply."
+        : s.type === "inbox_updates" ? "Private inbox updates reply."
+        : s.type === "peon_candidate_search" ? "Private job search reply."
         : gatheringMessage(s.type) ? `${gatheringPrivateBody[s.type]} reply.`
         : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,
+      booking_roster_member_ids: s.bookingRoster ? tx.array([...s.bookingRoster], "TEXT") : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     // Collected replies to members join the line's thread history (platform.outbound "collected"; sent_at when Cloud accepts), so the
@@ -1014,7 +1297,13 @@ export class NetworkRuntime {
       app_id: app, id: e.id, type: e.type, member_id: (e as { member?: string }).member ?? null, t: new Date(e.t), event: e,
     }));
     for (let i = 0; i < capital.length; i += 500) await tx`insert into network.capital_events ${tx(capital.slice(i, i + 500))} on conflict (app_id, id) do nothing`;
-    for (const [from, to] of u.blocks) if (ok(from) && ok(to)) {
+    const blocks = u.blocks.filter(([from, to]) => ok(from) && ok(to));
+    if (blocks.length) {
+      // Queue claims lock the same canonical people before reading pair safety.
+      await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+        where member.app_id=${app} and member.id in ${tx([...new Set(blocks.flat())])} order by person.id for key share of person`;
+    }
+    for (const [from, to] of blocks) {
       await tx`insert into network.edges (app_id, from_id, to_id, type, strength, explicit) values (${app}, ${from}, ${to}, 'blocked', 1, true) on conflict (from_id, to_id, type) do nothing`;
       // Blocks are person to person: the block holds on every app the two people use (the snapshot of each app reads it).
       await tx`insert into platform.person_blocks (from_person, to_person, origin_app, at)
@@ -1054,16 +1343,21 @@ export class NetworkRuntime {
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`delete from platform.member_invitations where app_id=${app} and (inviter_member_id=${id} or redeemed_member_id=${id})`;
       await tx`delete from platform.member_invitation_reviews where app_id=${app} and inviter_member_id=${id}`;
-      const joinNotices = await tx`select id,inbound_id from network.messages where app_id=${app} and ${id}=any(invite_join_members)`;
-      if (joinNotices.length) {
-        const ids = joinNotices.map(row => row.id as string);
+      const linkedNotices = await tx`select id,inbound_id,booking_roster_member_ids is not null as booking from network.messages where app_id=${app}
+        and (${id}=any(invite_join_members) or ${id}=any(booking_roster_member_ids))`;
+      if (linkedNotices.length) {
+        const ids = linkedNotices.map(row => row.id as string);
         await tx`update platform.outbound set body=null, ended_at=coalesce(ended_at,${new Date(this.clock.now())}),
-          status=case when status=any(${tx.array(WAITING_STATUSES, "TEXT")}) then 'dropped_forgotten' else status end
+          status=case when status=any(${tx.array([...WAITING_STATUSES, "collected", "send_unknown"], "TEXT")}) then 'dropped_forgotten' else status end
           where app_id=${app} and id in ${tx(ids)}`;
-        const turns = joinNotices.flatMap(row => row.inbound_id ? [row.inbound_id as string] : []);
+        const turns = linkedNotices.flatMap(row => row.inbound_id ? [row.inbound_id as string] : []);
         if (turns.length) await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,
           receipt=null,receipt_hash=null,action_receipts='{}'::jsonb where app_id=${app} and id in ${tx(turns)}`;
-        await tx`update network.messages set body='Invitation notice erased.',invite_join_members=null where app_id=${app} and id in ${tx(ids)}`;
+        await tx`update network.messages set body=case when booking_roster_member_ids is not null then 'Booking notice erased.' else 'Invitation notice erased.' end,
+          booking_roster_member_ids=null,invite_join_members=null where app_id=${app} and id in ${tx(ids)}`;
+        const bookingDeliveries = linkedNotices.filter(row => row.booking).map(row => `net:${row.id}`);
+        if (bookingDeliveries.length) await tx`update notify.inbox_items set summary='Booking notice erased.'
+          where app_id=${app} and delivery_id in ${tx(bookingDeliveries)}`;
       }
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,

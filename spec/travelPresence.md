@@ -54,7 +54,7 @@ pure def lawCoveringTripSharesTime(window: PresenceWindow, requested: PresenceWi
 
 ### A signed travel statement saves only the member's own dates in that app
 
-The signed conversation identifies the app and checks that the phone still belongs to the active member there. Without that binding, the command produces no write or reply. The shell accepts exact calendar dates in the destination city and treats the end date as the first day outside the trip. A missing, invalid, or ended window asks for dates. An overlapping stay in a different city needs a correction. Repeating the same stay leaves one record. The travel entry and its collected confirmation commit together. A retry may return the stored reply only while the same membership is authorized. This command changes no consent, account status, home location, or matching markets.
+The signed conversation identifies the app and checks that the phone still belongs to the active member there. Without that binding, the command produces no write or reply. The shell accepts exact calendar dates in the destination city and treats the end date as the first day outside the trip. A missing, invalid, or ended window asks for dates. An overlapping stay in a different city needs a correction. Repeating the same stay leaves one record. The travel entry and its completed signed confirmation commit together under the [signed inbox rule](signedInbox.md). A runtime failure after the save preserves that confirmation for an authorized retry. This command changes no consent, account status, home location, or matching markets.
 
 ```quint
 type TravelEntry = TravelUnavailable | TravelNeedsDates | TravelDateConflict | TravelAlreadySaved | TravelSave

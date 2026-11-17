@@ -21,6 +21,8 @@ export declare function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export declare function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export declare function cloudIdentityTimesValid(issuedAtMs: number, expiresAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export declare function lawSessionStartIsNeverFuture(issuedAtMs: number, asOf: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export declare function canRecordExchange(signIn: SignIn): boolean;
@@ -30,6 +32,12 @@ export declare function recordExchange(signIn: SignIn, exchangeAccepted: boolean
 export declare function canCheckIdentity(signIn: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export declare function checkIdentity(signIn: SignIn, identityAvailable: boolean, identityValid: boolean): SignIn;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export declare function lawCloudIdentityNeedsFutureExpiry(issuedAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export declare function lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) @throws {never} */
+export declare function lawStoredSessionEndsByIdentityExpiry(createdAt: number, startedAt: number, ttl: number, maxAge: number, identityExpiry: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) @throws {never} */
 export declare function canCheckPhone(signIn: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) @throws {never} */

@@ -31,6 +31,10 @@ export type Event =
 export const noSkill: string = "";
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const updatePromptLead: string = "Ask The Network for update ";
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
+export const updateHandoffPrefix: string = "/t/";
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
+export const linkedAssistants: LinkedAssistant[] = ["ChatGptAssistant", "ClaudeAssistant", "GrokAssistant"];
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export const initial: Entry = { phase: "NotArrived", entry: "NoEntry", app: "Ntwrk", skill: noSkill };
 
@@ -244,6 +248,18 @@ export function sometimesFollowingSkillFromCatalog(s: Entry): boolean {
 
 /** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
+export function sometimesFollowingSkillFromClaudePlugin(s: Entry): boolean {
+  return s.phase === "FollowingSkill" && s.entry === "FromClaudePlugin";
+}
+
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
+//@ pure
+export function sometimesFollowingSkillFromOpenAiPlugin(s: Entry): boolean {
+  return s.phase === "FollowingSkill" && s.entry === "FromOpenAiPlugin";
+}
+
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
+//@ pure
 export function sometimesExplaining(s: Entry): boolean {
   return s.phase === "Explaining";
 }
@@ -286,9 +302,9 @@ export function enabled(current: Entry, event: Event): boolean {
 export function step(current: Entry, event: Event): Entry {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "arrive" && canArrive(current, event.entryKind)) return arrive(current, event.entryKind, event.app);
-  if (event.type === "resolveSkill" && canResolveSkill(current)) return resolveSkill(current, event.wantsSignup);
-  if (event.type === "resolveUpdate" && canResolveUpdate(current)) return resolveUpdate(current, event.connected, event.referenceOwn);
+  if (event.type === "arrive") return canArrive(current, event.entryKind) ? arrive(current, event.entryKind, event.app) : current;
+  if (event.type === "resolveSkill") return canResolveSkill(current) ? resolveSkill(current, event.wantsSignup) : current;
+  if (event.type === "resolveUpdate") return canResolveUpdate(current) ? resolveUpdate(current, event.connected, event.referenceOwn) : current;
   return current;
 }
 

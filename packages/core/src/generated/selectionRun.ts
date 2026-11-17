@@ -112,21 +112,19 @@ export function sometimesGreedyBoundLowered(s: SelectionRun): boolean {
 /** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function numberUsed(counts: Record<string, number>, key: string): number {
-  return ("$" + key) in counts ? get_selectionRun(counts, "$" + key) : 0;
+  return lookup0_selectionRun(counts, key, 0);
 }
 
 /** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function selectedBefore(s: SelectionRun, candidateKey: string): boolean {
-  const local_0 = s.selectedKeys;
-  return ("$" + candidateKey) in local_0 ? get_selectionRun(local_0, "$" + candidateKey) : false;
+  return lookup1_selectionRun(s.selectedKeys, candidateKey, false);
 }
 
 /** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function pairAlreadyUsed(s: SelectionRun, pair: string): boolean {
-  const local_1 = s.usedPairs;
-  return ("$" + pair) in local_1 ? get_selectionRun(local_1, "$" + pair) : false;
+  return lookup1_selectionRun(s.usedPairs, pair, false);
 }
 
 /** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
@@ -198,11 +196,11 @@ export function reserveSelection(s: SelectionRun, choice: SelectionChoice, timeF
   //@ ensures (inv(s) && canReserveSelection(s, choice, timeFree, exploring, packAllows, value)) ==> stepGreedyValuesNeverRise(s, \result)
   //@ ensures (inv(s) && canReserveSelection(s, choice, timeFree, exploring, packAllows, value)) ==> stepOnlyReserveIncreasesSelections(s, "reserveSelection", \result)
   //@ ensures (inv(s) && canReserveSelection(s, choice, timeFree, exploring, packAllows, value)) ==> stepRefusedMemberGetsNoReservation(s, \result)
-  const local_2 = choice.pairKeys.reduce((pairs: Record<string, boolean>, pair: string) => ({ ...pairs, ["$" + pair]: true } as Record<string, boolean>), s.usedPairs);
-  const local_3 = choice.members.reduce((counts: Record<string, number>, m: SelectionMember) => addUse(counts, m.id), s.proactive);
-  const local_4 = choice.members.reduce((counts: Record<string, number>, m: SelectionMember) => m.contributor ? addUse(counts, m.id) : counts, s.contribution);
-  const local_5 = s.phase === "Greedy" ? value : s.greedyBound;
-  return { ...s, selectedCount: exact_selectionRun(s.selectedCount + 1), selectedKeys: ({ ...s.selectedKeys, ["$" + choice.candidateKey]: true } as Record<string, boolean>), usedPairs: local_2, byCity: addUse(s.byCity, choice.city), proactive: local_3, contribution: local_4, greedyBound: local_5 };
+  const local_0 = choice.pairKeys.reduce((pairs: Record<string, boolean>, pair: string) => ({ ...pairs, ["$" + pair]: true } as Record<string, boolean>), s.usedPairs);
+  const local_1 = choice.members.reduce((counts: Record<string, number>, m: SelectionMember) => addUse(counts, m.id), s.proactive);
+  const local_2 = choice.members.reduce((counts: Record<string, number>, m: SelectionMember) => m.contributor ? addUse(counts, m.id) : counts, s.contribution);
+  const local_3 = s.phase === "Greedy" ? value : s.greedyBound;
+  return { ...s, selectedCount: exact_selectionRun(s.selectedCount + 1), selectedKeys: ({ ...s.selectedKeys, ["$" + choice.candidateKey]: true } as Record<string, boolean>), usedPairs: local_0, byCity: addUse(s.byCity, choice.city), proactive: local_1, contribution: local_2, greedyBound: local_3 };
 }
 
 /** Story: Select compatible proposals within the run’s limits / A greedy refusal names a member who stays without room (spec/selectionRun.md) */
@@ -257,8 +255,8 @@ export function refuseSelection(s: SelectionRun, choice: SelectionChoice, value:
   //@ ensures (inv(s) && canRefuseSelection(s, choice, value, blockedMember)) ==> stepGreedyValuesNeverRise(s, \result)
   //@ ensures (inv(s) && canRefuseSelection(s, choice, value, blockedMember)) ==> stepOnlyReserveIncreasesSelections(s, "refuseSelection", \result)
   //@ ensures (inv(s) && canRefuseSelection(s, choice, value, blockedMember)) ==> stepRefusedMemberGetsNoReservation(s, \result)
-  const local_6: SelectionRefusal = { member: blockedMember, proactiveAtRefusal: proactiveUsed(s, blockedMember.id), contributionAtRefusal: numberUsed(s.contribution, blockedMember.id) };
-  return { ...s, greedyBound: value, refusals: s.refusals.concat([local_6]) };
+  const local_4: SelectionRefusal = { member: blockedMember, proactiveAtRefusal: proactiveUsed(s, blockedMember.id), contributionAtRefusal: numberUsed(s.contribution, blockedMember.id) };
+  return { ...s, greedyBound: value, refusals: s.refusals.concat([local_4]) };
 }
 
 /** Do the rules allow this event in this state? */
@@ -277,11 +275,11 @@ export function enabled(current: SelectionRun, event: Event): boolean {
 export function step(current: SelectionRun, event: Event): SelectionRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginExploration" && canBeginExploration(current)) return beginExploration(current);
-  if (event.type === "beginGreedy" && canBeginGreedy(current)) return beginGreedy(current);
-  if (event.type === "completeRun" && canCompleteRun(current)) return completeRun(current);
-  if (event.type === "reserveSelection" && canReserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value)) return reserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value);
-  if (event.type === "refuseSelection" && canRefuseSelection(current, event.choice, event.value, event.blockedMember)) return refuseSelection(current, event.choice, event.value, event.blockedMember);
+  if (event.type === "beginExploration") return canBeginExploration(current) ? beginExploration(current) : current;
+  if (event.type === "beginGreedy") return canBeginGreedy(current) ? beginGreedy(current) : current;
+  if (event.type === "completeRun") return canCompleteRun(current) ? completeRun(current) : current;
+  if (event.type === "reserveSelection") return canReserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value) ? reserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value) : current;
+  if (event.type === "refuseSelection") return canRefuseSelection(current, event.choice, event.value, event.blockedMember) ? refuseSelection(current, event.choice, event.value, event.blockedMember) : current;
   return current;
 }
 
@@ -336,14 +334,22 @@ export function initialHolds(): SelectionRun {
   return initial;
 }
 
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup0_selectionRun(m: Record<string, number>, k: string, otherwise: number): number {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup1_selectionRun(m: Record<string, boolean>, k: string, otherwise: boolean): boolean {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_selectionRun(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
-}
-
-/** What a map holds for a key, which it must hold. */
-export function get_selectionRun<K extends string | number, T>(m: Record<K, T>, key: K): T {
-  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
-  return m[key];
 }

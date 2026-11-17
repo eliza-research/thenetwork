@@ -1,5 +1,7 @@
 // GENERATED from spec/engineAsks.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { type ProbeTiming as probeDispatch_ProbeTiming, type ProbeAvailability as probeDispatch_ProbeAvailability, type ReplacementRoute as probeDispatch_ReplacementRoute, type ProbePhase as probeDispatch_ProbePhase, type ParticipantProbe as probeDispatch_ParticipantProbe, questionHoldMs as probeDispatch_questionHoldMs, probeResponseMs as probeDispatch_probeResponseMs, probeIsInvite as probeDispatch_probeIsInvite, probeQuestionHoldUntil as probeDispatch_probeQuestionHoldUntil, needsOtherTimes as probeDispatch_needsOtherTimes, probeExpiryDeadline as probeDispatch_probeExpiryDeadline, probeExpired as probeDispatch_probeExpired, slopProbeReplyCurrent as probeDispatch_slopProbeReplyCurrent, mayTryAlternate as probeDispatch_mayTryAlternate, alternateAllowed as probeDispatch_alternateAllowed, openTurn as probeDispatch_openTurn, needsProbeSend as probeDispatch_needsProbeSend, probeTiming as probeDispatch_probeTiming, probeAvailability as probeDispatch_probeAvailability, canMarkUnavailable as probeDispatch_canMarkUnavailable, markUnavailable as probeDispatch_markUnavailable, canRecordReply as probeDispatch_canRecordReply, recordReply as probeDispatch_recordReply, shouldLookForOtherTimes as probeDispatch_shouldLookForOtherTimes, initial as probeDispatch_initial, canOfferOtherTimes as probeDispatch_canOfferOtherTimes, offerOtherTimes as probeDispatch_offerOtherTimes, canExpireProbe as probeDispatch_canExpireProbe, expireProbe as probeDispatch_expireProbe, stepUnavailableNeverReopens as probeDispatch_stepUnavailableNeverReopens, sometimesAgreed as probeDispatch_sometimesAgreed, sometimesSettledNo as probeDispatch_sometimesSettledNo, lawSlopProbeNeedsAcceptance as probeDispatch_lawSlopProbeNeedsAcceptance, probePending as probeDispatch_probePending, replacementRoute as probeDispatch_replacementRoute, groupMayRemainWithoutAlternate as probeDispatch_groupMayRemainWithoutAlternate, usePriorIntent as probeDispatch_usePriorIntent, turnReached as probeDispatch_turnReached, lawProbeWaitsForOpenQuestion as probeDispatch_lawProbeWaitsForOpenQuestion, lawOneToOneClosesWithoutAlternate as probeDispatch_lawOneToOneClosesWithoutAlternate, lawRequiredParticipantCannotBeReplaced as probeDispatch_lawRequiredParticipantCannotBeReplaced, mayUsePriorIntent as probeDispatch_mayUsePriorIntent, canOpenTurn as probeDispatch_canOpenTurn, lawLaterTurnRequiresFirst as probeDispatch_lawLaterTurnRequiresFirst, canUsePriorIntent as probeDispatch_canUsePriorIntent } from "./probeDispatch.ts";
+import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle } from "./opportunityLifecycle.ts";
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 export type QuestionPhase = "AwaitingOptions" | "PlanningQuestions" | "QuestionsPublished";
@@ -18,6 +20,8 @@ export type Event =
 export const requiredQuestionWaitMs: number = 604800000;
 /** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
 export const compatibilityWaitMs: number = 1814400000;
+/** Story: Ask for the information needed to find a match / A queued question still belongs to the member's open turn (spec/engineAsks.md) */
+export const engineQuestionDeliveryPrefix: string = "engine-question:";
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 export const initial: AskRun = { phase: "AwaitingOptions", counts: ({} as Record<string, number>) };
 
@@ -68,7 +72,7 @@ export function questionSubjectAllowed(s: AskRun, adult: boolean, supportedMarke
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function countReservedQuestions(s: AskRun, memberId: string): number {
-  return ("$" + memberId) in s.counts ? get_engineAsks(s.counts, "$" + memberId) : 0;
+  return lookup0_engineAsks(s.counts, memberId, 0);
 }
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
@@ -94,12 +98,6 @@ export function countPublishedQuestions(s: AskRun, memberId: string): number {
 //@ pure
 export function sometimesPublishesQuestions(s: AskRun): boolean {
   return s.phase === "QuestionsPublished" && countReservedQuestions(s, "a") > 0;
-}
-
-/** Story: Ask for the information needed to find a match / The Network asks for dating preferences once (spec/engineAsks.md) */
-//@ pure
-export function networkPreferenceQuestion(missingPreferences: boolean, activeIntent: boolean, previouslyAsked: boolean): boolean {
-  return missingPreferences && activeIntent && !previouslyAsked;
 }
 
 /** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
@@ -138,6 +136,32 @@ export function compatibilityQuestionDue(elapsedMs: number): boolean {
   return elapsedMs >= compatibilityWaitMs;
 }
 
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
+//@ pure
+export function compatibilityTypeQuestionDue(typeEnabled: boolean, typeMissing: boolean, elapsedMs: number): boolean {
+  return typeEnabled && typeMissing && compatibilityQuestionDue(elapsedMs);
+}
+
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
+//@ pure
+export function lawTypeQuestionNeedsItsSwitch(typeMissing: boolean, elapsedMs: number): boolean {
+  //@ ensures \result === true
+  return !compatibilityTypeQuestionDue(false, typeMissing, elapsedMs);
+}
+
+/** Story: Ask for the information needed to find a match / A queued question still belongs to the member's open turn (spec/engineAsks.md) */
+//@ pure
+export function queuedEngineQuestionAllowed(exactQuestion: boolean, memberEligible: boolean, askedAt: number, now: number): boolean {
+  return exactQuestion && memberEligible && askedAt >= 0 && askedAt <= now && exact_engineAsks(now - askedAt) < probeDispatch_questionHoldMs;
+}
+
+/** Story: Ask for the information needed to find a match / A queued question still belongs to the member's open turn (spec/engineAsks.md) */
+//@ pure
+export function lawEngineQuestionNeedsOpenTurn(memberEligible: boolean, askedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !queuedEngineQuestionAllowed(false, memberEligible, askedAt, now);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: AskRun, event: Event): boolean {
@@ -152,9 +176,9 @@ export function enabled(current: AskRun, event: Event): boolean {
 export function step(current: AskRun, event: Event): AskRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "publishQuestions" && canPublishQuestions(current)) return publishQuestions(current);
-  if (event.type === "setAvailability" && canSetAvailability(current)) return setAvailability(current, event.configured);
-  if (event.type === "reserveQuestion" && canReserveQuestion(current, event.memberId, event.adult, event.supportedMarket)) return reserveQuestion(current, event.memberId, event.adult, event.supportedMarket);
+  if (event.type === "publishQuestions") return canPublishQuestions(current) ? publishQuestions(current) : current;
+  if (event.type === "setAvailability") return canSetAvailability(current) ? setAvailability(current, event.configured) : current;
+  if (event.type === "reserveQuestion") return canReserveQuestion(current, event.memberId, event.adult, event.supportedMarket) ? reserveQuestion(current, event.memberId, event.adult, event.supportedMarket) : current;
   return current;
 }
 
@@ -203,6 +227,13 @@ export function initialHolds(): AskRun {
   return initial;
 }
 
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup0_engineAsks(m: Record<string, number>, k: string, otherwise: number): number {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_engineAsks(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
@@ -215,10 +246,4 @@ export function equal_engineAsks(a: unknown, b: unknown): boolean {
   const keys = Object.keys(a);
   return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
     && keys.every((k) => Object.hasOwn(b, k) && equal_engineAsks((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
-}
-
-/** What a map holds for a key, which it must hold. */
-export function get_engineAsks<K extends string | number, T>(m: Record<K, T>, key: K): T {
-  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
-  return m[key];
 }

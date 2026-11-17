@@ -44,4 +44,13 @@ cleanup cannot cause an early repeat.
 
 ```quint
 pure val stopHintWindowMs: int = 2592000000
+
+pure def rateCounterCutoff(platformCutoff: int, extraKeepMs: int): int = platformCutoff - extraKeepMs
+pure def stopHintCounterPastRetention(lastAt: int, platformCutoff: int): bool =
+  rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, stopHintWindowMs))
+
+pure def lawOrdinaryCounterFollowsPlatformCutoff(lastAt: int, platformCutoff: int): bool =
+  rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, 0)) == rowBeforeCutoff(lastAt, platformCutoff)
+pure def lawStopHintCounterStaysInWindow(lastAt: int, platformCutoff: int): bool =
+  lastAt >= platformCutoff - stopHintWindowMs implies not(stopHintCounterPastRetention(lastAt, platformCutoff))
 ```

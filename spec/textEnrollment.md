@@ -8,10 +8,11 @@ The service parses the sender's text, reads the app and pending records and appl
 
 ### Dedicated lines and explicit app choices take priority
 
-An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read or invitation feedback reply for an app takes priority over an app keyword. Otherwise inspect pending join and current memberships.
+An explicit routing override or registered receiving line selects its own app. On the shared line an explicit saved-profile read takes priority over an invitation feedback reply, which takes priority over an app keyword. Otherwise inspect any pending join and current memberships.
 
 ```quint
-type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ExplicitRoute | PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
+type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ProfileRoute | SurveyRoute | KeywordRoute |
+  PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
 type TextRoute = { phase: RoutePhase }
 type ExplicitFacts = { dedicated: bool, profileApp: bool, surveyApp: bool, appKeyword: bool }
 pure val initialRoute: TextRoute = { phase: AwaitingExplicitRoute }
@@ -19,8 +20,34 @@ pure val initialRoute: TextRoute = { phase: AwaitingExplicitRoute }
 pure def checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute =
   if (routing.phase != AwaitingExplicitRoute) routing
   else if (explicitFacts.dedicated) { phase: DedicatedRoute }
-  else if (explicitFacts.profileApp or explicitFacts.surveyApp or explicitFacts.appKeyword) { phase: ExplicitRoute }
+  else if (explicitFacts.profileApp) { phase: ProfileRoute }
+  else if (explicitFacts.surveyApp) { phase: SurveyRoute }
+  else if (explicitFacts.appKeyword) { phase: KeywordRoute }
   else { phase: AwaitingFallbackRoute }
+
+pure def lawDedicatedLineTakesPrecedence(profileApp: bool, surveyApp: bool, appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: true, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword }).phase == DedicatedRoute
+
+pure def lawProfileReadTakesPrecedence(surveyApp: bool, appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword }).phase == ProfileRoute
+
+pure def lawSurveyReplyTakesPrecedence(appKeyword: bool): bool =
+  checkExplicitRoute(initialRoute, { dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword }).phase == SurveyRoute
+```
+
+### A prepared Peon signup names its app on a separate first line
+
+The Peon skill's one prepared text starts with exactly `join peon` on its own line, followed by the approved profile. The shared line takes this as an explicit Peon choice when the text has a profile after the first line. The message still goes through normal text enrollment and consent checks. A Peon mention elsewhere in a message does not select the app. Existing standalone keywords and dedicated lines keep their routing rules.
+
+```quint
+pure val preparedPeonTextHeader = "join peon"
+pure val headerValues = Set(preparedPeonTextHeader, "peon", "I plan to join peon", "")
+
+pure def preparedPeonTextNamesApp(header: str, profilePresent: bool): bool =
+  header == preparedPeonTextHeader and profilePresent
+
+pure def lawPreparedPeonTextRequiresExplicitHeader(header: str, profilePresent: bool): bool =
+  preparedPeonTextNamesApp(header, profilePresent) iff (header == preparedPeonTextHeader and profilePresent)
 ```
 
 ### A pending join routes only a possible join answer
@@ -135,9 +162,18 @@ pure def lawSlopEnrollmentRequiresAdult(adult: bool): bool =
 
 ### A first-contact notice cannot substitute for enrollment
 
-The notice is available only in the signed turn for a nonmember number that is not banned. A known underage floor or refused age prevents the notice. The existing unique write allows at most one notice per phone and the failure handler removes a notice that could not complete.
+The notice is available only in the signed turn for a number without a current or older runtime membership and with no applicable ban. A known underage floor or refused age prevents the notice. The service can collect the reply while the turn is running. It records the one-time notice key only when it commits a completed response containing the notice. A failed or abandoned turn leaves the notice available to the next eligible turn. A join refused for age discards any collected notice. Normal enrollment separately checks age and consent.
 
 ```quint
-pure def noticeAllowed(joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
-  joinAgeAllowed and ageFloorAllowed
+pure def firstContactMayCheckAge(signedTurn: bool, nonMember: bool, banned: bool): bool =
+  signedTurn and nonMember and not(banned)
+
+pure def firstContactNoticeAllowed(signedTurn: bool, nonMember: bool, banned: bool,
+    joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
+  firstContactMayCheckAge(signedTurn, nonMember, banned) and joinAgeAllowed and ageFloorAllowed
+
+pure def lawFirstContactNoticeRequiresEligibleNumber(signedTurn: bool, nonMember: bool, banned: bool,
+    joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
+  firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed)
+    implies (signedTurn and nonMember and not(banned) and joinAgeAllowed and ageFloorAllowed)
 ```

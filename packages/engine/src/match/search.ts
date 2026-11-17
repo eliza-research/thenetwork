@@ -3,7 +3,7 @@
 // candidateSearch machine, which keeps the top `searchLimit` and certifies when nothing unchecked
 // can beat them.
 import {
-  enabled, initial, searchTouchesPerCheck, searchWindowHigh, searchWindowLow, step, unseenValueBound,
+  enabled, initial, searchMayTouch, searchWindowHigh, searchWindowLow, step, unseenValueBound,
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
 } from "../../../core/src/generated/candidateSearch.ts";
 import { lanePairValue, laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
@@ -49,7 +49,10 @@ function lowerBound(lo: number, hi: number, at: (i: number) => number, x: number
  * The window of `profile` in its partner block: inside each segment the profile reaches, the
  * positions whose standing is in [low, high]. Ascending and disjoint; adjacent spans are merged.
  */
-function windowSpans(block: CandidateBlock, profile: MatchProfile, low: number, high: number): Span[] {
+function windowSpans(block: CandidateBlock, profile: MatchProfile, band: number): Span[] {
+  const offset = laneOffset(profile.lane, profile.side);
+  const low = searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
+  const high = searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
   const standingAt = (i: number) => block.profiles[i].standing;
   const spans: Span[] = [];
   for (const segment of block.segments) {
@@ -89,6 +92,27 @@ function windowRanges(group: TagGroup, postings: Postings, tags: TagSet, window:
   });
 }
 
+function tagRanges(block: CandidateBlock, profile: MatchProfile, window: readonly Span[]): Range[] {
+  return [
+    ...windowRanges("affinity", block.interests, profile.interests, window),
+    ...windowRanges("complement", block.offers, profile.seeks, window),
+    ...windowRanges("returned", block.seeks, profile.offers, window),
+  ];
+}
+
+const spanSize = (spans: readonly Span[]): number => spans.reduce((n, span) => n + span.end - span.start, 0);
+
+/** Exact window and tag counts for offline cost reports, using only the indexed span endpoints. */
+export function searchWindowMetrics(block: CandidateBlock, profile: MatchProfile): { window: number; ranges: number; shortest: number } {
+  const window = windowSpans(block, profile, laneLimits(profile.lane).rules.parityBand);
+  let ranges = 0, shortest = Infinity;
+  for (const range of tagRanges(block, profile, window)) {
+    ranges += range.size;
+    shortest = Math.min(shortest, range.size);
+  }
+  return { window: spanSize(window), ranges, shortest: ranges === 0 ? 0 : shortest };
+}
+
 /**
  * The best `searchLimit` partners of `profile`, with at most `searchBudget` pair checks and at most
  * `searchTouchesPerCheck x searchBudget` posting entries visited.
@@ -101,10 +125,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   if (!block) return resultOf(block, step(search, empty), 0);
 
   // spec/candidateSearch.md, "The standing window contains every partner that the parity rule allows"
-  const offset = laneOffset(profile.lane, profile.side), band = rules.parityBand;
-  const window = windowSpans(block, profile,
-    searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling),
-    searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling));
+  const window = windowSpans(block, profile, rules.parityBand);
   if (window.length === 0) return resultOf(block, step(search, empty), 0);
 
   const vectors = vectorsOf(w);
@@ -117,12 +138,8 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   // a's interests in the partners' interests, a's seeks in their offers, a's offers in their seeks,
   // walked rarest first. `open` counts the tags of each group whose window range is not fully walked:
   // a candidate that was not touched can have a hit only in those.
-  const walk = [
-    ...windowRanges("affinity", block.interests, profile.interests, window),
-    ...windowRanges("complement", block.offers, profile.seeks, window),
-    ...windowRanges("returned", block.seeks, profile.offers, window),
-  ].sort((x, y) => x.size - y.size); // the sort is stable
-  const windowSize = window.reduce((n, span) => n + span.end - span.start, 0);
+  const walk = tagRanges(block, profile, window).sort((x, y) => x.size - y.size); // the sort is stable
+  const windowSize = spanSize(window);
   const open: Record<TagGroup, number> = { affinity: 0, complement: 0, returned: 0 };
   for (const range of walk) open[range.group]++;
   let windowWalked = false;
@@ -149,12 +166,11 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const fullPack = hasPackValue ? pairValueScale : undefined;
   const pending = new CandidateHeap();
   const touched = new Set<number>();
-  const touchLimit = searchTouchesPerCheck * limits.searchBudget;
   let touches = 0, walked = 0, walkSpent = false;
   /** Touches the positions of `spans`; false when the touch limit stops it first. */
   const visit = (spans: readonly Span[], positionAt: (i: number) => number): boolean => {
     for (const { start, end } of spans) for (let i = start; i < end; i++) {
-      if (touches >= touchLimit) return false;
+      if (!searchMayTouch(touches, limits.searchBudget)) return false;
       touches++;
       const position = positionAt(i);
       if (touched.has(position)) continue;
@@ -188,7 +204,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       continue;
     }
     if (!top || search.checks >= limits.searchBudget) {
-      return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent }), touches);
+      return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent, touchedLeft: top !== undefined }), touches);
     }
     pending.pop();
     search = step(search, { type: "checkCandidate", value: pairValueOf(w, profile, top.other), ordinal: top.other.ordinal });

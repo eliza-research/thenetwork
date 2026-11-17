@@ -22,7 +22,7 @@
 // The simulated hiring world (packages/sim/src/apps/peon) writes seats directly and never uses
 // these functions, so the pinned peon gates do not move. Pure; reads no hidden truth.
 import type { Edge, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
-import { initial, interactionOccupies, remainingOpenings, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
+import { initial, remainingOpenings, seatRecordOccupies, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
 import type { EngineInput } from "../../types.ts";
 import { JOB_INTENT, SAFETY, T } from "./schema.ts";
 
@@ -111,8 +111,8 @@ export function seatFills(input: Pick<EngineInput, "interactions" | "openOpportu
     ledgers.set(seat, ledger);
   };
   // spec/peonCapacity.md, "Only live or successful introductions occupy an opening"
-  for (const r of input.interactions ?? []) if (interactionOccupies(r.outcome)) observe(r.participants);
-  for (const o of input.openOpportunities ?? []) observe(o.participants);
+  for (const r of input.interactions ?? []) if (seatRecordOccupies(false, r.outcome)) observe(r.participants);
+  for (const o of input.openOpportunities ?? []) if (seatRecordOccupies(true, "")) observe(o.participants);
   return new Map([...ledgers].map(([seat, ledger]) => [seat, new Set(step(ledger, { type: "publishLedger" }).occupied)]));
 }
 

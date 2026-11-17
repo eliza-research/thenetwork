@@ -38,13 +38,17 @@ export const OBJECTIVES: ObjectiveDef[] = [
 export const objectiveById = new Map(OBJECTIVES.map(o => [o.id, o]));
 
 const DETAIL_TAGS = /\btags:\s*([a-z0-9_,\s]+)/i;
+
 /** Tags the agent wrote into intent details, e.g. "(format: small_group; tags: rock_music,guitar,band)". */
 export function detailTags(details: string | undefined): string[] {
   const m = DETAIL_TAGS.exec(details ?? "");
   return m ? m[1]!.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
 }
-/** Intent details without the tag list: the tags name what a partner needs, not what the member asks to do. */
-export const detailProse = (details: string | undefined): string => (details ?? "").replace(DETAIL_TAGS, "");
+
+/** Lane parsing uses the member's prose. The tag list describes partner fit. */
+export function detailProse(details: string | undefined): string {
+  return (details ?? "").replace(DETAIL_TAGS, "");
+}
 
 /**
  * Objectives a stated want maps to. Order of evidence: the objective text; else the explicit

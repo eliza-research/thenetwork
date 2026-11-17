@@ -14,7 +14,7 @@ const other = "+12125550112";
 const note = "Private staff vouch, for this invitation only";
 const first = {
   app: "ntwrk", issuerId: "cohort-operator", requestId: "seed-batch-a",
-  entries: [{ e164, homeCity: "nyc", vouchNote: note }, { e164: other, homeCity: "sf", vouchNote: "Private second vouch" }],
+  entries: [{ e164, homeCity: "nyc", vouchNote: note }, { e164: other, homeCity: "sf", vouchNote: `  ${"é".repeat(250)}  ` }],
 } satisfies SeedInvitationBatchRequest;
 let now = at;
 let url: string;
@@ -42,6 +42,10 @@ if (pgAvailable) {
 
 test.skipIf(!pgAvailable)("staff seed batches and verified redemption stay app-bound and erase private evidence", async () => {
   const issue = (input: SeedInvitationBatchRequest) => scoped(input.app, tx => store.issue(tx, input));
+  for (const vouchNote of ["   ", "é".repeat(251)]) {
+    expect(await issue({ ...first, entries: [first.entries[0]!, { ...first.entries[1]!, vouchNote }] })).toEqual({ kind: "unavailable" });
+  }
+  expect(await sql`select id from platform.seed_invitation_batches`).toHaveLength(0);
   const attempts = await Promise.all([issue(first), issue(first)]);
   const batch = attempts.find(result => result.kind === "issued");
   if (!batch || batch.kind !== "issued") throw new Error("Expected one original batch");
@@ -66,6 +70,7 @@ test.skipIf(!pgAvailable)("staff seed batches and verified redemption stay app-b
   expect(stored[0]?.evidence).not.toContain(note);
   expect(stored[0]?.evidence).not.toContain(link.token);
   expect(stored[0]?.size).toBe(Buffer.byteLength(note));
+  expect(stored[1]?.size).toBe(500);
   expect(await scoped("friends", tx => tx`select batch_id from platform.seed_invitations where batch_id=${batch.batchId}`)).toHaveLength(0);
   expect(await scoped(first.app, tx => store.findRecipient(tx, { app: first.app, token: link.token, e164: other }))).toBeUndefined();
   expect(await scoped("friends", tx => store.findRecipient(tx, { app: "friends", token: link.token, e164 }))).toBeUndefined();

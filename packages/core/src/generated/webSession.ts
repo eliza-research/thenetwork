@@ -140,10 +140,10 @@ export function enabled(current: SessionFlow, event: Event): boolean {
 export function step(current: SessionFlow, event: Event): SessionFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "readToken" && canReadToken(current)) return readToken(current, event.tokenPresent, event.tokenLength);
-  if (event.type === "readRow" && canReadRow(current)) return readRow(current, event.sameAppRow, event.expired, event.hasRevocation, event.revocationDue, event.banned, event.rotationRequested, event.oldEnough, event.at);
-  if (event.type === "recordRevocation" && canRecordRevocation(current)) return recordRevocation(current);
-  if (event.type === "recordReplacement" && canRecordReplacement(current)) return recordReplacement(current);
+  if (event.type === "readToken") return canReadToken(current) ? readToken(current, event.tokenPresent, event.tokenLength) : current;
+  if (event.type === "readRow") return canReadRow(current) ? readRow(current, event.sameAppRow, event.expired, event.hasRevocation, event.revocationDue, event.banned, event.rotationRequested, event.oldEnough, event.at) : current;
+  if (event.type === "recordRevocation") return canRecordRevocation(current) ? recordRevocation(current) : current;
+  if (event.type === "recordReplacement") return canRecordReplacement(current) ? recordReplacement(current) : current;
   return current;
 }
 

@@ -171,11 +171,11 @@ export function enabled(current: Issuance, event: Event): boolean {
 export function step(current: Issuance, event: Event): Issuance {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginApproval" && canBeginApproval(current)) return beginApproval(current, event.requestLive);
-  if (event.type === "checkGrantAuthority" && canCheckGrantAuthority(current)) return checkGrantAuthority(current, event.authority);
-  if (event.type === "checkLockedApproval" && canCheckLockedApproval(current)) return checkLockedApproval(current, event.approval);
-  if (event.type === "recordCommit" && canRecordCommit(current, event.committed)) return recordCommit(current, event.committed);
-  if (event.type === "recordStorageFailure" && canRecordStorageFailure(current)) return recordStorageFailure(current);
+  if (event.type === "beginApproval") return canBeginApproval(current) ? beginApproval(current, event.requestLive) : current;
+  if (event.type === "checkGrantAuthority") return canCheckGrantAuthority(current) ? checkGrantAuthority(current, event.authority) : current;
+  if (event.type === "checkLockedApproval") return canCheckLockedApproval(current) ? checkLockedApproval(current, event.approval) : current;
+  if (event.type === "recordCommit") return canRecordCommit(current, event.committed) ? recordCommit(current, event.committed) : current;
+  if (event.type === "recordStorageFailure") return canRecordStorageFailure(current) ? recordStorageFailure(current) : current;
   return current;
 }
 

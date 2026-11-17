@@ -1,5 +1,5 @@
 // The four app sites. One shared backend serves /api/*, /mcp and /oauth/* for all of them
-// (deploy/router.ts forwards those paths; everything else is a static file from dist/).
+// (deploy/router.ts forwards those paths and serves the update handoff). Public pages are built into dist/.
 // The pages come from one React app (apps/site), prerendered per brand; this file adds what
 // Cloudflare serves as it is: _headers, _worker.js, _routes.json, the skill files and static/.
 import { createHash } from "node:crypto";
@@ -13,7 +13,7 @@ import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 import { siteApp } from "../apps/site/prerender.ts";
 import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
-import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType } from "../packages/core/src/generated/sitePages.ts";
+import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType, updateHandoffAssetPath } from "../packages/core/src/generated/sitePages.ts";
 import { brandFor } from "../packages/core/src/generated/brandIdentity.ts";
 import {
   type AgentSignup,
@@ -88,9 +88,10 @@ export const PAGE_FILES: Record<SitePage, string> = {
   TermsPage: "terms.html",
   NotFoundPage: "404.html",
   JoinPage: "join.html",
+  UpdateHandoffPage: updateHandoffAssetPath.slice(1) + ".html",
 };
 
-/** The pages of one site (spec/sitePages.md: only peon.biz keeps the browser join page). */
+/** The pages of one site, including the pages that are specific to one site. */
 export function pages(s: Site): SitePage[] {
   return sitePageList.filter((page) => siteHasPage(s.key, page));
 }
@@ -147,36 +148,27 @@ export function signupMarkers(text: string): SignupMarker[] {
   return out;
 }
 
-/** The transports a skill of this app reaches when the agent has the capability (spec/agentSignup.md:9). */
+const CONNECTOR_CAPABILITIES = [true, false];
+
+/** The transports a skill of this app reaches when the agent has the capability. */
 function skillTransports(s: Site): Transport[] {
   const kind = skillKindFor(s.key);
-  const reached = [true, false].flatMap((httpsSession) => [true, false].map((connectorTools) => transportFor(kind, httpsSession, connectorTools)));
-  return [...new Set(reached)].filter((t) => t !== "NoTransport");
+  return CONNECTOR_CAPABILITIES.map(available => transportFor(kind, available)).filter(t => t !== "NoTransport");
 }
 
-/** The event of one marked step when the step succeeds. `chooseTransport` takes the capabilities that reach `transport`. */
-function successfulEvent(s: Site, event: string, transport: Transport, forwarded: boolean): SignupEvent | undefined {
+/** Map each marked step to its successful app-specific event. */
+function successfulEvent(s: Site, event: string, transport: Transport): SignupEvent | undefined {
   const kind = skillKindFor(s.key);
+  const inviteOnly = brandFor(s.key).joinMode === "InviteOnly";
   switch (event) {
-    case "chooseTransport": {
-      const caps = [true, false].flatMap((httpsSession) => [true, false].map((connectorTools) => ({ httpsSession, connectorTools })));
-      const cap = caps.find((c) => transportFor(kind, c.httpsSession, c.connectorTools) === transport)!;
-      return { type: "chooseTransport", skillKind: kind, ...cap };
-    }
-    case "readAppFacts": return { type: "readAppFacts", appMatches: true, inviteMode: brandFor(s.key).joinMode === "InviteOnly" };
+    case "chooseTransport": return { type: "chooseTransport", skillKind: kind,
+      connectorTools: transportFor(kind, true) === transport };
+    case "readAppFacts": return { type: "readAppFacts", appMatches: true, inviteMode: inviteOnly };
     case "draftProfile": return { type: "draftProfile", statedAge: "Adult" };
     case "decideApproval": return { type: "decideApproval", decision: "ApproveExact" };
-    case "checkSession": return { type: "checkSession", sessionLive: false };
-    case "readAuthMode": return { type: "readAuthMode", codeMode: true };
-    case "startCode": return { type: "startCode", codeStart: "CodeSent" };
-    case "checkCode": return { type: "checkCode", verified: true };
-    case "readAccount": return {
-      type: "readAccount",
-      account: forwarded ? "InviteRequired" : "JoinableAccount",
-      invitation: { forwarded, sameApp: forwarded, approved: forwarded },
-    };
-    case "joinApp": return { type: "joinApp", joinResult: "JoinCreated", invitationSubmitted: forwarded };
-    case "readBack": return { type: "readBack", readBackMatches: true };
+    case "offerHandoff": return { type: "offerHandoff", linkAvailable: true };
+    case "observeBrowser": return { type: "observeBrowser",
+      result: inviteOnly ? "BrowserNewInvited" : "BrowserNewOpen", appWriteGrant: true };
     case "checkSiteStatus": return { type: "checkSiteStatus", siteApp: true, siteStatus: "SiteActive" };
     case "submitProfile": return { type: "submitProfile", accepted: true };
     case "confirmProfile": return { type: "confirmProfile", stillLive: true };
@@ -184,38 +176,31 @@ function successfulEvent(s: Site, event: string, transport: Transport, forwarded
   }
 }
 
-/**
- * The problems of a skill's signup steps: for each transport of the app's skill, the marked steps in document order must be
- * a path that the generated agentSignup machine allows from `initial`, and the path must end at that transport's end report
- * (spec/agentSignup.md:9, spec/agentSignup.md:331). The machine fixes the order: the auth mode before the number, one code
- * request, and approval of the exact profile and consent before Join.
- */
+const DIRECT_CREDENTIAL_FLOW = /\/api\/auth\/otp\/(?:start|verify)|session\.cookies/i;
+
+/** Replay the marked signup steps against the generated machine for every supported transport. */
 export function signupStepProblems(s: Site, text: string): string[] {
   const markers = signupMarkers(text);
   const transports = skillTransports(s);
   const problems: string[] = [];
-  if (markers.length === 0) return [`${s.skill}/SKILL.md has no agentSignup step markers`];
+  if (DIRECT_CREDENTIAL_FLOW.test(text)) problems.push(`${s.skill}/SKILL.md describes a direct phone sign-in outside the browser`);
+  if (markers.length === 0) return [...problems, `${s.skill}/SKILL.md has no agentSignup step markers`];
   for (const m of markers) {
     if (m.transport !== null && !transports.includes(m.transport as Transport)) problems.push(`${s.skill}/SKILL.md:${m.line} marks a step for ${m.transport}, which the ${s.domain} skill does not use (${transports.join(", ")})`);
   }
-  const cases = transports.map(transport => ({ transport, forwarded: false }));
-  if (transports.includes("InAgentCode") && brandFor(s.key).joinMode === "InviteOnly") {
-    cases.push({ transport: "InAgentCode", forwarded: true });
-  }
-  for (const { transport, forwarded } of cases) {
-    const route = forwarded ? `${transport} with a forwarded invitation` : transport;
+  for (const transport of transports) {
     let state: AgentSignup = signupStart;
-    for (const m of markers.filter((x) => x.transport === null || x.transport === transport)) {
-      const event = successfulEvent(s, m.event, transport, forwarded);
+    for (const m of markers.filter(x => x.transport === null || x.transport === transport)) {
+      const event = successfulEvent(s, m.event, transport);
       if (!event) { problems.push(`${s.skill}/SKILL.md:${m.line} names "${m.event}", which is not a step of a successful signup`); break; }
-      if (!signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (${route})`); break; }
+      if (!signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (${transport})`); break; }
       state = signupStep(state, event);
-      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (${route})`); break; }
+      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (${transport})`); break; }
     }
     if (problems.length) break;
     const want = endReportFor(transport);
     const got = reportFor(state.phase);
-    if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${route} steps end in phase ${state.phase} (${got}), not at ${want}`);
+    if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${transport} steps end in phase ${state.phase} (${got}), not at ${want}`);
   }
   return problems;
 }
@@ -296,7 +281,7 @@ function writeSkills(s: Site, outdir: string, env: Record<string, string | undef
 
 /** The router every site runs on its backend paths (Pages advanced mode _worker.js): an entry with the default export only. */
 export const ROUTER = join(here, "../deploy/pages-worker.ts");
-/** dist/_routes.json for Cloudflare Pages: the Worker runs on the backend paths only (deploy/router.ts RUN_WORKER_FIRST). */
+/** dist/_routes.json for Cloudflare Pages: the public paths that run the Worker. */
 export const routesFile = (): string => JSON.stringify({ version: 1, include: RUN_WORKER_FIRST, exclude: [] }, null, 2) + "\n";
 
 /** Words that must never ship in a production build (audit sites-infra-14). */
@@ -332,8 +317,7 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     for (const page of pages(s)) write(join(outdir, PAGE_FILES[page]), app.page(s.key, page, input));
     if (existsSync(s.src)) cpSync(s.src, outdir, { recursive: true });
     write(join(outdir, "_headers"), headersFile());
-    // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json runs it only on the
-    // backend paths (every other path is a static file, served without the Worker).
+    // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json lists the paths that run it.
     const worker = await buildWorker({
       entryPoints: [ROUTER], bundle: true, platform: "browser", format: "esm", minify: true,
       outfile: join(outdir, "_worker.js"), write: false, logLevel: "silent",

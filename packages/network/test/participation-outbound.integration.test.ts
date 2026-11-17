@@ -1,12 +1,15 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
-import { Mini } from "./mini.ts";
+import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
+import { Mini, type Spec } from "./mini.ts";
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
@@ -16,6 +19,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   const url = await migratedDb("participation_outbound");
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
+  const secret = "synthetic-named-cancellation-fixture";
   const app = APPS.friends;
   const phones = ["+12125550381", "+12125550382"];
   const calls: SendRequest[] = [];
@@ -27,11 +31,18 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
   });
+  const sendTurn = async (messageId: string, text: string, receivedAt = clock.now()) => {
+    const input: TurnRequest = { app: app.id, channel: "blooio", from: phones[0]!, to: null, messageId,
+      transport: "imessage", receivedAt, text };
+    const body = JSON.stringify(input);
+    const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
+    return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }));
+  };
   try {
     await service.start();
-    const members = [];
+    const members: Spec[] = [];
     for (const [index, e164] of phones.entries()) {
       const name = index === 0 ? "Ari" : "Blair";
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
@@ -94,6 +105,19 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     clock.set(booked.meetingAt! - DAY);
     for (const phone of phones) await adapter.engaged(phone);
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id=${app.id}`;
+    const stageBookingNotice = (opportunity: typeof booked, index: number) => {
+      const memberId = members[index]!.id;
+      const revision = opportunity.scheduleRevision ?? 0;
+      const id = revision > 0 ? rescheduleUpdateKey(opportunity.id, revision, memberId) : `fixture-booking:${opportunity.id}:${memberId}`;
+      rt.unit.sends.push({ id, memberId, to: phones[index], kind: "transactional", type: revision > 0 ? "scheduling" : "proposal",
+        oppId: opportunity.id, body: "Your meeting is booked at the park.", proactive: false, system: false, ts: clock.now() });
+      return id;
+    };
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: pair.net.exportState().members, opps: [booked] });
+      stageBookingNotice(booked, 0);
+      stageBookingNotice(booked, 1);
+    });
     const queueReminder = (i: number, memberId: string) => rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), opps: [booked] });
       rt.unit.sends.push({ id: `day-before-reminder:${planId}:${memberId}`, memberId, to: phones[i], kind: "transactional",
@@ -122,25 +146,66 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     });
     const firstCheckIn = `day-of-checkin:${planId}:r0:${first}`;
     expect(await adapter.queue.statusOf(firstCheckIn)).toBe("retry_scheduled");
+    const booking = async () => (await rt.pg.load())?.opps.find(opp => opp.id === planId);
+    expect((await sendTurn("held-check-in-no", "no")).status).toBe(200);
+    expect(await booking()).toMatchObject({ stage: "scheduled", status: expect.arrayContaining([[first, "yes"]]) });
+    expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
     const revised = { ...booked, scheduleRevision: 1, meetingAt: booked.meetingAt! + HOUR };
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised] }));
     clock.advance(HOUR);
     await adapter.queue.setLineSafety(undefined);
     await rt.deliver();
     expect(await adapter.queue.statusOf(firstCheckIn)).toBe("suppressed_ineligible");
+    await rt.unitOfWork(() => { stageBookingNotice(revised, 0); });
     await rt.unitOfWork(net => net.tick(clock.now()));
     const revisedCheckIn = `day-of-checkin:${planId}:r1:${first}`;
     expect(await adapter.queue.statusOf(revisedCheckIn)).toBe("sent");
+    expect((await sendTurn("delayed-check-in-no", "no", clock.now() - MINUTE)).status).toBe(200);
+    expect(await booking()).toMatchObject({ stage: "scheduled", status: expect.arrayContaining([[first, "yes"]]) });
+    expect((await sendTurn("delivered-check-in-yes", "yes")).status).toBe(200);
+    expect((await booking())?.explicit).toContain(first);
     await rt.deliver();
     expect(calls.filter(call => call.idempotencyKey === `tn:${revisedCheckIn}`)).toHaveLength(1);
     expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
+
+    // A signed cancellation with an exact time belongs to that meeting, even with another reply pending.
+    const previousSchedule = { ...booked, id: `${planId}-another`, meetingAt: booked.meetingAt! + DAY, scheduleRevision: 1 };
+    const another = { ...previousSchedule, meetingAt: previousSchedule.meetingAt + HOUR, scheduleRevision: 2 };
+    await sql`update network.members set participation_state='normal' where app_id=${app.id} and id=${first!}`;
+    for (const phone of phones) await adapter.engaged(phone);
+    const receivedScheduleNotice = await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised, previousSchedule] });
+      return stageBookingNotice(previousSchedule, 1);
+    });
+    expect(await adapter.queue.statusOf(receivedScheduleNotice)).toBe("sent");
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised, another] }));
+    const pendingSlot = async () => (await rt.pg.load())?.members.find(member => member.id === first)?.awaiting;
+    expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
+    const cancelAt = (messageId: string, at: number) =>
+      sendTurn(messageId, `Please cancel my meeting on ${localBookingStart(at).replace(" ", " at ")}`);
+    const unknown = await cancelAt("unknown-meeting-time", another.meetingAt + HOUR);
+    expect(await unknown.json()).toMatchObject({ replies: [expect.stringContaining("couldn't find")] });
+    expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
+    const confirmation = await cancelAt("named-meeting-time", another.meetingAt);
+    expect(await confirmation.json()).toMatchObject({ replies: [expect.stringContaining("thanks for the heads up")] });
+    expect((await rt.pg.load())?.opps.map(opp => [opp.id, opp.stage])).toEqual([[planId, "scheduled"], [another.id, "closed"]]);
+    expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
+    const sentCancellation = `booked-cancellation:${another.id}:${second}`;
+    expect(await adapter.queue.statusOf(sentCancellation)).toBe("sent");
+    expect(calls.filter(call => call.idempotencyKey === `tn:${sentCancellation}`)).toHaveLength(1);
+    expect(calls.some(call => call.idempotencyKey === `tn:booked-cancellation:${planId}:${second}`)).toBe(false);
 
     for (const [suffix, text] of [["drop", "I can't make it."], ["block", "Block Blair"]] as const) {
       const cancelledId = `${planId}-${suffix}`;
       await adapter.engaged(phones[0]!);
       await adapter.engaged(phones[1]!);
+      const booking = { ...booked, id: cancelledId };
+      const bookingNotice = await rt.unitOfWork(net => {
+        net.importState({ ...net.exportState(), members: pairedMembers, opps: [booking] });
+        return stageBookingNotice(booking, 1);
+      });
+      expect(await adapter.queue.statusOf(bookingNotice)).toBe("sent");
       await rt.unitOfWork(async net => {
-        net.importState({ ...net.exportState(), members: pairedMembers, opps: [{ ...booked, id: cancelledId }] });
         await net.onInbound({ id: `cancel-${suffix}`, memberId: first!, body: text, ts: clock.now(), channel: "sms" });
         rt.unit.sends.push({ id: `stale-${suffix}`, memberId: second!, to: phones[1], kind: "transactional",
           body: "The previous meeting reminder.", type: "reminder", oppId: cancelledId, proactive: false, system: false, ts: clock.now() });

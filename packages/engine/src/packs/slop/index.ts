@@ -13,7 +13,7 @@
 // Core invariants (minors never matched, blocks win, hard filters before scoring, LeakGuard,
 // determinism, consent before reveal) are the engine's and cannot be loosened here.
 import {
-  compatibilityQuestionDue, requiredQuestionDue, slopQuestionSubject, slopQuestionTrack, widerRadiusQuestion, wideningPoolEligible,
+  compatibilityQuestionDue, compatibilityTypeQuestionDue, requiredQuestionDue, slopQuestionSubject, slopQuestionTrack, widerRadiusQuestion, wideningPoolEligible,
 } from "../../../../core/src/generated/engineAsks.ts";
 import { DEFAULT_ATTENTION, GENERATOR_NAMES, resolveConfig, type AttentionConfig, type EngineConfig, type EngineConfigInput } from "../../config.ts";
 import type { AppPack, EligibilityPolicy } from "../../pack.ts";
@@ -125,7 +125,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
         // Compatibility questions (one message; never re-asked within 3 weeks): basics, then type.
         if (!o.compatAsks) return;
         if (needsBasics(p) && compatibilityQuestionDue(w.now - lastAsk(["slop_basics"]))) add("slop_basics", intent?.id);
-        if (o.typeAsk && (!p.wants || !p.self) && compatibilityQuestionDue(w.now - lastAsk(["slop_type"]))) add("slop_type", intent?.id);
+        if (compatibilityTypeQuestionDue(o.typeAsk, !p.wants || !p.self, w.now - lastAsk(["slop_type"]))) add("slop_type", intent?.id);
       },
     },
     consent: {

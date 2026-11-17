@@ -40,3 +40,35 @@ export function lawConfirmedChangeStays(requestedAt: number, cutoff: number): bo
   //@ ensures \result === true
   return !phoneChangePastRetention(true, requestedAt, cutoff);
 }
+
+/** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
+//@ pure
+export function rateCounterCutoff(platformCutoff: number, extraKeepMs: number): number {
+  return exact_platformRetention(platformCutoff - extraKeepMs);
+}
+
+/** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
+//@ pure
+export function lawOrdinaryCounterFollowsPlatformCutoff(lastAt: number, platformCutoff: number): boolean {
+  //@ ensures \result === true
+  return rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, 0)) === rowBeforeCutoff(lastAt, platformCutoff);
+}
+
+/** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
+//@ pure
+export function stopHintCounterPastRetention(lastAt: number, platformCutoff: number): boolean {
+  return rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, stopHintWindowMs));
+}
+
+/** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
+//@ pure
+export function lawStopHintCounterStaysInWindow(lastAt: number, platformCutoff: number): boolean {
+  //@ ensures \result === true
+  return !(lastAt >= exact_platformRetention(platformCutoff - stopHintWindowMs)) || !stopHintCounterPastRetention(lastAt, platformCutoff);
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_platformRetention(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
+}

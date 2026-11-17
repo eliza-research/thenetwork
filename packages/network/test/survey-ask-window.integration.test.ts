@@ -1,3 +1,4 @@
+// spec/interruptionFeedback.md, "Sample a confirmed invitation after its own answer"
 // A member's own ask allows two follow-ups in 48 hours without a pause path. The simulator judge
 // counts them by timing, so an invitation survey sent in that window is one of the two. The Network
 // must count it too: the message after the two follow-ups is proactive and carries the pause path
@@ -37,6 +38,8 @@ test("an invitation survey in a member's ask window uses one of the ask's follow
   // The survey goes out a day after her answer, inside the ask window: follow-up 2 by its timing.
   propose(["c", "a"], false);
   expect(await w.runUntil(() => w.probed("c") && !!survey(), 2 * DAY)).toBe(true);
+  expect(survey()?.meta.proactive).toBe(true);
+  expect(hasPausePath(survey()!.body)).toBe(true);
   expect(toAna("probe")).toHaveLength(1);
   await say("a", "Weekends work best.");
   await w.run(HOUR);

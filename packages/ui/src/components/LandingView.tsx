@@ -2,6 +2,7 @@
 import type { ComponentProps, MouseEvent, Ref } from "react";
 import type { Brand } from "../../../core/src/generated/brandIdentity.ts";
 import { type AgentId, type Landing, canPressCopy, landingShows } from "../../../core/src/generated/landingEntry.ts";
+import { footerOf } from "../../../core/src/generated/sitePages.ts";
 import type { LandingLinks } from "../brand/landing.ts";
 import { cn } from "../lib/cn.ts";
 import { AgentRow } from "./AgentRow.tsx";
@@ -65,10 +66,7 @@ export function LandingView({ brand, links, state, promptRef, onCopy, onChooseAg
         )}
         {landingShows("StatusItem") && <StatusLine className="mt-5" status={state.status} agent={state.statusAgent} links={links} />}
       </main>
-      <SiteFooter
-        className={wrap}
-        pages={[...(landingShows("PrivacyLinkItem") ? (["PrivacyPage"] as const) : []), ...(landingShows("TermsLinkItem") ? (["TermsPage"] as const) : [])]}
-      />
+      <SiteFooter className={wrap} pages={footerOf("LandingPage")} />
     </div>
   );
 }

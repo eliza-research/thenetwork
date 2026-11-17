@@ -82,6 +82,12 @@ pure def memberInviteNeedsReview(weak: bool, burst: bool, riskLanguage: bool): b
 
 pure def lawUnusualMemberInviteRequiresReview(weak: bool, burst: bool, riskLanguage: bool): bool =
   (weak or burst or riskLanguage) implies memberInviteNeedsReview(weak, burst, riskLanguage)
+
+pure def memberInviteHeldLinkMayRelease(signedOwner: bool, currentApproval: bool): bool =
+  signedOwner and currentApproval
+
+pure def lawMemberInviteHeldLinkNeedsSignedApproval(signedOwner: bool, currentApproval: bool): bool =
+  memberInviteHeldLinkMayRelease(signedOwner, currentApproval) implies (signedOwner and currentApproval)
 ```
 
 ### The link goes to the inviter as a reply

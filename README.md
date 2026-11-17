@@ -41,7 +41,9 @@ The same generated functions run in the application. HTTP, SQL, text
 parsing, and the other I/O stay with the package that owns the boundary.
 See the [pinned Vibestack README](tools/vibestack/README.md)
 for the complete standalone guide, including the React and VibeLang stack,
-Studio, examples, template setup and the packaged CLI.
+Studio, examples, template setup and the packaged CLI. The standalone
+setup keeps generated files and caches such as `.cache/` and `.turbo/`
+out of version control. [Standalone setup](tools/vibestack/README.md#using-it-from-another-package)
 
 ## The stack
 

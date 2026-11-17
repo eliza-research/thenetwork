@@ -8,28 +8,19 @@ lemma forgetCrewInvitee_ensures(offer: CrewOfferState, memberId: string)
     assert kept.yes == ProofLib.Filter(keep, offer.yes);
     assert kept.no == ProofLib.Filter(keep, offer.no);
     assert kept.offered == ProofLib.Filter(keep, offer.offered);
-    KeptRepliesStillInvited(offer.yes, offer.offered, memberId);
-    KeptRepliesStillInvited(offer.no, offer.offered, memberId);
-    assert Std.Collections.Seq.All(kept.yes, (id: string) => id in kept.offered);
-    assert Std.Collections.Seq.All(kept.no, (id: string) => id in kept.offered);
+    KeptRepliesStillInvited(keep, offer.yes, offer.offered);
+    KeptRepliesStillInvited(keep, offer.no, offer.offered);
   }
 }
 
-lemma KeptRepliesStillInvited(answers: seq<string>, invited: seq<string>, removed: string)
-  requires Std.Collections.Seq.All(answers, (id: string) => id in invited)
-  ensures Std.Collections.Seq.All(
-    ProofLib.Filter((id: string) => id != removed, answers),
-    (id: string) => id in ProofLib.Filter((id: string) => id != removed, invited))
+lemma KeptRepliesStillInvited(keep: string -> bool, answers: seq<string>, invited: seq<string>)
+  requires forall id :: id in answers ==> id in invited
+  ensures forall id :: id in ProofLib.Filter(keep, answers) ==> id in ProofLib.Filter(keep, invited)
 {
-  reveal Std.Collections.Seq.All();
-  var keep := (id: string) => id != removed;
-  var keptAnswers := ProofLib.Filter(keep, answers);
-  var keptInvitees := ProofLib.Filter(keep, invited);
-  forall id | id in keptAnswers
-    ensures id in keptInvitees
+  forall id | id in ProofLib.Filter(keep, answers)
+    ensures id in ProofLib.Filter(keep, invited)
   {
     ProofLib.FilterMember(keep, answers, id);
-    assert id in invited;
     ProofLib.FilterMember(keep, invited, id);
   }
 }

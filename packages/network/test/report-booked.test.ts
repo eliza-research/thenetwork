@@ -26,7 +26,7 @@ describe("an urgent report before a booked date", () => {
     expect(w.to("b", from).map(s => s.body)).toContain(copy.declinedQuiet);
     expect(w.log("meeting_cancelled").map(l => l.detail.reason)).toEqual(["blocked"]);
     const toA = w.to("a", from).map(s => s.body);
-    expect(toA).toEqual([copy.reported]);
+    expect(toA).toEqual([copy.reported()]);
     expect(w.net.eligible("b")).toBe(false);
     expect(w.net.recipientPolicy("c", "probe", { about: ["b"] })).toEqual({ ok: false, reason: "other_held" });
     expect(w.net.recipientPolicy("b", "checkin")).toEqual({ ok: false, reason: "held" });

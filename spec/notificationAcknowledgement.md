@@ -17,18 +17,58 @@ pure def lawScopedReadRequiresAppMatch(sameApp: bool): bool =
   appAllowsInboxItem(true, sameApp) implies sameApp
 ```
 
+### A signed Updates reply reads a bounded page in the member's current text thread
+
+The whole word `updates`, with optional outer space and any letter case, is a direct command on the signed phone text thread. The shared line may read current updates for the phone owner's active app memberships. A dedicated line reads only its app. A sender needs the current active membership for each item and does not join, consent or resume by reading. Group turns and assistant profile submissions do not run this command. A reply is one text with up to three summaries. A provider-accepted digest whose exact text and recipient still match its receipt has already shown its preview summaries on this thread. Keep those summaries available on other surfaces and offer the rest in the thread. The text can ask the person to reply `updates` again when more are available. Mark these summaries seen in the same durable turn that records the reply. A replay never reads a new page and cannot expose a stored summary after its owner, active app membership or current update changes.
+
+```quint
+pure val threadUpdateCommand = "updates"
+pure val threadUpdatePageSize = 3
+
+pure def mayShowThreadUpdate(sharedLine: bool, sameRoutedApp: bool, activeAppOwner: bool): bool =
+  activeAppOwner and appAllowsInboxItem(not(sharedLine), sameRoutedApp)
+
+pure def lawDedicatedThreadCannotShowAnotherApp(sameRoutedApp: bool, activeAppOwner: bool): bool =
+  mayShowThreadUpdate(false, sameRoutedApp, activeAppOwner) implies sameRoutedApp
+
+pure def lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: bool, activeAppOwner: bool): bool =
+  mayShowThreadUpdate(true, sameRoutedApp, activeAppOwner) implies activeAppOwner
+```
+
 ### A delivered text can appear only once and its opportunity must still be current
 
-Key a delivered Network text by its message ID, with the opportunity as
-context when there is one. A repeated projection uses the same durable
-delivery ID, including for a retained older subject. Each new accepted text
-about that opportunity remains a separate item. Resolve an item's opportunity
+An accepted member-facing probe, plan probe, proposal, reminder, feedback
+request, cancellation or scheduling text can produce an inbox item. System
+replies do not produce one. Key a delivered text by its message ID, with the
+opportunity as context when there is one. A repeated projection uses the
+same durable delivery ID, including for a retained older subject, and skips
+an already recorded delivery. Each new accepted text about that opportunity
+remains a separate item. Resolve an item's opportunity
 in the caller's app. Retained subjects that used only the opportunity or
 message ID still resolve there. Omit a closed opportunity or a missing
 opportunity from an explicitly bound text. Retire stale items as seen with
 the selected read. Ordinary updates with no opportunity remain visible.
 
 ```quint
+pure val networkTextSummaryLimit: int = 500
+
+pure def networkTextCanProduceInboxItem(system: bool, messageType: str): bool =
+  not(system) and (messageType == "probe" or messageType == "plan_probe" or messageType == "proposal"
+    or messageType == "reminder" or messageType == "feedback_request" or messageType == "cancellation"
+    or messageType == "scheduling")
+
+type NetworkTextProjection = SkipRecordedText | ProjectOpportunityText | ProjectUnboundText
+
+pure def networkTextProjection(deliveryRecorded: bool, opportunityBound: bool): NetworkTextProjection =
+  if (deliveryRecorded) SkipRecordedText
+  else if (opportunityBound) ProjectOpportunityText else ProjectUnboundText
+
+pure def lawRecordedTextHasNoNewProjection(opportunityBound: bool): bool =
+  networkTextProjection(true, opportunityBound) == SkipRecordedText
+
+pure def lawSystemTextProducesNoInboxItem(messageType: str): bool =
+  not(networkTextCanProduceInboxItem(true, messageType))
+
 pure def inboxOpportunityTerminal(opportunityStatus: str): bool =
   opportunityStatus == "COMPLETED" or opportunityStatus == "FEEDBACK_COLLECTED" or opportunityStatus == "DECLINED" or opportunityStatus == "EXPIRED" or
     opportunityStatus == "CANCELLED" or opportunityStatus == "SKIPPED" or opportunityStatus == "ABANDONED" or opportunityStatus == "QUORUM_FAILED"
@@ -45,7 +85,7 @@ pure def lawMissingBoundOpportunityCannotDisplay(opportunityStatus: str): bool =
 
 ### Only a live update token of this member can resolve items
 
-An update token is a reference to the inbox. The caller still needs their own authenticated identity, and a token expires at its expiry time. After an eligible lookup, record first redemption and load the token's stored items. For a surface that lists its own updates, return subject IDs for these items and let that surface acknowledge what it displayed separately.
+An update token is a reference to the inbox. The caller still needs their own authenticated identity, and a token expires at its expiry time. Load only the caller's live items from the token, restricted to the caller's app when the surface is app-scoped. Record first redemption and delivery action only after finding one of those items. A token exclusively for another app does not change the token or delivery. For a surface that lists its own updates, return subject IDs for these items and let that surface acknowledge what it displayed separately.
 
 ```quint
 pure def mayRedeemInboxToken(sameOwner: bool, expiresAt: int, at: int): bool =
@@ -53,6 +93,11 @@ pure def mayRedeemInboxToken(sameOwner: bool, expiresAt: int, at: int): bool =
 
 pure def lawInboxTokenExpiresAtDeadline(expiresAt: int): bool =
   not(mayRedeemInboxToken(true, expiresAt, expiresAt))
+
+pure def inboxTokenMayRecordRedemption(matchingLiveItems: int): bool = matchingLiveItems > 0
+
+pure def lawNoMatchingAppItemsMeansNoRedemption(matchingLiveItems: int): bool =
+  matchingLiveItems <= 0 implies not(inboxTokenMayRecordRedemption(matchingLiveItems))
 ```
 
 ### A read marks the selected items seen before responding
