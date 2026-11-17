@@ -3,6 +3,7 @@
 // spec/consoleWorkspace.md, "The world menu exists only in the simulated world"
 // spec/consoleWorkspace.md, "A reveal needs real data, the safety role and a reason"
 // spec/consoleWorkspace.md, "A reveal ends early on request or when its time passes"
+// spec/consoleMemberView.md, "The timeline shows recorded delivery and leak evidence for the exact message"
 import { CrossAppButton } from "./apps.tsx";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ScoreComponents } from "@thenetwork/core";
@@ -19,7 +20,7 @@ import {
   receiveViewer, revealOffered, sendWorldEvent, step as stepWorkspace, worldMenuShown, type Event as WorkspaceEvent, type PanelAnswer, type PanelView, type RevealForm, type WorkMode, type WorkPanel,
   type Workspace, type WorldEvent,
 } from "../../core/src/generated/consoleWorkspace.ts";
-import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
+import type { AppProfile360, BookedPlan, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
 import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
 import { ago, COMPONENT_SIGN, consoleNav, dur, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
@@ -640,10 +641,28 @@ function eventIcon(e: SystemEvent): string {
 /** The leak-check result on an outbound message. */
 function GuardMark({ g }: { g?: ObsMessage["guard"] }) {
   if (!g) return null;
-  return g === "passed"
-    ? <StatusMark tone="ok" label="leak check" showLabel title="Leak check passed: sent as written" />
-    : <StatusMark tone="warn" label="leak check: generic sent" showLabel title="The leak check stopped the first text: this generic version went out" />;
+  const mark = guardMarks[g];
+  return <StatusMark tone={mark.tone} label={mark.label} showLabel title={mark.description} />;
 }
+const guardMarks: Record<NonNullable<ObsMessage["guard"]>, { tone: StatusTone; label: string; description: string }> = {
+  passed: { tone: "ok", label: "Leak check passed", description: "The body passed the leak check before a delivery attempt." },
+  fallback: { tone: "warn", label: "Generic fallback", description: "The leak check stopped the first text and a generic replacement was used." },
+  blocked: { tone: "destructive", label: "Stopped by leak check", description: "The leak check stopped this body." },
+  released: { tone: "warn", label: "Released by staff", description: "Staff released this body from leak review." },
+};
+const deliveryReason: Record<DeliveryReason, string> = {
+  line_paused: "Shared line paused", recipient_cap: "Recipient send cap", line_cap: "Shared line send cap", new_conversation_cap: "New conversation cap",
+  awaiting_admission: "Waiting for send admission", earlier_attempt: "Retry after an earlier attempt", reply_window: "Reply window closed",
+  plan_availability_changed: "Plan availability changed", eligibility: "Eligibility check refused", expired_or_stale: "Deadline passed or plan changed",
+  sending_not_approved: "Sending approval missing", no_send_consent: "Send consent unavailable", person_cap: "Person send cap", quiet_hours: "Quiet hours",
+  awaiting_reply: "Waiting for a reply", leak_guard: "Leak review required", invalid_timezone: "Time zone unavailable",
+  membership_unavailable: "Membership unavailable", acceptance_unknown: "Provider acceptance unconfirmed", provider_refused: "Provider refused delivery",
+  dispatch_error: "Dispatch could not complete", accepted_by_provider: "Provider accepted",
+};
+const impliedReason: Partial<Record<string, DeliveryReason>> = {
+  accepted: "accepted_by_provider", deferred_quiet_hours: "quiet_hours", held_awaiting_reply: "awaiting_reply",
+  parked_leak_review: "leak_guard", dropped_leak_review: "leak_guard",
+};
 /** Messages and feed events in time order: the latest 30, then "Show earlier". */
 function TimelineList({ items, who }: { items: TimelineItem[]; who: (m: ObsMessage & { memberId?: string }) => string }) {
   const [n, setN] = useState(30);
@@ -660,6 +679,7 @@ function TimelineList({ items, who }: { items: TimelineItem[]; who: (m: ObsMessa
             {who(x.msg)} · {stamp(x.msg.ts)}{x.msg.type ? ` · ${humanize(x.msg.type)}` : ""}
             {x.msg.proactive ? <span title="Proactive: the Network started this"> · proactive</span> : null}
             {x.msg.status !== "delivered" ? ` · ${humanize(x.msg.status)}` : ""}
+            {x.msg.deliveryReason && x.msg.deliveryReason !== impliedReason[x.msg.status] ? ` · ${deliveryReason[x.msg.deliveryReason]}` : ""}
             <GuardMark g={x.msg.guard} />
           </div>
           <div className={cn("whitespace-pre-wrap", x.msg.hiddenLength !== undefined ? "text-muted-foreground" : "text-foreground")}>{x.msg.body}{x.msg.hiddenLength !== undefined ? ` · ${x.msg.hiddenLength} chars` : ""}</div>

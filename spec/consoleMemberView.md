@@ -40,6 +40,36 @@ pure def lawStaffRevealNeedsCurrentSafety(sameView: bool, signInCurrent: bool, g
   not(staffRevealMayDisclose(sameView, false, signInCurrent, grantTimeLeftMs))
 ```
 
+### The timeline shows recorded delivery and leak evidence for the exact message
+
+In real mode, show the current durable queue status and a normalized reason when the app, member and outbound message all match. The queue's staff read exposes no address, body, provider error or raw operator note. A leak stop, a staff release, and a body checked before a delivery attempt are separate outcomes. A check does not prove delivery. A pending row with no check evidence shows no leak result. Another message at the same time proves nothing about this message. When the queue has no matching evidence, show only the stored message status and separately recorded timeline events. A failed evidence read stops the detail read. A recorded leak stop withholds the prepared body, including from a member reveal, so only the authorized leak review can show it.
+
+```quint
+type ConsoleDeliveryGuard = DeliveryGuardUnrecorded | DeliveryGuardBlocked | DeliveryGuardReleased | DeliveryGuardChecked
+
+pure def consoleDeliveryEvidenceAllowed(sameApp: bool, sameMember: bool, sameMessage: bool, memberOutbound: bool): bool =
+  sameApp and sameMember and sameMessage and memberOutbound
+
+pure def consoleDeliveryGuard(exactEvidence: bool, leakStopped: bool, staffReleased: bool, attempted: bool): ConsoleDeliveryGuard =
+  if (not(exactEvidence)) DeliveryGuardUnrecorded
+  else if (leakStopped) DeliveryGuardBlocked
+  else if (staffReleased) DeliveryGuardReleased
+  else if (attempted) DeliveryGuardChecked
+  else DeliveryGuardUnrecorded
+
+pure def consolePreparedBodyWithheld(guardResult: ConsoleDeliveryGuard, storedLeakStop: bool): bool =
+  guardResult == DeliveryGuardBlocked or storedLeakStop
+
+pure def lawUnmatchedDeliveryShowsNoLeakCheck(leakStopped: bool, staffReleased: bool, attempted: bool): bool =
+  consoleDeliveryGuard(false, leakStopped, staffReleased, attempted) == DeliveryGuardUnrecorded
+
+pure def lawUnattemptedDeliveryCannotShowChecked(exactEvidence: bool, leakStopped: bool, staffReleased: bool): bool =
+  consoleDeliveryGuard(exactEvidence, leakStopped, staffReleased, false) != DeliveryGuardChecked
+
+pure def lawRecordedLeakStopWithholdsPreparedBody(guardResult: ConsoleDeliveryGuard): bool =
+  consolePreparedBodyWithheld(guardResult, true)
+```
+
 ## Story: Open Slop photos for a verified adult
 
 > As an authorized staff member, I want to see photos for a verified adult after giving the logged reason.
