@@ -93,7 +93,7 @@ pure def recordVerification(change: PhoneChange, otpVerified: bool): PhoneChange
 
 ### The verified request can move only when both numbers allow it
 
-Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction checks current ownership and availability again. A missing current identity returns review and a number claimed before the move returns the in-use outcome. Only a completed store move permits success.
+Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target and the request's lifetime again after verification. A missing, superseded or expired request cannot move. A missing or held current identity returns review and a number claimed before the move returns the in-use outcome. Only a completed store move permits success.
 
 ```quint
 pure def canCheckMovePolicy(change: PhoneChange): bool = change.phase == AwaitingMovePolicy and change.codeVerified
@@ -114,6 +114,8 @@ pure def recordMove(change: PhoneChange, moveResult: MoveOutcome): PhoneChange =
 ### Reporting a move requires both the new code and current move authority
 
 The transition into a completed move requires OTP verification and the move policy. The outer service finishes its existing age-floor and runtime updates before replying. A pending request or a failed move cannot report a completed move.
+
+Preserve the person's member IDs and history. Move current native connector grants bound to that person and their current same-app signup drafts in the same transaction. End active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. End those tokens, remove their private drafts and audit the revocation. The member can reconnect an affected assistant. End old phone sessions. A person-bound member routes only through their current verified phone. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
 
 ```quint
 pure def alwaysMoveRequiresProof(change: PhoneChange): bool =

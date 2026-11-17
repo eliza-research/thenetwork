@@ -3,6 +3,7 @@
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
+import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -64,8 +65,8 @@ export interface PhoneChange {
   oldHash?: string | null; newHash?: string | null;
 }
 /** What movePhone moves: the person's phone from one number to another, and everything keyed to the number. */
-export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }
-export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
+export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; now: () => number }
+export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "stale_request";
 
 /**
  * Rate counters that look back further than the retention purge (2 days): the bucket kind (the text
@@ -179,7 +180,7 @@ export interface PeopleStore {
   /**
    * Move the person to a new verified number, in one transaction: the phone identity (verified now), the
    * consent history (copied, then the old number's rows go), the keyed phone hash on the person, the age
-   * floor (the lowest of both numbers' floors stays, on the new hash), the MCP grants keyed by the old hash,
+   * floor (the lowest of both numbers' floors stays, on the new hash), the person's live native MCP grants,
    * the one-time Eliza notice. The old number's sessions, codes and pending text flows end, and messages
    * still waiting in the outbound queue for the old number are ended unsent. The change row is confirmed
    * and keeps only the two hashes. "number_in_use": the new number already belongs to someone (nothing moved).
@@ -373,10 +374,14 @@ export class MemoryPeopleStore implements PeopleStore {
   }
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
     const old = this.phones.get(m.oldE164);
-    if (!old || old.personId !== m.personId) return "no_phone";
+    if (!old || old.personId !== m.personId || old.hold !== null) return "no_phone";
+    const change = this.phoneChanges.get(m.changeId);
+    const at = m.now();
+    if (!change || change.confirmedAt !== null || change.personId !== m.personId || change.newE164 !== m.newE164
+      || change.requestedAt > at || !pendingWindowOpen(at - change.requestedAt)) return "stale_request";
     if (this.phones.has(m.newE164)) return "number_in_use";
     this.phones.delete(m.oldE164);
-    this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: m.at, method: "otp_sms", lastSeenAt: m.at, hold: null });
+    this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
     for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
     this.personHash.set(m.personId, m.newHash);
     const floor = this.ageFloors.get(m.oldHash);
@@ -384,8 +389,7 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
     for (const [k, c] of this.challenges) if (c.e164 === m.oldE164) this.challenges.delete(k);
     for (const [k, p] of this.pending) if (p.phoneHash === m.oldHash) this.pending.delete(k);
-    const c = this.phoneChanges.get(m.changeId);
-    if (c) Object.assign(c, { confirmedAt: m.at, newE164: null, oldHash: m.oldHash, newHash: m.newHash });
+    Object.assign(change, { confirmedAt: at, newE164: null, oldHash: m.oldHash, newHash: m.newHash });
     return "ok";
   }
 

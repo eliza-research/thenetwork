@@ -7,6 +7,8 @@
 // keeps only keyed hashes (the audit record).
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
+import { NetworkService } from "../../network/service/service.ts";
 import { APPS } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -18,8 +20,14 @@ const host = "localhost:5102"; // slop.date in dev
 const jsonH = { "content-type": "application/json" };
 
 describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
-  let url: string, store: PgPeopleStore, sql: SQL;
-  beforeAll(async () => { url = await migratedDb("number_change"); store = new PgPeopleStore(url); sql = new SQL({ url, max: 2 }); }, T);
+  let url: string, store: PgPeopleStore, oauth: PgOAuthStore, sql: SQL;
+  beforeAll(async () => {
+    url = await migratedDb("number_change");
+    store = new PgPeopleStore(url);
+    sql = new SQL({ url, max: 2 });
+    oauth = new PgOAuthStore(sql);
+    await oauth.migrate();
+  }, T);
   afterAll(async () => { await store?.close(); await sql?.close(); if (url) await dropDb(url); });
 
   let tests = 0;
@@ -115,6 +123,129 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     t.tick(16 * MIN);
     expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).toMatchObject({ status: 409, body: { error: "no_pending_change" } });
     expect((await store.findPhone(A))).toBeDefined();
+  }, T);
+
+  // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
+  test("a provider verification that finishes after the pending move expires leaves the number unchanged", async () => {
+    const t = setup();
+    const [oldNumber, newNumber] = ["+12125550263", "+12125550264"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
+    const original = await store.findPhone(oldNumber);
+    if (!original) throw new Error("The moving account is missing");
+    const result = await t.api.accounts.confirmNumberChange({ e164: oldNumber, personId: original.personId }, async (app, phone) => {
+      expect(phone).toBe(newNumber);
+      const code = t.codes.get(phone);
+      if (!code) throw new Error("The fixture OTP was not sent");
+      const verified = await t.api.otp.verify(app, phone, code, "203.0.113.250");
+      expect(verified).toBe(true);
+      t.tick(16 * MIN);
+      return verified;
+    });
+    expect(result).toEqual({ ok: false, error: "no_pending_change" });
+    expect(await store.findPhone(oldNumber)).toEqual(original);
+    expect(await store.findPhone(newNumber)).toBeUndefined();
+  }, T);
+
+  // spec/phoneChange.md, "Reporting a move requires both the new code and current move authority"
+  test("a released number cannot route to the former member through an old channel alias", async () => {
+    const t = setup();
+    const [oldNumber, newNumber, legacyNumber] = ["+12125550265", "+12125550266", "+12125550267"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    const owner = await store.findPhone(oldNumber);
+    const member = owner && await store.getMembership(owner.personId, "slop");
+    if (!owner || !member) throw new Error("The moving member is missing");
+    const legacyMember = "slop_number_move_legacy";
+    await sql`insert into network.members (id,app_id,home_city,age,person_id)
+      values (${member.memberId},'slop','nyc',31,${owner.personId}::uuid),(${legacyMember},'slop','nyc',31,null)`;
+    await sql`insert into network.channel_identities (member_id,app_id,channel,address,is_primary)
+      values (${member.memberId},'slop','sms',${oldNumber},true),(${legacyMember},'slop','sms',${legacyNumber},true)`;
+    const service = new NetworkService({ url, clock: { now: t.now }, networks: [{ id: "slop:nyc", matchingEnabled: false }],
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, photoStorage: null, log: () => {} });
+    try {
+      await service.start();
+      const runtime = service.runtimeFor("slop")!;
+      await runtime.identities();
+      expect(await service.memberApps(oldNumber)).toMatchObject([{ memberId: member.memberId }]);
+      expect(runtime.memberOf(oldNumber)).toBe(member.memberId);
+      expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
+      expect((await browser.call("POST", "/api/me/phone/confirm", { code: t.codes.get(newNumber) })).status).toBe(200);
+      await runtime.identities();
+      expect(await service.memberApps(oldNumber)).toEqual([]);
+      expect(runtime.memberOf(oldNumber)).toBeUndefined();
+      expect(await service.memberApps(newNumber)).toMatchObject([{ memberId: member.memberId }]);
+      expect(runtime.memberOf(newNumber)).toBe(member.memberId);
+      expect(runtime.addressOf(member.memberId)).toBe(newNumber);
+      expect(await service.memberApps(legacyNumber)).toMatchObject([{ memberId: legacyMember }]);
+      expect(runtime.memberOf(legacyNumber)).toBe(legacyMember);
+
+      t.tick(31_000);
+      const successor = t.browser();
+      await successor.login(oldNumber);
+      expect((await t.join(successor)).status).toBe(200);
+      const nextOwner = await store.findPhone(oldNumber);
+      const nextMember = nextOwner && await store.getMembership(nextOwner.personId, "slop");
+      if (!nextOwner || !nextMember) throw new Error("The released number did not receive a separate account");
+      expect(nextOwner.personId).not.toBe(owner.personId);
+      await sql`insert into network.members (id,app_id,home_city,age,person_id) values (${nextMember.memberId},'slop','nyc',31,${nextOwner.personId}::uuid)`;
+      await sql`insert into network.channel_identities (member_id,app_id,channel,address) values (${legacyMember},'slop','imessage',${oldNumber})`;
+      await runtime.identities();
+      expect((await service.memberApps(oldNumber)).map(route => route.memberId)).toEqual([nextMember.memberId]);
+      expect(runtime.memberOf(oldNumber)).toBe(nextMember.memberId);
+    } finally { await service.close(); }
+  }, T);
+
+  // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
+  test("only a live native grant bound to the moving person carries its draft and tokens to the new number", async () => {
+    const t = setup();
+    const [oldNumber, newNumber] = ["+12125550261", "+12125550262"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    const personId = (await store.findPhone(oldNumber))!.personId;
+    const oldKey = t.api.accounts.phoneHash(oldNumber), newKey = t.api.accounts.phoneHash(newNumber);
+    const at = new Date(t.now()), expires = new Date(t.now() + 60 * MIN);
+    const local = "grant_phone_move_native", cloud = "grant_cloud_phone_move", unbound = "grant_phone_move_unbound";
+    const retired = "grant_phone_move_retired";
+    const client = "client_phone_move";
+    const resource = "https://friends.help/mcp";
+    await sql`insert into oauth.clients (id,redirect_uris,auth_method,app_id,surface,kind,created_at)
+      values (${client},${["https://assistant.example/callback"]},'none','friends','full','dcr',${at})`;
+    const authority = { version: 1, phoneKey: oldKey };
+    const rows = [
+      { id: local, person: personId, authority: null, revoked: null },
+      { id: cloud, person: personId, authority, revoked: null },
+      { id: unbound, person: null, authority: null, revoked: null },
+      { id: retired, person: personId, authority: null, revoked: at },
+    ];
+    for (const row of rows) {
+      await sql`insert into oauth.grants (id,client_id,app_id,phone_key,person_id,scopes,resource,created_at,expires_at,revoked_at,cloud_authority)
+        values (${row.id},${client},'friends',${oldKey},${row.person},${["profile:write"]},${resource},${at},${expires},${row.revoked},${row.authority}::jsonb)`;
+      await sql`insert into oauth.signup_drafts (grant_id,app_id,phone_key,fields,expires_at)
+        values (${row.id},'friends',${oldKey},${{ firstName: "Ana" }}::jsonb,${expires})`;
+      await sql`insert into oauth.tokens (hash,kind,grant_id,client_id,app_id,resource,scopes,created_at,expires_at,revoked_at)
+        values (${`${row.id}-token`},'access',${row.id},${client},'friends',${resource},${["profile:write"]},${at},${expires},${row.revoked})`;
+    }
+    expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
+    expect(await browser.call("POST", "/api/me/phone/confirm", { code: t.codes.get(newNumber) })).toMatchObject({ status: 200, body: { ok: true } });
+
+    expect(await store.findPhone(oldNumber)).toBeUndefined();
+    expect(await store.findPhone(newNumber)).toMatchObject({ personId });
+    expect(await oauth.getGrant(local)).toMatchObject({ phoneKey: newKey, personId, revokedAt: null });
+    expect(await oauth.getGrant(cloud)).toMatchObject({ phoneKey: oldKey, personId, cloudAuthority: authority, revokedAt: t.now() });
+    expect(await oauth.getGrant(unbound)).toMatchObject({ phoneKey: oldKey, personId: null, revokedAt: t.now() });
+    expect(await oauth.getGrant(retired)).toMatchObject({ phoneKey: oldKey, personId, revokedAt: at.getTime() });
+    expect(await oauth.claimSignupDraft(newKey, "friends", personId, t.now())).toEqual({ firstName: "Ana" });
+    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, t.now())).toBeUndefined();
+    expect(await oauth.getToken(`${local}-token`)).toMatchObject({ revokedAt: null });
+    for (const id of [cloud, unbound]) expect(await oauth.getToken(`${id}-token`)).toMatchObject({ revokedAt: t.now() });
+    const ended = [cloud, unbound].sort();
+    expect((await sql`select grant_id from oauth.audit where kind='consent_revoked' order by grant_id`).map(row => row.grant_id)).toEqual(ended);
+    expect(await sql`select grant_id from oauth.signup_drafts where grant_id in ${sql(ended)}`).toEqual([]);
   }, T);
 
   test("a number that belongs to someone is refused only after its code is proved; nothing moves", async () => {

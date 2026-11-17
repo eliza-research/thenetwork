@@ -288,7 +288,7 @@ Models: [safety and trust](../models/safety_trust.md), [outbound queue](../model
 
 Direct the person to help@ntwrk.party for formal export and erasure requests. Verify ownership and scope. An authorized agent can read the person's own profile on the current app for confirmation. Export includes stored and derived data where permitted. Erasure closes open opportunities, clears affected records and derived state, and propagates through restore. Preserve only retained safety and suppression evidence under policy. A per-app leave affects that app alone.
 
-Models: [identity lifecycle](../models/identity_sagas.md), [profile read](../models/profile_read.md), [backup and restore](../models/backup_restore.md).
+Models: [account privacy and export](../accountPrivacy.md), [identity lifecycle](../models/identity_sagas.md), [profile read](../models/profile_read.md), [backup and restore](../models/backup_restore.md).
 
 ## Story F25 — Keep my account when my number changes
 
@@ -298,7 +298,7 @@ Models: [identity lifecycle](../models/identity_sagas.md), [profile read](../mod
 
 Verify the new number and confirm from the old number or use steward recovery. Update authorized identity mappings and grants. End stale sessions. Preserve the person ID and membership history. Reusing a released number must not expose the former person's account.
 
-Models: [phone identity](../models/phone_identity.md), [identity lifecycle](../models/identity_sagas.md), [OAuth and MCP](../models/oauth_mcp.md).
+Models: [phone change](../phoneChange.md), [phone identity](../models/phone_identity.md), [identity lifecycle](../models/identity_sagas.md), [OAuth and MCP](../models/oauth_mcp.md).
 
 ## Story F26 — Set travel and presence
 

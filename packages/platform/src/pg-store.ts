@@ -1,6 +1,7 @@
 // PeopleStore on Postgres (the platform schema, migration 0003). The login needs the
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
@@ -341,6 +342,7 @@ export class PgPeopleStore implements PeopleStore {
   async putPhoneChange(c: PhoneChange) {
     await this.sql.begin(async tx => {
       // One waiting change per person: a newer request replaces the older one.
+      await tx`select id from platform.people where id=${c.personId}::uuid for update`;
       await tx`delete from platform.phone_changes where person_id = ${c.personId}::uuid and confirmed_at is null and id <> ${c.id}::uuid`;
       await tx`insert into platform.phone_changes (id, person_id, app_id, new_e164, requested_by, requested_at, confirmed_at, old_hash, new_hash)
         values (${c.id}, ${c.personId}, ${c.app}, ${c.newE164}, ${c.requestedBy}, ${ts(c.requestedAt)}, ${ts(c.confirmedAt)}, ${c.oldHash ?? null}, ${c.newHash ?? null})
@@ -353,12 +355,18 @@ export class PgPeopleStore implements PeopleStore {
   }
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
     return this.sql.begin(async tx => {
-      const [old] = await tx`select * from platform.phone_identities where e164 = ${m.oldE164} and person_id = ${m.personId}::uuid for update`;
-      if (!old) return "no_phone";
+      const [person] = await tx`select id from platform.people where id=${m.personId}::uuid and deleted_at is null for update`;
+      if (!person) return "no_phone";
+      const [old] = await tx`select hold from platform.phone_identities where e164 = ${m.oldE164} and person_id = ${m.personId}::uuid for update`;
+      if (!old || old.hold !== null) return "no_phone";
+      const [pending] = await tx<{ requested_at: Date }[]>`select requested_at from platform.phone_changes
+        where id=${m.changeId}::uuid and person_id=${m.personId}::uuid and new_e164=${m.newE164} and confirmed_at is null for update`;
+      const at = m.now();
+      if (!pending || pending.requested_at.getTime() > at || !pendingWindowOpen(at - pending.requested_at.getTime())) return "stale_request";
       // The new number is checked again inside the transaction (a join or another change may have taken it).
       const [taken] = await tx`select 1 from platform.phone_identities where e164 = ${m.newE164}`;
       if (taken) return "number_in_use";
-      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${m.newE164}, ${m.personId}::uuid, ${ts(m.at)}, 'otp_sms', ${ts(m.at)})`;
+      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${m.newE164}, ${m.personId}::uuid, ${ts(at)}, 'otp_sms', ${ts(at)})`;
       await tx`delete from platform.phone_identities where e164 = ${m.oldE164}`;
       // The ledger is never updated in place: its rows are copied to the new number, then the old number's rows go.
       await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
@@ -375,19 +383,41 @@ export class PgPeopleStore implements PeopleStore {
       await tx`delete from platform.otp_challenges where e164 = ${m.oldE164}`;
       await tx`delete from platform.pending_texts where phone_hash = ${m.oldHash}`;
       // Messages still waiting for the old number never go there: it may belong to someone else next.
-      await tx`update platform.outbound set status = 'suppressed_ineligible', note = 'number changed', to_address = null, ended_at = ${ts(m.at)}, updated_at = ${ts(m.at)},
+      await tx`update platform.outbound set status = 'suppressed_ineligible', note = 'number changed', to_address = null, ended_at = ${ts(at)}, updated_at = ${ts(at)},
           lease_owner = null, lease_until = null
         where to_address = ${m.oldE164} and status = any(${OUTBOUND_WAITING}::text[])`;
       await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${m.newHash}, sent_at from platform.eliza_notices where phone_hash = ${m.oldHash} on conflict do nothing`;
       await tx`delete from platform.eliza_notices where phone_hash = ${m.oldHash}`;
-      // The person's linked agents (MCP OAuth grants) hold the keyed hash: they move with the number (PRD 11.5, F25).
-      const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
-        else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;
-      if (oauth?.ok) await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
-      const changed = await tx`update platform.phone_changes set confirmed_at = ${ts(m.at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}
-        where id = ${m.changeId}::uuid and person_id = ${m.personId}::uuid and confirmed_at is null returning id`;
-      if (!changed.length) throw new Error("no waiting number change for this person");
+      await this.movePhoneGrants(tx, m, new Date(at));
+      await tx`update platform.phone_changes set confirmed_at = ${ts(at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}
+        where id = ${m.changeId}::uuid`;
       return "ok";
     });
+  }
+
+  private async movePhoneGrants(tx: SQL, move: PhoneMove, at: Date): Promise<void> {
+    const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
+      else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;
+    if (!oauth?.ok) return;
+    // Cloud's grant trigger forbids moving its sealed phone authority. Unbound grants also cannot prove this person owns the grant.
+    const cloudBound = tx`(id like 'grant_cloud_%' or cloud_authority is not null)`;
+    await tx`with ended as (
+        update oauth.grants set revoked_at=${at}
+        where phone_key=${move.oldHash} and revoked_at is null and expires_at>${at}
+          and (${cloudBound} or person_id is distinct from ${move.personId})
+        returning id,client_id,app_id
+      ), tokens as (
+        update oauth.tokens set revoked_at=${at} where grant_id in (select id from ended) and revoked_at is null
+      ), drafts as (
+        delete from oauth.signup_drafts where grant_id in (select id from ended)
+      ) insert into oauth.audit (at,kind,client_id,grant_id,app_id,detail)
+        select ${at},'consent_revoked',client_id,id,app_id,'phone changed' from ended`;
+    await tx`with moved as (
+        update oauth.grants set phone_key=${move.newHash}
+        where person_id=${move.personId} and phone_key=${move.oldHash} and revoked_at is null and expires_at>${at} and not ${cloudBound}
+        returning id,app_id
+      ) update oauth.signup_drafts draft set phone_key=${move.newHash} from moved
+        where draft.grant_id=moved.id and draft.app_id=moved.app_id and draft.phone_key=${move.oldHash}
+          and draft.consumed_at is null and draft.expires_at>${at}`;
   }
 }

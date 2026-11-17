@@ -58,11 +58,8 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //  - The leak gate (leaks.ts) is an oracle: each inbox item has a nondeterministic `leaky` flag.
 //  - A signup draft has no clock here: its 10-minute expiry (T:288, P:232-233 scrubs it) only removes
 //    data, and no invariant needs it.
-//  - Open drift, not modelled (docs: the oauth_mcp drift report of 2026-11-09): endIfBanned (H:581-585)
-//    revokes a banned person's grant at its first use, and the platform number change
-//    (packages/platform/src/pg-store.ts:452-457) revokes the Cloud grants of the old number. Neither
-//    writes an oauth.audit row, which `everyRevocationAudited` requires. The model keeps the ban as a
-//    read-only check and the old abort of a number change with a Cloud grant.
+//  - The platform number change records revocations in its own transaction. This move updates grants,
+//    tokens and drafts without running the assistant-link hook. The model retains its existing ban handling.
 module oauth_mcp {
 
   // ---------------------------------------------------------------- constants
@@ -821,24 +818,30 @@ module oauth_mcp {
   }
 
   /**
-   * packages/platform/src/pg-store.ts:371-377 movePhone: one transaction that also moves
-   * oauth.grants.phone_key and (SD-384 fix) oauth.signup_drafts.phone_key to the new number.
-   * oauth.sql raises on any grant_cloud_ row, so the whole number change rolls back (SD-108, owned by
-   * the identity_sagas model, not fixed on this branch).
+   * packages/platform/src/pg-store.ts movePhoneGrants: a current grant with the same person and
+   * native authority moves with its draft. A current Cloud or unowned grant is revoked and audited.
+   * A draft has no separate clock in this model. Its actual expiry is also checked before moving it.
    */
   action movePhone(p: str, src: str, dst: str): bool = all {
     src != dst, pf.owner.get(src) == p, p != NONE, pf.owner.get(dst) == NONE,
     not(pf.holdNum.contains(src)), not(pf.holdNum.contains(dst)),
-    val cloudRow = REQS.exists(g => oa.grants.get(g).cloud and oa.grants.get(g).phone == src and (oa.grants.get(g).st == "live" or oa.grants.get(g).st == "revoked"))
-    if (cloudRow) all {
-      oa' = oa, pf' = pf, gh' = { ...gh, last: eff("movePhoneAborted", p, 0, false) },
-    } else all {
-      oa' = { ...oa,
-        grants: oa.grants.keys().mapBy(g => { val x = oa.grants.get(g); if (x.phone == src and x.st != "none") { ...x, phone: dst } else x }),
-        drafts: oa.drafts.keys().mapBy(g => { val d = oa.drafts.get(g); if (d.exists and d.phone == src) { ...d, phone: dst } else d }) },
+    val current = REQS.filter(g => liveG(oa, g) and oa.grants.get(g).phone == src)
+    val movable = current.filter(g => not(oa.grants.get(g).cloud) and oa.grants.get(g).person == p)
+    val retiring = current.exclude(movable)
+    val ended = retiring.fold(oa, (state, g) => revokeOa(state, g))
+    all {
+      oa' = { ...ended,
+        grants: ended.grants.keys().mapBy(g => { val x = ended.grants.get(g); if (movable.contains(g)) { ...x, phone: dst } else x }),
+        drafts: ended.drafts.keys().mapBy(g => {
+          val d = ended.drafts.get(g)
+          if (retiring.contains(g)) { exists: false, phone: "", scrubbed: true }
+          else if (movable.contains(g) and d.exists and not(d.scrubbed) and d.phone == src) { ...d, phone: dst }
+          else d
+        }) },
       // Ghost: a forget recorded for an earlier owner of dst does not cover the person who moves in.
       pf' = { ...pf, owner: pf.owner.set(src, NONE).set(dst, p), forgotten: pf.forgotten.filter(k => k._1 != dst) },
-      gh' = { ...gh, last: eff("movePhone", p, 0, true) },
+      gh' = { ...gh, audits: gh.audits.union(retiring.map(g => ("revoked", g))), revokedEver: gh.revokedEver.union(retiring),
+        last: { ...eff("movePhone", p, 0, true), status: src } },
     },
     ib' = ib, pc' = pc,
   }
@@ -1019,13 +1022,9 @@ module oauth_mcp {
   /** SD-395. README section 2: "At most 5 accepted profiles per grant a day": only accepted ones count. */
   val quotaCountsAccepted = gh.last.kind == "quotaRefused" implies oa.quota.get(gh.last.grant).accepted >= PROFILE_CAP
 
-  /**
-   * SD-108, NOT in `safety`. INV-M1 (platform number change, pg-store.ts:371-377): a number change
-   * succeeds whatever grants the person has. Still violated (`cloudMoveTest`): the oauth.sql trigger
-   * raises on a Cloud grant row. SD-108 belongs to the identity_sagas model and its fix set, not to this
-   * branch, and its verdict is disputed (a number change is 409 in Cloud mode).
-   */
-  val numberChangeWorks = gh.last.kind != "movePhoneAborted"
+  /** A completed move releases its source number and leaves no live grant on it. */
+  val numberChangeWorks = gh.last.kind == "movePhone" implies (
+    pf.owner.get(gh.last.status) == NONE and REQS.forall(g => not(liveG(oa, g) and oa.grants.get(g).phone == gh.last.status)))
 
   /** SD-384. P:61-79: a draft is claimed by its grant's phone key; a live draft keys the same phone as its grant. */
   val draftFollowsGrant = REQS.forall(g =>
@@ -1036,7 +1035,7 @@ module oauth_mcp {
     noBannedUse, replayIsTrue, codeOnce, oneRefreshHead, revokedTerminal, servedOnLiveOwnGrant,
     activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, noIntroToMinor, noStaleUpdate,
     everyRevocationAudited, oneOutcome, grantHasCodeAndAudit, requestRetention, clientKeptOnceGranted,
-    quotaCountsAccepted, draftFollowsGrant,
+    quotaCountsAccepted, draftFollowsGrant, numberChangeWorks,
   }
 
   /** The invariants that the code kept before the fixes (no register defect). */
@@ -1237,10 +1236,12 @@ module oauth_mcp {
       .then(submitProfile(1))
       .expect(gh.last.kind == "quotaRefused" and quotaCountsAccepted and safety)
 
-  /** SD-108 trace (not fixed here; identity_sagas): a person with a Cloud grant row cannot change the number. */
+  /** SD-108: a Cloud grant ends on its original number while a native grant carries forward. */
   run cloudMoveTest =
-    init.then(connect(1, "cF", true)).then(consentsRevoke(1)).then(movePhone("p1", "n1", "n2"))
-      .expect(not(numberChangeWorks) and pf.owner.get("n1") == "p1")
+    init.then(connect(1, "cF", true)).then(connect(2, "cP", false)).then(movePhone("p1", "n1", "n2"))
+      .expect(numberChangeWorks and pf.owner.get("n2") == "p1" and oa.grants.get(1).phone == "n1"
+        and oa.grants.get(1).st == "revoked" and gh.audits.contains(("revoked", 1))
+        and liveG(oa, 2) and oa.grants.get(2).phone == "n2" and safety)
 
   /** SD-186 (c) fix (e2e "revoking one of two live Claude grants keeps the Claude signal active"). */
   run activeTwoGrantsTest =

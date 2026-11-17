@@ -318,7 +318,8 @@ export class Accounts {
       const policy = blocked ? "MoveBlocked" : await this.store.findPhone(newE164) ? "NumberTaken" : "MoveAllowed";
       const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
-      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), at: this.now() });
+      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), now: () => this.now() });
+      if (moved === "stale_request") return numberChangeRefused("NoPendingChange");
       const result = stepPhoneChange(allowed, {
         type: "recordMove", moveResult: moved === "ok" ? "MoveApplied" : moved === "number_in_use" ? "MoveNumberTaken" : "MoveMissingPhone",
       });
