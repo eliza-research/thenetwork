@@ -85,3 +85,19 @@ pure def compatibilityTypeQuestionDue(typeEnabled: bool, typeMissing: bool, elap
 pure def lawTypeQuestionNeedsItsSwitch(typeMissing: bool, elapsedMs: int): bool =
   not(compatibilityTypeQuestionDue(false, typeMissing, elapsedMs))
 ```
+
+### A queued question still belongs to the member's open turn
+
+An engine follow-up that had to wait can go out only while its exact message is the member's open question in this app. After the member writes, asks to pause, starts a different question, or becomes ineligible, suppress the stale message. Recheck the saved question and the current account under the outbound claim lock. A question stops waiting after the same 24 hours used for the [probe question hold](probeDispatch.md#wait-for-the-members-send-window-and-current-availability). Replies in a current onboarding conversation follow their own path.
+
+```quint
+import probeDispatch as Probe from "./probeDispatch"
+
+pure val engineQuestionDeliveryPrefix = "engine-question:"
+
+pure def queuedEngineQuestionAllowed(exactQuestion: bool, memberEligible: bool, askedAt: int, now: int): bool =
+  exactQuestion and memberEligible and askedAt >= 0 and askedAt <= now and now - askedAt < Probe::questionHoldMs
+
+pure def lawEngineQuestionNeedsOpenTurn(memberEligible: bool, askedAt: int, now: int): bool =
+  not(queuedEngineQuestionAllowed(false, memberEligible, askedAt, now))
+```

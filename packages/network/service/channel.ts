@@ -28,6 +28,7 @@ import { bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetr
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { engineQuestionDeliveryPrefix, queuedEngineQuestionAllowed } from "../../core/src/generated/engineAsks.ts";
 import { queuedPlanProbeAllowed } from "../../core/src/generated/planDispatch.ts";
 import { reengagementDeliveryPrefix, reengagementMayDispatch } from "../../core/src/generated/outreachPolicy.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
@@ -277,6 +278,33 @@ type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
   category: string | null;
   prefs: { categoriesOptIn?: unknown; romanceOptIn?: unknown } | null;
 };
+
+/** Recheck the exact engine question under the current runtime and recipient locks. */
+async function engineQuestionAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<RecipientCheck> {
+  const refused = { ok: false, reason: "engine_question_changed" } as const;
+  if (!row.memberId || (row.kind !== "proactive" && row.kind !== "transactional")) return refused;
+  const [question] = await tx<(Parameters<typeof effectiveParticipation>[0] & {
+    awaited_id: string | null; asked_at: number | null; only_when_asked: boolean | null; age: number | null;
+    restricted_age: boolean; held: boolean;
+  })[]>`select current.awaiting->>'engineQuestionDeliveryId' as awaited_id, current."openAskAt" as asked_at,
+      current."onlyWhenAsked" as only_when_asked, ages.age,
+      coalesce(current.minor or current."ageConflict",false) as restricted_age,
+      (ages.banned or ages.staff_held or ages.report_held) as held,
+      member.participation_state,member.participation_window,member.opted_out
+    from network.messages msg
+    join network.members member on member.app_id=msg.app_id and member.id=msg.member_id
+    join platform.matching_ages ages on ages.app_id=member.app_id and ages.member_id=member.id
+    join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
+    join lateral jsonb_to_recordset(saved.state->'members') as current(id text,stage text,minor boolean,"ageConflict" boolean,awaiting jsonb,
+      "openAskAt" double precision,"onlyWhenAsked" boolean) on current.id=member.id
+    where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.direction='outbound'
+      and msg.type='question' and msg.body=${row.text} and current.stage='active' and current.awaiting->>'kind'='interview'
+      and member.account_status='active' and not member.opted_out`;
+  if (!question) return refused;
+  const eligible = canBeMatched(question.age ?? undefined) && !question.restricted_age && !question.held && !question.only_when_asked
+    && effectiveParticipation(question, now).state !== "paused";
+  return queuedEngineQuestionAllowed(question.awaited_id === row.id, eligible, question.asked_at ?? -1, now) ? { ok: true } : refused;
+}
 
 /** Called after the queue locks the member row that owns these settings. */
 async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: number): Promise<RecipientCheck> {
@@ -545,6 +573,9 @@ export class BlooioAdapter implements ChannelAdapter {
           || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix) || row.id.startsWith(meetingFeedbackPrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
+        if (row.id.startsWith(engineQuestionDeliveryPrefix)) {
+          await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
+        }
         if (row.id.startsWith(lateArrivalDeliveryPrefix)) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)
           || bookedReminderKind(row.id) || terminalNotice(row) === "booking") {
@@ -602,6 +633,7 @@ export class BlooioAdapter implements ChannelAdapter {
         const reminder = bookedReminderKind(row.id);
         if (reminder) return bookedReminderAdmission(tx, row, reminder, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(meetingFeedbackPrefix)) return meetingFeedbackAdmission(tx, row, rt.pg.id, this.o.clock.now());
+        if (row.id.startsWith(engineQuestionDeliveryPrefix)) return engineQuestionAdmission(tx, row, rt.pg.id, this.o.clock.now());
         return probeAdmission(tx, row, rt, this.o.clock.now());
       },
       claimed: async (row, tx) => {

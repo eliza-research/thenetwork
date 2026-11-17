@@ -79,6 +79,7 @@ import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { engineQuestionDeliveryPrefix } from "../../core/src/generated/engineAsks.ts";
 import { weeklyCheckinEvidence, weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
@@ -432,7 +433,7 @@ interface MemberState {
   awaiting?: {
     kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting";
     oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean;
-    probeReceiptId?: string; crewOfferReceiptId?: string;
+    probeReceiptId?: string; crewOfferReceiptId?: string; engineQuestionDeliveryId?: string;
     bookedCheckIn?: { meetingAt: number; revision: number };
   };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
@@ -657,7 +658,7 @@ type SendHook =
   | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
   | { t: "reschedule_offer" | "reschedule_updated"; oppId: string; key: string }
   | ({ t: "group_late" } & LateArrivalDelivery)
-  | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
+  | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean; engineQuestion?: true } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string }
   | { t: "invite_notice"; notice: InviteJoinNotice }
   | EmptyIntentNotice;
@@ -5454,8 +5455,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       done.add(m.id);
       // An app with an onboarding loop asks its own next question (one at a time); the engine's text when the loop has none left.
       const nx = hooks?.onboarding?.next(m.onboarding, { age: this.ageOf(m) });
-      if (nx) this.send(m, nx.text, { type: "question", proactive: false, ask: { id: a.id, reason: nx.reason } }, "interview", { hook: { t: "ask", reason: nx.reason } });
-      else this.send(m, a.question, { type: "question", proactive: false, ask: { id: a.id, reason: a.reason } }, "interview", { hook: { t: "ask", reason: a.reason } });
+      const reason = nx?.reason ?? a.reason;
+      this.send(m, nx?.text ?? a.question, { type: "question", proactive: false, ask: { id: a.id, reason } }, "interview", {
+        hook: { t: "ask", reason, engineQuestion: true },
+      });
     }
   }
   private lastAsk(id: MemberId) { return Math.max(-Infinity, ...this.asks.filter(a => a.memberId === id).map(a => a.at)); }
@@ -6280,7 +6283,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.memberInviteLink && approvedLink(text) === o.memberInviteLink) meta = { ...meta, approvedInviteLink: o.memberInviteLink };
     const invitationJoins = sentStandaloneNotice ? [sentStandaloneNotice.inviteeId] : deliveredInviteJoins.map(notice => notice.inviteeId);
     if (invitationJoins.length) meta = { ...meta, invitationJoins };
-    const idPrefix = invitationJoins.length ? "invite-notice:" : kind === "reengage" ? reengagementDeliveryPrefix : "";
+    const idPrefix = invitationJoins.length ? "invite-notice:"
+      : kind === "reengage" ? reengagementDeliveryPrefix
+      : o.hook?.t === "ask" && o.hook.engineQuestion ? engineQuestionDeliveryPrefix : "";
     const delivery = this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
     const hook = o.hook;
     if (hook?.t === "feedback" && !this.ctx.initialInviteReceipt && delivery.status === "delivered") {
@@ -6519,14 +6524,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "ask": return {
         // `follow`: the next onboarding question in a conversation the member is having now (not on the ask interval).
         valid: () => !m.minor && !m.awaiting && (!!h.follow || now() - this.lastAsk(m.id) >= ASK_EVERY_DAYS * DAY),
-        onSent: () => {
+        onSent: deliveryId => {
           const rec: AskRecord = { memberId: m.id, at: now(), reason: h.reason };
           // One message can carry several asks: one record each, answered together.
           for (const r of h.also ?? []) this.asks.push({ memberId: m.id, at: rec.at, reason: r });
           const ob = this.opts.hooks?.onboarding;
           if (ob) m.onboarding = ob.asked(m.onboarding, [h.reason, ...(h.also ?? [])], { age: this.ageOf(m) });
           this.asks.push(rec); m.asked++; this.counters.asksSent++;
-          this.expect(m, { kind: "interview", ask: rec, at: rec.at });
+          this.expect(m, { kind: "interview", ask: rec, at: rec.at, ...(h.engineQuestion ? { engineQuestionDeliveryId: deliveryId } : {}) });
           this.ctx.log("ask_sent", { memberId: m.id, reason: h.reason });
         },
       };
