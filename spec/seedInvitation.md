@@ -100,7 +100,8 @@ idempotency key under the same transaction as issuance. A new key
 creates the batch once. A repeat acts on the original live batch only
 when all inputs agree and the same authorized operator requests it.
 A repeat creates no new links and extends no deadline. A reused key
-with different contents or an expired batch is unavailable. Keep
+with different contents or an expired batch is unavailable: a repeat
+needs the original batch to be live at the time of the request. Keep
 recipient account status out of staff responses.
 
 ```quint
@@ -209,7 +210,9 @@ The exact confirmed recipient may decline an open invitation. The
 shared-line STOP and existing safety controls continue to apply.
 Current suppression or a ban blocks redemption through the eligibility
 check. Clear private vouch material on a verified decline or when the
-30-day retention ends. A terminal invitation cannot issue or redeem again.
+30-day retention ends. An issued invitation keeps its vouch material
+until it closes or is redeemed. A terminal invitation cannot issue or
+redeem again.
 
 ```quint
 pure def seedInvitationMayDecline(exactRecipient: bool, open: bool): bool = exactRecipient and open
@@ -223,6 +226,11 @@ pure def closeSeedInvitation(invite: SeedInvitation, now: int, exactDecline: boo
   if (canCloseSeedInvitation(invite, now, exactDecline))
     { ...invite, phase: SeedClosed, vouchRetained: false }
   else invite
+
+pure def lawSeedInvitationDeclineOrExpiryClearsVouch(issuedAt: int, now: int, exactDecline: bool): bool =
+  val issuedInvite = { phase: SeedIssued, issuedAt: issuedAt, vouchRetained: true }
+  canCloseSeedInvitation(issuedInvite, now, exactDecline)
+    implies not(closeSeedInvitation(issuedInvite, now, exactDecline).vouchRetained)
 
 pure def alwaysOnlyIssuedSeedInvitationKeepsVouch(invite: SeedInvitation): bool =
   invite.vouchRetained == (invite.phase == SeedIssued)

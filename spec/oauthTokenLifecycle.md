@@ -41,10 +41,19 @@ pure def readRefresh(flow: TokenFlow, refreshMatches: bool): TokenFlow =
 
 ### The request needs current grant authority and must stay within its consent
 
-Use a live grant for an eligible member. Check the current authority. A current ban of the grant's phone or person makes the authority invalid, also for a grant issued before the ban. An expired credential is refused before an unavailable authority is reported as temporary. Only a current authority advances the request. Refresh allows the same or a narrower set of scopes and keeps the original resource. Check both deadlines again before using the credential in the store.
+Use a live grant for an eligible member. Check the current authority. A current ban of the grant's phone or person makes the authority invalid, also for a grant issued before the ban. An expired credential is refused before an unavailable authority is reported as temporary. Only a current authority advances the request. Refresh allows the same or a narrower set of scopes and keeps the original resource. Check both deadlines again before using the credential in the store. Each use of an access token makes the same check: an expired token or grant is invalid, and otherwise the current authority decides.
 
 ```quint
 type TokenAuthority = Current | Invalid | Unavailable
+
+pure def accessTokenAuthority(credentialLive: bool, authority: TokenAuthority): TokenAuthority =
+  if (not(credentialLive)) Invalid else authority
+
+pure def lawExpiredAccessTokenIsInvalid(authority: TokenAuthority): bool =
+  accessTokenAuthority(false, authority) == Invalid
+
+pure def lawBannedAccessTokenIsInvalid(credentialLive: bool): bool =
+  accessTokenAuthority(credentialLive, Invalid) == Invalid
 
 pure def canReadGrant(flow: TokenFlow): bool = flow.phase == CheckingGrant
 pure def readGrant(flow: TokenFlow, grantLive: bool, eligible: bool): TokenFlow =

@@ -29,7 +29,7 @@ pure def openingsInRange(openings: int): bool =
 
 ### The low end of the pay range comes first
 
-The pay range is in thousands of dollars per year. The low end is at least ten and the high end is at most 999. The text reader and the staff endpoint can supply a fractional value within those bounds, so a stated range such as $90,500-$120,750 is kept in full.
+The pay range is in thousands of dollars per year. The low end is at least ten and the high end is at most 999. The model states these comparisons on whole numbers. The text reader and the staff endpoint can supply a fractional value, and the shell applies the same three comparisons to the exact value without rounding, so a stated range such as $90,500-$120,750 is kept in full.
 
 ```quint
 pure def payRangeAllowed(low: int, high: int): bool =

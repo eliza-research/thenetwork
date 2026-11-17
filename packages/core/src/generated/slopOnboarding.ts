@@ -10,8 +10,8 @@ export interface QuestionFacts { ageMissing: boolean; genderMissing: boolean; se
 
 /** One variant per transition in the spec. */
 export type Event =
+  | { type: "routeProfile"; restricted: boolean; hardComplete: boolean; confirmed: boolean; skipped: boolean; belowAskCap: boolean }
   | { type: "resolveReadback"; textAvailable: boolean }
-  | { type: "routeProfile"; restricted: boolean; wantsReadback: boolean }
   | { type: "chooseQuestion"; facts: QuestionFacts; unavailable: string[] };
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
@@ -33,6 +33,14 @@ export function readbackEligible(hardComplete: boolean, confirmed: boolean, skip
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 //@ pure
+export function routeProfile(p: PromptRun, restricted: boolean, hardComplete: boolean, confirmed: boolean, skipped: boolean, belowAskCap: boolean): PromptRun {
+  //@ ensures (inv(p) && canRouteProfile(p)) ==> alwaysReadyHasReason(\result)
+  //@ ensures (inv(p) && canRouteProfile(p)) ==> stepRestrictedStaysWithheld(p, \result)
+  return { ...p, phase: restricted ? "Withheld" : (readbackEligible(hardComplete, confirmed, skipped, belowAskCap) ? "ReadbackOffered" : "QuestionSearch") };
+}
+
+/** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
+//@ pure
 export function canResolveReadback(p: PromptRun): boolean {
   return p.phase === "ReadbackOffered";
 }
@@ -49,14 +57,6 @@ export function resolveReadback(p: PromptRun, textAvailable: boolean): PromptRun
 //@ pure
 export function canRouteProfile(p: PromptRun): boolean {
   return p.phase === "AwaitingProfile";
-}
-
-/** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
-//@ pure
-export function routeProfile(p: PromptRun, restricted: boolean, wantsReadback: boolean): PromptRun {
-  //@ ensures (inv(p) && canRouteProfile(p)) ==> alwaysReadyHasReason(\result)
-  //@ ensures (inv(p) && canRouteProfile(p)) ==> stepRestrictedStaysWithheld(p, \result)
-  return { ...p, phase: restricted ? "Withheld" : (wantsReadback ? "ReadbackOffered" : "QuestionSearch") };
 }
 
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
@@ -153,8 +153,8 @@ export function lawPlainYesConfirmsUnchangedReadback(answeredNo: boolean, restri
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PromptRun, event: Event): boolean {
-  if (event.type === "resolveReadback") return canResolveReadback(current);
   if (event.type === "routeProfile") return canRouteProfile(current);
+  if (event.type === "resolveReadback") return canResolveReadback(current);
   if (event.type === "chooseQuestion") return canChooseQuestion(current);
   return false;
 }
@@ -164,8 +164,8 @@ export function enabled(current: PromptRun, event: Event): boolean {
 export function step(current: PromptRun, event: Event): PromptRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
+  if (event.type === "routeProfile") return canRouteProfile(current) ? routeProfile(current, event.restricted, event.hardComplete, event.confirmed, event.skipped, event.belowAskCap) : current;
   if (event.type === "resolveReadback") return canResolveReadback(current) ? resolveReadback(current, event.textAvailable) : current;
-  if (event.type === "routeProfile") return canRouteProfile(current) ? routeProfile(current, event.restricted, event.wantsReadback) : current;
   if (event.type === "chooseQuestion") return canChooseQuestion(current) ? chooseQuestion(current, event.facts, event.unavailable) : current;
   return current;
 }
@@ -185,8 +185,8 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   const is_QuestionFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.ageMissing === "boolean" && typeof v.genderMissing === "boolean" && typeof v.seeksMissing === "boolean" && typeof v.ageRangeMissing === "boolean" && typeof v.distanceMissing === "boolean" && typeof v.locationMissing === "boolean" && typeof v.unknownZip === "boolean" && typeof v.dealbreakersMissing === "boolean" && typeof v.goalMissing === "boolean" && typeof v.interestsMissing === "boolean" && typeof v.activitiesMissing === "boolean" && typeof v.freeMissing === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
+  if (raw.type === "routeProfile" && typeof raw.restricted === "boolean" && typeof raw.hardComplete === "boolean" && typeof raw.confirmed === "boolean" && typeof raw.skipped === "boolean" && typeof raw.belowAskCap === "boolean") return { type: "routeProfile", restricted: raw.restricted, hardComplete: raw.hardComplete, confirmed: raw.confirmed, skipped: raw.skipped, belowAskCap: raw.belowAskCap };
   if (raw.type === "resolveReadback" && typeof raw.textAvailable === "boolean") return { type: "resolveReadback", textAvailable: raw.textAvailable };
-  if (raw.type === "routeProfile" && typeof raw.restricted === "boolean" && typeof raw.wantsReadback === "boolean") return { type: "routeProfile", restricted: raw.restricted, wantsReadback: raw.wantsReadback };
   if (raw.type === "chooseQuestion" && is_QuestionFacts(raw.facts) && Array.isArray(raw.unavailable) && raw.unavailable.every((x0: any) => typeof x0 === "string")) return { type: "chooseQuestion", facts: ({ ageMissing: raw.facts.ageMissing, genderMissing: raw.facts.genderMissing, seeksMissing: raw.facts.seeksMissing, ageRangeMissing: raw.facts.ageRangeMissing, distanceMissing: raw.facts.distanceMissing, locationMissing: raw.facts.locationMissing, unknownZip: raw.facts.unknownZip, dealbreakersMissing: raw.facts.dealbreakersMissing, goalMissing: raw.facts.goalMissing, interestsMissing: raw.facts.interestsMissing, activitiesMissing: raw.facts.activitiesMissing, freeMissing: raw.facts.freeMissing }), unavailable: raw.unavailable.map((x0: any) => x0) };
   return undefined;
 }

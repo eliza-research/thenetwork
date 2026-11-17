@@ -258,6 +258,13 @@ export function lawFirstContactNoticeRequiresEligibleNumber(signedTurn: boolean,
   return !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed) || (signedTurn && nonMember && !banned && joinAgeAllowed && ageFloorAllowed);
 }
 
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawMemberOrBannedGetsNoNotice(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !(!nonMember || banned || !signedTurn) || !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: TextJoin, event: Event): boolean {

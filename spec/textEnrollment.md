@@ -1,6 +1,6 @@
 # Join through the shared text line
 
-The service parses the sender's text, reads the app and pending records and applies the effective age policy. The generated transitions select the routing, join and enrollment actions. The service retains its phone lock, database writes, consent events and send controls.
+The service parses the sender's text, reads the app and pending records and applies the effective age policy. The generated transitions select the routing, join and enrollment actions. The service retains its phone lock, database writes, consent events and send controls. A first-contact notice writes no membership: the service runs the normal join flow after it. The service records the one-time notice key for a phone only when it commits a completed response that contains the notice.
 
 ## Story: Text the Network to join an app
 
@@ -52,7 +52,7 @@ pure def lawPreparedPeonTextRequiresExplicitHeader(header: str, profilePresent: 
 
 ### A pending join routes only a possible join answer
 
-Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. Use only pending fields from the routed app.
+Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. The shell parses the answer for an age only when the sender has a pending join for an app they have yet to join and already belongs to an app. Use only pending fields from the routed app.
 
 ```quint
 type FallbackFacts = { hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool, answerHasAge: bool, hasOpenItem: bool }
@@ -176,4 +176,9 @@ pure def lawFirstContactNoticeRequiresEligibleNumber(signedTurn: bool, nonMember
     joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
   firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed)
     implies (signedTurn and nonMember and not(banned) and joinAgeAllowed and ageFloorAllowed)
+
+pure def lawMemberOrBannedGetsNoNotice(signedTurn: bool, nonMember: bool, banned: bool,
+    joinAgeAllowed: bool, ageFloorAllowed: bool): bool =
+  (not(nonMember) or banned or not(signedTurn)) implies
+    not(firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed))
 ```

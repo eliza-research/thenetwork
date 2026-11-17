@@ -31,3 +31,16 @@ export function lawNetworkIntentDefaultsOnlyWithNoSpecificRoute(professional: bo
   //@ ensures \result === true
   return networkIntentRoute(true, "NoRoute", professional) === (professional ? "IntroRoute" : "FriendRoute");
 }
+
+/** Story: Use my request as the purpose of the introduction / Each cofounder peer explicitly opts in under their app account (spec/networkIntentLane.md) */
+//@ pure
+export function cofounderPeersOptedIn(firstIntentLive: boolean, secondIntentLive: boolean): boolean {
+  return firstIntentLive && secondIntentLive;
+}
+
+/** Story: Use my request as the purpose of the introduction / Each cofounder peer explicitly opts in under their app account (spec/networkIntentLane.md) */
+//@ pure
+export function lawEndedCofounderIntentBlocksIntroduction(otherIntentLive: boolean): boolean {
+  //@ ensures \result === true
+  return !cofounderPeersOptedIn(false, otherIntentLive) && !cofounderPeersOptedIn(otherIntentLive, false);
+}

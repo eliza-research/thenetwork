@@ -29,6 +29,12 @@ export function inv(current: MemberRequestJourney): boolean {
 
 /** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
+export function stepNoParticipantContactedBeforeReview(before: MemberRequestJourney, after: MemberRequestJourney, out: RequestEffect[]): boolean {
+  return !out.some((effect: RequestEffect) => effect === "ParticipantContacted");
+}
+
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
+//@ pure
 export function sometimesWaits(s: MemberRequestJourney): boolean {
   return s.request === "WaitingForCandidate";
 }
@@ -60,6 +66,7 @@ export function canTextRequest(s: MemberRequestJourney): boolean {
 /** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function textRequest(s: MemberRequestJourney): RequestUpdate {
+  //@ ensures (inv(s) && canTextRequest(s)) ==> stepNoParticipantContactedBeforeReview(s, \result.state, \result.out)
   //@ ensures (inv(s) && canTextRequest(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "textRequest", \result.state)
   return s.request === "WaitingForCandidate" || s.request === "PendingHumanReview" ? ({ state: s, out: ([] as RequestEffect[]) } as RequestUpdate) : ({ state: ({ ...s, request: offerFor(s.candidateAvailable), requestCount: exact_memberRequestJourney(s.requestCount + 1), attempts: 1 } as MemberRequestJourney), out: effectsFor(s.candidateAvailable) } as RequestUpdate);
 }
@@ -79,6 +86,7 @@ export function sometimesRetriesExistingRequest(s: MemberRequestJourney): boolea
 /** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md) */
 //@ pure
 export function candidateArrives(s: MemberRequestJourney): RequestUpdate {
+  //@ ensures (inv(s) && canCandidateArrives(s)) ==> stepNoParticipantContactedBeforeReview(s, \result.state, \result.out)
   //@ ensures (inv(s) && canCandidateArrives(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "candidateArrives", \result.state)
   return s.candidateAvailable ? ({ state: s, out: ([] as RequestEffect[]) } as RequestUpdate) : (s.request === "WaitingForCandidate" ? ({ state: ({ ...s, candidateAvailable: true, request: "PendingHumanReview", attempts: exact_memberRequestJourney(s.attempts + 1) } as MemberRequestJourney), out: (["ReviewQueued"] as RequestEffect[]) } as RequestUpdate) : ({ state: ({ ...s, candidateAvailable: true } as MemberRequestJourney), out: ([] as RequestEffect[]) } as RequestUpdate));
 }
@@ -122,6 +130,7 @@ export function stepAWithdrawnRequestNeedsNewAsk(before: MemberRequestJourney, v
 /** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function restartJourney(s: MemberRequestJourney): RequestUpdate {
+  //@ ensures (inv(s) && canRestartJourney(s)) ==> stepNoParticipantContactedBeforeReview(s, \result.state, \result.out)
   //@ ensures (inv(s) && canRestartJourney(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "restartJourney", \result.state)
   return { state: s, out: ([] as RequestEffect[]) };
 }
@@ -129,6 +138,7 @@ export function restartJourney(s: MemberRequestJourney): RequestUpdate {
 /** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function textWithdrawal(s: MemberRequestJourney): RequestUpdate {
+  //@ ensures (inv(s) && canTextWithdrawal(s)) ==> stepNoParticipantContactedBeforeReview(s, \result.state, \result.out)
   //@ ensures (inv(s) && canTextWithdrawal(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "textWithdrawal", \result.state)
   const local_0 = s.request === "PendingHumanReview" ? "probing" : "none";
   const local_1 = memberRequest_memberRequestWithdrawable(true, s.request !== "NoRequest", true, s.request === "WithdrawnRequest", local_0);

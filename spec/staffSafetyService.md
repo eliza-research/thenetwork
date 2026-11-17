@@ -1,6 +1,6 @@
 # Apply staff safety decisions in the service
 
-The [case and report spec](safetyCase.md) governs decisions inside one Network runtime. This module governs the service's targets, action admission, and audit stages. The service resolves staff authority and owned records, writes audits, and calls one runtime at a time.
+The [case and report spec](safetyCase.md) governs decisions inside one Network runtime. This module governs the service's targets, action admission, and audit stages. The service resolves staff authority and owned records, writes audits, and calls one runtime at a time. When a member has no linked person, the service's discovery returns only the requested member, so that member is the only target. The service writes the request audit before it runs an admitted action; when that write fails, the action does not run. The hold decision runs inside the audited action. The ban admission runs before the request audit, and the ban rows are written inside the audited action. The requested member's runtime checks, under the case and report spec, that the member and any supplied report match.
 
 ## Story: Hold a member without exposing their other memberships
 
@@ -94,7 +94,7 @@ pure def lawCarriedTrustHoldRequiresOneCurrentOwner(canonicalBan: bool, staffHol
 
 ### Keep the requested and result audits in order
 
-Persist the request audit before performing an admitted cross-runtime safety action. If the requested audit fails, the caller cannot proceed. An action that returns gets a subsequent result audit. Preserve the existing best-effort handling for a result-audit failure.
+The audit stages are a run of their own, apart from the hold and ban runs. The action runs only after the request audit is recorded. An action that returns gets a subsequent result audit, and only after the action. Preserve the existing best-effort handling for a result-audit failure.
 
 ```quint
 pure def canRecordRequestedSafetyAudit(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting

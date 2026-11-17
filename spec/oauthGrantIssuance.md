@@ -31,7 +31,7 @@ pure def lawDeadlineExcludesExpiry(expiresAt: int): bool = not(requestIsLive(exp
 
 ### Authority is checked before the consent request is locked
 
-An unavailable authority check returns a retryable response while leaving the request unconsumed. An invalid authority check refuses the connection. A current phone or person ban makes local authority invalid. Check that authority at approval, authorization code exchange, refresh, and every use of an access token. Only valid authority can proceed to the store operation.
+An unavailable authority check returns a retryable response while leaving the request unconsumed. An invalid authority check refuses the connection. A current phone or person ban makes local authority invalid. Check that authority at approval. The [token rules](oauthTokenLifecycle.md) check it again at authorization code exchange, at refresh, and at every use of an access token. Only valid authority can proceed to the store operation.
 
 ```quint
 pure def canCheckGrantAuthority(issuance: Issuance): bool =

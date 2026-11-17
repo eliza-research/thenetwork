@@ -13,8 +13,21 @@ export const cofounderConsentMarker: string = cofounderIntent_cofounderIntentDet
 
 /** Story: Both peers still want a cofounder / Exact current consent belongs to the same app (spec/cofounderDispatch.md) */
 //@ pure
+export function cofounderBoundIntentCurrent(sameIntentId: boolean, intentEligible: boolean): boolean {
+  return sameIntentId && intentEligible;
+}
+
+/** Story: Both peers still want a cofounder / Exact current consent belongs to the same app (spec/cofounderDispatch.md) */
+//@ pure
 export function cofounderIntentEligible(app: string, expectedApp: string, category: string, details: string, intentLive: boolean): boolean {
   return (expectedApp === "ntwrk" || expectedApp === "peon") && app === expectedApp && category === "professional" && details === cofounderConsentMarker && intentLive;
+}
+
+/** Story: Both peers still want a cofounder / Exact current consent belongs to the same app (spec/cofounderDispatch.md) */
+//@ pure
+export function lawCofounderOtherIntentIdNeverCurrent(app: string, expectedApp: string, category: string, details: string, intentLive: boolean): boolean {
+  //@ ensures \result === true
+  return !cofounderBoundIntentCurrent(false, cofounderIntentEligible(app, expectedApp, category, details, intentLive));
 }
 
 /** Story: Both peers still want a cofounder / Exact current consent belongs to the same app (spec/cofounderDispatch.md) */
@@ -33,14 +46,14 @@ export function lawCofounderIntentRejectsInactive(app: string, expectedApp: stri
 
 /** Story: Both peers still want a cofounder / A review, probe and reveal require both exact intents (spec/cofounderDispatch.md) */
 //@ pure
-export function cofounderDeliveryAllowed(pairCurrent: boolean, reviewed: boolean, revealing: boolean, bothAccepted: boolean): boolean {
-  return pairCurrent && reviewed && (!revealing || bothAccepted);
+export function cofounderPairCurrent(distinctPeers: boolean, firstIntent: boolean, secondIntent: boolean, peersEligible: boolean): boolean {
+  return distinctPeers && firstIntent && secondIntent && peersEligible;
 }
 
 /** Story: Both peers still want a cofounder / A review, probe and reveal require both exact intents (spec/cofounderDispatch.md) */
 //@ pure
-export function cofounderPairCurrent(distinctPeers: boolean, firstIntent: boolean, secondIntent: boolean, peersEligible: boolean): boolean {
-  return distinctPeers && firstIntent && secondIntent && peersEligible;
+export function cofounderDeliveryAllowed(pairCurrent: boolean, reviewed: boolean, revealing: boolean, bothAccepted: boolean): boolean {
+  return pairCurrent && reviewed && (!revealing || bothAccepted);
 }
 
 /** Story: Both peers still want a cofounder / A review, probe and reveal require both exact intents (spec/cofounderDispatch.md) */

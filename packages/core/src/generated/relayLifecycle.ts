@@ -13,7 +13,7 @@ export interface RelayLifecycle { phase: RelayPhase; staffReviewed: boolean; ret
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "recordVerdict"; verdict: RelayVerdict; rateOnly: boolean; hasText: boolean; ageSignal: boolean }
-  | { type: "recordDelivery"; delivery: DeliveryResult }
+  | { type: "recordDelivery"; delivery: DeliveryResult; policyPermits: boolean }
   | { type: "reviewHold"; released: boolean };
 
 /** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
@@ -49,15 +49,15 @@ export function alwaysOnlyHeldItemRetainsText(relay: RelayLifecycle): boolean {
 
 /** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
-export function canRecordDelivery(relay: RelayLifecycle): boolean {
-  return relay.phase === "ReadyToSend" || relay.phase === "Released";
+export function canRecordDelivery(relay: RelayLifecycle, policyPermits: boolean): boolean {
+  return (relay.phase === "ReadyToSend" || relay.phase === "Released") && policyPermits;
 }
 
 /** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
-export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult): RelayLifecycle {
-  //@ ensures (inv(relay) && canRecordDelivery(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
-  //@ ensures (inv(relay) && canRecordDelivery(relay)) ==> stepReviewRemainsRecorded(relay, \result)
+export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult, policyPermits: boolean): RelayLifecycle {
+  //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> alwaysOnlyHeldItemRetainsText(\result)
+  //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> stepReviewRemainsRecorded(relay, \result)
   return { ...relay, phase: delivery === "Delivered" ? "Sent" : (delivery === "Queued" ? "Deferred" : "SendRefused") };
 }
 
@@ -103,7 +103,7 @@ export function sometimesReviewRejects(relay: RelayLifecycle): boolean {
 //@ pure
 export function enabled(current: RelayLifecycle, event: Event): boolean {
   if (event.type === "recordVerdict") return canRecordVerdict(current);
-  if (event.type === "recordDelivery") return canRecordDelivery(current);
+  if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits);
   if (event.type === "reviewHold") return canReviewHold(current);
   return false;
 }
@@ -114,7 +114,7 @@ export function step(current: RelayLifecycle, event: Event): RelayLifecycle {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "recordVerdict") return canRecordVerdict(current) ? recordVerdict(current, event.verdict, event.rateOnly, event.hasText, event.ageSignal) : current;
-  if (event.type === "recordDelivery") return canRecordDelivery(current) ? recordDelivery(current, event.delivery) : current;
+  if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits) ? recordDelivery(current, event.delivery, event.policyPermits) : current;
   if (event.type === "reviewHold") return canReviewHold(current) ? reviewHold(current, event.released) : current;
   return current;
 }
@@ -134,7 +134,7 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "recordVerdict" && (raw.verdict === "Pass" || raw.verdict === "Hold" || raw.verdict === "Block") && typeof raw.rateOnly === "boolean" && typeof raw.hasText === "boolean" && typeof raw.ageSignal === "boolean") return { type: "recordVerdict", verdict: raw.verdict, rateOnly: raw.rateOnly, hasText: raw.hasText, ageSignal: raw.ageSignal };
-  if (raw.type === "recordDelivery" && (raw.delivery === "Delivered" || raw.delivery === "Queued" || raw.delivery === "Refused")) return { type: "recordDelivery", delivery: raw.delivery };
+  if (raw.type === "recordDelivery" && (raw.delivery === "Delivered" || raw.delivery === "Queued" || raw.delivery === "Refused") && typeof raw.policyPermits === "boolean") return { type: "recordDelivery", delivery: raw.delivery, policyPermits: raw.policyPermits };
   if (raw.type === "reviewHold" && typeof raw.released === "boolean") return { type: "reviewHold", released: raw.released };
   return undefined;
 }

@@ -29,7 +29,7 @@ export function canRecordListenerDrain(s) { return M.canRecordListenerDrain(s); 
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export function recordListenerDrain(s) { return M.recordListenerDrain(s); }
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
-export function canSettleWorkDrain(s, timedOut) { return M.canSettleWorkDrain(s, timedOut); }
+export function ticksReleased(s) { return M.ticksReleased(s); }
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export function settleWorkDrain(s, timedOut) { return M.settleWorkDrain(s, timedOut); }
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
@@ -47,7 +47,11 @@ export function sometimesClosesAfterGrace(s) { return M.sometimesClosesAfterGrac
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export function canBeginShutdown(s) { return M.canBeginShutdown(s); }
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
+export function canSettleWorkDrain(s, timedOut) { return M.canSettleWorkDrain(s, timedOut); }
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export function stepDrainNeverReopens(before, after) { return M.stepDrainNeverReopens(before, after); }
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
+export function stepCleanDrainHasNoTicks(before, after) { return M.stepCleanDrainHasNoTicks(before, after); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

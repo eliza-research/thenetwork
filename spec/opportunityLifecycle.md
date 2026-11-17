@@ -8,7 +8,7 @@ The [whole-flow model](models/opportunity.md) follows participant replies, retri
 
 ### An opportunity starts in review
 
-Every proposal starts in review. An approval can start probing only after the review is recorded and the eligibility recheck has passed. A reviewer can reroll a proposal in review. A replacement starts a fresh review revision and deadline. A reroll with no replacement closes the proposal.
+Every proposal starts in review. An approval can start probing only after the review is recorded and the eligibility recheck has passed. A reviewer can reroll a proposal in review. A replacement starts a fresh review revision and deadline, and needs a new approval. A reroll with no replacement closes the proposal.
 
 ```quint
 type OpportunityPhase = InReview | Probing | Scheduled | Done | Closed
@@ -40,7 +40,7 @@ pure def alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boo
 
 ### Only an approved proposal with enough consent can book
 
-For a regular opportunity, everyone must agree. A group plan supplies the result of its plan quorum and fallback rules after availability, blocks, and timing are checked. A scheduled plan can be updated when someone joins or leaves. A booked group can continue only with at least three attending. The remaining people agreed to a group and need fresh consent for a one-to-one meeting.
+For a regular opportunity, everyone must agree. A group plan supplies the result of its plan quorum and fallback rules after availability, blocks, and timing are checked. A scheduled plan can be updated when someone joins or leaves. A booked group can continue only with at least three attending. With fewer, the booking closes. The remaining people agreed to a group, so a one-to-one meeting needs a new proposal with fresh consent.
 
 ```quint
 pure def canBook(proposal: OpportunityLifecycle, hasConsent: bool): bool =
@@ -52,7 +52,11 @@ pure def book(proposal: OpportunityLifecycle, hasConsent: bool): OpportunityLife
 pure def groupCanContinue(remaining: int): bool = remaining >= 3
 
 pure def lawAGroupNeedsAtLeastThree(remaining: int): bool =
-  groupCanContinue(remaining) implies remaining >= 3
+  (remaining < 3) implies not(groupCanContinue(remaining))
+
+pure def lawPairLeftFromGroupNeedsFreshConsent(proposal: OpportunityLifecycle, remaining: int): bool =
+  (proposal.phase == Scheduled and not(groupCanContinue(remaining)))
+    implies (canClose(proposal) and not(canBook(close(proposal), true)))
 ```
 
 ### A member can withdraw probe consent before the reveal

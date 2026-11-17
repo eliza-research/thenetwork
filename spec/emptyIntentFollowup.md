@@ -22,6 +22,9 @@ pure def emptyIntentWaitOver(statementAgeMs: int, waitDays: int): bool =
 
 pure def lawNewStatementWaitsBeforeAFollowup(waitDays: int): bool =
   waitDays > 0 implies not(emptyIntentWaitOver(0, waitDays))
+
+pure def lawDefaultWaitHoldsAStatementForTenDays(statementAgeMs: int): bool =
+  statementAgeMs < 10 * emptyIntentDayMs implies not(emptyIntentWaitOver(statementAgeMs, emptyIntentDefaultWaitDays))
 ```
 
 ### A pending follow-up uses current permission and the same live statement

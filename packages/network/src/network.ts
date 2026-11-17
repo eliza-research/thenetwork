@@ -44,13 +44,13 @@ import {
 } from "../../core/src/generated/memberRequest.ts";
 import {
   defaultMemberInviteCapacity, memberInviteBurst, memberInviteCanAttribute, memberInviteCanIssue, memberInviteConfirmationReady,
-  memberInviteDraftCurrent, memberInviteEvidenceValid, memberInviteLinkCanBeShared, memberInviteNeedsReview, memberInviteSourceCurrent,
+  memberInviteDraftCurrent, memberInviteEvidenceValid, memberInviteHeldLinkReleased, memberInviteLinkCanBeShared, memberInviteNeedsReview, memberInviteSourceCurrent,
   memberInviteUsesAllowance, memberInviteVouchWeak, memberInviteWithinBurstWindow, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
   attendanceBookingReceived, chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
-  dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
+  dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, dayOfReplyAccepted, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
   settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement, verifiedMeetingValueAllowed,
 } from "../../core/src/generated/meetingSettlement.ts";
@@ -61,7 +61,7 @@ import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../cor
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
-import { rescheduleAnswerAfterReceipt, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
+import { rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
   describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
@@ -100,7 +100,7 @@ import {
 import { interruptionFeedbackAnswer, interruptionFeedbackCode, interruptionFeedbackKey, interruptionSampleBucket, type InterruptionSurvey } from "./interruption-feedback.ts";
 import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
-import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
+import { cofounderBoundIntentCurrent, cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import { approvedVenueBookingLink, venueBookingLink, venueBookingNoticeBase, venueBookingNoticeKey } from "./venue-booking-link.ts";
 import { chooseFriendsPlanWindow, friendsPlanOfferedWindows, friendsPlanProbeDeliveryKey, friendsPlanTimeOptions, parseFriendsPlanTimeReply, validFriendsPlanTimeWindows } from "./friends-plan-time-choice.ts";
@@ -1287,8 +1287,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
       const o = this.opps.get(aw.oppId!);
       const checkIn = aw.bookedCheckIn;
-      const checkInCurrent = !checkIn || (o?.meetingAt === checkIn.meetingAt && (o.scheduleRevision ?? 0) === checkIn.revision
-        && bookedReminderWindow("day-of-checkin", now, checkIn.meetingAt));
+      // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
+      const checkInCurrent = !checkIn || dayOfReplyAccepted(o?.meetingAt === checkIn.meetingAt && (o.scheduleRevision ?? 0) === checkIn.revision,
+        nyParts(now).day === nyParts(checkIn.meetingAt).day, checkIn.meetingAt - now);
       if (!o || !checkInCurrent || !bookedReplyCurrent(opportunityLifecycle(o), o.status.get(m.id) === "yes")) {
         m.awaiting = undefined;
       } else {
@@ -1469,7 +1470,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (command.kind === "request") {
       const matches = [...this.opps.values()].filter(o => o.meetingAt === command.originalAt && upcomingCancellationEligible(
         opportunityLifecycle(o), o.participants.includes(m.id), o.status.get(m.id) === "yes", true, command.originalAt, now));
-      if (matches.length !== 1) return reply(matches.length > 1 ? this.copy.whichBookingToReschedule : this.copy.noBookingToCancel);
+      // spec/meetingReschedule.md, "A request selects one future booking and one viable slot"
+      if (!rescheduleBookingSelected(matches.length)) return reply(matches.length > 1 ? this.copy.whichBookingToReschedule : this.copy.noBookingToCancel);
       const o = matches[0]!;
       const roster = this.rescheduleRoster(o);
       const expiresAt = rescheduleDeadline(now, command.originalAt, command.proposedAt, MIN_NOTICE);
@@ -3088,6 +3090,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.close(o, "rerolled in review");
       return { ok: true };
     }
+    // spec/opportunityLifecycle.md, "An opportunity starts in review": a reroll with a replacement stays in review.
     o.stage = STAGE_BY_PHASE[next.phase];
     o.alternates = o.alternates.filter(a => a !== alt);
     o.participants = o.participants.map(p => (p === out ? alt : p));
@@ -4014,7 +4017,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const disposition = memberInviteNeedsReview(weak, burst, draft.riskLanguage) ? "review" : "issue";
     const { firstName, relationship, requestId } = draft;
     const result = this.opts.issueMemberInvite?.({ inviterId: m.id, messageId, at, firstName, relationship, requestId, ...evidence, reviewReasons, disposition });
-    if (!result || (result.status === "issued" && (disposition === "review" || !isMemberInvitationLink(this.app, result.url)))) {
+    if (!result || (result.status === "issued" && (!memberInviteHeldLinkReleased(disposition === "review", false) || !isMemberInvitationLink(this.app, result.url)))) {
       this.inviteVouchReply(m, this.copy.inviteUnavailable);
       return;
     }
@@ -5792,9 +5795,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const snapshot = this.snapshotCached();
     const current = (memberId: MemberId) => {
-      const intent = snapshot.intents.find(i => i.memberId === memberId && i.id === o.cofounderIntents?.[memberId]);
-      return !!intent && intent.objective === cofounderIntentObjective
-        && cofounderIntentEligible(intent.app ?? "", this.app.id, intent.category, intent.details ?? "", standingIntentLive(intent, now));
+      const bound = o.cofounderIntents?.[memberId];
+      const intent = snapshot.intents.find(i => i.memberId === memberId && i.id === bound);
+      return !!intent && cofounderBoundIntentCurrent(intent.id === bound, intent.objective === cofounderIntentObjective
+        && cofounderIntentEligible(intent.app ?? "", this.app.id, intent.category, intent.details ?? "", standingIntentLive(intent, now)));
     };
     const eligible = (memberId: MemberId) => {
       const record = this.record(memberId), member = this.members.get(memberId);

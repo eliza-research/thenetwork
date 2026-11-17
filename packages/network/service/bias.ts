@@ -35,7 +35,7 @@ export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[
   // spec/weeklyBias.md, "Outcomes count only the opportunities in the observation window"
   // Reached: created in the window and past review (probed, scheduled, done, or closed after review).
   // Held: done with its meeting in the window, whenever the proposal was created.
-  const reached = opps.filter(o => biasOpportunityInWindow(o.createdAt, from, now) && biasOpportunityReached(o.stage, o.closedFrom ?? "review"));
+  const reached = opps.filter(o => biasOpportunityInWindow(o.createdAt, from, now) && biasOpportunityReached(o.stage, o.closedFrom ?? ""));
   const held = opps.filter(o => biasDateHeld(o.stage, o.meetingAt !== undefined, o.meetingAt ?? 0, from, now));
   const pairDates = new Map<string, number>();
   for (const o of held) if (biasSinglePair(o.participants.length)) { const k = [...o.participants].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }

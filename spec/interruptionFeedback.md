@@ -1,5 +1,7 @@
 # Feedback on a proactive invitation
 
+The shell owns the stored survey record, the send queue, the provider receipts and the scorecard log. It keeps at most one survey per member and deletes the survey when it accepts an answer, so a later answer finds no survey and each survey counts at most one response.
+
 ## Story: Tell the Network whether an invitation was worth a text
 
 > As a member, I want to give private feedback on an invitation without changing my answer to it.
@@ -32,7 +34,7 @@ pure def lawSurveyUsesOnlyAnAvailableFollowupSlot(survey: bool, timingFollowup: 
 
 ### A direct answer measures the interruption once
 
-Bind the survey code to the same app, member and invitation. Include the app in the reply command so it reaches the correct app on the shared line. Accept a direct affirmative or negative code received after the provider accepts the exact survey and while the survey is current. STOP and a hold invalidate it. A valid answer consumes the survey. Save only its yes or no value for the app scorecard. Count one response per answered survey. Keep the response out of matching and the other participants' messages.
+Bind the survey code to the same app, member and invitation. Include the app in the reply command so it reaches the correct app on the shared line. Accept a direct affirmative or negative code received after the provider accepts the exact survey and while the survey is current. The survey is current for less than 48 hours after the Network sent it, while the member can still receive it. STOP and a hold invalidate it. Save only the answer's yes or no value for the app scorecard. Keep the response out of matching and the other participants' messages.
 
 ```quint
 pure def interruptionFeedbackCurrent(ageMs: int, eligible: bool): bool =

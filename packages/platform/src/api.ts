@@ -829,8 +829,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         type: "checkGrantEnvelope",
         envelopeValid: authority.version===1 && authority.app===grant.app && authority.resource===grant.resource
           && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && !(authority.issuedAt*1000>now())
-          && Number.isSafeInteger(authority.expiresAt) && !(authority.expiresAt<=now())
+          && Number.isSafeInteger(authority.expiresAt)
           && typeof authority.sealed==="string" && authority.sealed.length<=16000,
+        grantLive: !(authority.expiresAt<=now()),
       });
       if (!canCheckGrantDelegation(envelope)) return authorityStatus(envelope);
       const value=unseal("cloud-grant",authority.sealed);
@@ -846,8 +847,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const owner=await accounts.byPhoneHash(grant.phoneKey);
       const owned = stepAuthority(bound, {
         type: "checkGrantOwner",
-        phoneEligible: (grant.personId === null || grant.personId === owner?.person.id)
-          && !await accounts.held(phone) && !await accounts.banned(phone) && !await o.store.isSuppressed(grant.phoneKey),
+        ownerCurrent: grant.personId === null || grant.personId === owner?.person.id,
+        phoneEligible: !await accounts.held(phone) && !await accounts.banned(phone) && !await o.store.isSuppressed(grant.phoneKey),
       });
       if (!canFinishCloudCheck(owned)) return authorityStatus(owned);
       const answer = cloudResponse[await productionDelegation.validate(grant.app, delegation)];

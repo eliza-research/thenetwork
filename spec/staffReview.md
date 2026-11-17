@@ -34,7 +34,7 @@ pure def bindCard(ctl: ReviewCtl, cardKey: str): ReviewCtl =
 
 ### A mode change applies only to a bound card
 
-A mode button toggles its panel, and a shortcut opens that mode. Leaving a mode clears the prompt for a required note. The shell supplies the selected card's current edit values when entering edit mode.
+A mode button toggles its panel, and a shortcut opens that mode. Each mode change clears the prompt for a required note, also when a shortcut opens the mode that is already open. The shell supplies the selected card's current edit values when entering edit mode.
 
 ```quint
 pure def canChangeReviewMode(ctl: ReviewCtl): bool = ctl.cardKey != ""
@@ -50,7 +50,7 @@ pure def alwaysRequiredNoteBelongsToRejection(ctl: ReviewCtl): bool = ctl.noteNe
 
 ### An old response cannot clear or move a newer selection
 
-Only a response from the same card and draft revision can settle the controller. An accepted decision clears the old draft. The shell moves to a neighbor only for an accepted decision that still belongs to this mounted queue. A refused decision keeps the draft on its own card.
+Only a response from the same card and draft revision can settle the controller. The shell settles the controller only for an accepted decision. Settling clears the old draft, closes the mode panel, and starts a new revision. The shell moves to a neighbor only for an accepted decision that still belongs to this mounted queue. The shell does not settle the controller for a refused decision, so the draft stays on its own card.
 
 ```quint
 pure def ownsReviewResponse(ctl: ReviewCtl, cardKey: str, revision: int): bool =

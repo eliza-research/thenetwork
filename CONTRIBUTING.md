@@ -50,7 +50,10 @@ needs approval. Link the specific story or rule when you propose a change.
   rule with its Quint and records approval with `pnpm run accept`.
   When every model is valid, the checker runs type checks and proofs alongside
   the simulations. It shares Node's compile cache with child processes and
-  reuses verification results for unchanged inputs. See the
+  reuses verification results for unchanged inputs. Quint parses and
+  typechecks each harness one time for each check, and each simulation uses
+  the compiled harness. Each tool runs in its own process group, and a check
+  that stops also stops each tool that it started. See the
   [check stages and cache rules](SPEC.md#stages-of-pnpm-check).
 - For work on the generator, follow the [Vibestack contributor guide](tools/vibestack/CONTRIBUTING.md#changing-the-tools)
   and add a fixture for each new class of error it detects.

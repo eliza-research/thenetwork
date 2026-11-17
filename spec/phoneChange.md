@@ -2,6 +2,8 @@
 
 A member uses their current app session to request a code for a new number and then confirm the move. The API requires a fresh login to request a code. The OTP service verifies the new number. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record.
 
+The shell's store move keeps the person's member IDs and history. In the same transaction, it moves the current native connector grants bound to that person and their current same-app signup drafts. It ends active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. It ends those tokens, removes their private drafts and audits the revocation. The member can reconnect an affected assistant. The store move ends old phone sessions. The shell routes a person-bound member only through their current verified phone. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
+
 ## Story: Keep my account when my phone changes
 
 > As a member, I want to prove I own the new number and keep my account, history and consents.
@@ -49,7 +51,7 @@ pure def checkStartPolicy(change: PhoneChange, oldNumberAllowed: bool): PhoneCha
 
 ### A challenge needs a send slot and a persisted request
 
-The account has three start requests per day. The store must grant a slot while the prior count is below three. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
+The account has three start requests per day. The store must grant a slot while the prior count is below three. A start request can continue only when the store grants the slot and the account made fewer than three start requests earlier on that day. If its allowance or the OTP service refuses, return the existing rate-limit outcome. The pending row is stored after the OTP service accepts the request. The start response never reveals who owns the target number.
 
 ```quint
 pure val phoneChangesPerDay: int = 3
@@ -101,7 +103,7 @@ pure def recordVerification(change: PhoneChange, otpVerified: bool): PhoneChange
 
 ### The verified request can move only when both numbers allow it
 
-Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target, the request's lifetime and both ban decisions again after verification. A missing, superseded or expired request returns the no-pending-change outcome. A ban or missing or held current identity returns review. A number claimed before the move returns the in-use outcome. Only a completed store move permits success.
+Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target, the request's lifetime and both ban decisions again after verification. A missing, superseded or expired request cannot move and returns the no-pending-change outcome. A ban or missing or held current identity returns review. A number claimed before the move returns the in-use outcome. Only a completed store move permits success.
 
 ```quint
 pure def canCheckMovePolicy(change: PhoneChange): bool = change.phase == AwaitingMovePolicy and change.codeVerified
@@ -132,8 +134,6 @@ pure def lawStaleMoveRemainsUnconfirmed(change: PhoneChange): bool =
 ### Reporting a move requires both the new code and current move authority
 
 The transition into a completed move requires OTP verification and the move policy. The outer service finishes its existing age-floor and runtime updates before replying. A pending request or a failed move cannot report a completed move.
-
-Preserve the person's member IDs and history. Move current native connector grants bound to that person and their current same-app signup drafts in the same transaction. End active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. End those tokens, remove their private drafts and audit the revocation. The member can reconnect an affected assistant. End old phone sessions. A person-bound member routes only through their current verified phone. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
 
 ```quint
 pure def alwaysMoveRequiresProof(change: PhoneChange): bool =

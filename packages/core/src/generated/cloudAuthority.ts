@@ -15,9 +15,9 @@ export type Event =
   | { type: "checkSiteProof"; bindingValid: boolean; proofLive: boolean; productionCloud: boolean; cacheLive: boolean }
   | { type: "useLocalSession"; cloudToken: boolean }
   | { type: "finishCloudCheck"; answer: CloudResponse; proofLive: boolean }
-  | { type: "checkGrantEnvelope"; envelopeValid: boolean }
+  | { type: "checkGrantEnvelope"; envelopeValid: boolean; grantLive: boolean }
   | { type: "checkGrantDelegation"; delegationBound: boolean }
-  | { type: "checkGrantOwner"; phoneEligible: boolean };
+  | { type: "checkGrantOwner"; ownerCurrent: boolean; phoneEligible: boolean };
 
 /** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 export const initial: AuthorityCheck = { phase: "AwaitingProof", fromCache: false };
@@ -133,6 +133,13 @@ export function lawProductionLeavesCloudCacheUnchanged(validationAccepted: boole
   return cloudCachePublication(true, validationAccepted, roundCurrent) === "KeepCloudValidation";
 }
 
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
+//@ pure
+export function lawStagingRejectedValidationClearsTheCache(roundCurrent: boolean): boolean {
+  //@ ensures \result === true
+  return cloudCachePublication(false, false, roundCurrent) === "ClearCloudValidation";
+}
+
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function grantResourceMatches(productionCloud: boolean, resource: string, standardMcp: string, openAiMcp: string): boolean {
@@ -153,10 +160,10 @@ export function canCheckGrantEnvelope(check: AuthorityCheck): boolean {
 
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
-export function checkGrantEnvelope(check: AuthorityCheck, envelopeValid: boolean): AuthorityCheck {
+export function checkGrantEnvelope(check: AuthorityCheck, envelopeValid: boolean, grantLive: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canCheckGrantEnvelope(check)) ==> alwaysOnlyValidChecksUseCache(\result)
   //@ ensures (inv(check) && canCheckGrantEnvelope(check)) ==> stepOnlyAnAuthorityResultFinishes(check, "checkGrantEnvelope", \result)
-  return { ...check, phase: envelopeValid ? "AwaitingDelegation" : "AuthorityInvalid" };
+  return { ...check, phase: envelopeValid && grantLive ? "AwaitingDelegation" : "AuthorityInvalid" };
 }
 
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
@@ -181,10 +188,38 @@ export function canCheckGrantOwner(check: AuthorityCheck): boolean {
 
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
-export function checkGrantOwner(check: AuthorityCheck, phoneEligible: boolean): AuthorityCheck {
+export function checkGrantOwner(check: AuthorityCheck, ownerCurrent: boolean, phoneEligible: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canCheckGrantOwner(check)) ==> alwaysOnlyValidChecksUseCache(\result)
   //@ ensures (inv(check) && canCheckGrantOwner(check)) ==> stepOnlyAnAuthorityResultFinishes(check, "checkGrantOwner", \result)
-  return { ...check, phase: phoneEligible ? "AwaitingCloud" : "AuthorityInvalid" };
+  return { ...check, phase: ownerCurrent && phoneEligible ? "AwaitingCloud" : "AuthorityInvalid" };
+}
+
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
+//@ pure
+export function lawGrantNeverOutlivesSessionOrIdentity(sessionExpiry: number, identityExpiry: number): boolean {
+  //@ ensures \result === true
+  return grantExpiresAt(sessionExpiry, identityExpiry) <= sessionExpiry && grantExpiresAt(sessionExpiry, identityExpiry) <= identityExpiry;
+}
+
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
+//@ pure
+export function lawGrantResourceNeedsProductionCloud(resource: string, standardMcp: string, openAiMcp: string): boolean {
+  //@ ensures \result === true
+  return !grantResourceMatches(false, resource, standardMcp, openAiMcp);
+}
+
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
+//@ pure
+export function lawGrantNeedsCurrentOwner(phoneEligible: boolean): boolean {
+  //@ ensures \result === true
+  return checkGrantOwner(initial, false, phoneEligible).phase === "AuthorityInvalid";
+}
+
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
+//@ pure
+export function lawExpiredGrantIsInvalid(envelopeValid: boolean): boolean {
+  //@ ensures \result === true
+  return checkGrantEnvelope(initial, envelopeValid, false).phase === "AuthorityInvalid";
 }
 
 /** Do the rules allow this event in this state? */
@@ -207,9 +242,9 @@ export function step(current: AuthorityCheck, event: Event): AuthorityCheck {
   if (event.type === "checkSiteProof") return canCheckSiteProof(current) ? checkSiteProof(current, event.bindingValid, event.proofLive, event.productionCloud, event.cacheLive) : current;
   if (event.type === "useLocalSession") return canUseLocalSession(current) ? useLocalSession(current, event.cloudToken) : current;
   if (event.type === "finishCloudCheck") return canFinishCloudCheck(current) ? finishCloudCheck(current, event.answer, event.proofLive) : current;
-  if (event.type === "checkGrantEnvelope") return canCheckGrantEnvelope(current) ? checkGrantEnvelope(current, event.envelopeValid) : current;
+  if (event.type === "checkGrantEnvelope") return canCheckGrantEnvelope(current) ? checkGrantEnvelope(current, event.envelopeValid, event.grantLive) : current;
   if (event.type === "checkGrantDelegation") return canCheckGrantDelegation(current) ? checkGrantDelegation(current, event.delegationBound) : current;
-  if (event.type === "checkGrantOwner") return canCheckGrantOwner(current) ? checkGrantOwner(current, event.phoneEligible) : current;
+  if (event.type === "checkGrantOwner") return canCheckGrantOwner(current) ? checkGrantOwner(current, event.ownerCurrent, event.phoneEligible) : current;
   return current;
 }
 
@@ -230,9 +265,9 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "checkSiteProof" && typeof raw.bindingValid === "boolean" && typeof raw.proofLive === "boolean" && typeof raw.productionCloud === "boolean" && typeof raw.cacheLive === "boolean") return { type: "checkSiteProof", bindingValid: raw.bindingValid, proofLive: raw.proofLive, productionCloud: raw.productionCloud, cacheLive: raw.cacheLive };
   if (raw.type === "useLocalSession" && typeof raw.cloudToken === "boolean") return { type: "useLocalSession", cloudToken: raw.cloudToken };
   if (raw.type === "finishCloudCheck" && (raw.answer === "CloudAccepted" || raw.answer === "CloudDenied" || raw.answer === "CloudUnavailable") && typeof raw.proofLive === "boolean") return { type: "finishCloudCheck", answer: raw.answer, proofLive: raw.proofLive };
-  if (raw.type === "checkGrantEnvelope" && typeof raw.envelopeValid === "boolean") return { type: "checkGrantEnvelope", envelopeValid: raw.envelopeValid };
+  if (raw.type === "checkGrantEnvelope" && typeof raw.envelopeValid === "boolean" && typeof raw.grantLive === "boolean") return { type: "checkGrantEnvelope", envelopeValid: raw.envelopeValid, grantLive: raw.grantLive };
   if (raw.type === "checkGrantDelegation" && typeof raw.delegationBound === "boolean") return { type: "checkGrantDelegation", delegationBound: raw.delegationBound };
-  if (raw.type === "checkGrantOwner" && typeof raw.phoneEligible === "boolean") return { type: "checkGrantOwner", phoneEligible: raw.phoneEligible };
+  if (raw.type === "checkGrantOwner" && typeof raw.ownerCurrent === "boolean" && typeof raw.phoneEligible === "boolean") return { type: "checkGrantOwner", ownerCurrent: raw.ownerCurrent, phoneEligible: raw.phoneEligible };
   return undefined;
 }
 

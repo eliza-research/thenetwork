@@ -56,7 +56,7 @@ pure def checkItems(review: ReviewRequest, itemCount: int, distinctIds: bool, al
 
 ### A command targets this batch revision and one existing item
 
-Accept needs an explicit private or matching scope. Reject takes no scope or wording. Edit takes valid replacement wording and requests a preview. The shell recognizes the command text and checks wording. The command must name the exact batch and revision and point to an existing item. A refused command sends no decision to the store.
+Accept needs an explicit private or matching scope. Reject takes no scope or wording. Edit takes valid replacement wording and requests a preview. The shell recognizes the command text and checks wording. It recognizes only the words private and matching as a scope, so a given scope is always one of these two scopes. Any other scope word makes the command text unrecognized, and the shell refuses it. The command must name the exact batch and revision and point to an existing item. A refused command sends no decision to the store.
 
 ```quint
 pure def canReadCommand(review: ReviewRequest): bool =

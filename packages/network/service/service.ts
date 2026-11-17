@@ -1694,7 +1694,8 @@ export class NetworkService implements RuntimeHost {
     const survey = dedicated ? undefined : interruptionFeedbackAnswer(ev.text);
     const surveyApp = survey && isAppId(survey.app) ? survey.app : undefined;
     const keywordApp = dedicated || profileApp || surveyApp ? undefined : this.namedApp(ev.text);
-    const explicit = checkExplicitRoute(initialRoute, { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp });
+    const explicitFacts = { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp };
+    const explicit = checkExplicitRoute(initialRoute, explicitFacts);
     if (explicit.phase === "DedicatedRoute" && dedicated) return { app: dedicated, shared: false };
     if (explicit.phase === "ProfileRoute" && profileApp) return { app: profileApp, shared: true };
     if (explicit.phase === "SurveyRoute" && surveyApp) return { app: surveyApp, shared: true };
@@ -2427,6 +2428,7 @@ export class NetworkService implements RuntimeHost {
     if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
     const approved = await findApprovedMemberInvitationReview(tx, rt.app.id, id, memberId, now);
     const replyId = `sys:${messageId}`;
+    // A held request returns its link only for the current approval presented in this owner's signed turn.
     if (memberInviteHeldLinkMayRelease(rt.signedMemberTurn(memberId, messageId), !!approved) && approved) {
       const staged = this.invitationLink(rt.app, memberId, approved.relationship, approved, now, id);
       rt.unit.memberInvitation = staged;

@@ -143,7 +143,7 @@ pure def lawHubLandingNamesNoApp(named: AppKey, surface: Surface): bool =
 
 ### Every site uses the same parts, and only peon.biz adds the browser join flow
 
-The four sites use the same header mark, headline, prompt field, agent row, Messages entry, status line, footer, legal text and not-found notice. Each part, the logo included, gets its brand only from the brand record and the accent tokens. No part holds a color of its own for one brand. peon.biz is the only site that keeps a browser join flow.
+The four sites use the same header mark, headline, prompt field, agent row, Messages entry, status line, footer, legal text and not-found notice. Each part, the logo included, gets its brand only from the brand record and the accent tokens of the site's brand. Every part of one site takes the same accent tokens, and no part holds a color of its own for one brand. peon.biz is the only site that keeps a browser join flow.
 
 ```quint
 type SharedPart = PartMark | PartHeadline | PartPrompt | PartAgentRow | PartMessages | PartStatus |
@@ -152,5 +152,10 @@ type SharedPart = PartMark | PartHeadline | PartPrompt | PartAgentRow | PartMess
 pure def siteUsesPart(app: AppKey, part: SharedPart): bool = part != PartJoinFlow or app == Peon
 
 pure def lawSitesShareParts(a: AppKey, b: AppKey, part: SharedPart): bool =
-  part != PartJoinFlow implies siteUsesPart(a, part) == siteUsesPart(b, part)
+  siteUsesPart(a, part) != siteUsesPart(b, part) implies (part == PartJoinFlow and (a == Peon or b == Peon))
+
+pure def partTokens(app: AppKey, part: SharedPart): AccentTokens = accentTokens(brandFor(app).accent)
+
+pure def lawPartsTakeTheBrandTokens(app: AppKey, part: SharedPart, other: SharedPart): bool =
+  partTokens(app, part) == partTokens(app, other) and partTokens(app, part) == accentTokens(brandFor(app).accent)
 ```

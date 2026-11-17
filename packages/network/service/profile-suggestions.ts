@@ -194,6 +194,7 @@ export class ProfileSuggestions {
         return preview;
       }
       if (collection.phase !== "SavingCollection") return null;
+      // A later turn cannot reuse an erased batch UUID while its original minimal receipt remains.
       const receiptCount = claim ? Object.keys(collectionTurn.action_receipts ?? {}).length : 0;
       const batchIdUnused = !receiptKey || (collectionReceiptHasRoom(receiptCount)
         && !(await tx`select 1 from platform.inbound where jsonb_exists(action_receipts,${receiptKey}) limit 1`).length

@@ -29,6 +29,9 @@ pure def textRequest(s: MemberRequestJourney): RequestUpdate =
   else { state: { ...s, request: offerFor(s.candidateAvailable), requestCount: s.requestCount + 1, attempts: 1 },
     out: effectsFor(s.candidateAvailable) }
 
+pure def stepNoParticipantContactedBeforeReview(before: MemberRequestJourney, after: MemberRequestJourney, out: List[RequestEffect]): bool =
+  not(out.some(effect => effect == ParticipantContacted))
+
 pure def sometimesWaits(s: MemberRequestJourney): bool = s.request == WaitingForCandidate
 pure def sometimesRequestsReview(s: MemberRequestJourney): bool = s.request == PendingHumanReview
 ```

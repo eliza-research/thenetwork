@@ -1,6 +1,6 @@
 # Participation controls in conversation
 
-The member can change settings for the app handling their signed text. The service reads the canonical phone and membership, writes the setting, and records the reply in the same transaction. These settings govern later outreach in that app. The shared-line STOP and START commands use the [carrier consent rules](carrierConsent.md).
+The member can change settings for the app handling their signed text. The service reads the canonical phone and membership, writes the setting, and records the reply in the same transaction. The service writes quiet hours only for a quiet hours command, so a signup or an update to a different setting keeps the saved hours. These settings govern later outreach in that app. The shared-line STOP and START commands use the [carrier consent rules](carrierConsent.md).
 
 ## Story: Change when and about what Eliza can contact me
 

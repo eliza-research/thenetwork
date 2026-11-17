@@ -1,6 +1,6 @@
 # Solo event recommendations
 
-[Story F10](product/stories.md#story-f10--get-concierge-value) asks for useful ideas before anyone else needs to be involved. The [published event catalog](publicEventCatalog.md) supplies current NYC Parks listings. A direct member request chooses the solo event format. Event introductions follow [F13](product/stories.md#story-f13--meet-at-an-event).
+[Story F10](product/stories.md#story-f10--get-concierge-value) asks for useful ideas before anyone else needs to be involved. The [published event catalog](publicEventCatalog.md) supplies current NYC Parks listings. A direct member request chooses the solo event format. Event introductions follow [F13](product/stories.md#story-f13--meet-at-an-event). The shell writes each event line with the title, local time, venue, official link, and a reason that includes no member information. The exact links for listings selected for a reply may pass its contact check; all private facts and other contact text still pass the leak checks. A solo reply neither contacts anyone else nor creates a booking or matching request.
 
 ## Story: Get ideas for my own time
 
@@ -32,10 +32,15 @@ pure def lawTripAwayPreventsLocalSuggestion(home: bool, visiting: bool): bool =
 
 ### Reply with at most three public events and a reason for each
 
-Rank eligible events by matching saved interests, estimated travel, then the earliest start. Use a stable listing order when all three are equal. Give the title, local time, venue, official link, and a reason that includes no member information. The exact links for listings selected for this reply may pass its contact check. All private facts and other contact text still pass the leak checks. If nothing fits, say so. A catalog read failure does not establish that no event fits. The reply neither contacts anyone else nor creates a booking or matching request. A stored reply can replay only while the same member would receive the same current answer.
+Rank eligible events by matching saved interests, estimated travel, then the earliest start. Use a stable listing order when all three are equal. Add events in that order only while the reply has fewer than three. If nothing fits, say so. A catalog read failure does not establish that no event fits. A stored reply can replay only while the same member would receive the same current answer.
 
 ```quint
 pure val maxSoloEventOptions = 3
+
+pure def soloReplyHasRoom(picked: int): bool = picked < maxSoloEventOptions
+
+pure def lawSoloReplyHoldsAtMostThree(picked: int): bool =
+  picked >= 3 implies not(soloReplyHasRoom(picked))
 
 pure def soloEventPrecedes(fit: int, minutes: int, start: int, otherFit: int, otherMinutes: int, otherStart: int): bool =
   fit > otherFit or (fit == otherFit and (minutes < otherMinutes or (minutes == otherMinutes and start < otherStart)))

@@ -72,6 +72,12 @@ export function networkTextCanProduceInboxItem(system: boolean, messageType: str
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
+export function networkTextDeliveryKey(messageId: string, opportunityId: string): string {
+  return messageId;
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
 export function inboxOpportunityTerminal(opportunityStatus: string): boolean {
   return opportunityStatus === "COMPLETED" || opportunityStatus === "FEEDBACK_COLLECTED" || opportunityStatus === "DECLINED" || opportunityStatus === "EXPIRED" || opportunityStatus === "CANCELLED" || opportunityStatus === "SKIPPED" || opportunityStatus === "ABANDONED" || opportunityStatus === "QUORUM_FAILED";
 }
@@ -87,6 +93,20 @@ export function networkTextProjection(deliveryRecorded: boolean, opportunityBoun
 export function lawSystemTextProducesNoInboxItem(messageType: string): boolean {
   //@ ensures \result === true
   return !networkTextCanProduceInboxItem(true, messageType);
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawRepeatedProjectionKeepsItsKey(messageId: string, firstOpportunity: string, laterOpportunity: string): boolean {
+  //@ ensures \result === true
+  return networkTextDeliveryKey(messageId, firstOpportunity) === networkTextDeliveryKey(messageId, laterOpportunity);
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawEachNewTextKeepsItsOwnKey(firstMessage: string, laterMessage: string, opportunityId: string): boolean {
+  //@ ensures \result === true
+  return !(firstMessage !== laterMessage) || networkTextDeliveryKey(firstMessage, opportunityId) !== networkTextDeliveryKey(laterMessage, opportunityId);
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */

@@ -8,7 +8,7 @@ A late-arrival report is part of the [booked meeting journey](product/stories.md
 
 ### Relay one direct report for one current booked meeting
 
-Accept an exact late-arrival report from the member's signed conversation for one reviewed, scheduled meeting whose confirmed roster includes that member. A pair booking has two distinct participants and uses the pair rule only when the opportunity and any underlying plan allow a pair. Both participants must have accepted and received the current booking by the time the message arrived. A group needs at least three such participants. Check a positive provider or signed gateway receipt for the exact member, opportunity and schedule revision. Both receipt of the member's text and handling must fall between one hour before the meeting and thirty minutes after it starts. An accepted member can make one report per schedule revision.
+Accept an exact late-arrival report from the member's signed conversation for one reviewed, scheduled meeting whose confirmed roster includes that member. The meeting must be one whose logistics the Network arranged, not a job introduction. A pair booking has two distinct participants and uses the pair rule only when the opportunity and any underlying plan allow a pair. Both participants must have accepted and received the current booking by the time the message arrived. A group needs at least three such participants. Check a positive provider or signed gateway receipt for the exact member, opportunity and schedule revision. Both receipt of the member's text and handling must fall between one hour before the meeting and thirty minutes after it starts. An accepted member can make one report per schedule revision.
 
 ```quint
 pure val lateArrivalLeadMs = 60 * 60000

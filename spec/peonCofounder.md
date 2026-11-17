@@ -20,6 +20,6 @@ pure def lawCofounderRequiresTwoEligiblePeers(appMember: bool, jobSeat: bool, cu
     implies (appMember and not(jobSeat) and currentIntent and professionalOptIn and acceptsOneToOne and contactOpen and noOpenOpportunity and secondEligible and sameMarket)
 ```
 
-The bounded search reads same-app, matchable work context. Job-intake data stays in Hire. Only [permitted lane evidence](memberStanding.md) affects standing. A shared goal alone supplies no skill or offer. Both peers have to receive useful work from the other for a pair to pass.
+The bounded search reads same-app, matchable work context. Job-intake data stays in Hire. Only [permitted lane evidence](memberStanding.md) affects standing. A shared goal alone supplies no skill or offer. The engine's reciprocal fit rule, not this definition, lets a pair pass only when both peers receive useful work from the other.
 
 A proposal retains both source intent references for revalidation. It has no job seat, employer summary, warm-path intermediary, or alternate participant. It goes to human review before any probe. Each peer must agree to the proposed introduction before reveal. The hiring rubric applies to Hire.

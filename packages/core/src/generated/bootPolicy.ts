@@ -43,9 +43,9 @@ export function devShortcuts(platform: string, node: string): boolean {
 
 /** Story: Start the service with its declared configuration / An explicit environment takes precedence and local shortcuts require dev (spec/bootPolicy.md) */
 //@ pure
-export function lawProductionDisallowsDev(platform: string): boolean {
+export function lawProductionDisallowsDev(platform: string, node: string): boolean {
   //@ ensures \result === true
-  return !devShortcuts(platform, "production");
+  return !devShortcuts(platform, "production") && !devShortcuts("production", node);
 }
 
 /** Story: Start the service with its declared configuration / The network service entry checks provider, review, storage and secret configuration (spec/bootPolicy.md) */

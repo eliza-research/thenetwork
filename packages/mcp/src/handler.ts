@@ -24,7 +24,7 @@ import {
 } from "../../core/src/generated/authorizationPages.ts";
 import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
-  type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
+  type TokenAuthority, type TokenFlow, type TokenReason, accessTokenAuthority, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import {
@@ -1187,9 +1187,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
-    const authority = await grantAuthorityCurrent(grant);
-    if (t.expiresAt <= now() || grant.expiresAt <= now()) return "invalid";
-    if (authority !== "valid") return authority;
+    // spec/oauthTokenLifecycle.md, "The request needs current grant authority and must stay within its consent"
+    const current = tokenAuthority[await grantAuthorityCurrent(grant)];
+    const authority = accessTokenAuthority(!(t.expiresAt <= now() || grant.expiresAt <= now()), current);
+    if (authority === "Invalid") return "invalid";
+    if (authority === "Unavailable") return "unavailable";
     return { token: t, grant, client };
   }
 

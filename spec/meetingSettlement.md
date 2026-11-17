@@ -8,7 +8,7 @@ The [opportunity model](models/opportunity.md) follows a booked meeting through 
 
 ### Confirmation needs an accepted invitation and a delivered booking
 
-Record confirmation once. A participant can confirm in words. A participant also confirms when the opt-out window expires or the meeting starts. A later confirmation in words still records the participant's explicit reply without emitting another confirmation.
+Record confirmation once. A participant can confirm in words. A participant also confirms when the 48-hour opt-out window expires or the meeting starts. A later confirmation in words still records the participant's explicit reply without emitting another confirmation.
 
 ```quint
 pure val confirmationWindowHours = 48
@@ -113,7 +113,7 @@ pure def lawStaleCancellationCannotWait(noticeAccepted: bool, receiptMayArrive: 
 
 ### The day-of check-in uses one near-meeting message
 
-If the near reminder falls on the meeting's local day, ask whether the participant is still coming and tell them they can report a delay or change. The check-in uses the same message slot as the near reminder. A reminder sent on the previous day stays informational. Keep an unrelated pending question intact. Use the existing booked reply when its slot is free or already refers to this meeting. Bind that reply to the meeting's current schedule. Require a positive receipt for the exact check-in and accept only an answer received at or after receipt, within the current check-in window and no later than handling. The participant can still use an explicit cancellation under the [booking selector](opportunityLifecycle.md). Sending the check-in and receiving no reply leave the confirmation and attendance rules as they were. A replacement schedule gets its own reminder IDs. The queue checks both the current schedule and the check-in window before delivery.
+If the near reminder falls on the meeting's local day, ask whether the participant is still coming and tell them they can report a delay or change. The check-in uses the same message slot as the near reminder. A reminder sent on the previous day stays informational. Keep an unrelated pending question intact. Use the existing booked reply when its slot is free or already refers to this meeting. Bind that reply to the meeting's current schedule. Accept it only while that schedule is current and the check-in window is open: on the meeting's local day, at most 12 hours before the meeting and before it starts. Require a positive receipt for the exact check-in and accept only an answer received at or after receipt and no later than handling. The participant can still use an explicit cancellation under the [booking selector](opportunityLifecycle.md). Sending the check-in and receiving no reply leave the confirmation and attendance rules as they were. A replacement schedule gets its own reminder IDs. The queue checks both the current schedule and the check-in window before delivery.
 
 ```quint
 pure def dayOfCheckInWindow(sameLocalDay: bool, remainingMs: int): bool =
@@ -121,6 +121,12 @@ pure def dayOfCheckInWindow(sameLocalDay: bool, remainingMs: int): bool =
 
 pure def dayOfCheckInDue(sameLocalDay: bool, replySlotAvailable: bool, remainingMs: int): bool =
   replySlotAvailable and dayOfCheckInWindow(sameLocalDay, remainingMs)
+
+pure def dayOfReplyAccepted(currentSchedule: bool, sameLocalDay: bool, remainingMs: int): bool =
+  currentSchedule and dayOfCheckInWindow(sameLocalDay, remainingMs)
+
+pure def lawDayOfReplyNeedsCurrentScheduleBeforeStart(currentSchedule: bool, sameLocalDay: bool, remainingMs: int): bool =
+  dayOfReplyAccepted(currentSchedule, sameLocalDay, remainingMs) implies (currentSchedule and remainingMs > 0)
 
 pure def dayOfCheckInAnswerCurrent(exactReceipt: bool, acceptedAt: int, receivedAt: int, handledAt: int): bool =
   exactReceipt and 0 <= acceptedAt and acceptedAt <= receivedAt and receivedAt <= handledAt
@@ -254,7 +260,7 @@ pure def countAttendance(evidence: AttendanceEvidence): AttendanceFinding =
 
 ### A host's check-in uses the host's response
 
-A host who was booked and says they came can verify attendance. If the host reports missing people, count only other booked participants who say they came and whom the host did not name as missing. Otherwise use the host's attendance list if given. If the host gave no names, count other booked participants who did not say they missed the meeting.
+A host who was booked and says they came can verify attendance. If the host reports missing people, count only other booked participants who say they came and whom the host did not name as missing. Otherwise use the host's attendance list if given. If the host gave no names, count other booked participants who did not say they missed the meeting. A member request counts as fulfilled only when the requester and at least one other participant attended.
 
 ```quint
 type CheckInSource = NoCheckIn | MissingNames | PresentNames | BookedParticipants

@@ -32,12 +32,13 @@ pure def alwaysOnlyHeldItemRetainsText(relay: RelayLifecycle): bool =
 
 ### The send path determines the result of an admitted item
 
-The send path may send, defer, or refuse an admitted item. A refusal updates the relay record so a repeated request cannot claim delivery. A deferred result waits for the recipient's delivery window.
+The send path may send, defer, or refuse an admitted item. It records a delivery result only while the current policy permits the item's rendered content: a pass verdict permits it for a ready item, and a fresh policy check permits it for a released item. A refusal updates the relay record so a repeated request cannot claim delivery. A deferred result waits for the recipient's delivery window.
 
 ```quint
-pure def canRecordDelivery(relay: RelayLifecycle): bool = relay.phase == ReadyToSend or relay.phase == Released
+pure def canRecordDelivery(relay: RelayLifecycle, policyPermits: bool): bool =
+  (relay.phase == ReadyToSend or relay.phase == Released) and policyPermits
 
-pure def recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult): RelayLifecycle =
+pure def recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult, policyPermits: bool): RelayLifecycle =
   { ...relay, phase: if (delivery == Delivered) Sent else if (delivery == Queued) Deferred else SendRefused }
 
 pure def sometimesDeliveryWaits(relay: RelayLifecycle): bool = relay.phase == Deferred

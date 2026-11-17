@@ -117,5 +117,26 @@ export function siteUsesPart(app: AppKey, part: SharedPart): boolean {
 //@ pure
 export function lawSitesShareParts(a: AppKey, b: AppKey, part: SharedPart): boolean {
   //@ ensures \result === true
-  return !(part !== "PartJoinFlow") || siteUsesPart(a, part) === siteUsesPart(b, part);
+  return !(siteUsesPart(a, part) !== siteUsesPart(b, part)) || (part === "PartJoinFlow" && (a === "Peon" || b === "Peon"));
+}
+
+/** Story: One component set for every brand / Every site uses the same parts, and only peon.biz adds the browser join flow (spec/brandIdentity.md) */
+//@ pure
+export function partTokens(app: AppKey, part: SharedPart): AccentTokens {
+  return accentTokens(brandFor(app).accent);
+}
+
+/** Story: One component set for every brand / Every site uses the same parts, and only peon.biz adds the browser join flow (spec/brandIdentity.md) */
+//@ pure
+export function lawPartsTakeTheBrandTokens(app: AppKey, part: SharedPart, other: SharedPart): boolean {
+  //@ ensures \result === true
+  return equal_brandIdentity(partTokens(app, part), partTokens(app, other)) && equal_brandIdentity(partTokens(app, part), accentTokens(brandFor(app).accent));
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_brandIdentity(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_brandIdentity((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

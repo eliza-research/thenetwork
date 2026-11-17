@@ -47,8 +47,8 @@ export function recoveryPlanCanProceed(sourceClosed: boolean, currentRosterAndSl
 
 /** Story: Get a fresh invitation after an underfilled booking closes / The next plan needs fresh review and all three separate acceptances (spec/bookedGroupReplacement.md) */
 //@ pure
-export function replacementAnswerAllowed(ownAnswer: boolean, probeSent: boolean, answerAt: number, sentAt: number): boolean {
-  return ownAnswer && probeSent && answerAt >= sentAt;
+export function replacementAnswerAllowed(ownAnswer: boolean, probeDelivered: boolean, answerAt: number, sentAt: number): boolean {
+  return ownAnswer && probeDelivered && answerAt >= sentAt;
 }
 
 /** Story: Get a fresh invitation after an underfilled booking closes / The next plan needs fresh review and all three separate acceptances (spec/bookedGroupReplacement.md) */

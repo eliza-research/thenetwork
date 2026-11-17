@@ -92,7 +92,14 @@ export function book(proposal: OpportunityLifecycle, hasConsent: boolean): Oppor
 //@ pure
 export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   //@ ensures \result === true
-  return !groupCanContinue(remaining) || remaining >= 3;
+  return !(remaining < 3) || !groupCanContinue(remaining);
+}
+
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawPairLeftFromGroupNeedsFreshConsent(proposal: OpportunityLifecycle, remaining: number): boolean {
+  //@ ensures \result === true
+  return !(proposal.phase === "Scheduled" && !groupCanContinue(remaining)) || (canClose(proposal) && !canBook(close(proposal), true));
 }
 
 /** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */

@@ -40,6 +40,12 @@ export function lawYoungSoloListingsNeedAllAges(age: number, minimum: number): b
 
 /** Story: Get ideas for my own time / Reply with at most three public events and a reason for each (spec/soloConcierge.md) */
 //@ pure
+export function soloReplyHasRoom(picked: number): boolean {
+  return picked < maxSoloEventOptions;
+}
+
+/** Story: Get ideas for my own time / Reply with at most three public events and a reason for each (spec/soloConcierge.md) */
+//@ pure
 export function soloEventPrecedes(fit: number, minutes: number, start: number, otherFit: number, otherMinutes: number, otherStart: number): boolean {
   return fit > otherFit || (fit === otherFit && (minutes < otherMinutes || (minutes === otherMinutes && start < otherStart)));
 }
@@ -48,6 +54,13 @@ export function soloEventPrecedes(fit: number, minutes: number, start: number, o
 //@ pure
 export function soloReplyReplayAllowed(authorized: boolean, sameLiveReply: boolean): boolean {
   return authorized && sameLiveReply;
+}
+
+/** Story: Get ideas for my own time / Reply with at most three public events and a reason for each (spec/soloConcierge.md) */
+//@ pure
+export function lawSoloReplyHoldsAtMostThree(picked: number): boolean {
+  //@ ensures \result === true
+  return !(picked >= 3) || !soloReplyHasRoom(picked);
 }
 
 /** Story: Get ideas for my own time / Reply with at most three public events and a reason for each (spec/soloConcierge.md) */

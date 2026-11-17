@@ -29,7 +29,7 @@ export declare function canRecordListenerDrain(s: BackendLifecycle): boolean;
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export declare function recordListenerDrain(s: BackendLifecycle): BackendLifecycle;
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
-export declare function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean;
+export declare function ticksReleased(s: BackendLifecycle): boolean;
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export declare function settleWorkDrain(s: BackendLifecycle, timedOut: boolean): BackendLifecycle;
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
@@ -47,7 +47,11 @@ export declare function sometimesClosesAfterGrace(s: BackendLifecycle): boolean;
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export declare function canBeginShutdown(s: BackendLifecycle): boolean;
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
+export declare function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean;
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
 export declare function stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle): boolean;
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) @throws {never} */
+export declare function stepCleanDrainHasNoTicks(before: BackendLifecycle, after: BackendLifecycle): boolean;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: BackendLifecycle, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

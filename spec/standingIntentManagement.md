@@ -1,6 +1,6 @@
 # Manage your standing intents
 
-[Story F9](product/stories.md#story-f9--keep-a-standing-intent) lets a member list, pause, and close their intents. The [freshness rules](standingIntent.md) supply the active deadline. The shell binds the command to the canonical member of the current app, lists only the member's rows, and stores controls in that network's persisted member state.
+[Story F9](product/stories.md#story-f9--keep-a-standing-intent) lets a member list, pause, and close their intents. The [freshness rules](standingIntent.md) supply the active deadline. The shell binds the command to the canonical member of the current app, lists only the member's rows, and stores controls in that network's persisted member state. The row write checks the stored status and the member and app scope it read: if the stored status changes or the row leaves that scope before the write, the whole transaction fails.
 
 ## Story: See and manage the things the Network is looking for
 
@@ -57,7 +57,7 @@ pure def sometimesClosesAnIntent(s: IntentManagement): bool = s.phase == CloseSe
 
 ### Commit a stored intent change with its acknowledgment
 
-A selected stored intent writes to the same member's row in the current app in the transaction that saves the control and acknowledgment. If its stored status changes or the row leaves that scope before the write, the whole transaction fails. A learned intent keeps its control in member state. Controls saved before row updates began still apply.
+A selected stored intent writes to the same member's row in the current app in the transaction that saves the control and acknowledgment, but only when a pause or a close is selected. A learned intent keeps its control in member state. Controls saved before row updates began still apply.
 
 ```quint
 pure def writesStandingIntentRow(s: IntentManagement, stored: bool): bool =

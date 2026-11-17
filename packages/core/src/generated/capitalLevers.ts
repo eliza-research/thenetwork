@@ -58,17 +58,17 @@ export function lawReachUsesOnlyReservedSlots(added: number, extra: number, seat
 
 /** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
 //@ pure
-export function lawReachNeverSeatsAnIncompatibleCandidate(added: number, extra: number): boolean {
-  //@ ensures \result === true
-  return !organizingReachSeatTaken(added, extra, false);
-}
-
-/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
-//@ pure
 export function reachFromBands(bands: number, base: number, perBand: number, maximum: number): ReachAllowance {
   const local_4 = exact_capitalLevers(base + exact_capitalLevers(bands * perBand));
   const local_5 = local_4 < maximum ? local_4 : maximum;
   return { max: local_5, reservedForLowExposure: local_5 > base ? exact_capitalLevers(local_5 - base) : 0 };
+}
+
+/** Story: Use my past contributions without changing who can match with me / Capital never makes an incompatible candidate eligible (spec/capitalLevers.md) */
+//@ pure
+export function lawReachNeverSeatsAnIncompatibleCandidate(added: number, extra: number): boolean {
+  //@ ensures \result === true
+  return !organizingReachSeatTaken(added, extra, false);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

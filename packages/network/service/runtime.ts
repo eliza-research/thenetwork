@@ -29,7 +29,7 @@ import type { RunRecord } from "@thenetwork/core";
 import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
-import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
+import { cofounderBoundIntentCurrent, cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
@@ -407,9 +407,10 @@ export class NetworkRuntime {
     const rows = await tx`select * from network.intents where app_id=${app} and id in ${tx(ids)} order by id for share`;
     const intents = rows.map(intentOf);
     const current = (memberId: MemberId) => {
-      const exact = intents.find(i => i.memberId === memberId && i.id === opp.cofounderIntents?.[memberId]);
-      return !!exact && exact.objective === cofounderIntentObjective
-        && cofounderIntentEligible(exact.app ?? "", app, exact.category, exact.details ?? "", standingIntentLive(exact, now));
+      const bound = opp.cofounderIntents?.[memberId];
+      const exact = intents.find(i => i.memberId === memberId && i.id === bound);
+      return !!exact && cofounderBoundIntentCurrent(exact.id === bound, exact.objective === cofounderIntentObjective
+        && cofounderIntentEligible(exact.app ?? "", app, exact.category, exact.details ?? "", standingIntentLive(exact, now)));
     };
     if (!current(first) || !current(second) || await this.canonicalPairBlocked(tx, first, second)) return refused;
     const members = await tx`select id, prefs, participation_state, participation_window, opted_out from network.members

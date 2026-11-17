@@ -1,6 +1,6 @@
 # Join in the browser
 
-The peon.biz site keeps one browser page at `/join`. A person's agent sends the person to `https://peon.biz/join?via=agent#firstName=..&age=..`. On this page the person confirms their own phone, reviews their first name and age, agrees to the texts and joins. This spec models only what the page shows and what the page lets the person do. The server owns the join rules ([site enrollment](siteEnrollment.md)) and the code limits ([phone verification limits](otpLimits.md)). The browser shell owns the address, the fetch calls, the security check widget, the focus and the copy. The shell sends each server answer to this machine as one event. The public sites have no sign-in link, no settings page and no member dashboard: this page is only for joining.
+The peon.biz site keeps one browser page at `/join`. A person's agent sends the person to `https://peon.biz/join?via=agent#firstName=..&age=..`. On this page the person confirms their own phone, reviews their first name and age, agrees to the texts and joins. This spec models only what the page shows and what the page lets the person do. The server owns the join rules ([site enrollment](siteEnrollment.md)) and the code limits ([phone verification limits](otpLimits.md)). The browser shell owns the address, the fetch calls, the security check widget, the focus and the copy. The shell keeps a Peon invitation token only in the page's memory: the token survives direct phone verification in the same page, the Cloud phone sign-in provider receives no token, and the page puts no invitation in persistent storage. After Cloud returns, the person reopens the original invitation link in the verified session. For a first Cloud sign-in, the site can seal the allowed name, age and agent-return flag with the pending Peon handoff, and the Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The site clears the draft cookie when the returning tab presents its one-use receipt. The page stores only the receipt across navigation and clears it on return. The shell sends each server answer to this machine as one event. The public sites have no sign-in link, no settings page and no member dashboard: this page is only for joining.
 
 ## Story: Open the join page from my agent's link
 
@@ -400,22 +400,9 @@ pure def lawFailedSaveKeepsOwnedProfile(page: JoinPage): bool =
 
 ### A Peon invitation stays in memory until the verified account agrees to join
 
-Read one valid token from Peon's issued `/join#invite=` link. Remove the
-fragment before making any API request. Keep the token in this page's
-memory. Only the same-origin Peon session can bind it to its verified
-account marker. A new owner of the same verified phone has a different
-marker. When the bound account submits a complete profile with text consent and
-the address is clean, the page sends the token in the same-origin Join JSON request along with its account
-marker. The server decides whether the invitation is current and can be
-accepted by that account. If it refuses the invitation, the page cannot
-join without it on that attempt. Clear the token after a definite result
-or loss or replacement of the verified account. A temporary request
-failure can retry with the same verified account.
+Read one valid token from Peon's issued `/join#invite=` link. Remove the fragment before any API request. Keep the token in the memory of this page. Only the same-origin Peon session can bind the token to its verified account marker. A new owner of the same verified phone has a different marker. The page sends the token, with its account marker, in the same-origin Join JSON request only when the bound account sends a complete profile with text consent and the address is clean. The server decides whether the invitation is current and can be accepted by that account. If it refuses the invitation, the page cannot join without it on that attempt. The page clears the token after a definite answer, and when it loses or replaces the verified account. A temporary request failure can retry with the same verified account.
 
-An invitation survives direct phone verification in the same page.
-The Cloud phone sign-in provider receives no invitation token. After
-Cloud returns, reopen the original invitation link in the verified
-session. The page puts no invitation in persistent storage.
+An invitation stays through direct phone verification in the same page. The Cloud phone sign-in provider receives no invitation token. After Cloud returns, open the original invitation link again in the verified session. The page puts no invitation in persistent storage.
 
 ```quint
 pure def browserInvitationMayBind(peonApp: bool, verifiedView: bool): bool =

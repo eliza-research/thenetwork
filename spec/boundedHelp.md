@@ -3,6 +3,13 @@
 [Story F14](product/stories.md#story-f14--ask-for-bounded-help) uses the same
 home-entry and high-risk facts for direct requests and the engine's helper
 search. The service keeps request text out of matching and safety case records.
+The service routes a saved request that identifies a home task through the same
+check again before it retries or contacts a helper. When an unfamiliar
+singleton needs a second helper, the engine's helper search uses the
+small-group format and applies that format's opt-in before it ranks any helper
+in the group. The engine marks a qualified home-entry configuration as medium
+risk, and the configuration still requires review and each participant's
+consent.
 
 ## Story: Ask for manageable help without unexpected contact
 
@@ -14,9 +21,8 @@ search. The service keeps request text out of matching and safety case records.
 Classify the request before creating a matching request. Refuse an out-of-scope
 high-risk task. Keep a home-entry task in the staff safety queue while the
 service has no approved private venue to offer. A repeat request uses the open
-case. The case has a reason code and no address, message text or trust penalty.
-Recheck a saved request that identifies a home task before it retries or
-contacts a helper. Ordinary bounded help uses the reviewed member request flow.
+case. Only an adult's request opens a case. The case has a reason code and no
+address, message text or trust penalty. Ordinary bounded help uses the reviewed member request flow.
 
 ```quint
 type BoundedHelpRoute = SearchPublicHelp | ReviewHomeEntryHelp | RefuseHighRiskHelp
@@ -38,10 +44,8 @@ pure def lawHighRiskHelpTakesPrecedence(homeEntry: bool): bool =
 ### An unfamiliar helper cannot be the only helper for home entry
 
 A home-entry configuration needs at least two helpers, or one helper already
-known to the requester. When an unfamiliar singleton needs a second helper,
-use the small-group format and apply that format's opt-in before ranking any
-helper in the group. A qualified configuration is medium risk and still
-requires review and each participant's consent.
+known to the requester. A home-entry request for one unfamiliar helper needs a
+second helper.
 
 ```quint
 pure def homeHelperSetAllowed(helperCount: int, knownSingleton: bool): bool =
@@ -68,7 +72,7 @@ pure def homeHelpOfferChangeAllowed(eligibleAdultOwner: bool, explicitChoice: bo
 
 ### Intake keeps only structured home-help details after considering a service
 
-Record a confirmed task from the supported moving-help vocabulary, a coarse neighborhood, an exact time window, and the estimated minutes of help. Record why a service could not solve the task. Store the app, requester, and expiry. Keep street addresses, free text, service links, and messages out of the plan. The review deadline cannot be later than the start of the task.
+Record a confirmed task from the supported moving-help vocabulary, a coarse neighborhood, an exact time window, and the estimated minutes of help. The estimated minutes are more than zero and fit in the time window. Record why a service could not solve the task. Store the app, requester, and expiry. Keep street addresses, free text, service links, and messages out of the plan. The review deadline cannot be later than the start of the task.
 
 ```quint
 type HomeHelpTask = MoveFurniture | CarryBoxes
@@ -103,7 +107,7 @@ pure def alwaysSubmittedHomeHelpHasDeadline(plan: HomeHelpPlan): bool =
 
 ### Fix the roster before review and recheck it at approval
 
-Before asking a person, save the exact helper roster for staff review. The owner and distinct helpers must be eligible for the task, time and format, and a singleton must have met the owner before. Safety staff in this app can approve only the current revision and the exact roster they reviewed. Audit each staff read and decision before returning it. At approval, check the roster again. Replacing a helper or changing the task, time, or area requires a new revision and fresh approval. A revision can shorten the deadline without extending it.
+Before asking a person, save the exact helper roster for staff review. A roster has at most three helpers. The owner and distinct helpers must be eligible for the task, time and format, and a singleton must have met the owner before. Safety staff in this app can approve only the current revision and the exact roster they reviewed. Audit each staff read and decision before returning it. At approval, check the roster again. Replacing a helper or changing the task, time, or area requires a new revision and fresh approval. A revision can shorten the deadline without extending it.
 
 ```quint
 pure def homeHelpRosterAllowed(helperCount: int, knownSingleton: bool, currentEligibility: bool): bool =

@@ -6,7 +6,7 @@
 // member said (or the one stated default: straight after an unclear seeks answer), and never identity, orientation, age, kids, faith or anything the rules did not read.
 import { parseReply } from "@thenetwork/core";
 import {
-  confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackAffirmed, readbackEligible, readbackReason, step,
+  confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackAffirmed, readbackReason, step,
 } from "../../../../core/src/generated/slopOnboarding.ts";
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
@@ -155,9 +155,10 @@ export function nextQuestion(p: SlopOnboarding): { reason: string; field: Onboar
 export function nextOnboardingPrompt(p: SlopOnboarding, skip: readonly string[] = []): { reason: string; text: string } | undefined {
   // spec/slopOnboarding.md, "Age restrictions stop dating onboarding before a prompt"
   const restricted = p.minor || p.declined;
-  const wantsReadback = !restricted && readbackEligible(hardComplete(p), !!p.confirmed, skip.includes(readbackReason),
-    (p.askCounts[readbackReason] ?? 0) < MAX_ASKS_PER_QUESTION);
-  let prompt = step(initial, { type: "routeProfile", restricted, wantsReadback });
+  let prompt = step(initial, {
+    type: "routeProfile", restricted, hardComplete: hardComplete(p), confirmed: !!p.confirmed,
+    skipped: skip.includes(readbackReason), belowAskCap: (p.askCounts[readbackReason] ?? 0) < MAX_ASKS_PER_QUESTION,
+  });
   if (prompt.phase === "ReadbackOffered") {
     const text = readBack(p);
     prompt = step(prompt, { type: "resolveReadback", textAvailable: !!text });

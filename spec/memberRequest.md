@@ -20,7 +20,7 @@ pure def lawDirectRequestPassesInterview(interviewPending: bool, initialOnboardi
 
 ### A repeat ask keeps the newest matching request
 
-Use the newest unwithdrawn people request for the same person and desire, or the same category when there is no desire ID. A booked or fulfilled request is outside this lookup. Reuse a request while it is probing or while it is inside the member's configured re-search interval. A new request requires a category that the app supports.
+Use the newest unwithdrawn people request for the same person and desire, or the same category when there is no desire ID. A booked or fulfilled request is outside this lookup. Reuse a request while it is probing or while it is inside the member's configured re-search interval. A quiet repeat ends with no other step. A repeat of a probing request tells the member that the search continues. When matching is paused, a repeat keeps its request waiting. Otherwise a repeat goes to the immediate retry check. A new request requires a category that the app supports. When matching is paused, a new request waits. A member who is not eligible for a search, because of a hold or a report, has the new request put on hold. A member who already has an open opportunity is busy, and the new request waits. Otherwise the new request starts a search.
 
 ```quint
 type MemberRequestPhase =
@@ -69,7 +69,7 @@ pure def applyRequestWithdrawal(flow: MemberRequestFlow, matched: bool): MemberR
 
 ### A standing request waits for its next search window
 
-An immediate repeat can search an open waiting request only when the member is eligible for this search and free. More than one hour must have passed since a recorded attempt. A scheduled retry checks only open, waiting people requests through seven days from creation and waits at least twenty hours after an earlier attempt. Both routes wait at least seventy-two hours after a requester confirmation question. A scheduled attempt still requires a currently eligible, free member.
+An immediate repeat can search an open waiting request only when the member is eligible for this search and free. Otherwise the request waits for a later search. More than one hour must have passed since a recorded attempt. A scheduled retry checks only open, waiting people requests through seven days from creation and waits at least twenty hours after an earlier attempt. Both routes wait at least seventy-two hours after a requester confirmation question. A scheduled attempt still requires a currently eligible, free member.
 
 ```quint
 pure val immediateRetryMs: int = 3600000

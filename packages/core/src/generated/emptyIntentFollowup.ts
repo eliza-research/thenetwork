@@ -26,6 +26,13 @@ export function lawNewStatementWaitsBeforeAFollowup(waitDays: number): boolean {
   return !(waitDays > 0) || !emptyIntentWaitOver(0, waitDays);
 }
 
+/** Story: Hear when nothing fits yet / Explain an empty search after its configured wait (spec/emptyIntentFollowup.md) */
+//@ pure
+export function lawDefaultWaitHoldsAStatementForTenDays(statementAgeMs: number): boolean {
+  //@ ensures \result === true
+  return !(statementAgeMs < exact_emptyIntentFollowup(10 * emptyIntentDayMs)) || !emptyIntentWaitOver(statementAgeMs, emptyIntentDefaultWaitDays);
+}
+
 /** Story: Hear when nothing fits yet / A pending follow-up uses current permission and the same live statement (spec/emptyIntentFollowup.md) */
 //@ pure
 export function emptyIntentFollowupReady(liveStatement: boolean, eligible: boolean, categoryAllowed: boolean, quietConversation: boolean, sameSearchDay: boolean, alreadyReported: boolean): boolean {

@@ -37,6 +37,7 @@ export function releaseTick(s: BackendLifecycle, tickKey: string): BackendLifecy
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepNewTicksRequireServing(s, "releaseTick", \result)
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, ticking: s.ticking.filter((set_x: string) => ![tickKey].includes(set_x)) };
 }
 
@@ -58,6 +59,7 @@ export function reserveTick(s: BackendLifecycle, tickKey: string): BackendLifecy
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepNewTicksRequireServing(s, "reserveTick", \result)
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, ticking: s.ticking.concat([tickKey].filter((set_x: string) => !s.ticking.includes(set_x))) };
 }
 
@@ -73,6 +75,7 @@ export function startTimer(s: BackendLifecycle, at: number): BackendLifecycle {
   //@ ensures (inv(s) && canStartTimer(s)) ==> stepNewTicksRequireServing(s, "startTimer", \result)
   //@ ensures (inv(s) && canStartTimer(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canStartTimer(s)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canStartTimer(s)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, timerStarted: true, ticksFrom: at };
 }
 
@@ -94,6 +97,7 @@ export function beginShutdown(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepNewTicksRequireServing(s, "beginShutdown", \result)
   //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, phase: "StoppingListeners" };
 }
 
@@ -109,13 +113,14 @@ export function recordListenerDrain(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepNewTicksRequireServing(s, "recordListenerDrain", \result)
   //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, phase: "WaitingForWork" };
 }
 
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
-export function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean {
-  return s.phase === "WaitingForWork" || (s.phase === "StoppingListeners" && timedOut);
+export function ticksReleased(s: BackendLifecycle): boolean {
+  return s.ticking.length === 0;
 }
 
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
@@ -124,6 +129,7 @@ export function settleWorkDrain(s: BackendLifecycle, timedOut: boolean): Backend
   //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepNewTicksRequireServing(s, "settleWorkDrain", \result)
   //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, phase: timedOut ? "ClosingTimedOut" : "ClosingClean" };
 }
 
@@ -139,6 +145,7 @@ export function recordBackendClose(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepNewTicksRequireServing(s, "recordBackendClose", \result)
   //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepCleanDrainHasNoTicks(s, \result)
   return { ...s, phase: s.phase === "ClosingClean" ? "ClosedClean" : "ClosedTimedOut" };
 }
 
@@ -174,8 +181,20 @@ export function canBeginShutdown(s: BackendLifecycle): boolean {
 
 /** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
+export function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean {
+  return (s.phase === "WaitingForWork" && (timedOut || ticksReleased(s))) || (s.phase === "StoppingListeners" && timedOut);
+}
+
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
+//@ pure
 export function stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle): boolean {
   return !(!backendAcceptsWork(before)) || !backendAcceptsWork(after);
+}
+
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
+//@ pure
+export function stepCleanDrainHasNoTicks(before: BackendLifecycle, after: BackendLifecycle): boolean {
+  return !(before.phase !== "ClosingClean" && after.phase === "ClosingClean") || ticksReleased(before);
 }
 
 /** Do the rules allow this event in this state? */

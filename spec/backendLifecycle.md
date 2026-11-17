@@ -1,6 +1,6 @@
 # Backend tick and shutdown lifecycle
 
-The backend process uses this machine for local tick reservations and shutdown progression. The [runtime operations model](models/runtime_ops.md) also follows persisted work, peer processes, and host termination. The backend retains its timer, listener, promise, and database effects.
+The backend process uses this machine for local tick reservations and shutdown progression. The [runtime operations model](models/runtime_ops.md) also follows persisted work, peer processes, and host termination. The backend retains its timer, listener, promise, and database effects. The shell also orders each scheduled round: it attempts inbound redrive before the network ticks, then retention and notifications, and it runs operations beside that sequence. At shutdown the shell clears its tick interval; the record of when the timer started stays.
 
 ## Story: Run one tick per worker at a time
 
@@ -8,7 +8,7 @@ The backend process uses this machine for local tick reservations and shutdown p
 
 ### Reserve each tick worker before starting its work
 
-The inbound inbox, each network, retention, notifications, and operations use separate keys. While the process is serving, an available worker can reserve its key only if no tick owns it. Release the reservation after the worker settles, including on a failure. Each scheduled round attempts inbound redrive before its network ticks, then retention and notifications. Operations run beside that sequence. The database owns advisory locks across processes.
+The inbound inbox, each network, retention, notifications, and operations use separate keys. While the process is serving, an available worker can reserve its key only if no tick owns it. Release the reservation after the worker settles, including on a failure. The database owns advisory locks across processes.
 
 ```quint
 type BackendPhase = Serving | StoppingListeners | WaitingForWork | ClosingClean | ClosingTimedOut | ClosedClean | ClosedTimedOut
@@ -49,7 +49,7 @@ pure def sometimesTimerStarts(s: BackendLifecycle): bool = s.timerStarted
 
 ### The grace period covers listener and work drain
 
-Mark the process as draining, clear the tick timer, and start the grace period before waiting for the listeners. Request a graceful stop on both listeners. Once they finish, wait for the tracked requests and ticks to settle. Only completion of both steps can produce a clean result. When either step reaches the same deadline, record an unclean result, force-close remaining connections and terminate pending database sessions. Close the service and report the result. A repeat shutdown call receives the same result.
+Mark the process as draining and start the grace period before waiting for the listeners. Request a graceful stop on both listeners. Once they finish, wait for the tracked requests and ticks to settle. Only completion of both steps can produce a clean result, and a clean result needs every tick reservation released. When either step reaches the same deadline, record an unclean result, force-close remaining connections and terminate pending database sessions. Close the service and report the result. A repeat shutdown call receives the same result.
 
 ```quint
 pure def canBeginShutdown(s: BackendLifecycle): bool = backendAcceptsWork(s)
@@ -58,8 +58,10 @@ pure def beginShutdown(s: BackendLifecycle): BackendLifecycle = { ...s, phase: S
 pure def canRecordListenerDrain(s: BackendLifecycle): bool = s.phase == StoppingListeners
 pure def recordListenerDrain(s: BackendLifecycle): BackendLifecycle = { ...s, phase: WaitingForWork }
 
+pure def ticksReleased(s: BackendLifecycle): bool = s.ticking.size() == 0
+
 pure def canSettleWorkDrain(s: BackendLifecycle, timedOut: bool): bool =
-  s.phase == WaitingForWork or (s.phase == StoppingListeners and timedOut)
+  (s.phase == WaitingForWork and (timedOut or ticksReleased(s))) or (s.phase == StoppingListeners and timedOut)
 pure def settleWorkDrain(s: BackendLifecycle, timedOut: bool): BackendLifecycle =
   { ...s, phase: if (timedOut) ClosingTimedOut else ClosingClean }
 
@@ -74,6 +76,9 @@ pure def stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle
 
 pure def stepCleanDrainWaitsForListeners(before: BackendLifecycle, after: BackendLifecycle): bool =
   (before.phase != ClosingClean and after.phase == ClosingClean) implies before.phase == WaitingForWork
+
+pure def stepCleanDrainHasNoTicks(before: BackendLifecycle, after: BackendLifecycle): bool =
+  (before.phase != ClosingClean and after.phase == ClosingClean) implies ticksReleased(before)
 
 pure def sometimesClosesCleanly(s: BackendLifecycle): bool = s.phase == ClosedClean
 pure def sometimesClosesAfterGrace(s: BackendLifecycle): bool = s.phase == ClosedTimedOut
