@@ -93,7 +93,7 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
         if (res.status === 200 || res.body?.error === "under_age") lowest = Math.min(lowest, age);
         if (res.body?.error === "under_age") expect(lowest).toBeLessThan(13);
         if (res.status === 200) expect(lowest).toBeGreaterThanOrEqual(13);
-        await c.api.accounts.leave(APPS[app], { e164: phone, personId: null });
+        await c.api.accounts.leave(APPS[app], { e164: phone, personId: (await c.api.accounts.personFor(phone))?.id ?? null });
         c.joined.length = 0;
       }
     }

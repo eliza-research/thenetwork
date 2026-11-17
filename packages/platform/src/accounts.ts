@@ -35,7 +35,7 @@ import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
 import { signupAccountView } from "./sessions.ts";
-import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
+import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
 /** A started number change must be confirmed with the code from the new number within this time. */
@@ -524,18 +524,20 @@ export class Accounts {
   }
 
   /** Leave one app: the forget path. The phone and other memberships stay. */
-  async leave(app: AppInfo, who: Who): Promise<void> {
-    const at = this.now();
+  async leave(app: AppInfo, who: Who, evidence?: Partial<Pick<AppLeaveInput, "at" | "expectedMemberId" | "line" | "ref">>): Promise<boolean> {
+    const at = evidence?.at ?? this.now();
     const request = stepPrivacy(accountPrivacyInitial, { type: "beginPrivacyRequest", operation: "LeaveApp" });
-    const person = await this.personFor(who.e164);
-    const m = person && (await this.store.getMembership(person.id, app.id));
-    await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "leave", at });
+    const admission = await this.store.beginAppLeave({ app: app.id, ...who, ...evidence, at });
+    const m = admission.ok ? admission.membership : undefined;
     const optedOut = stepPrivacy(request, {
-      type: "recordLeaveConsent", membershipBound: hasScopedMembership(!!person, !!m, m?.state === "removed"),
+      type: "recordLeaveConsent", recorded: admission.ok, membershipBound: hasScopedMembership(!!who.personId, !!m, m?.state === "removed"),
     });
-    if (optedOut.phase !== "AwaitingAppForget" || !person || !m) return;
-    await this.hooks.onForget?.({ app, personId: person.id, memberId: m.memberId, e164: who.e164 });
-    await this.store.forgetMembership(person.id, app.id, at);
+    if (optedOut.phase === "AwaitingAppForget" && who.personId && m) {
+      await this.hooks.onForget?.({ app, personId: who.personId, memberId: m.memberId, e164: who.e164 });
+      await this.store.forgetMembership(who.personId, app.id, at, m.memberId);
+      return stepPrivacy(optedOut, { type: "recordAppForget" }).phase === "CompletePrivacyRequest";
+    }
+    return optedOut.phase === "CompletePrivacyRequest";
   }
 
   /** Delete everything: every membership (forget path each), the phone, grants, own blocks, sessions; keep a tombstone and the suppression hash. */

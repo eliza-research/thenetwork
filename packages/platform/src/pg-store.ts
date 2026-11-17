@@ -2,11 +2,11 @@
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
-import { hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
+import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
+import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -15,6 +15,10 @@ const json = <T>(v: unknown): T => (typeof v === "string" ? JSON.parse(v) : v) a
 
 async function lockPhoneBinding(tx: SQL, e164: string): Promise<void> {
   await tx`select pg_advisory_xact_lock(hashtextextended(${`phone-binding:${e164}`}, 0))`;
+}
+
+async function lockPersonPhone(tx: SQL, personId: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`person-phone-binding:${personId}`}, 0))`;
 }
 
 const person = (r: Row): Person => ({ id: r.id, lowestAge: r.lowest_age ?? null, createdAt: ms(r.created_at)!, deletedAt: ms(r.deleted_at) });
@@ -133,11 +137,31 @@ export class PgPeopleStore implements PeopleStore {
         first_name = excluded.first_name, profile = excluded.profile, joined_at = excluded.joined_at, left_at = excluded.left_at`;
   }
 
-  async addConsent(e: ConsentEvent) {
-    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
+  async addConsent(e: ConsentEvent, db = this.sql) {
+    const r = await db`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
       values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
       on conflict (e164, ref) where ref is not null do nothing returning id`;
     return r.length > 0;
+  }
+  async beginAppLeave(input: AppLeaveInput): Promise<AppLeaveAdmission> {
+    const { app, e164, personId, expectedMemberId, at, line, ref } = input;
+    return this.sql.begin(async tx => {
+      if (personId) {
+        // Dispatch holds person and membership row locks and rechecks consent before sending.
+        // The identity lock keeps a phone move from racing the opt-out without waiting for dispatch.
+        await lockPersonPhone(tx, personId);
+        const [owner] = await tx`select id from platform.people where id=${personId}::uuid and deleted_at is null`;
+        if (!owner) return { ok: false };
+      } else await lockPhoneBinding(tx, e164);
+      const [phone] = await tx<{ person_id: string; hold: PhoneHold | null; verified_at: Date }[]>`select person_id, hold, verified_at
+        from platform.phone_identities where e164=${e164}`;
+      if (!appLeaveBindingCurrent(personId ?? "", phone?.person_id ?? "", phone?.hold != null, phone?.verified_at.getTime() ?? 0, at)) return { ok: false };
+      const [row] = personId ? await tx`select * from platform.memberships where person_id=${personId}::uuid and app_id=${app}` : [];
+      const current = row && membership(row);
+      if (!appLeaveMemberCurrent(expectedMemberId ?? "", current?.memberId ?? "", current?.joinedAt ?? 0, at)) return { ok: false };
+      await this.addConsent({ app, e164, at, line, ref, state: "opted_out", source: "leave" }, tx);
+      return { ok: true, membership: current };
+    });
   }
   async lastConsent(e164: string, app: AppId): Promise<ConsentLast> {
     const rows = await this.sql`
@@ -307,11 +331,12 @@ export class PgPeopleStore implements PeopleStore {
     });
   }
 
-  async forgetMembership(personId: string, app: AppId, at: number) {
+  async forgetMembership(personId: string, app: AppId, at: number, expectedMemberId?: string) {
     await this.sql.begin(async tx => {
       await tx`select id from platform.people where id = ${personId} for update`;
-      await tx`update platform.memberships set state = 'removed', review = null, first_name = null, profile = '{}'::jsonb, left_at = ${ts(at)}
-        where person_id = ${personId} and app_id = ${app}`;
+      const removed = await tx`update platform.memberships set state = 'removed', review = null, first_name = null, profile = '{}'::jsonb, left_at = ${ts(at)}
+        where person_id = ${personId} and app_id = ${app} ${expectedMemberId === undefined ? tx`` : tx`and member_id = ${expectedMemberId}`} returning member_id`;
+      if (expectedMemberId !== undefined && removed.length === 0) return;
       await tx`update platform.share_grants set revoked_at = ${ts(at)} where person_id = ${personId} and (from_app = ${app} or to_app = ${app}) and revoked_at is null`;
       await tx`select set_config('app.app_id', ${app}, true)`;
       await tx`select notify.forget_data(${personId}, ${app})`;
@@ -320,7 +345,8 @@ export class PgPeopleStore implements PeopleStore {
 
   async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, releaseHeldPhone = false) {
     return this.sql.begin(async tx => {
-      if (!personId) await lockPhoneBinding(tx, e164);
+      if (personId) await lockPersonPhone(tx, personId);
+      else await lockPhoneBinding(tx, e164);
       const [owner] = personId ? await tx<{ lowest_age: number | null; phone_hash: string | null }[]>`select lowest_age, phone_hash
         from platform.people where id = ${personId}::uuid and deleted_at is null for update` : [];
       if (personId && !owner) return false;
@@ -384,6 +410,7 @@ export class PgPeopleStore implements PeopleStore {
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
     return this.sql.begin(async tx => {
       await lockPhoneBinding(tx, m.newE164);
+      await lockPersonPhone(tx, m.personId);
       const [person] = await tx`select id from platform.people where id=${m.personId}::uuid and deleted_at is null for update`;
       if (!person) return "no_phone";
       const [old] = await tx`select hold from platform.phone_identities where e164 = ${m.oldE164} and person_id = ${m.personId}::uuid for update`;

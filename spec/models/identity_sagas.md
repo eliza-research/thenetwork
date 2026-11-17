@@ -104,7 +104,7 @@ module identity_sagas {
 
   type Sagas = {
     ban: { pc: int, p: int, scope: str, hashes: Set[str], left: Set[str], marked: Set[str] },
-    leave: { pc: int, p: int, app: str, ph: str, hasM: bool, failListener: bool },
+    leave: { pc: int, p: int, app: str, ph: str, hasM: bool, gen: int, failListener: bool },
     del: { pc: int, p: int, ph: str, left: Set[str] },
     ch: { pc: int, ph: str, p: int, left: Set[str] },
     mv: { pc: int, p: int, src: str, dst: str },
@@ -538,7 +538,7 @@ module identity_sagas {
   // ------------------------------------------------------------------ init
   pure val SAGAS0: Sagas = {
     ban: { pc: 0, p: 0, scope: "", hashes: Set(), left: Set(), marked: Set() },
-    leave: { pc: 0, p: 0, app: "", ph: "", hasM: false, failListener: false },
+    leave: { pc: 0, p: 0, app: "", ph: "", hasM: false, gen: 0, failListener: false },
     del: { pc: 0, p: 0, ph: "", left: Set() },
     ch: { pc: 0, ph: "", p: 0, left: Set() },
     mv: { pc: 0, p: 0, src: "", dst: "" },
@@ -872,13 +872,13 @@ module identity_sagas {
         set3(addEv(forgetUnit(w0, target, a), ph, a, true, w.now), s,
           { ...g, forgotten: g.forgotten.union(Set((target, a, w.gen.get((target, a))))), last: "leave by a legacy member", args: [a] })
       else
-        set3(w0, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: LIVE_MEM.contains(w0.mem.get((p, a))) or w0.mem.get((p, a)) == "invited", failListener: false } },
-          { ...g, leavePending: if (LIVE_MEM.contains(w0.mem.get((p, a)))) g.leavePending.union(Set((p, a))) else g.leavePending,
+        set3(w0, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: LIVE_MEM.contains(w0.mem.get((p, a))) or w0.mem.get((p, a)) == "invited", gen: w0.gen.get((p, a)), failListener: false } },
+          { ...g,
             last: "leave by text (app, phone)", args: [a, ph] }),
     }
   }
 
-  // By the API (api.ts:626-629): refused only when held. No ban check.
+  // The API authenticates the person and the phone. App leave also accepts a banned member.
   action leaveApi(ph: str, a: str, failListener: bool): bool = {
     val p = personFor(w, ph)
     all {
@@ -887,8 +887,8 @@ module identity_sagas {
       // A site session lives 30 days (sessions.ts SESSION_TTL_MS) and its login marked the number seen.
       not(stale(w, ph)),
       w.phones.get(ph).exists,
-      set3(w, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: p != 0 and w.mem.get((p, a)) != "none" and w.mem.get((p, a)) != "removed", failListener: failListener } },
-        { ...g, leavePending: if (p != 0 and LIVE_MEM.contains(w.mem.get((p, a)))) g.leavePending.union(Set((p, a))) else g.leavePending,
+      set3(w, { ...s, leave: { pc: 1, p: p, app: a, ph: ph, hasM: p != 0 and w.mem.get((p, a)) != "none" and w.mem.get((p, a)) != "removed", gen: w.gen.get((p, a)), failListener: failListener } },
+        { ...g,
           last: "leave by the API", args: [a] }),
     }
   }
@@ -899,13 +899,19 @@ module identity_sagas {
     val a = l.app
     all {
       l.pc > 0,
-      if (l.pc == 1) {
-        // addConsent opted_out, then return when there is no person or membership (accounts.ts:425-426).
+      if (l.pc == 1 and (w.phones.get(l.ph).hold or personFor(w, l.ph) != p or w.gen.get((p, a)) != l.gen))
+        set3(w, { ...s, leave: { ...l, pc: 0 } }, { ...g, last: "leave: binding changed before consent", args: [] })
+      else if (l.pc >= 2 and w.gen.get((p, a)) != l.gen)
+        set3(w, { ...s, leave: { ...l, pc: 0 } }, { ...g, leavePending: g.leavePending.exclude(Set((p, a))), last: "leave: membership replaced after consent", args: [] })
+      else if (l.pc == 1) {
+        // The store checks the captured binding when it appends consent. Signed message time and
+        // verification times are modelled as the generation check here, and are exact in accountPrivacy.md.
         val done = p == 0 or not(l.hasM)
         // The opt-out record of the person's own request (like a STOP: stopCommit), so the number is no
         // longer "erased until it writes again" (noPlainPhoneAfterDelete).
         set3(addEv(w, l.ph, a, true, w.now), { ...s, leave: { ...l, pc: if (done) 0 else 2 } },
-          { ...g, erasedPhones: g.erasedPhones.exclude(Set(l.ph)), last: "leave: opted_out written", args: [] })
+          { ...g, leavePending: if (not(done)) g.leavePending.union(Set((p, a))) else g.leavePending,
+            erasedPhones: g.erasedPhones.exclude(Set(l.ph)), last: "leave: opted_out written", args: [] })
       } else if (l.pc == 2) {
         // onForget: photos first; a banned person's photos stay (8e96df9, SD-275, SD-256).
         val banned = personBanned(w, p)
@@ -1236,6 +1242,16 @@ module identity_sagas {
       .then(delStep("slop")).then(delStep("slop")).then(delStep("peon")).then(delStep("slop"))
       .expect(g.delDone == 1 and not(w.people.get(1).live) and w.people.get(2).live and phoneOf(w, 2) == "A"
               and not(w.suppression.contains("A")) and w.suppression.contains("B") and retryCompletes)
+
+  // The admitted phone binding and the selected membership must still match at the consent write.
+  run leavePreservesReassignedNumberTest =
+    init0
+      .then(leaveApi("A", "slop", false))
+      .then(mvStart(1, "B")).then(mvStep).then(mvStep)
+      .then(join("A", "slop"))
+      .then(leaveStep)
+      .expect(s.leave.pc == 0 and g.leaveDone == 0 and phoneOf(w, 2) == "A" and w.mem.get((2, "slop")) == "active"
+              and not(w.ledger.exists(e => e.ph == "A" and e.app == "slop" and e.out)))
 
   // A ban with no crash: every membership restricted, the Network holds both members.
   run banCompletesTest =

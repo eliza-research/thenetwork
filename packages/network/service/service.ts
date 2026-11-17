@@ -1706,16 +1706,24 @@ export class NetworkService implements RuntimeHost {
     if (leaving && e164) {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);
-      if (lrt && lrt !== rt) await lrt.identities();
-      const lid = lrt?.memberOf(ev.from);
-      if (lrt && lid) {
-        const person = await this.accounts.personFor(e164);
-        if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
-        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
-        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
-        await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
-        return "left";
-      }
+      if (!lrt) return "handled";
+      if (lrt !== rt) await lrt.identities();
+      const person = await this.accounts.personFor(e164);
+      const routedId = lrt.memberOf(ev.from);
+      // A retry can follow Network cleanup that finished before the membership tombstone was written.
+      const membership = !routedId && person ? await this.people.getMembership(person.id, leaving.id) : undefined;
+      const lid = routedId ?? (membership && membership.state !== "invited" && membership.state !== "removed" ? membership.memberId : undefined);
+      if (!lid) return "handled";
+      if (!person && !await lrt.scoped(async tx => (await tx`select id from network.members
+        where app_id=${leaving.id} and id=${lid} and person_id is null`).length > 0)) return "held";
+      const at = this.consentAt(ev);
+      const left = await this.accounts.leave(leaving, { e164, personId: person?.id ?? null },
+        { at, line, ref: rowId, expectedMemberId: person ? lid : undefined });
+      if (!left) return "held";
+      if (!person) await this.forget(leaving, lid);
+      if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
+      await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
+      return "left";
     }
     if (banned) return "held";
 

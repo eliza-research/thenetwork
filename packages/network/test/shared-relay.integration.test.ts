@@ -297,7 +297,7 @@ test("relay admission and canonical leave use one lock order, retaining the fres
     if(row.id.startsWith("relay:")){entered();await gate;}
     try{return await original(row,tx);}catch(error){sqlStates.push((error as {errno?:string}).errno??"unknown");throw error;}
   };
-  let sending:Promise<Response>|undefined,leaving:Promise<void>|undefined;
+  let sending:Promise<Response>|undefined,leaving:Promise<boolean>|undefined;
   try{
     const request=await open("relay-leave-lock-order","tell Dee I'll meet them outside",c),before=posts;
     sending=post(RELAY_PATH,request);

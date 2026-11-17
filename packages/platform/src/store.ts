@@ -4,7 +4,7 @@
 import type { City } from "../../core/src/types.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
-import { hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
+import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -34,6 +34,11 @@ export interface Membership {
   joinedAt: number | null;
   leftAt: number | null;
 }
+export interface AppLeaveInput {
+  app: AppId; e164: string; personId: string | null; expectedMemberId?: string;
+  at: number; line?: string | null; ref?: string;
+}
+export type AppLeaveAdmission = { ok: true; membership?: Membership } | { ok: false };
 /**
  * A staff ban after a report (docs/admin-console.md 3.7.1). "phone": this number (its keyed hash) can
  * never join any app again. "person": the person, on every app, and every phone they had when banned.
@@ -112,6 +117,8 @@ export interface PeopleStore {
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
   addConsent(e: ConsentEvent): Promise<boolean>;
+  /** Check ownership and append an app opt-out before returning the membership selected for cleanup. */
+  beginAppLeave(input: AppLeaveInput): Promise<AppLeaveAdmission>;
   /** The last event for (e164, app) and the last for (e164, every app). */
   lastConsent(e164: string, app: AppId): Promise<ConsentLast>;
   /** The events for this app only (export). */
@@ -168,7 +175,7 @@ export interface PeopleStore {
   purge(before: number): Promise<number>;
 
   /** Leave one app: the membership is set to removed and its name and profile are cleared; grants that involve the app are revoked. */
-  forgetMembership(personId: string, app: AppId, at: number): Promise<void>;
+  forgetMembership(personId: string, app: AppId, at: number, expectedMemberId?: string): Promise<void>;
   /** Erase the verified person and their current phone, or an unbound phone. Release an exact held binding for reuse. */
   deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, releaseHeldPhone?: boolean): Promise<boolean>;
 
@@ -267,6 +274,17 @@ export class MemoryPeopleStore implements PeopleStore {
     if (e.ref && this.consent.some(x => x.e164 === e.e164 && x.ref === e.ref)) return false;
     this.consent.push({ ...e });
     return true;
+  }
+  async beginAppLeave(input: AppLeaveInput): Promise<AppLeaveAdmission> {
+    const { app, e164, personId, expectedMemberId, at, line, ref } = input;
+    const phone = this.phones.get(e164);
+    if (!appLeaveBindingCurrent(personId ?? "", phone?.personId ?? "", phone?.hold != null, phone?.verifiedAt ?? 0, at)) return { ok: false };
+    if (personId && this.people.get(personId)?.deletedAt !== null) return { ok: false };
+    const m = personId ? this.members.get(`${app}:${personId}`) : undefined;
+    if (!appLeaveMemberCurrent(expectedMemberId ?? "", m?.memberId ?? "", m?.joinedAt ?? 0, at)) return { ok: false };
+    const membership = m && { ...m };
+    await this.addConsent({ app, e164, at, line, ref, state: "opted_out", source: "leave" });
+    return { ok: true, membership };
   }
   async lastConsent(e164: string, app: AppId) { return lastEvents(this.consent, e164, app); }
   async consentEvents(e164: string, app: AppId) { return this.consent.filter(e => e.e164 === e164 && e.app === app).map(e => ({ ...e })); }
@@ -393,8 +411,9 @@ export class MemoryPeopleStore implements PeopleStore {
     return "ok";
   }
 
-  async forgetMembership(personId: string, app: AppId, at: number) {
+  async forgetMembership(personId: string, app: AppId, at: number, expectedMemberId?: string) {
     const m = this.members.get(`${app}:${personId}`);
+    if (expectedMemberId !== undefined && m?.memberId !== expectedMemberId) return;
     if (m) Object.assign(m, { state: "removed", review: null, firstName: null, profile: {}, leftAt: at });
     for (const g of this.grants.values()) if (g.personId === personId && (g.fromApp === app || g.toApp === app) && g.revokedAt === null) g.revokedAt = at;
   }

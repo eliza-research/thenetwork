@@ -761,7 +761,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/me/delete":
         return withSession(async (who, a) => {
           if ((b.scope === "app" || b.scope === "all") && (await accounts.held(who.e164))) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
-          if (b.scope === "app") { await accounts.leave(app, who); return json(200, { ok: true }); }
+          if (b.scope === "app") return await accounts.leave(app, who) ? json(200, { ok: true })
+            : json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
           if (b.scope === "all") {
             // Step-up: a cookie from an older login cannot delete everything. A Cloud session starts at the Cloud
             // phone proof's issuedAt, so a new Cloud sign-in (the site's reauth path) is the fresh step-up there.

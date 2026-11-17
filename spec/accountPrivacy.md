@@ -8,7 +8,7 @@ The account service acts on the canonical person for the caller's verified phone
 
 ### A leave records app consent before cleanup
 
-Record an opt-out for the chosen app even if the phone has no membership to remove. If the canonical person has a membership that has yet to be removed, run the app's forget hook and mark that membership removed. Leave does not erase the person or change other apps.
+Record an opt-out for the chosen app even if the verified phone has no membership to remove. Check the exact phone owner under the identity lock before writing consent. A signed leave uses the message time and the routed membership. The phone binding and the app membership must have existed by that time. The consent write and selection of the membership for cleanup share one transaction. After an admitted leave, run the app's forget hook and remove only that exact membership. A phone move after consent carries the recorded opt-out with the person. Leave does not erase the person or change other apps.
 
 ```quint
 type PrivacyOperation = LeaveApp | DeleteAccount | ExportApp
@@ -31,11 +31,20 @@ pure def beginPrivacyRequest(privacy: PrivacyRequest, operation: PrivacyOperatio
 pure def hasScopedMembership(hasPerson: bool, hasMembership: bool, removed: bool): bool =
   hasPerson and hasMembership and not(removed)
 
+pure def appLeaveBindingCurrent(verifiedOwner: str, currentOwner: str, held: bool, verifiedAt: int, requestedAt: int): bool =
+  verifiedPrivacyOwnerMatches(verifiedOwner, currentOwner, held) and verifiedAt <= requestedAt
+
+pure def appLeaveMemberCurrent(expectedMember: str, currentMember: str, joinedAt: int, requestedAt: int): bool =
+  expectedMember == "" or (expectedMember == currentMember and joinedAt <= requestedAt)
+
 pure def canRecordLeaveConsent(privacy: PrivacyRequest): bool =
   privacy.phase == AwaitingLeaveConsent and privacy.operation == LeaveApp
-pure def recordLeaveConsent(privacy: PrivacyRequest, membershipBound: bool): PrivacyRequest =
-  { ...privacy, optedOut: true, membershipBound: membershipBound,
-    phase: if (membershipBound) AwaitingAppForget else CompletePrivacyRequest }
+pure def recordLeaveConsent(privacy: PrivacyRequest, recorded: bool, membershipBound: bool): PrivacyRequest =
+  { ...privacy, optedOut: recorded, membershipBound: recorded and membershipBound,
+    phase: if (not(recorded)) RefusedPrivacyRequest else if (membershipBound) AwaitingAppForget else CompletePrivacyRequest }
+
+pure def lawLeaveNeverPredatesPhoneBinding(owner: str, verifiedAt: int, requestedAt: int): bool =
+  requestedAt < verifiedAt implies not(appLeaveBindingCurrent(owner, owner, false, verifiedAt, requestedAt))
 
 pure def canRecordAppForget(privacy: PrivacyRequest): bool =
   privacy.phase == AwaitingAppForget and privacy.operation == LeaveApp and privacy.optedOut and privacy.membershipBound
