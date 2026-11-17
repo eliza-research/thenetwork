@@ -33,6 +33,8 @@ import {
   initial as landingStart,
   joinKeyword,
   joinMessagePrefix,
+  landingHeadingsAllowed,
+  landingWordsAllowed,
   messagesOpensHere,
   step as landingStep,
   tileKindFor,
@@ -364,7 +366,8 @@ test("landing pages keep agent onboarding and the Messages entry", () => {
     expect(home, s.domain).toContain(`>${prompt}</code>`);
     expect(home, s.domain).not.toMatch(/<button\b[^>]*>Copy<\/button>/);
     expect(desktop, s.domain).toMatch(/<button\b[^>]*>Copy<\/button>/);
-    expect(home.match(/<h1[\s>]/g)?.length, s.domain).toBe(1);
+    expect(landingHeadingsAllowed(home.match(/<h1[\s>]/g)?.length ?? 0), s.domain).toBe(true);
+    expect(landingWordsAllowed(text(desktop).split(" ").length), s.domain).toBe(true);
     // Every agent is a logo with an accessible name and no visible name; a link opens it with the prompt.
     const row = agentRow(home);
     expect(row, s.domain).not.toBe("");

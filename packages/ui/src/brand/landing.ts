@@ -9,6 +9,7 @@ import {
   copyByHandText,
   joinKeyword,
   joinMessagePrefix,
+  messagesFallbackTemplate,
   promptCarriesVersion,
   promptHost,
   promptLead,
@@ -82,9 +83,10 @@ export function statusText(status: StatusLine, agent: AgentId, links: Pick<Landi
     case "CopyByHand":
       return copyByHandText;
     case "MessageCopied":
-      return `Message copied. Text it to ${links.textLine} if iMessage did not open.`;
     case "TextTheNumber":
-      return `Text “${links.joinMessage}” to ${links.textLine}.`;
+      // spec/landingEntry.md, "The device decides whether the entry opens Messages or shows the number"
+      return messagesFallbackTemplate(status === "MessageCopied")
+        .replace(/\{message\}|\{number\}/g, field => field === "{message}" ? links.joinMessage : links.textLine);
   }
 }
 
