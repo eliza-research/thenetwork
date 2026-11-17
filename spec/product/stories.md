@@ -278,7 +278,7 @@ Models: [gathering review](../monthlyGathering.md), [invitation review](../month
 
 A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
 
-Models: [safety and trust](../models/safety_trust.md), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
+Models: [safety and trust](../models/safety_trust.md), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
 
 ## Story F24 — Export or delete my data
 

@@ -1169,7 +1169,13 @@ export class NetworkRuntime {
       app_id: app, id: e.id, type: e.type, member_id: (e as { member?: string }).member ?? null, t: new Date(e.t), event: e,
     }));
     for (let i = 0; i < capital.length; i += 500) await tx`insert into network.capital_events ${tx(capital.slice(i, i + 500))} on conflict (app_id, id) do nothing`;
-    for (const [from, to] of u.blocks) if (ok(from) && ok(to)) {
+    const blocks = u.blocks.filter(([from, to]) => ok(from) && ok(to));
+    if (blocks.length) {
+      // Queue claims lock the same canonical people before reading pair safety.
+      await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+        where member.app_id=${app} and member.id in ${tx([...new Set(blocks.flat())])} order by person.id for key share of person`;
+    }
+    for (const [from, to] of blocks) {
       await tx`insert into network.edges (app_id, from_id, to_id, type, strength, explicit) values (${app}, ${from}, ${to}, 'blocked', 1, true) on conflict (from_id, to_id, type) do nothing`;
       // Blocks are person to person: the block holds on every app the two people use (the snapshot of each app reads it).
       await tx`insert into platform.person_blocks (from_person, to_person, origin_app, at)

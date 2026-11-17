@@ -111,6 +111,7 @@ import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
+import { peerOpportunityContactBlocked } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -3348,6 +3349,9 @@ export class NetworkService implements RuntimeHost {
         const rt = await this.runtimeOfMember(handled.app, memberId);
         const replyIds = handled.replyIds;
         const bookingRuntime = rt ?? this.runtimeFor(handled.app);
+        if (bookingRuntime && await bookingRuntime.scoped(tx => peerOpportunityContactBlocked(tx, bookingRuntime.app.id, memberId, replyIds))) {
+          return json({ error: "turn_opportunity_blocked", retryable: false }, 409);
+        }
         if (bookingRuntime && await bookingRuntime.scoped(tx =>
           originalBookingNoticeStale(tx, bookingRuntime.app.id, bookingRuntime.pg.id, replyIds, this.clock))) {
           return json({ error: "turn_booking_changed", retryable: false }, 409);

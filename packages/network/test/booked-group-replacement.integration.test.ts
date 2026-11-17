@@ -148,6 +148,16 @@ test.runIf(pgAvailable).each(scenes)("a booked Friends group closes before its r
       const unchanged = await post(TURN_PATH, bookedYes.messageId, bookedYes);
       expect(unchanged.status).toBe(200);
       expect(await unchanged.json()).toEqual(bookedReply);
+      // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
+      // The exact notice includes Ari and Blair even though it is returned to Elliot.
+      const [block] = await sql<{ from_person: string; to_person: string }[]>`insert into platform.person_blocks (from_person,to_person,origin_app,at)
+        select a.person_id,b.person_id,'ntwrk',${new Date(clock.now())} from platform.memberships a, platform.memberships b
+        where a.app_id=${app.id} and a.member_id=${ari} and b.app_id=${app.id} and b.member_id=${blair} returning from_person,to_person`;
+      if (!block) throw new Error("Fixture could not commit the cross-app block");
+      const refused = await post(TURN_PATH, lateYes.messageId, lateYes);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ error: "turn_opportunity_blocked", retryable: false });
+      await sql`delete from platform.person_blocks where from_person=${block.from_person} and to_person=${block.to_person}`;
       const [held] = await sql`select queued.id,queued.body,queued.status,queued.attempts,msg.booking_roster_member_ids from network.messages msg
         join platform.outbound queued on queued.app_id=msg.app_id and queued.id=msg.id and queued.member_id=msg.member_id
         where msg.app_id=${app.id} and msg.opportunity_id=${original.oppId} and msg.type='proposal' and msg.member_id=${ari}`;

@@ -13,11 +13,13 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { Mini, START } from "./mini.ts";
@@ -189,6 +191,64 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
       try { await check(block, svc, ids, queues); } finally { await closeAll(); }
     }, T);
   }
+
+  // spec/outboundAdmission.md, "Recheck blocks between the participants before contact"
+  test("a committed block suppresses a reviewed invitation already queued in another app", async () => {
+    await closeAll();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const sends: SendRequest[] = [];
+    const friends = new BlooioAdapter({ app: FR, from: "+12125550099", clock, liveGate: () => true, log: () => {}, provider: {
+      kind: "sim", send: async request => {
+        sends.push(request);
+        return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
+      },
+    } });
+    const svc = new NetworkService({ url: URL_, clock, instance: "crossapp-pending", log: () => {}, env: { PLATFORM_ENV: "dev" },
+      adapter: rt => rt.app.id === FR ? friends : new DryRunAdapter(() => {}),
+      networks: APPS_RUN.map(app => ({ id: `${app}:nyc`, matchingEnabled: false })), webhookSecrets: { ntwrk: SECRET },
+    });
+    open.push(svc);
+    try {
+      await svc.start();
+      const ids = await seed(svc);
+      for (const who of ["a", "b"]) for (const text of ONBOARD) await say(svc, clock, "ntwrk", who, text);
+      const w = new Mini(PEOPLE.filter(p => p.apps.includes(FR)).map(p => ({ id: ids[p.key]![FR]!, name: p.name,
+        age: 30, area: "Greenpoint", interests: p.interests[FR] })), { app: FR, review: "human", plans: false, growth: false });
+      const affected = [ids.b![FR]!, ids.a![FR]!];
+      const unaffected = [ids.c![FR]!, ids.e![FR]!];
+      await w.onboard(...affected, ...unaffected);
+      const blockedMatch = w.propose(affected, { category: "hobby" });
+      const activeMatch = w.propose(unaffected, { alternates: affected, category: "hobby" });
+      for (const opp of [blockedMatch, activeMatch]) {
+        expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === opp), 2 * DAY)).toBe(true);
+        expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+      }
+      const rt = svc.runtimeFor(FR)!;
+      await friends.queue.setLineSafety("review");
+      await rt.unitOfWork(net => {
+        const { members, opps } = w.net.exportState();
+        net.importState({ ...net.exportState(), members, opps });
+        rt.unit.sends.push(
+          { id: "pending-blocked-probe", memberId: affected[0]!, to: phone("b"), oppId: blockedMatch, kind: "proactive", type: "probe",
+            body: "Would you like to meet a climbing partner?", proactive: true, system: false, ts: clock.now() },
+          { id: "pending-unrelated-probe", memberId: unaffected[0]!, to: phone("c"), oppId: activeMatch, kind: "proactive", type: "probe",
+            body: "Would you like to meet someone for a board game?", proactive: true, system: false, ts: clock.now() },
+        );
+      });
+      expect(await friends.queue.statusOf("pending-blocked-probe")).toBe("retry_scheduled");
+      expect(await friends.queue.statusOf("pending-unrelated-probe")).toBe("retry_scheduled");
+      expect(await say(svc, clock, "ntwrk", "a", "block Ben Ito")).toBe("handled");
+      expect(await sql`select origin_app from platform.person_blocks`).toEqual([{ origin_app: "ntwrk" }]);
+      expect(sends).toHaveLength(0);
+      await friends.queue.setLineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      expect(await friends.queue.statusOf("pending-unrelated-probe")).toBe("sent");
+      expect(await friends.queue.statusOf("pending-blocked-probe")).toBe("suppressed_ineligible");
+      expect(sends.map(send => send.idempotencyKey)).toEqual(["tn:pending-unrelated-probe"]);
+    } finally { await closeAll(); }
+  }, T);
 
   async function check(block: boolean, svc: NetworkService, ids: Awaited<ReturnType<typeof run>>["ids"], queues: Awaited<ReturnType<typeof run>>["queues"]) {
     const a = ids.a![FR]!, b = ids.b![FR]!;

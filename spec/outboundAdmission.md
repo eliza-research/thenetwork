@@ -53,6 +53,21 @@ pure def lawPausedProbeCannotProceed(categoryAllowed: bool): bool =
   queuedProbePolicy(true, true, categoryAllowed) == RecipientIneligible
 ```
 
+### Recheck blocks between the participants before contact
+
+A queued probe, plan probe, schedule, booking notice, or reminder needs a current roster with no block between its members. A block in any app applies in either direction. Use the exact roster recorded on a booking notice when present. Otherwise use the recipient and the current participating seats. Declined, dropped, unavailable, and alternate seats do not join that roster. Read the block again before returning a stored signed reply that carries this contact. Neutral cancellation and safety replies keep their own admission rules.
+
+```quint
+pure val peerContactTypes: List[str] = List("probe", "plan_probe", "scheduling", "proposal", "reminder")
+pure val peerContactSeatStatuses: List[str] = List("pending", "checking", "available", "accepted", "confirmed", "attended")
+
+pure def queuedPeerContactPolicy(rosterBlocked: bool): Admission =
+  if (rosterBlocked) RecipientIneligible else Proceed
+
+pure def lawBlockedRosterCannotProceed(rosterBlocked: bool): bool =
+  rosterBlocked implies queuedPeerContactPolicy(rosterBlocked) != Proceed
+```
+
 ### Replies, quiet hours and unanswered messages limit when a send can go out
 
 A reply must follow a recent inbound. An agent-initiated message needs a valid time zone and waits through quiet hours. Read the current member's saved window and local zone, falling back to the queue's settings when absent. Equal window endpoints turn quiet hours off. Recheck under the current member lock just before claiming. If the row must wait, schedule it for the first allowed time without using a provider attempt or a person-cap slot. Replies and compliance messages are exempt from quiet hours. After the unanswered limit, an eligible agent-initiated message can use one re-engagement after its waiting period. Otherwise the row waits for an answer. Compliance skips the unanswered limit.

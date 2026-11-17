@@ -33,6 +33,7 @@ import { effectiveParticipation } from "./snapshot.ts";
 import { lockGatheringAdmission, monthlyGatheringInvitePrefix } from "./monthly-gathering-delivery.ts";
 import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./monthly-gathering-notices.ts";
 import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
+import { lockPeerOpportunityContact, peerOpportunityContactBlocked } from "./peer-opportunity-admission.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -500,15 +501,13 @@ export class BlooioAdapter implements ChannelAdapter {
           || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix) || row.id.startsWith(meetingFeedbackPrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
-        else if (row.oppId) await tx`select saved.id from network.network_state saved
-          join network.messages msg on msg.app_id=saved.app_id and msg.id=${row.id}
-          where saved.id=${rt.pg.id} and msg.app_id=${row.app} and msg.opportunity_id=${row.oppId} and msg.type='proposal' for share of saved`;
         if (row.id.startsWith(lateArrivalDeliveryPrefix)) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)
           || bookedReminderKind(row.id) || terminalNotice(row) === "booking") {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
+        if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
@@ -526,6 +525,9 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.oppId) {
           const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, this.o.clock.now());
           if (!event.ok) return event;
+        }
+        if (row.oppId && row.memberId && await peerOpportunityContactBlocked(tx, row.app, row.memberId, [row.id])) {
+          return { ok: false, reason: "opportunity_roster_blocked" };
         }
         if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], this.o.clock)) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
