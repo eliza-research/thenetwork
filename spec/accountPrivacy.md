@@ -76,9 +76,15 @@ pure def recordAccountErasure(privacy: PrivacyRequest): PrivacyRequest =
 
 ### A removed or absent membership has no exportable profile
 
-Export consent for the requested app. Include a membership and its associated Network data only if the canonical person has a membership for the same app that has yet to be removed. The shell owns app-specific data lookup and formatting.
+Bind the request to the verified session's person and phone before reading consent or app records. An unbound session can export phone consent only while the phone has no owner. A held phone or a changed owner removes access to the export. Check ownership again after collecting the data. Include a profile and its Network data only while the same membership exists for the requested app. The shell owns app-specific data lookup and formatting.
 
 ```quint
+pure def memberExportOwnerMatches(verifiedOwner: str, currentOwner: str, held: bool): bool =
+  not(held) and verifiedOwner == currentOwner
+
+pure def lawHeldPhoneCannotExport(verifiedOwner: str, currentOwner: str): bool =
+  not(memberExportOwnerMatches(verifiedOwner, currentOwner, true))
+
 pure def canCheckAppExport(privacy: PrivacyRequest): bool =
   privacy.phase == AwaitingAppExport and privacy.operation == ExportApp
 pure def checkAppExport(privacy: PrivacyRequest, membershipBound: bool): PrivacyRequest =
@@ -104,6 +110,15 @@ pure def lawAppearanceNeverAppearsInExport(visibility: str, status: str, provena
 
 pure def lawPrivateExportNeedsConfirmation(provenance: str, facetSource: str, isAppearance: bool): bool =
   not(memberExportFacetAllowed("agent_private", "proposed", provenance, facetSource, isAppearance))
+```
+
+### An export includes the member's own gathering responses
+
+The Network exports a member's retained RSVP, attendance and follow-up choices with the event details for that revision. Attendance and follow-up are optional. Include only the export owner's responses to the same event revision. Keep other members' identities and responses, private references and staff review records out of the export.
+
+```quint
+pure def memberExportGatheringsAllowed(app: str, membershipBound: bool): bool =
+  app == "ntwrk" and membershipBound
 ```
 
 ### The service completes each operation in its own scope

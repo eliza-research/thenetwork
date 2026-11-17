@@ -133,7 +133,7 @@ import type { PeerInfo } from "../../platform/src/api.ts";
 import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoStorage } from "../../platform/src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
 import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
-import { memberExportFacetAllowed } from "../../core/src/generated/accountPrivacy.ts";
+import { memberExportFacetAllowed, memberExportGatheringsAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
@@ -1359,6 +1359,7 @@ export class NetworkService implements RuntimeHost {
     const data = await rt.scoped(async tx => {
       const [member] = await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members
         where app_id=${a} and id=${memberId} and person_id=${personId}::uuid and account_status<>'removed'`;
+      const includeGatherings = memberExportGatheringsAllowed(a, !!member);
       if (!member) return null;
       const records = await tx<{ kind: string; value: string; tags: string[]; provenance: string; source: string | null; status: string; valid_from: Date; privacy_scope: string }[]>
         `select kind, value, tags, provenance, source, status, valid_from, privacy_scope from network.facets
@@ -1373,7 +1374,32 @@ export class NetworkService implements RuntimeHost {
       const opportunities = await tx`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p
         join network.opportunities o on o.app_id=p.app_id and o.id=p.opportunity_id
         where p.app_id=${a} and p.member_id=${memberId} order by o.created_at, o.id`;
-      return { member, facets, intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opportunities] };
+      const gatherings = includeGatherings ? await tx<{
+        gathering_id: string; revision: number; venue_name: string; starts_at: Date; ends_at: Date;
+        choice: string; responded_at: Date; attended: boolean | null; attended_at: Date | null;
+        follow_up_choices: { wanted: boolean; respondedAt: string }[];
+      }[]>`select r.gathering_id, r.revision, g.venue_name, g.starts_at, g.ends_at, r.choice, r.responded_at,
+          attendance.attended, attendance.responded_at as attended_at,
+          coalesce((select jsonb_agg(jsonb_build_object('wanted', followup.wanted, 'respondedAt', followup.responded_at)
+            order by followup.responded_at, followup.wanted)
+            from network.monthly_gathering_followup_choices followup
+            where followup.app_id=r.app_id and followup.gathering_id=r.gathering_id and followup.revision=r.revision
+              and followup.member_id=r.member_id), '[]'::jsonb) as follow_up_choices
+        from network.monthly_gathering_rsvps r
+        join network.monthly_gatherings g on g.app_id=r.app_id and g.id=r.gathering_id and g.revision=r.revision
+        left join network.monthly_gathering_attendance attendance on attendance.app_id=r.app_id
+          and attendance.gathering_id=r.gathering_id and attendance.revision=r.revision and attendance.member_id=r.member_id
+        where r.app_id=${a} and r.member_id=${memberId} order by g.starts_at, r.gathering_id` : undefined;
+      return {
+        member, facets, intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opportunities],
+        ...(gatherings && { gatherings: gatherings.map(gathering => ({
+          gatheringId: gathering.gathering_id, revision: gathering.revision, venue: gathering.venue_name,
+          startsAt: gathering.starts_at.toISOString(), endsAt: gathering.ends_at.toISOString(),
+          rsvp: { choice: gathering.choice, respondedAt: gathering.responded_at.toISOString() },
+          attendance: gathering.attended_at === null ? null : { attended: gathering.attended, respondedAt: gathering.attended_at.toISOString() },
+          followUpChoices: gathering.follow_up_choices.map(choice => ({ ...choice, respondedAt: new Date(choice.respondedAt).toISOString() })),
+        })) }),
+      };
     });
     return data && { ...data, photos: await this.photos.list(personId, a) };
   }

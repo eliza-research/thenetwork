@@ -133,6 +133,20 @@ test.skipIf(!pgAvailable)("signed gathering attendance and private follow-up pre
     clock.advance(MINUTE);
     expect((await send(prefer(ari.e164, beaCode!))).replies).toEqual(early.replies);
     expect(await mutual()).toEqual([]);
+    const who = { e164: ari.e164, personId: ari.personId };
+    const privacyExport = await service.accounts.exportApp(app, who);
+    expect(privacyExport.network).toMatchObject({ member: { id: ari.memberId } });
+    expect((privacyExport.network as { gatherings: unknown }).gatherings).toEqual([{
+      gatheringId: id, revision: 1, venue: "McCarren Park",
+      startsAt: new Date(startsAt).toISOString(), endsAt: new Date(endsAt).toISOString(),
+      rsvp: { choice: "grouping", respondedAt: createdAt.toISOString() },
+      attendance: { attended: true, respondedAt: new Date(endsAt).toISOString() },
+      followUpChoices: [{ wanted: true, respondedAt: new Date(clock.now()).toISOString() }],
+    }]);
+    expect(await service.accounts.exportApp(APPS.friends, who)).toMatchObject({ membership: null, consent: [], network: null });
+    expect(await service.accounts.exportApp(app, { ...who, personId: bea.personId }))
+      .toMatchObject({ membership: null, consent: [], network: null });
+
     expect((await send(prefer(bea.e164, ariCode!))).replies).toEqual(early.replies);
     expect(await mutual()).toEqual([{ members: [ari.memberId, bea.memberId].sort(), groupReviewId }]);
     const [firstEpoch] = await sources();
@@ -214,9 +228,10 @@ test.skipIf(!pgAvailable)("signed gathering attendance and private follow-up pre
     expect(await claim(secondEpoch!)).toBe(false);
 
     expect(await sql`select body from network.messages where body like ${`%${beaCode}%`} or body like ${`%${ariCode}%`}`).toEqual([]);
-    await service.accounts.leave(app, { e164: ari.e164, personId: ari.personId });
+    await service.accounts.leave(app, who);
     expect(await sql`select member_id from network.monthly_gathering_attendance where member_id=${ari.memberId}`).toEqual([]);
     expect(await rows()).toEqual([]);
+    expect(await service.accounts.exportApp(app, who)).toMatchObject({ membership: null, network: null });
     clock.set(endsAt + 7 * DAY);
     expect(await send(makeAttendance(bea.e164))).toMatchObject({ reason: "gathering_followup", replies: [] });
   } finally {

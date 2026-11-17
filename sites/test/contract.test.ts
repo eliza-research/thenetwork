@@ -130,7 +130,9 @@ describe("the join page client (packages/ui/src/api) against createPublicApi", (
     expect(await verifyCode(phone, otp.codes.get(phone)!)).toEqual({ result: "Verified" });
     const session = await readSession();
     expect(session.result).toBe("MayJoin");
-    expect(session.account).not.toBe("");
+    // spec/siteEnrollment.md, "A submitted account marker must match the authenticated account"
+    expect(session.signupView).toMatch(/^[a-f0-9]{64}$/);
+    expect(session.account).toBe(session.signupView);
     const joined = await joinApp({ ...(session.signupView ? { signupView: session.signupView } : {}), firstName: "Cy", age: 29, consent: { sms: true, wording: APPS[APP].consent.text } });
     expect(joined, JSON.stringify(joined)).toMatchObject({ result: "JoinedOk", firstName: "Cy" });
     expect((await readSession()).result).toBe("AlreadyIn");

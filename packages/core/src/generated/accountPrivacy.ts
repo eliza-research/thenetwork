@@ -132,6 +132,19 @@ export function recordAccountErasure(privacy: PrivacyRequest): PrivacyRequest {
 
 /** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
 //@ pure
+export function memberExportOwnerMatches(verifiedOwner: string, currentOwner: string, held: boolean): boolean {
+  return !held && verifiedOwner === currentOwner;
+}
+
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
+//@ pure
+export function lawHeldPhoneCannotExport(verifiedOwner: string, currentOwner: string): boolean {
+  //@ ensures \result === true
+  return !memberExportOwnerMatches(verifiedOwner, currentOwner, true);
+}
+
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
+//@ pure
 export function canCheckAppExport(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAppExport" && privacy.operation === "ExportApp";
 }
@@ -178,6 +191,12 @@ export function lawAppearanceNeverAppearsInExport(visibility: string, status: st
 export function lawPrivateExportNeedsConfirmation(provenance: string, facetSource: string, isAppearance: boolean): boolean {
   //@ ensures \result === true
   return !memberExportFacetAllowed("agent_private", "proposed", provenance, facetSource, isAppearance);
+}
+
+/** Story: Read my own app data / An export includes the member's own gathering responses (spec/accountPrivacy.md) */
+//@ pure
+export function memberExportGatheringsAllowed(app: string, membershipBound: boolean): boolean {
+  return app === "ntwrk" && membershipBound;
 }
 
 /** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */

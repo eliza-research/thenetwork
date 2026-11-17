@@ -21,6 +21,8 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
   const store = new MemoryPeopleStore();
   const first = "+12125550141", second = "+12125550142", third = "+12125550143", fourth = "+12125550144", fifth = "+12125550145";
   const retryPhone = "+12125550146";
+  const reassigned = "+12125550147";
+  let now = Date.UTC(2026, 10, 16, 15);
   const directToken = Buffer.alloc(32, 1).toString("base64url");
   const verifiedToken = Buffer.alloc(32, 2).toString("base64url");
   const expiredToken = Buffer.alloc(32, 3).toString("base64url");
@@ -32,7 +34,7 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
   const referredPhones: string[] = [];
   const joins: Record<string, unknown>[] = [];
   const platformFor = (host: string) => createPublicApi({
-    store, env: { PLATFORM_ENV: "dev" }, hostMap: { [host]: "peon" },
+    store, now: () => now, env: { PLATFORM_ENV: "dev" }, hostMap: { [host]: "peon" },
     otp: { name: "browser-invitation-fixture", async send() { return { code: "246810" }; } },
     async findInvitation(app, token, _at, phone) {
       if (app === "peon" && tokenByPhone.get(phone) === token) return { inviterMemberId: "fixture-inviter", tokenHash: "fixture-hash" };
@@ -186,6 +188,42 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
       expect(joins.slice(from)).toHaveLength(2);
       expect(joins[from + 1]).toEqual(joins[from]);
       expect(referredPhones).toEqual([first, second, retryPhone]);
+    });
+
+    // spec/siteEnrollment.md, "A submitted account marker must match the authenticated account"
+    await withPage(async page => {
+      const original = await platform.accounts.createPerson(reassigned, "otp_sms", 40);
+      await verifyInSession(page, reassigned);
+      await page.goto(`${origin}/join`);
+      await profile(page);
+      await agree(page);
+
+      await store.setPhoneHold(reassigned, "recycled_number");
+      expect(await platform.accounts.clearHold(reassigned, "new_owner")).toBe(true);
+      const current = await platform.accounts.createPerson(reassigned, "otp_sms", 35);
+      expect(current.id).not.toBe(original.id);
+      now += 60_000;
+      await verifyInSession(page, reassigned);
+
+      const prior = joins.length;
+      const staleResponse = page.waitForResponse(`${origin}/api/join`);
+      await submit(page);
+      expect((await staleResponse).status()).toBe(409);
+      await page.getByText("Your account changed. Please check your details again.").waitFor();
+      expect(await page.getByLabel("First name").inputValue()).toBe("");
+      expect(await page.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
+      expect(await store.getMembership(current.id, "peon")).toBeUndefined();
+      expect(await store.consentEvents(reassigned, "peon")).toHaveLength(0);
+      expect((await store.getPerson(current.id))?.lowestAge).toBe(35);
+
+      await page.getByLabel("First name").fill("Rae");
+      await page.getByLabel("Age", { exact: true }).fill("35");
+      await agree(page);
+      await submit(page);
+      await step(page, "Done");
+      expect(joins[prior]?.signupView).not.toEqual(joins[prior + 1]?.signupView);
+      expect(await store.getMembership(current.id, "peon")).toMatchObject({ firstName: "Rae" });
+      expect(await store.consentEvents(reassigned, "peon")).toHaveLength(1);
     });
   } finally {
     releaseRetryAttempt();

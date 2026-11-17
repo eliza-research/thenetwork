@@ -397,7 +397,8 @@ pure def lawFailedSaveKeepsOwnedProfile(page: JoinPage): bool =
 Read one valid token from Peon's issued `/join#invite=` link. Remove the
 fragment before making any API request. Keep the token in this page's
 memory. Only the same-origin Peon session can bind it to its verified
-account marker. When that account completes the consent form, the page sends
+account marker. A new owner of the same verified phone has a different
+marker. When that account completes the consent form, the page sends
 the token in the same-origin Join JSON request along with its account
 marker. The server decides whether the invitation is current and can be
 accepted by that account. If it refuses the invitation, the page cannot

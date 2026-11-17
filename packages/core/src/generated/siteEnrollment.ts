@@ -39,6 +39,19 @@ export function publicSignupUsesBrowser(app: string): boolean {
 
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 //@ pure
+export function signupAccountViewMatches(markerSupplied: boolean, markerMatches: boolean): boolean {
+  return !markerSupplied || markerMatches;
+}
+
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
+//@ pure
+export function lawRejectStaleSignupAccountView(markerSupplied: boolean, markerMatches: boolean): boolean {
+  //@ ensures \result === true
+  return !(markerSupplied && !markerMatches) || !signupAccountViewMatches(markerSupplied, markerMatches);
+}
+
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
+//@ pure
 export function canCheckAccountView(joining: Enrollment): boolean {
   return joining.phase === "AwaitingAccountView";
 }

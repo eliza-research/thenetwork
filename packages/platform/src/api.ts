@@ -14,7 +14,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //   const api = createPublicApi({ store, otp, turnstile });
 //   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
-import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
@@ -389,7 +389,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       let authenticated: Awaited<ReturnType<typeof auth>>;
       const response = await o.photoRelay.route(req, photoPath, appId, async () => {
         authenticated = await auth();
-        return authenticated?.session.personId ? { personId: authenticated.session.personId, accountView: signupAccountView(appId, accounts.phoneHash(authenticated.session.e164)) } : undefined;
+        return authenticated?.session.personId ? { personId: authenticated.session.personId,
+          accountView: signupAccountView(appId, accounts.phoneHash(authenticated.session.e164), authenticated.session.personId) } : undefined;
       });
       if (response) { if (authenticated) rotatedCookies(response, authenticated); return response; }
     }
@@ -590,12 +591,16 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "GET /api/me":
         return withSession(async who => {
           const c = await accounts.canJoin(app, who);
+          const currentPerson = c.person?.id ?? null;
+          if (c.reason !== "review" && who.personId !== null && who.personId !== currentPerson)
+            return json(401, { ok: false, error: "unauthorized" });
           const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
           const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           const home = live && o.home && (who.personId === null || who.personId === live.personId)
             ? await o.home({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           return json(200, {
-            app: appId, ...(["ntwrk", "friends", "peon"].includes(appId) && c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164)) } : {}), phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
+            app: appId, ...(c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164), currentPerson) } : {}),
+            phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
             ...(participation ? { participation } : {}),
@@ -631,9 +636,12 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return withSession(async who => {
           // Updated forms bind the reviewed fields to the displayed account. Check before
           // recording age, creating a person or accepting consent; another tab may change cookies.
+          const markerSupplied = b.signupView !== undefined;
+          const personId = who.personId ?? (markerSupplied ? (await accounts.personFor(who.e164))?.id ?? null : null);
+          const markerMatches = markerSupplied && b.signupView === signupAccountView(appId, accounts.phoneHash(who.e164), personId);
           const accountView = stepEnrollment(enrollmentInitial, {
             type: "checkAccountView",
-            viewMatches: b.signupView === undefined || b.signupView === signupAccountView(appId, accounts.phoneHash(who.e164)),
+            viewMatches: signupAccountViewMatches(markerSupplied, markerMatches),
           });
           if (accountView.phase === "AccountChanged")
             return json(409, { ok: false, error: "account_changed" });
@@ -643,7 +651,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (b.inviteToken !== undefined && typeof b.inviteToken !== "string")
             return json(400, { ok: false, error: "invalid_invitation" });
           try {
-            const r = await accounts.join(app, who, input, enrollment, b.inviteToken);
+            const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined);
+            if (!r.ok && r.error === "account_changed") return json(409, { ok: false, error: r.error });
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {

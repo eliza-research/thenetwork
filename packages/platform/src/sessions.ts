@@ -25,8 +25,9 @@ export const newToken = () => randomBytes(32).toString("base64url");
 /** The stored form of a token: a keyed hash, so a database copy cannot be turned into cookies. */
 export const tokenHash = (token: string, secret: string) => createHmac("sha256", secret).update(`session:${token}`).digest("hex");
 
-/** Non-authorizing view marker from a verified app/phone binding. Never accepted as a credential. */
-export const signupAccountView = (app: string, phoneKey: string) => createHash("sha256").update(`signup-view:${app}:${phoneKey}`).digest("hex");
+/** Opaque view marker for the verified app, phone and person. A marker never authenticates a session. */
+export const signupAccountView = (app: AppId, phoneKey: string, personId: string | null) =>
+  createHash("sha256").update(JSON.stringify(["signup-view/v2", app, phoneKey, personId])).digest("hex");
 
 export class SessionService {
   constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; phoneHash: (e164: string) => string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}

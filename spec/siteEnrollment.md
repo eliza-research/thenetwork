@@ -20,7 +20,7 @@ pure def publicSignupUsesBrowser(app: str): bool = app == "peon"
 
 ### A submitted account marker must match the authenticated account
 
-A supplied signup marker must match the app-bound account that owns the session. Some supported clients have no marker. Those requests continue with the authenticated account. The authenticated API checks the marker before decoding the profile or calling the account service.
+A supplied signup marker must match the app, verified phone and current person, including when no person has been created yet. Each app provides this opaque marker for an eligible signed-in account. Reassigning a phone to another person changes the marker even when the number is the same. Some supported clients have no marker. Those requests continue with the authenticated account. The API checks the marker before decoding the profile. The account service checks a supplied marker again under the phone's join lock before it reads an invitation or writes age, membership or consent.
 
 ```quint
 type EnrollmentPhase = AwaitingAccountView | AccountChanged | AwaitingProfile | InvalidProfile | AwaitingConsent | ConsentMismatch |
@@ -42,6 +42,12 @@ pure val initial: Enrollment = {
   phase: AwaitingAccountView, viewChecked: false, validProfile: false, currentConsent: false,
   currentEligibility: false, rejoin: false, invited: false, referred: false, invalidReferral: false, ageAllowed: false,
 }
+
+pure def signupAccountViewMatches(markerSupplied: bool, markerMatches: bool): bool =
+  not(markerSupplied) or markerMatches
+
+pure def lawRejectStaleSignupAccountView(markerSupplied: bool, markerMatches: bool): bool =
+  (markerSupplied and not(markerMatches)) implies not(signupAccountViewMatches(markerSupplied, markerMatches))
 
 pure def canCheckAccountView(joining: Enrollment): bool = joining.phase == AwaitingAccountView
 

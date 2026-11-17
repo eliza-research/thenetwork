@@ -1153,9 +1153,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const key = o.platform.phoneKey(who.e164);
         const action = signupDraftBrowserAction(who.personId === await o.platform.personForKey(key), p.endsWith("/discard"));
         if (action === "RefuseBrowserAction") return json(403, { error: "not_allowed" });
+        const signupView = signupAccountView(c.app.id, key, who.personId);
         if (action === "CheckDiscardView") {
           const body = await readJson(req);
-          if (!signupDraftDiscardAllowed(action, !!body && body.signupView === signupAccountView(c.app.id, key))) return json(403, { error: "not_allowed" });
+          if (!signupDraftDiscardAllowed(action, !!body && body.signupView === signupView)) return json(403, { error: "not_allowed" });
           await store.discardSignupDrafts(key, c.app.id, now());
           return json(200, { discarded: true }, who.setCookie ? { "set-cookie": who.setCookie } : {});
         }
@@ -1165,7 +1166,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           const decision = signupDraftClaimRoute(status, allowed);
           if (decision === "RefuseClaim") return json(403, { error: "not_allowed" });
           const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
-          const response = json(200, { draft: draft ?? null, signupView: signupAccountView(c.app.id, key) }, { "cache-control": "no-store" });
+          const response = json(200, { draft: draft ?? null, signupView }, { "cache-control": "no-store" });
           if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
           return response;
         });

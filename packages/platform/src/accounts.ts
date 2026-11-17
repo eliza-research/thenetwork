@@ -21,12 +21,12 @@ import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import {
-  hasAgeToPreserve, hasScopedMembership, initial as accountPrivacyInitial, step as stepPrivacy,
+  hasAgeToPreserve, hasScopedMembership, initial as accountPrivacyInitial, memberExportOwnerMatches, step as stepPrivacy,
 } from "../../core/src/generated/accountPrivacy.ts";
 import {
   initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
-import { profileJoinAge, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
@@ -34,6 +34,7 @@ import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
+import { signupAccountView } from "./sessions.ts";
 import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
@@ -91,7 +92,7 @@ export interface JoinInput {
   consent: { sms: true; wording?: string; version?: string };
 }
 
-export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "invalid" | "review" | "consent_wording";
+export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "invalid" | "review" | "consent_wording" | "account_changed";
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 /** True when the client's consent names this app's canonical opt-in text (by its words or its version). */
@@ -417,20 +418,22 @@ export class Accounts {
     return m;
   }
 
-  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
     if (enrollment.phase !== "AwaitingConsent") return { ok: false, error: "invalid" };
     const consent = stepEnrollment(enrollment, { type: "confirmConsent", consentMatches: consentMatches(app, input.consent) });
     if (consent.phase !== "AwaitingEligibility") return { ok: false, error: "consent_wording" };
     // One join per phone at a time: parallel requests see the first one's person and membership.
-    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent, inviteToken));
+    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent, inviteToken, signupView));
   }
 
-  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
     const at = this.now();
     const held = (await this.seen(who.e164)) === "held";
     let person = held ? undefined : await this.personFor(who.e164);
     const eligibility = stepEnrollment(consent, { type: "checkEligibility", eligible: !held && !await this.banned(who.e164, person) });
     if (eligibility.phase !== "AwaitingMembership") return { ok: false, error: "review" };
+    const markerMatches = signupView !== undefined && signupView === signupAccountView(app.id, this.phoneHash(who.e164), person?.id ?? null);
+    if (!signupAccountViewMatches(signupView !== undefined, markerMatches)) return { ok: false, error: "account_changed" };
     const existing = person && (await this.store.getMembership(person.id, app.id));
     const existingMember = !!existing && existing.state !== "removed" && existing.state !== "invited";
     const attemptedReferral = !existingMember && inviteToken !== undefined;
@@ -563,25 +566,36 @@ export class Accounts {
 
   /** This app's own data. Nothing from another app, not even its name. */
   async exportApp(app: AppInfo, who: Who): Promise<Record<string, unknown>> {
+    const exportHeader = { app: app.id, exportedAt: new Date(this.now()).toISOString(), phone: who.e164 };
+    const ownsPhone = async () => {
+      const phone = await this.store.findPhone(who.e164);
+      return memberExportOwnerMatches(who.personId ?? "", phone?.personId ?? "", phone?.hold != null);
+    };
+    const empty = { ...exportHeader, membership: null, consent: [], network: null };
+    if (!(await ownsPhone())) return empty;
+
     const request = stepPrivacy(accountPrivacyInitial, { type: "beginPrivacyRequest", operation: "ExportApp" });
-    const person = await this.personFor(who.e164);
-    const m = person && (await this.store.getMembership(person.id, app.id));
+    const m = who.personId ? await this.store.getMembership(who.personId, app.id) : undefined;
     const checked = stepPrivacy(request, {
-      type: "checkAppExport", membershipBound: hasScopedMembership(!!person, !!m, m?.state === "removed"),
+      type: "checkAppExport", membershipBound: hasScopedMembership(!!who.personId, !!m, m?.state === "removed"),
     });
     const consent = (await this.store.consentEvents(who.e164, app.id)).map(e => ({ state: e.state, source: e.source, wording: e.wording ?? null, at: new Date(e.at).toISOString() }));
     const exported = stepPrivacy(checked, { type: "recordConsentExport" });
     const live = exported.phase === "CompletePrivacyRequest" && exported.includeMembership ? m : undefined;
+    const network = who.personId && live
+      ? (await this.hooks.onExport?.({ app, personId: who.personId, memberId: live.memberId, e164: who.e164 })) ?? null
+      : null;
+    const current = who.personId && live ? await this.store.getMembership(who.personId, app.id) : undefined;
+    if (!(await ownsPhone())) return empty;
+    if (!current || current.memberId !== live?.memberId || current.state === "removed") return { ...empty, consent };
     return {
-      app: app.id,
-      exportedAt: new Date(this.now()).toISOString(),
-      phone: who.e164,
-      membership: live ? {
-        memberId: live.memberId, state: live.state, firstName: live.firstName, profile: live.profile,
-        joinedAt: live.joinedAt === null ? null : new Date(live.joinedAt).toISOString(),
-      } : null,
+      ...exportHeader,
+      membership: {
+        memberId: current.memberId, state: current.state, firstName: current.firstName, profile: current.profile,
+        joinedAt: current.joinedAt === null ? null : new Date(current.joinedAt).toISOString(),
+      },
       consent,
-      network: person && live ? ((await this.hooks.onExport?.({ app, personId: person.id, memberId: live.memberId, e164: who.e164 })) ?? null) : null,
+      network,
     };
   }
 
