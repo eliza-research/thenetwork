@@ -41,7 +41,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, replacementProbeKey, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
@@ -58,6 +58,8 @@ import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
 import { homeHelpNoticeId, lockHomeHelpNoticeRoster } from "./bounded-home-help-delivery.ts";
 import { gatheringInvitationAdmission } from "./monthly-gathering-delivery.ts";
 import { gatheringNoticeAdmission } from "./monthly-gathering-notices.ts";
+import { currentGatheringRepeatSources, gatheringMatchSourceCurrent, lockGatheringMatchSource } from "./monthly-gathering-match-authority.ts";
+import { gatheringRepeatContactAllowed } from "../../core/src/generated/gatheringRepeatDelivery.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
@@ -77,6 +79,7 @@ import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
+interface GatheringRepeatMessage { id: string; opportunity_id: string; type: string; body: string }
 
 export type StagedMemberInvitation =
   | { status: "review"; review: HeldMemberInvitation }
@@ -466,6 +469,71 @@ export class NetworkRuntime {
     return gatheringNoticeAdmission(tx, this.app, this.pg.id, accounts, row, this.clock.now());
   }
 
+  private async gatheringRepeatState(tx: SQL, lock = false): Promise<NetworkState | undefined> {
+    if (this.id !== "ntwrk:nyc") return;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state
+      where app_id=${this.app.id} and id=${this.pg.id} ${lock ? tx`for share` : tx``}`;
+    return saved?.state;
+  }
+
+  async lockGatheringRepeatClaim(tx: SQL, oppId: string): Promise<void> {
+    const state = await this.gatheringRepeatState(tx, true);
+    const source = state?.opps.find(item => item.id === oppId)?.gatheringRepeat;
+    if (source) await lockGatheringMatchSource(tx, this.app, source);
+  }
+
+  private async gatheringRepeatMessageCurrent(tx: SQL, state: NetworkState, message: GatheringRepeatMessage, memberId: string,
+    address: string, body: string): Promise<boolean> {
+    const opportunity = state.opps.find(item => item.id === message.opportunity_id);
+    if (!opportunity) return false;
+    const { gatheringRepeat: source, participants, review } = opportunity;
+    const statuses = new Map(opportunity.status);
+    const exactMessage = message.body === body && participants.includes(memberId);
+    const probe = message.type === "probe" || message.type === "scheduling";
+    const initialBooking = message.type === "proposal" && !message.id.startsWith(RESCHEDULE_QUEUE_PREFIX);
+    if (!probe && !initialBooking) return exactMessage;
+    const exactPair = !!source && participants.length === 2 && source.members.every(id => participants.includes(id));
+    const humanApproved = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
+    const lifecycle = probe
+      ? opportunity.stage === "probing" && statuses.get(memberId) === "probing" && message.id === gatheringRepeatProbeKey(opportunity.id, memberId, message.type === "scheduling")
+      : opportunity.stage === "scheduled" && participants.every(id => statuses.get(id) === "yes" && opportunity.contacted.includes(id))
+        && opportunity.bookedTold?.includes(memberId) === true;
+    const rollout = this.matchingAllowed && state.matchingEnabled;
+    const accounts = this.host.accountsFor?.(tx);
+    const current = !!accounts && !!source && rollout && exactPair && humanApproved && lifecycle && exactMessage
+      && await gatheringMatchSourceCurrent(tx, accounts, this.app, source, this.clock.now(), { memberId, e164: address }, state);
+    return gatheringRepeatContactAllowed(rollout, exactPair, humanApproved, lifecycle, exactMessage, current);
+  }
+
+  async gatheringRepeatClaim(tx: SQL, row: QueueRow): Promise<boolean> {
+    if (!row.memberId || !row.oppId || row.app !== this.app.id) return false;
+    const state = await this.gatheringRepeatState(tx);
+    if (!state) return false;
+    const [message] = await tx<GatheringRepeatMessage[]>`select id,opportunity_id,type,body from network.messages
+      where app_id=${this.app.id} and id=${row.id} and opportunity_id=${row.oppId} and member_id=${row.memberId} and direction='outbound'`;
+    if (!message) return row.id.startsWith("relay:");
+    if (message.type === "probe" || message.type === "scheduling" || message.type === "proposal") {
+      if (row.mediaUrls.length || row.approvedPhotos?.length) return false;
+    }
+    return this.gatheringRepeatMessageCurrent(tx, state, message, row.memberId, row.to, row.text);
+  }
+
+  async gatheringRepeatRepliesCurrent(tx: SQL, memberId: string, address: string, ids: readonly string[], bodies: readonly string[]): Promise<boolean> {
+    if (this.app.id !== "ntwrk") return true;
+    const messages = await tx<GatheringRepeatMessage[]>`select id,opportunity_id,type,body from network.messages
+      where app_id=${this.app.id} and id=any(${tx.array([...ids], "TEXT")}) and member_id=${memberId} and direction='outbound'
+        and starts_with(opportunity_id,${gatheringRepeatOppPrefix}) order by opportunity_id,id`;
+    if (!messages.length) return true;
+    const state = await this.gatheringRepeatState(tx, true);
+    if (!state) return false;
+    for (const message of messages) {
+      const source = state.opps.find(item => item.id === message.opportunity_id)?.gatheringRepeat;
+      if (source) await lockGatheringMatchSource(tx, this.app, source);
+      if (!await this.gatheringRepeatMessageCurrent(tx, state, message, memberId, address, bodies[ids.indexOf(message.id)] ?? "")) return false;
+    }
+    return true;
+  }
+
   async expectedInvitationAdmission(tx: SQL, row: { id: string; to: string; text: string }): Promise<boolean> {
     return !!await this.host.admitExpectedInvitation?.(tx, this, row);
   }
@@ -571,6 +639,12 @@ export class NetworkRuntime {
         this.unit = newUnit();
         await this.refresh();
         const state = await this.loadState();
+        this.net.setGatheringRepeatSources([]);
+        if (state?.matchingEnabled && this.matchingAllowed && this.id === "ntwrk:nyc" && this.host.accountsFor) {
+          // A read failure must retry the unit. Only a successful scan may retire an unbooked source.
+          const sources = await this.scoped(tx => currentGatheringRepeatSources(tx, this.host.accountsFor!(tx), this.app, this.clock.now(), state));
+          this.net.setGatheringRepeatSources(sources);
+        }
         await this.refreshInitialInviteReceipts(state);
         if (legacyIntentReconciliationDue(!!state, state?.legacyIntentRowsReconciled === true)) this.unit.legacyIntentState = state;
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
@@ -593,20 +667,26 @@ export class NetworkRuntime {
   private async refreshInitialInviteReceipts(state: NetworkState | undefined) {
     this.initialInviteReceipts.clear();
     const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
+    const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
+    const gatheringIds: string[] = [];
     const ids = (state?.members ?? []).flatMap(member => {
       const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []);
       const awaiting = member.awaiting;
       // An unrelated inbound clears the unanswered ledger, but the exact open replacement question can still be answered.
       if (awaiting?.kind === "probe" && awaiting.oppId && replacements.has(awaiting.oppId)) pending.push(replacementProbeKey(awaiting.oppId, member.id));
+      const repeat = awaiting?.kind === "probe" && awaiting.oppId ? gathering.get(awaiting.oppId) : undefined;
+      if (repeat) gatheringIds.push(gatheringRepeatProbeKey(repeat.id, member.id, !!repeat.timeRetry?.includes(member.id)));
       const survey = member.interruptionSurvey;
       if (survey?.sentAt !== undefined) pending.push(interruptionFeedbackKey(this.app.id, member.id, survey.opportunityId));
       return pending;
     });
-    if (!ids.length) return;
+    if (!ids.length && !gatheringIds.length) return;
     const rows = await this.scoped(tx => tx`select m.id, coalesce(o.status, m.status) as status,
       case when o.id is null then m.ts else o.sent_at end as accepted_at
       from network.messages m left join platform.outbound o on o.app_id = m.app_id and o.id = m.id
-      where m.app_id = ${this.app.id} and m.id in ${tx(ids)} and m.direction = 'outbound' and m.proactive`);
+      where m.app_id=${this.app.id} and m.direction='outbound' and (
+        (m.id=any(${tx.array(ids, "TEXT")}) and m.proactive) or
+        (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')))`);
     for (const row of rows) {
       const status = row.status as string;
       if (row.accepted_at != null && /^(accepted|sent|delivered|read)$/.test(status)) {

@@ -11,7 +11,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent } from "../src/rescheduling.ts";
@@ -350,6 +350,7 @@ export class BlooioAdapter implements ChannelAdapter {
       lockAdmission: async (row, tx) => {
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
+        if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix) || row.id.startsWith(replacementProbePrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
@@ -368,6 +369,7 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) return rt.gatheringNoticeAdmission(tx, row);
+        if (row.oppId?.startsWith(gatheringRepeatOppPrefix) && !await rt.gatheringRepeatClaim(tx, row)) return { ok: false, reason: "gathering_repeat_changed" };
         if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());

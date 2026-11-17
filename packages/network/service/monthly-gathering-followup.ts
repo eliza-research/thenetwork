@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   gatheringFollowupCanChoose, gatheringFollowupMayReplace, gatheringFollowupMutual, gatheringFollowupOpen,
   gatheringFollowupPairCurrent, gatheringFollowupReferenceAllowed,
@@ -6,7 +7,7 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { keyedHash, safeEqual } from "../../platform/src/phone.ts";
-import { storedInviteNoticePartyCurrent, type NetworkState } from "../src/network.ts";
+import { storedInviteNoticePartyCurrent, type GatheringRepeatSource, type NetworkState } from "../src/network.ts";
 import type { MemberCommandOwner } from "./member-command.ts";
 import { currentGatheringMember, gatheringRsvpKey, gatheringRsvpReference, type GatheringRsvpKey } from "./monthly-gathering-rsvp.ts";
 
@@ -31,9 +32,10 @@ export function gatheringFollowupCommand(text: string): GatheringFollowupCommand
     return { ...key, kind: "preference", reference: decision, yes: peerDecision === "yes" };
 }
 
-type FollowupAccounts = Pick<Accounts, "activeMembership" | "lowestAge">;
+export type FollowupAccounts = Pick<Accounts, "activeMembership" | "lowestAge">;
 interface SignedResponse { id: string; at: number }
-interface FollowupContext { key: GatheringRsvpKey; app: AppInfo; city: string; state: NetworkState; now: number }
+interface FollowupContext { key: GatheringRsvpKey; app: AppInfo; city: string; state: NetworkState; now: number; endsAt: number }
+export interface GatheringFollowupRecipient { memberId: string; e164: string }
 interface Group { review_id: string; group_no: number }
 interface Attendance { attended: boolean; responded_at: Date; response_id: string }
 interface Preference { wanted: boolean; responded_at: Date; response_id: string }
@@ -41,14 +43,17 @@ const FOLLOWUP_RECEIPT = "Follow-up choices are private and require both people 
 const ATTENDANCE_RECEIPTS = { yes: "I recorded that you attended the gathering.", no: "I recorded that you did not attend the gathering." };
 
 async function followupContext(tx: SQL, app: AppInfo, key: GatheringRsvpKey, reference: boolean, receivedAt: number, now: number,
-  write: boolean): Promise<FollowupContext | undefined> {
+  write: boolean, state?: NetworkState): Promise<FollowupContext | undefined> {
   if (app.id !== "ntwrk" || gatheringRsvpKey(key.id, String(key.revision))?.id !== key.id) return;
   const [event] = await tx<{ city: string; revision: number; status: string; starts_at: Date; ends_at: Date }[]>`select city,revision,status,starts_at,ends_at
     from network.monthly_gatherings where app_id=${app.id} and id=${key.id} and city='nyc' ${write ? tx`for update` : tx``}`;
   if (!event || !gatheringFollowupOpen(event.status === "approved", event.revision === key.revision, reference,
     event.starts_at.getTime(), event.ends_at.getTime(), receivedAt, now)) return;
-  const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where app_id=${app.id} and id=${`${app.id}:${event.city}`}`;
-  if (saved) return { key, app, city: event.city, state: saved.state, now };
+  if (!state) {
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where app_id=${app.id} and id=${`${app.id}:${event.city}`}`;
+    state = saved?.state;
+  }
+  if (state) return { key, app, city: event.city, state, now, endsAt: event.ends_at.getTime() };
 }
 
 async function admittedMember(tx: SQL, accounts: FollowupAccounts, ctx: FollowupContext, memberId: string, exactPhone?: string): Promise<boolean> {
@@ -130,14 +135,15 @@ async function unblockedPair(tx: SQL, ctx: FollowupContext, first: string, secon
 }
 
 async function currentPair(tx: SQL, accounts: FollowupAccounts, ctx: FollowupContext, ownGroup: Group, ownId: string, peerId: string,
-  ownAlreadyAdmitted: boolean) {
+  ownAlreadyAdmitted: boolean, recipient?: GatheringFollowupRecipient) {
   const own = await attendance(tx, ctx, ownId);
   const peer = await attendance(tx, ctx, peerId);
   if (!own || !peer) return;
   const otherGroup = await approvedGroup(tx, ctx, peerId);
   const sameGroup = otherGroup?.review_id === ownGroup.review_id && otherGroup.group_no === ownGroup.group_no;
   if (!sameGroup || ownId === peerId) return;
-  const eligible = (ownAlreadyAdmitted || await admittedMember(tx, accounts, ctx, ownId)) && await admittedMember(tx, accounts, ctx, peerId);
+  const eligible = (ownAlreadyAdmitted || await admittedMember(tx, accounts, ctx, ownId, recipient?.memberId === ownId ? recipient.e164 : undefined))
+    && await admittedMember(tx, accounts, ctx, peerId, recipient?.memberId === peerId ? recipient.e164 : undefined);
   if (gatheringFollowupPairCurrent(sameGroup, ownId !== peerId, eligible, await unblockedPair(tx, ctx, ownId, peerId), own.attended, peer.attended))
     return { own, peer };
 }
@@ -201,26 +207,57 @@ export async function gatheringFollowupReplyCurrent(tx: SQL, accounts: FollowupA
 /** Internal evidence only. Ordinary pair policy and a fresh review still govern any contact. */
 export async function gatheringMutualFollowups(tx: SQL, accounts: FollowupAccounts, app: AppInfo,
   key: GatheringRsvpKey, now: number): Promise<{ members: [string, string]; groupReviewId: string }[]> {
-  const ctx = await followupContext(tx, app, key, false, now, now, false);
+  return (await gatheringRepeatSourcesForEvent(tx, accounts, app, key, now)).map(({ members, groupReviewId }) => ({ members, groupReviewId }));
+}
+
+interface MutualChoice {
+  member_id: string;
+  peer_id: string;
+  group_review_id: string;
+  one_own: string;
+  one_peer: string;
+  two_own: string;
+  two_peer: string;
+  one_id: string;
+  two_id: string;
+  one_at: Date;
+  two_at: Date;
+}
+
+/** Read the current, exact two-choice epoch. No member text, address or reply ID leaves this module. */
+export async function gatheringRepeatSourcesForEvent(tx: SQL, accounts: FollowupAccounts, app: AppInfo, key: GatheringRsvpKey, now: number,
+  o: { state?: NetworkState; expected?: GatheringRepeatSource; recipient?: GatheringFollowupRecipient } = {}): Promise<GatheringRepeatSource[]> {
+  const ctx = await followupContext(tx, app, key, false, now, now, false, o.state);
   if (!ctx) return [];
-  const choices = await tx<{ member_id: string; peer_id: string; group_review_id: string;
-    one_own: string; one_peer: string; two_own: string; two_peer: string }[]>`select one.member_id,one.peer_id,one.group_review_id,
+  const expected = o.expected;
+  const choices = await tx<MutualChoice[]>`select one.member_id,one.peer_id,one.group_review_id,
       one.own_attendance_response as one_own,one.peer_attendance_response as one_peer,
-      two.own_attendance_response as two_own,two.peer_attendance_response as two_peer
+      two.own_attendance_response as two_own,two.peer_attendance_response as two_peer,
+      one.response_id as one_id, two.response_id as two_id, one.responded_at as one_at, two.responded_at as two_at
     from network.monthly_gathering_followup_choices one join network.monthly_gathering_followup_choices two
       on two.app_id=one.app_id and two.gathering_id=one.gathering_id and two.revision=one.revision and two.group_review_id=one.group_review_id
       and two.member_id=one.peer_id and two.peer_id=one.member_id and two.wanted
-    where one.app_id=${app.id} and one.gathering_id=${key.id} and one.revision=${key.revision} and one.member_id<one.peer_id and one.wanted
-    order by one.member_id,one.peer_id`;
-  const result: { members: [string, string]; groupReviewId: string }[] = [];
+    where one.app_id=${app.id} and one.gathering_id=${key.id} and one.revision=${key.revision}
+      and one.member_id collate "C" < one.peer_id collate "C" and one.wanted
+      ${expected ? tx`and one.member_id=${expected.members[0]} and one.peer_id=${expected.members[1]} and one.group_review_id=${expected.groupReviewId}` : tx``}
+    order by one.member_id collate "C",one.peer_id collate "C"`;
+  const result: GatheringRepeatSource[] = [];
   for (const choice of choices) {
     const group = await approvedGroup(tx, ctx, choice.member_id);
     if (!group || group.review_id !== choice.group_review_id) continue;
-    const pair = await currentPair(tx, accounts, ctx, group, choice.member_id, choice.peer_id, false);
+    const pair = await currentPair(tx, accounts, ctx, group, choice.member_id, choice.peer_id, false, o.recipient);
     if (!pair) continue;
     const exactAttendance = choice.one_own === pair.own.response_id && choice.two_peer === pair.own.response_id &&
       choice.one_peer === pair.peer.response_id && choice.two_own === pair.peer.response_id;
-    if (gatheringFollowupMutual(true, true, true, exactAttendance)) result.push({ members: [choice.member_id, choice.peer_id], groupReviewId: group.review_id });
+    const ownAt = pair.own.responded_at.getTime(), peerAt = pair.peer.responded_at.getTime();
+    const firstChoiceAt = choice.one_at.getTime(), secondChoiceAt = choice.two_at.getTime();
+    if (!gatheringFollowupMutual(true, true, true, exactAttendance) || ownAt < ctx.endsAt || peerAt < ctx.endsAt
+      || firstChoiceAt > now || secondChoiceAt > now
+      || !gatheringFollowupCanChoose(true, ownAt, peerAt, firstChoiceAt) || !gatheringFollowupCanChoose(true, ownAt, peerAt, secondChoiceAt)) continue;
+    const members: [string, string] = [choice.member_id, choice.peer_id];
+    const consentVersion = createHash("sha256").update(JSON.stringify(["gathering-repeat", app.id, key.id, key.revision, group.review_id, members,
+      [pair.own.response_id, ownAt], [pair.peer.response_id, peerAt], [choice.one_id, firstChoiceAt], [choice.two_id, secondChoiceAt]])).digest("hex");
+    result.push({ gatheringId: key.id, revision: key.revision, groupReviewId: group.review_id, members, consentVersion });
   }
   return result;
 }

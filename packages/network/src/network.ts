@@ -68,6 +68,7 @@ import {
   acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
+import { gatheringRepeatMayAnswer, gatheringRepeatMayBook, gatheringRepeatMayStage, gatheringRepeatOppPrefix, gatheringRepeatSourceMatches } from "../../core/src/generated/gatheringRepeat.ts";
 import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
@@ -143,6 +144,11 @@ import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type Safe
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
 export type Origin = "engine" | "request" | "plans" | "planner" | "second_encounter" | "newcomer_welcome" | "player";
+
+/** Current private authority for one gathering pair. No response contents or share codes. */
+export interface GatheringRepeatSource {
+  gatheringId: string; revision: number; groupReviewId: string; members: [MemberId, MemberId]; consentVersion: string;
+}
 
 /**
  * Review gate (PRD 32.8). "human" (the default): a person approves each opportunity before anyone
@@ -555,6 +561,8 @@ interface Opp {
   feedbackFrom: Set<MemberId>;
   /** Original completed meeting behind this review item. */
   repeatFrom?: string;
+  /** Exact gathering consent behind this review item. Never part of member-facing copy. */
+  gatheringRepeat?: GatheringRepeatSource;
   /** Planner plans and crew sessions: the engine plan and its quorum run (plans.startPlanRun). */
   plan?: plans.Plan; planRun?: plans.PlanRun;
   /** The cancelled booking behind this separate review item. Never part of member-facing copy. */
@@ -681,6 +689,29 @@ const activeOpportunityParticipant = (o: Opp, id: MemberId) =>
   o.participants.includes(id) && !["unavailable", "no", "dropped"].includes(o.status.get(id) ?? "");
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+export { gatheringRepeatOppPrefix };
+
+function gatheringRepeatMembersMatch(left: readonly MemberId[], right: readonly MemberId[]): boolean {
+  return left.length === 2 && right.length === 2 && left[0] !== left[1] && left.every(memberId => right.includes(memberId));
+}
+
+export function sameGatheringRepeatSource(left: GatheringRepeatSource | undefined, right: GatheringRepeatSource | undefined): boolean {
+  return !!left && !!right && gatheringRepeatSourceMatches(left.gatheringId === right.gatheringId, left.revision === right.revision,
+    left.groupReviewId === right.groupReviewId, gatheringRepeatMembersMatch(left.members, right.members), left.consentVersion === right.consentVersion);
+}
+
+export function gatheringRepeatOppId(source: GatheringRepeatSource): string {
+  return `${gatheringRepeatOppPrefix}${sha256(stableStringify([source.gatheringId, ...source.members.slice().sort()]))}`;
+}
+
+export function gatheringRepeatProbeKey(oppId: string, memberId: MemberId, retry = false): string {
+  return `${oppId}:${retry ? "times" : "probe"}:${memberId}`;
+}
+
+function isGatheringRepeat(o: Pick<Opp, "id" | "gatheringRepeat">): boolean {
+  return o.id.startsWith(gatheringRepeatOppPrefix) || o.gatheringRepeat !== undefined;
+}
 /** A tie-break in [0, 1) from the seed and two ids (FNV-1a): stable per run, not id order. */
 function seededTie(seed: number, a: string, b: string): number {
   let h = 0x811c9dc5 ^ seed;
@@ -802,6 +833,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
+  /** A service read for the current unit. This authority is never imported or exported with state. */
+  private gatheringRepeatSources = new Map<string, GatheringRepeatSource>();
   private pcfg: PlansConfig;
 
   constructor(opts: NetworkOptions = {}) {
@@ -926,6 +959,20 @@ export class ConsentNetwork implements NetworkUnderTest {
   private heardFrom(m: MemberState) {
     m.pendingAsks = []; m.unanswered = 0; m.outbound = 0; m.openAskAt = undefined; m.reengaged = false;
     if (m.onlyWhenAsked) { m.onlyWhenAsked = false; this.ctx.log("outreach_resumed", { memberId: m.id }); }
+  }
+
+  /** A fresh, signed follow-up choice is engagement without answering an unrelated pending question. */
+  noteGatheringFollowupReply(id: MemberId): void {
+    if (this.app.id !== "ntwrk" || this.declinedIds.has(id)) return;
+    const member = this.members.get(id);
+    if (!member || member.optedOut || member.account) return;
+    this.dirty = true;
+    const now = this.now();
+    member.lastInbound = Math.max(member.lastInbound, now);
+    member.msgsIn++;
+    member.replies = [...(member.replies ?? []), now].slice(-60);
+    member.unsolStreak = 0;
+    this.heardFrom(member);
   }
 
   /**
@@ -1099,7 +1146,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (aw?.kind === "probe") {
       const o = this.opps.get(aw.oppId!);
       const options = o?.offered?.[m.id] ?? [];
-      const r0 = mergeConsent(parseProbeReply(body, options), this.understood, options);
+      const gathering = !!o && isGatheringRepeat(o);
+      if (gathering) {
+        if (!this.repeatSourceCurrent(o)) return this.close(o, "gathering repeat consent changed");
+        const key = gatheringRepeatProbeKey(o.id, m.id, o.timeRetry?.includes(m.id));
+        const receipt = this.ctx.initialInviteReceipt?.(key);
+        const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+        if (!gatheringRepeatMayAnswer(true, this.memberReply && !msg.reaction, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)) return "open" as const;
+      }
+      const parsedAnswer = parseProbeReply(body, options);
+      const r0 = gathering ? parsedAnswer : mergeConsent(parsedAnswer, this.understood, options);
       // A bare "👍" / "ok" after two or more messages in a row ("On it." and the probe) may answer
       // either one: it is not a yes to meeting someone (asked once more).
       const r = r0.answer === "yes" && this.outboundBefore >= 2 && ACK_ONLY.test(body.trim()) ? { ...r0, answer: "unclear" as const } : r0;
@@ -1424,6 +1480,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.declinedIds.add(id);
     for (let i = this.requests.length - 1; i >= 0; i--) if (this.requests[i]!.memberId === id) this.requests.splice(i, 1);
     this.dropMember(id, "declined");
+    for (const [oppId, source] of this.gatheringRepeatSources) if (source.members.includes(id)) this.gatheringRepeatSources.delete(oppId);
     const names = [this.fullNames.get(id), this.members.get(id)?.display].filter((x): x is string => !!x && x !== id);
     const first = this.members.get(id)?.first;
     const scrub = (t: string) => names.reduce((x, n) => x.split(n).join("someone"), first ? t.replaceAll(copy.inviteeJoined(first), "") : t);
@@ -2629,7 +2686,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.opts.review = mode;
     this.ctx?.log("review_mode", { mode, actor: actor ?? null });
     // The simulated reviewer never decides fraud items: confirming gaming needs a person (and the truth).
-    if (mode === "auto" && this.ctx) for (const item of this.reviewQueue()) if (item.kind !== "fraud") this.review(item.oppId, "approve", { reviewer: SIM_AUTO_REVIEWER });
+    if (mode === "auto" && this.ctx) for (const item of this.reviewQueue()) if (item.kind !== "fraud" && !item.oppId.startsWith(gatheringRepeatOppPrefix)) this.review(item.oppId, "approve", { reviewer: SIM_AUTO_REVIEWER });
   }
 
   /** Is proactive matching on (the NYC switch)? */
@@ -2682,6 +2739,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const refuse = (reason: string): ActionResult => { this.ctx.log("review_refused", { oppId, decision, reason }); return { ok: false, reason }; };
     if (!REVIEW_DECISIONS.has(decision)) return refuse("unknown_decision");
+    if (isGatheringRepeat(o) && decision === "approve" && (!opts.reviewer || opts.reviewer === SIM_AUTO_REVIEWER)) return refuse("staff_review_required");
     // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw"
     if (opts.revision !== undefined && !reviewRevisionCurrent(opts.revision, reviewRevision(o))) return refuse("review_stale");
     const blocked = this.reviewBlock(oppId, decision, opts) ?? (decision === "edit" ? this.editBlock(o, opts) : undefined);
@@ -2735,6 +2793,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (opts.reason === "other" && !opts.note?.trim()) return "note_required";
     // spec/reviewDeadline.md, "An opportunity expires at its review deadline"
     if (reviewLate(this.now(), o.review.deadline)) return "review_expired";
+    if (isGatheringRepeat(o) && (decision === "reroll" || decision === "edit")) return "gathering_repeat_fixed_pair";
     if (decision === "approve" || decision === "edit") {
       for (const id of o.participants) {
         if (this.declinedIds.has(id)) return "participant_declined";
@@ -2795,7 +2854,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
-    if (o.origin === "second_encounter" && (!o.repeatFrom || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
+    if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor,
       lane: o.lane, cofounderIntents: o.cofounderIntents, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
@@ -2855,7 +2914,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const p of o.participants) o.status.set(p, "queued");
     this.counters.reviewQueued++;
     this.ctx.log("review_queued", { proposal: this.toProposal(o), origin: o.origin, deadline: o.review.deadline, runId: o.runId });
-    if (this.opts.review === "auto") this.review(o.id, "approve", { reviewer: SIM_AUTO_REVIEWER });
+    if (this.opts.review === "auto" && !isGatheringRepeat(o)) this.review(o.id, "approve", { reviewer: SIM_AUTO_REVIEWER });
   }
 
   /** Start the consent flow for an approved opportunity: probe the member with the want first. */
@@ -2924,7 +2983,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private startProbes(o: Opp) {
-    if (!this.opts.probes) { for (const id of o.participants) o.status.set(id, "available"); return this.reveal(o); }
+    if (!this.opts.probes && !isGatheringRepeat(o)) { for (const id of o.participants) o.status.set(id, "available"); return this.reveal(o); }
     this.advanceProbes(o);
   }
 
@@ -2936,6 +2995,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private advanceProbes(o: Opp) {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
+    if (isGatheringRepeat(o) && !this.repeatSourceCurrent(o)) return this.close(o, "gathering repeat consent changed");
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", false, false)) {
       return this.close(o, "cofounder_intent_changed");
@@ -2979,7 +3039,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const pending = participantProbe(o.status.get(id));
     if (!needsProbeSend(pending, o.contacted.has(id))) return;
-    if (o.origin === "second_encounter" && (!o.repeatFrom || !this.repeatPreferencesAllow(o.category, o.participants))) {
+    if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatPreferencesAllow(o.category, o.participants))) {
       this.close(o, "repeat preferences changed");
       return;
     }
@@ -3035,7 +3095,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.send(m, text, timesOnly ? { type: "scheduling", proactive: false, proposalId: o.id, ...(options.length ? { timeOptions: options } : {}) } : {
       type: "probe", proactive: invite, probe: { key: o.id, category: o.category, participants: [...o.participants], kind: o.kind, window },
       ...(options.length ? { timeOptions: options } : {}),
-    }, "probe", { about: o.participants, fallback, hook: { t: "probe", oppId: o.id, id }, noDefer: true });
+    }, "probe", { about: o.participants, fallback, hook: { t: "probe", oppId: o.id, id }, noDefer: true,
+      ...(isGatheringRepeat(o) ? { key: gatheringRepeatProbeKey(o.id, id) } : {}) });
   }
 
   /**
@@ -3152,6 +3213,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = []) {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "probing") return;
+    if (isGatheringRepeat(o) && !this.repeatSourceCurrent(o)) return this.close(o, "gathering repeat consent changed");
     // spec/probeDispatch.md, "A reply or an expired deadline settles the probe"
     const current = participantProbe(o.status.get(m.id));
     if (!canRecordReply(current)) return;
@@ -3185,10 +3247,13 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.offered = { ...o.offered, [m.id]: fresh };
         o.status.set(m.id, "probing");
         o.sentAt = { ...o.sentAt, [m.id]: this.now() };
-        this.send(m, copy.timesRetry(attention.timeOptionsPhrase(fresh, NY)), { type: "scheduling", proactive: false, timeOptions: fresh }, "scheduling",
-          { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id } });
+        const gathering = isGatheringRepeat(o);
+        this.send(m, copy.timesRetry(attention.timeOptionsPhrase(fresh, NY)), { type: "scheduling", proactive: false, timeOptions: fresh,
+          ...(gathering ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
+          ...(gathering ? { key: gatheringRepeatProbeKey(o.id, m.id, true), noDefer: true } : {}) });
         return;
       }
+      if (isGatheringRepeat(o) && needsOtherTimes(offeredTimes, pickedTimes)) return this.closeNoCommonTime(o, m.id);
       this.ack(m, "Great, thanks.");
     } else if (answered.phase === "Unavailable") {
       this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
@@ -3292,6 +3357,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", true,
       o.participants.every(p => o.status.get(p) === "available" && o.contacted.has(p)))) {
       return this.close(o, "cofounder_intent_changed");
+    }
+    if (isGatheringRepeat(o)) {
+      const [first, second] = o.participants;
+      const accepted = (id: MemberId | undefined) => id !== undefined && o.status.get(id) === "available" && o.primed.has(id) && o.contacted.has(id);
+      if (!gatheringRepeatMayBook(this.repeatSourceCurrent(o), o.review?.decision === "approve" && !!o.review.reviewer && o.review.reviewer !== SIM_AUTO_REVIEWER,
+        accepted(first), accepted(second))) return this.close(o, "gathering repeat consent changed");
     }
     if (o.origin === "second_encounter" && !this.repeatPreferencesAllow(o.category, o.participants)) return this.close(o, "repeat preferences changed");
     const now = this.now();
@@ -4616,6 +4687,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.pendingInviteJoins?.length) m.pendingInviteJoins = m.pendingInviteJoins.filter(notice => now - notice.at < inviteJoinNoticeLifetimeMs);
     }
     this.retainMemberStanding(now);
+    this.queueGatheringRepeats();
     for (const o of this.openOpps()) {
       if (o.stage === "scheduled") continue;
       if (this.holdHelpOpportunity(o)) {
@@ -5523,6 +5595,69 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
   }
 
+  /** Replace the runtime's fresh authority. The imported snapshot carries proposals, never authority. */
+  setGatheringRepeatSources(sources: readonly GatheringRepeatSource[]): void {
+    this.gatheringRepeatSources.clear();
+    if (this.app.id !== "ntwrk") return;
+    const conflicts = new Set<string>();
+    for (const source of sources) {
+      if (!source.gatheringId || !source.groupReviewId || !Number.isSafeInteger(source.revision) || source.revision < 1 ||
+        !source.members[0] || !source.members[1] || !gatheringRepeatMembersMatch(source.members, source.members) || !/^[a-f0-9]{64}$/.test(source.consentVersion)) continue;
+      const id = gatheringRepeatOppId(source);
+      const existing = this.gatheringRepeatSources.get(id);
+      if (existing && !sameGatheringRepeatSource(existing, source)) conflicts.add(id);
+      this.gatheringRepeatSources.set(id, { ...source, members: [source.members[0], source.members[1]] });
+    }
+    for (const id of conflicts) this.gatheringRepeatSources.delete(id);
+  }
+
+  private gatheringRepeatPairAllowed(pair: [MemberId, MemberId]): boolean {
+    const [first, second] = pair;
+    const key = pairKey(first, second);
+    return !this.blocked(first, second) && !this.avoid.has(key) && (this.declined.get(key) ?? -Infinity) <= this.now() - 60 * DAY &&
+      this.repeatPreferencesAllow("social", pair) && pair.every(id => {
+        if (this.declinedIds.has(id)) return false;
+        const member = this.members.get(id), record = this.record(id);
+        return !!member && !!record && record.homeCity === "nyc" && canBeMatched(record.age) && record.state !== "paused" &&
+          !record.prefs?.onlyWhenAsked && (record.accountStatus === undefined || record.accountStatus === "active") &&
+          gatheringMemberStateCurrent(member, !this.trust.ok(id) || this.reportHeld(id));
+      });
+  }
+
+  private repeatSourceCurrent(o: Opp): boolean {
+    if (!isGatheringRepeat(o)) return !!o.repeatFrom;
+    const source = o.gatheringRepeat;
+    return this.app.id === "ntwrk" && this.matchingEnabled() && !!source && o.origin === "second_encounter" &&
+      o.kind === "second_encounter" && o.category === "social" && !o.plan && !o.seat && !o.requester && !o.alternates.length &&
+      sameGatheringRepeatSource(source, this.gatheringRepeatSources.get(o.id)) && gatheringRepeatMembersMatch(o.participants, source.members) &&
+      this.gatheringRepeatPairAllowed(source.members);
+  }
+
+  private closeStaleGatheringRepeats(): void {
+    for (const opp of this.openOpps()) {
+      if ((opp.stage === "review" || opp.stage === "probing") && isGatheringRepeat(opp) && !this.repeatSourceCurrent(opp)) {
+        this.close(opp, "gathering repeat consent changed");
+      }
+    }
+  }
+
+  /** Stage at most one ordinary, separately consented social review for one gathering pair. */
+  queueGatheringRepeats(): void {
+    if (this.app.id !== "ntwrk") return;
+    this.closeStaleGatheringRepeats();
+    if (!this.matchingEnabled()) return;
+    for (const [id, source] of this.gatheringRepeatSources) {
+      const pair = source.members;
+      if (!gatheringRepeatMayStage(true, true, this.gatheringRepeatPairAllowed(pair) && this.repeatOutreachAllowed("social", pair), this.opps.has(id))) continue;
+      const [first, second] = pair;
+      const opp = this.newOpp({ id, origin: "second_encounter", kind: "second_encounter", category: "social", objective: "Meet someone nearby",
+        detail: "a coffee nearby", participants: pair, alternates: [], primed: [], explanations: { [first]: GOOD_FIT, [second]: GOOD_FIT },
+        score: 0.8, generator: "gathering_second_encounter", tags: [] });
+      opp.gatheringRepeat = source;
+      this.submit(opp);
+    }
+  }
+
   /** App-local facts for the current staff gathering read. No profile values or pair identities leave the engine. */
   gatheringPriorityEvidence(now: number) {
     if (this.app.id !== "ntwrk") return [];
@@ -5956,8 +6091,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "times": return {
         valid: () => !!o && o.stage === "probing" && o.status.get(h.id) === "probing",
         onSent: () => { if (o) m.awaiting = { kind: "probe", oppId: o.id, at: now() }; },
-        // Not reached: the plan goes ahead at the best time for everyone.
-        onRefused: () => { if (o && o.stage === "probing" && o.status.get(h.id) === "probing") { o.status.set(h.id, "available"); this.advanceProbes(o); } },
+        onRefused: () => {
+          if (!o || o.stage !== "probing" || o.status.get(h.id) !== "probing") return;
+          if (isGatheringRepeat(o)) return this.closeNoCommonTime(o, h.id);
+          // Existing scheduling uses the best common time if its extra question could not go out.
+          o.status.set(h.id, "available");
+          this.advanceProbes(o);
+        },
       };
       case "reveal": return {
         valid: () => !!o && o.stage === "scheduled" && (o.scheduleRevision ?? 0) === 0 && o.status.get(h.id) === "yes" && now() < (o.meetingAt ?? Infinity),

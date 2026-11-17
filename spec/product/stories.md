@@ -268,7 +268,7 @@ Models: [bounded candidate search](../candidateSearch.md), [empty intent follow-
 
 An admin creates the monthly public city gathering and approves eligible invitation priority. Collect RSVPs, suggest small groupings, remind as permitted and ask whom members would like to see again. Apply adult eligibility and review to member connections. This follows the slop pilot in the NYC Network rollout.
 
-Models: [gathering review](../monthlyGathering.md), [invitation review](../monthlyGatheringInvitationReview.md), [invitation delivery](../monthlyGatheringDelivery.md), [RSVP](../monthlyGatheringRsvp.md), [grouping](../monthlyGatheringGrouping.md), [notices](../monthlyGatheringNotices.md), [attendance and follow-up](../monthlyGatheringFollowup.md), [plan run](../models/plan_run.md), [review desk](../models/review_desk.md), [matching engine](../models/matching_engine.md).
+Models: [gathering review](../monthlyGathering.md), [invitation review](../monthlyGatheringInvitationReview.md), [invitation delivery](../monthlyGatheringDelivery.md), [RSVP](../monthlyGatheringRsvp.md), [grouping](../monthlyGatheringGrouping.md), [notices](../monthlyGatheringNotices.md), [attendance and follow-up](../monthlyGatheringFollowup.md), [reviewed second encounter](../gatheringRepeat.md), [second-encounter delivery checks](../gatheringRepeatDelivery.md), [plan run](../models/plan_run.md), [review desk](../models/review_desk.md), [matching engine](../models/matching_engine.md).
 
 ## Story F23 — Block or report
 

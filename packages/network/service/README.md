@@ -378,13 +378,22 @@ gathering, members in an approved group can send `GATHERING REFERENCE <id>
 use `GATHERING FOLLOW-UP <id> <revision> <peer-reference> YES` to make a
 private choice, or `NO` to withdraw it.
 
+Two current mutual choices can create one second-encounter review for that
+gathering and pair. Staff approve the exact pair. Each member then answers
+their own anonymous probe before either receives the initial meeting details.
+The queue rechecks the exact gathering choices and both members' adult
+eligibility before initial contact or disclosure. A booked meeting uses the
+ordinary logistics and consent rules.
+
 [Staff review rules](../../../spec/monthlyGathering.md) ·
 [Invitation approval](../../../spec/monthlyGatheringInvitationReview.md) ·
 [Invitation delivery](../../../spec/monthlyGatheringDelivery.md) ·
 [RSVP and privacy rules](../../../spec/monthlyGatheringRsvp.md) ·
 [Grouping review](../../../spec/monthlyGatheringGrouping.md) ·
 [Reminders and attendance prompt](../../../spec/monthlyGatheringNotices.md) ·
-[Attendance and follow-up](../../../spec/monthlyGatheringFollowup.md)
+[Attendance and follow-up](../../../spec/monthlyGatheringFollowup.md) ·
+[Reviewed second encounter](../../../spec/gatheringRepeat.md) ·
+[Second-encounter delivery checks](../../../spec/gatheringRepeatDelivery.md)
 
 ## Limits
 

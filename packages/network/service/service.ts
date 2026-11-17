@@ -3099,6 +3099,14 @@ export class NetworkService implements RuntimeHost {
       const onboarding = policyAllowed && age === undefined && outcome === "join_asked" && !turn.memberId;
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
+      // An authorized direct follow-up choice is a fresh conversation turn. Replays skip this callback.
+      const gatheringPreference = outcome === "gathering_followup" && collected.length > 0 && gatheringFollowupCommand(input.text)?.kind === "preference";
+      if (gatheringPreference && accountEligible && rt && turn.memberId && binding?.membership.memberId === turn.memberId) {
+        const memberId = turn.memberId;
+        await rt.unitOfWork(net => net.noteGatheringFollowupReply(memberId))
+          .catch(() => this.log(`[gathering] preference engagement waits (${rt.id})`));
+        await this.lineAdapter()?.engaged?.(input.from);
+      }
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
       if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && outcome !== "gathering_rsvp" && outcome !== "gathering_followup" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
@@ -3128,6 +3136,10 @@ export class NetworkService implements RuntimeHost {
         const bookingRuntime = rt ?? this.runtimeFor(handled.app);
         if (bookingRuntime && await bookingRuntime.scoped(tx => originalBookingNoticeStale(tx, bookingRuntime.app.id, bookingRuntime.pg.id, replyIds))) {
           return json({ error: "turn_booking_changed", retryable: false }, 409);
+        }
+        if (bookingRuntime && !await bookingRuntime.scoped(tx =>
+          bookingRuntime.gatheringRepeatRepliesCurrent(tx, memberId, input.from, replyIds, handled.replies))) {
+          return json({ error: "turn_gathering_repeat_changed", retryable: false }, 409);
         }
         const schedulingIds = replyIds.filter(id => id.startsWith(RESCHEDULE_QUEUE_PREFIX));
         if (schedulingIds.length) {
