@@ -820,18 +820,62 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // A part word in the same clause narrows a named day to that part of the day
+  // ("Saturday evening" is not the Saturday 11am slot; "Thursday morning" is not
+  // the Thursday 7pm slot). The part boundaries match the daypart mapping in #159
+  // (morning 5:00-11:59, afternoon 12:00-16:59, evening 17:00-4:59). A day part
+  // the probe did not offer is a counter-offer, like an unoffered day. Only matchAll
+  // is used on the shared daypart regexes: a .test() on them would leave lastIndex
+  // behind and make later calls order-dependent.
+  const sameClause = (a: number, b: number): boolean => {
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    return !/[.,;!?]|\b(but|though|however|although|so)\b/.test(t.slice(lo, hi));
+  };
+  const partsInClause = (at: number): Set<"morning" | "afternoon" | "evening"> => {
+    const parts = new Set<"morning" | "afternoon" | "evening">();
+    for (const [re, part] of DAYPART_WORDS) {
+      for (const pm of t.matchAll(re)) {
+        if (sameClause(at, pm.index!) && !negatedAt(t, pm.index!, pm[0].length)) parts.add(part);
+      }
+    }
+    return parts;
+  };
+  const partKeys = (keys: string[], parts: Set<"morning" | "afternoon" | "evening">): string[] =>
+    keys.filter(k => {
+      const o = options.find(o => o.key === k);
+      const h = o ? labelHour(o.label) : undefined;
+      return h !== undefined && parts.has(daypartOfHour(h));
+    });
+  let unofferedDayPart = false;
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (!keys.length) continue;
+    for (const m of t.matchAll(re)) {
+      const parts = partsInClause(m.index!);
+      if (!parts.size) { mark(keys, m.index!, m[0].length); continue; }
+      const narrowed = partKeys(keys, parts);
+      if (narrowed.length) mark(narrowed, m.index!, m[0].length);
+      else if (!negatedAt(t, m.index!, m[0].length)) unofferedDayPart = true;
+    }
   }
-  // "Weekend" names the Saturday and Sunday options ("this weekend works" books only those;
-  // Thursday is not the weekend). A weekend the probe did not offer is a counter-offer, like an
-  // unoffered day: the member is free at a time that was not offered.
+  // "Weekend" names the Saturday and Sunday options ("this weekend works" books only
+  // those; Thursday is not the weekend). With a part word in the same clause it names
+  // only the weekend options in that part ("weekend morning works" is the Saturday
+  // 11am slot, not the Thursday 7pm one). A weekend part the probe did not offer is
+  // a counter-offer, like an unoffered day.
   const weekendKeys = options.filter(o => o.label.startsWith("Saturday") || o.label.startsWith("Sunday")).map(o => o.key);
   let unofferedWeekend = false;
+  let unofferedWeekendPart = false;
   for (const m of t.matchAll(/\bweekends?\b/g)) {
-    if (weekendKeys.length) mark(weekendKeys, m.index!, m[0].length);
-    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekend = true;
+    const parts = partsInClause(m.index!);
+    if (!parts.size) {
+      if (weekendKeys.length) mark(weekendKeys, m.index!, m[0].length);
+      else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekend = true;
+      continue;
+    }
+    const narrowed = partKeys(weekendKeys, parts);
+    if (narrowed.length) mark(narrowed, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekendPart = true;
   }
   // "Weekday" names the Monday-to-Friday options ("any weekday works" books only those;
   // Saturday and Sunday are not weekdays). A weekday the probe did not offer is a counter-offer, like an
@@ -853,10 +897,6 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "mornings on weekdays"). A daypart refused in its own clause ("weekday mornings,
   // not evenings") does not count. Only matchAll is used on the shared daypart regexes:
   // a .test() on them would leave lastIndex behind and make later calls order-dependent.
-  const sameClause = (a: number, b: number): boolean => {
-    const [lo, hi] = a < b ? [a, b] : [b, a];
-    return !/[.,;!?]|\b(but|though|however|although|so)\b/.test(t.slice(lo, hi));
-  };
   for (const m of t.matchAll(/\bweekdays?\b/g)) {
     const parts = new Set<"morning" | "afternoon" | "evening">();
     for (const [re, part] of DAYPART_WORDS) {
@@ -926,6 +966,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // offered times: "weekday morning works" when no weekday-morning option was offered must not book
   // the weekend. A named offered time still books that time.
   if (unofferedWeekdayPart && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+  // A yes aimed at a day part the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "weekend evening works" when no weekend-evening option was offered must not
+  // book the weekdays. A named offered time still books that time.
+  if ((unofferedDayPart || unofferedWeekend || unofferedWeekendPart) && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

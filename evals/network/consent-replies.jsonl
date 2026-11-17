@@ -328,7 +328,6 @@
 {"text":"a weekday evening works","label":"yes","keys":["a"]}
 {"text":"a weekday works, Saturday too","label":"yes","keys":["a","b"]}
 {"text":"any weekday works, Sunday too","label":"yes","keys":["a","c"]}
-{"text":"weekdays work","label":"yes","keys":["a"]}
 {"text":"weekdays work for me","label":"yes","keys":["a"]}
 {"text":"weekdays work best","label":"yes","keys":["a"]}
 {"text":"I'm free on weekdays","label":"yes","keys":["a"]}
@@ -363,7 +362,6 @@
 {"text":"I work during the week","label":"unclear"}
 {"text":"during the week doesn't work","label":"unclear"}
 {"text":"weekday evening works","label":"yes","keys":["a"]}
-{"text":"a weekday evening works","label":"yes","keys":["a"]}
 {"text":"weekday night works","label":"yes","keys":["a"]}
 {"text":"a weekday night works","label":"yes","keys":["a"]}
 {"text":"weekday evening is best","label":"yes","keys":["a"]}
@@ -386,3 +384,38 @@
 {"text":"weekday morning is too early","label":"unclear"}
 {"text":"I can't do weekday mornings","label":"unclear"}
 {"text":"weekday mornings, not evenings","label":"unclear"}
+{"text":"weekend morning works","label":"yes","keys":["b"]}
+{"text":"a weekend morning works","label":"yes","keys":["b"]}
+{"text":"I'm free weekend mornings","label":"yes","keys":["b"]}
+{"text":"weekend afternoon works","label":"yes","keys":["c"]}
+{"text":"a weekend afternoon works","label":"yes","keys":["c"]}
+{"text":"weekend lunch works","label":"yes","keys":["c"]}
+{"text":"weekend morning works, Saturday too","label":"yes","keys":["b"]}
+{"text":"weekend morning works, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"weekend evening works, Saturday too","label":"yes","keys":["b"]}
+{"text":"weekend afternoon works, Sunday too","label":"yes","keys":["c"]}
+{"text":"Saturday works, weekend evening too","label":"yes","keys":["b"]}
+{"text":"weekend morning or evening works","label":"yes","keys":["b"]}
+{"text":"weekend evening or morning works","label":"yes","keys":["b"]}
+{"text":"Saturday morning works","label":"yes","keys":["b"]}
+{"text":"Sunday afternoon works","label":"yes","keys":["c"]}
+{"text":"Thursday evening works","label":"yes","keys":["a"]}
+{"text":"this weekend works","label":"yes","keys":["b","c"]}
+{"text":"weekend works","label":"yes","keys":["b","c"]}
+{"text":"weekend evening works","label":"yes","keys":[]}
+{"text":"a weekend evening works","label":"yes","keys":[]}
+{"text":"weekend night works","label":"yes","keys":[]}
+{"text":"Saturday evening works","label":"yes","keys":[]}
+{"text":"Saturday afternoon works","label":"yes","keys":[]}
+{"text":"Sunday morning works","label":"yes","keys":[]}
+{"text":"Sunday evening works","label":"yes","keys":[]}
+{"text":"Thursday morning works","label":"yes","keys":[]}
+{"text":"weekend morning doesn't work","label":"unclear"}
+{"text":"I can't do weekend mornings","label":"unclear"}
+{"text":"not weekend evenings","label":"unclear"}
+{"text":"weekend mornings work","label":"unclear"}
+{"text":"weekend evenings work","label":"unclear"}
+{"text":"weekend evening is best","label":"unclear"}
+{"text":"I'm free on weekend evenings","label":"unclear"}
+{"text":"weekend mornings, not evenings","label":"unclear"}
+{"text":"mornings on weekends work","label":"unclear"}
