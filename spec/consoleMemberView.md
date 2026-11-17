@@ -44,6 +44,8 @@ pure def lawStaffRevealNeedsCurrentSafety(sameView: bool, signInCurrent: bool, g
 
 In real mode, show the current durable queue status and a normalized reason when the app, member and outbound message all match. The queue's staff read exposes no address, body, provider error or raw operator note. A leak stop, a staff release, and a body checked before a delivery attempt are separate outcomes. A check does not prove delivery. A pending row with no check evidence shows no leak result. Another message at the same time proves nothing about this message. When the queue has no matching evidence, show only the stored message status and separately recorded timeline events. A failed evidence read stops the detail read. A recorded leak stop withholds the prepared body, including from a member reveal, so only the authorized leak review can show it.
 
+Each app's database reader has access only to its own delivery evidence view. The legacy Observatory reader has access to the Ntwrk view. Apply the same grants on upgrades and when reinstalling the base schema.
+
 ```quint
 type ConsoleDeliveryGuard = DeliveryGuardUnrecorded | DeliveryGuardBlocked | DeliveryGuardReleased | DeliveryGuardChecked
 

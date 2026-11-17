@@ -322,14 +322,15 @@ revoke select on network.channel_identities from network_observatory;
 revoke select on network.network_state from network_observatory;
 alter default privileges in schema network grant select on tables to network_observatory;
 
--- The shared console role reads The Network's (ntwrk) console view only, never the view of every app
--- or another app's view (audit platform-7, migration 0010). "All tables" above includes those views
--- when this file runs again, so they are taken back here.
+-- The legacy console role reads the Ntwrk state and delivery-evidence views. The blanket grant
+-- includes views already present when this repeatable schema runs, so restore their app scope here.
 do $$
 declare v text;
 begin
   for v in select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
-           where n.nspname = 'network' and c.relkind = 'v' and c.relname like 'network\_state\_console%' and c.relname <> 'network_state_console_ntwrk' loop
+           where n.nspname = 'network' and c.relkind = 'v'
+             and ((c.relname like 'network\_state\_console%' and c.relname <> 'network_state_console_ntwrk')
+               or (c.relname like 'outbound\_evidence\_%' and c.relname <> 'outbound_evidence_ntwrk')) loop
     execute format('revoke select on network.%I from network_observatory', v);
   end loop;
 end $$;
