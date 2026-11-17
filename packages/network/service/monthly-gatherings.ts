@@ -69,7 +69,7 @@ function parseDraft(value: unknown): GatheringInput | undefined {
   return { month: draft.month, venue: { kind: venue.kind, id: venue.id }, startsAt: draft.startsAt, endsAt: draft.endsAt, capacity: draft.capacity };
 }
 
-type StoredGatheringVenue = Pick<GatheringRow, "month" | "venue_kind" | "venue_ref" | "venue_name" | "starts_at" | "ends_at" | "capacity">;
+export type StoredGatheringVenue = Pick<GatheringRow, "month" | "venue_kind" | "venue_ref" | "venue_name" | "starts_at" | "ends_at" | "capacity">;
 
 function gatheringInput(row: StoredGatheringVenue): GatheringInput {
   return { month: row.month, venue: { kind: row.venue_kind, id: row.venue_ref }, startsAt: row.starts_at.getTime(), endsAt: row.ends_at.getTime(), capacity: row.capacity };
@@ -116,6 +116,11 @@ function response(body: object, status = 200) {
 /** The approved venue still has the exact public name and time window. */
 export async function gatheringVenueStillCurrent(tx: SQL, row: StoredGatheringVenue, now: number): Promise<boolean> {
   return await gatheringVenue(tx, gatheringInput(row), now) === row.venue_name;
+}
+
+/** The public catalog importer takes the same lock exclusively before replacing this source. */
+export async function lockGatheringListing(tx: SQL): Promise<void> {
+  await tx`select pg_advisory_xact_lock_shared(hashtext('thenetwork-public-events-nyc-parks'))`;
 }
 const failure = (error: string, status: number) => response({ ok: false, error }, status);
 

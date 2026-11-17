@@ -21,9 +21,8 @@ export function gatheringRsvpAttendanceAllowed(currentOwner: boolean, adult: boo
 
 /** Story: Choose how to attend the monthly gathering / Only the exact approved gathering accepts a fresh RSVP (spec/monthlyGatheringRsvp.md) */
 //@ pure
-export function lawGatheringMinorCannotAttend(currentOwner: boolean, localMember: boolean, activeParticipant: boolean): boolean {
-  //@ ensures \result === true
-  return !gatheringRsvpAttendanceAllowed(currentOwner, false, localMember, activeParticipant);
+export function gatheringRsvpNeedsListingCheck(publishedListing: boolean, withdrawing: boolean, beforeStart: boolean): boolean {
+  return publishedListing && !withdrawing && beforeStart;
 }
 
 /** Story: Choose how to attend the monthly gathering / Only the exact approved gathering accepts a fresh RSVP (spec/monthlyGatheringRsvp.md) */
@@ -31,6 +30,20 @@ export function lawGatheringMinorCannotAttend(currentOwner: boolean, localMember
 export function lawGatheringRequiresApproval(sameRevision: boolean, isWithdrawal: boolean, approvedAt: number, startAt: number, endAt: number, receivedAt: number, handledAt: number): boolean {
   //@ ensures \result === true
   return !gatheringRsvpWindow(false, sameRevision, isWithdrawal, approvedAt, startAt, endAt, receivedAt, handledAt);
+}
+
+/** Story: Choose how to attend the monthly gathering / Only the exact approved gathering accepts a fresh RSVP (spec/monthlyGatheringRsvp.md) */
+//@ pure
+export function lawGatheringMinorCannotAttend(currentOwner: boolean, localMember: boolean, activeParticipant: boolean): boolean {
+  //@ ensures \result === true
+  return !gatheringRsvpAttendanceAllowed(currentOwner, false, localMember, activeParticipant);
+}
+
+/** Story: Choose how to attend the monthly gathering / Only the exact approved gathering accepts a fresh RSVP (spec/monthlyGatheringRsvp.md) */
+//@ pure
+export function lawGatheringWithdrawalDoesNotDependOnListing(publishedListing: boolean, beforeStart: boolean): boolean {
+  //@ ensures \result === true
+  return !gatheringRsvpNeedsListingCheck(publishedListing, true, beforeStart);
 }
 
 /** Story: Choose how to attend the monthly gathering / Each member owns one RSVP and withdrawal wins a tie (spec/monthlyGatheringRsvp.md) */

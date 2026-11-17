@@ -1,13 +1,14 @@
 import { canBeMatched, type ParticipationState } from "@thenetwork/core";
 import {
   gatheringInvitationPriority, gatheringRsvpAttendanceAllowed, gatheringRsvpGroupingAllowed,
-  gatheringRsvpHasSeat, gatheringRsvpReplaces, gatheringRsvpRosterAllowed, gatheringRsvpWindow,
+  gatheringRsvpHasSeat, gatheringRsvpNeedsListingCheck, gatheringRsvpReplaces, gatheringRsvpRosterAllowed, gatheringRsvpWindow,
 } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { lowestAge } from "../../platform/src/age.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import type { MemberCommandOwner } from "./member-command.ts";
+import { gatheringVenueStillCurrent, lockGatheringListing, type StoredGatheringVenue } from "./monthly-gatherings.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 
 export interface GatheringRsvpKey { id: string; revision: number }
@@ -49,9 +50,8 @@ export function gatheringRsvpCommand(text: string): GatheringRsvpCommand | undef
   if (withdrawal) return { id: gatheringIdFromReference(withdrawal[1]!), revision: Number(withdrawal[2]), choice: "withdrawn" };
 }
 
-interface GatheringRow {
-  city: string; status: string; revision: number; capacity: number;
-  reviewed_at: Date | null; starts_at: Date; ends_at: Date;
+interface GatheringRow extends StoredGatheringVenue {
+  city: string; status: string; revision: number; reviewed_at: Date | null;
 }
 interface RsvpRow { revision: number; choice: Choice; response_id: string; responded_at: Date }
 interface MemberRow {
@@ -61,8 +61,14 @@ interface MemberRow {
 
 function gathering(tx: SQL, app: AppInfo, key: GatheringRsvpKey, lock: boolean) {
   if (app.id !== "ntwrk" || !UUID.test(key.id) || !Number.isSafeInteger(key.revision) || key.revision < 1) return;
-  return tx<GatheringRow[]>`select city,status,revision,capacity,reviewed_at,starts_at,ends_at
+  return tx<GatheringRow[]>`select city,status,revision,capacity,reviewed_at,starts_at,ends_at,month,venue_kind,venue_ref,venue_name
     from network.monthly_gatherings where app_id=${app.id} and id=${key.id} ${lock ? tx`for update` : tx``}`;
+}
+
+async function currentRsvpListing(tx: SQL, event: GatheringRow, withdrawing: boolean, now: number): Promise<boolean> {
+  if (!gatheringRsvpNeedsListingCheck(event.venue_kind === "listing", withdrawing, now < event.starts_at.getTime())) return true;
+  await lockGatheringListing(tx);
+  return gatheringVenueStillCurrent(tx, event, now);
 }
 
 async function ownerMembership(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner, lock: boolean) {
@@ -96,6 +102,7 @@ async function currentRsvpContext(tx: SQL, accounts: RsvpAccounts, owner: Member
   const withdrawing = command.choice === "withdrawn";
   if (!event || !gatheringRsvpWindow(event.status === "approved", event.revision === command.revision, withdrawing,
     event.reviewed_at?.getTime() ?? 0, event.starts_at.getTime(), event.ends_at.getTime(), turn.at, now)) return;
+  if (!await currentRsvpListing(tx, event, withdrawing, now)) return;
   const membership = await ownerMembership(tx, accounts, owner, lock);
   if (!membership || membership.binding.membership.joinedAt! > turn.at) return;
   if (!withdrawing && !await eligible(accounts, owner, event.city, membership, now)) return;
@@ -148,11 +155,15 @@ export interface GatheringRosterMember { memberId: string; grouping: boolean }
 
 /** Internal staff read; the caller must already be authorized for this gathering's operations. */
 export async function gatheringRsvpRoster(tx: SQL, accounts: RsvpAccounts, app: AppInfo,
-  key: GatheringRsvpKey, now: number): Promise<GatheringRosterMember[] | undefined> {
+  key: GatheringRsvpKey, now: number, lockGroupingMembers = false): Promise<GatheringRosterMember[] | undefined> {
   const rows = await gathering(tx, app, key, false);
   const event = rows?.[0];
   if (!event || !gatheringRsvpRosterAllowed(event.status === "approved", event.revision === key.revision,
     event.reviewed_at?.getTime() ?? 0, event.ends_at.getTime(), now)) return;
+  if (!await currentRsvpListing(tx, event, false, now)) return;
+  if (lockGroupingMembers) await tx`select m.id from network.monthly_gathering_rsvps r
+    join network.members m on m.app_id=r.app_id and m.id=r.member_id
+    where r.app_id=${app.id} and r.gathering_id=${key.id} and r.revision=${key.revision} and r.choice='grouping' order by m.id for update of m`;
   const responses = await tx<{ member_id: string; choice: Choice; responded_at: Date; phones: string[] }[]>`select
       r.member_id,r.choice,r.responded_at,array_agg(p.e164 order by p.e164) as phones
     from network.monthly_gathering_rsvps r join network.members m on m.app_id=r.app_id and m.id=r.member_id

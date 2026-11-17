@@ -126,10 +126,7 @@ async function reviewGrouping(tx: SQL, ctx: GroupingContext, key: GatheringRsvpK
   const [event] = await tx<Gathering[]>`select status,revision,reviewed_at,starts_at,ends_at
     from network.monthly_gatherings where app_id=${app} and city=${ctx.city} and id=${key.id} for update`;
   if (!event || !openGathering(event, key, ctx.now())) return failure("not_found", 404);
-  if (submitted !== undefined) await tx`select m.id from network.monthly_gathering_rsvps r
-    join network.members m on m.app_id=r.app_id and m.id=r.member_id
-    where r.app_id=${app} and r.gathering_id=${key.id} and r.revision=${key.revision} and r.choice='grouping' order by m.id for update of m`;
-  const roster = await gatheringRsvpRoster(tx, ctx.accountsFor(tx), ctx.app, key, ctx.now());
+  const roster = await gatheringRsvpRoster(tx, ctx.accountsFor(tx), ctx.app, key, ctx.now(), submitted !== undefined);
   if (!roster) return failure("not_found", 404);
   const willing = roster.filter(member => member.grouping).map(member => member.memberId);
   const groups = suggestGroups(willing, readEvidence(willing, ctx.now()));

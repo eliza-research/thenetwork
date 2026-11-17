@@ -6,7 +6,7 @@
 
 ### Only the exact approved gathering accepts a fresh RSVP
 
-Use the signed direct member turn in the gathering's app. Resolve the current member through the verified phone, account, app consent, ban and hold rules. A new RSVP is for an active local adult. Use the server's lowest matching age. The exact gathering revision must be approved. Both the signed receive time and the handling time must precede the start. A member can take an existing RSVP back until the gathering ends. Recognizing a command outside the signed member path cannot change attendance.
+Use the signed direct member turn in the gathering's app. Resolve the current member through the verified phone, account, app consent, ban and hold rules. A new RSVP is for an active local adult. Use the server's lowest matching age. The exact gathering revision must be approved. Both the signed receive time and the handling time must precede the start. An affirmative RSVP and its receipt require the exact approved public listing and window to remain in the fresh catalog when that listing supplied the venue. Serialize this check with catalog publication. A member can take an existing RSVP back until the gathering ends, even if the listing changes. Recognizing a command outside the signed member path cannot change attendance.
 
 ```quint
 pure def gatheringRsvpWindow(approved: bool, sameRevision: bool, isWithdrawal: bool, approvedAt: int, startAt: int, endAt: int, receivedAt: int, handledAt: int): bool =
@@ -15,6 +15,12 @@ pure def gatheringRsvpWindow(approved: bool, sameRevision: bool, isWithdrawal: b
 
 pure def gatheringRsvpAttendanceAllowed(currentOwner: bool, adult: bool, localMember: bool, activeParticipant: bool): bool =
   currentOwner and adult and localMember and activeParticipant
+
+pure def gatheringRsvpNeedsListingCheck(publishedListing: bool, withdrawing: bool, beforeStart: bool): bool =
+  publishedListing and not(withdrawing) and beforeStart
+
+pure def lawGatheringWithdrawalDoesNotDependOnListing(publishedListing: bool, beforeStart: bool): bool =
+  not(gatheringRsvpNeedsListingCheck(publishedListing, true, beforeStart))
 
 pure def lawGatheringRequiresApproval(sameRevision: bool, isWithdrawal: bool, approvedAt: int, startAt: int, endAt: int, receivedAt: int, handledAt: int): bool =
   not(gatheringRsvpWindow(false, sameRevision, isWithdrawal, approvedAt, startAt, endAt, receivedAt, handledAt))
@@ -43,7 +49,7 @@ pure def lawGatheringCapacityDoesNotOverbook(reservedCount: int, capacity: int):
 
 ### The private roster uses current eligibility and separate grouping consent
 
-The roster belongs to authorized gathering operations. Return only operational member identifiers for the exact approved current gathering. Recheck current eligibility on read. A plain RSVP never grants grouping permission. A member who explicitly includes grouping can enter staff's candidate roster. Any actual connection needs the normal review, pair safety, and consent. No member sees the roster, contact data or someone else's choice through RSVP.
+The roster belongs to authorized gathering operations. Return only operational member identifiers for the exact approved current gathering. Recheck current eligibility on read. Before start, apply the same listing check to the roster and grouping review. During the gathering, staff can still read reservations because the catalog serves future listings only. A plain RSVP never grants grouping permission. A member who explicitly includes grouping can enter staff's candidate roster. Any actual connection needs the normal review, pair safety, and consent. No member sees the roster, contact data or someone else's choice through RSVP.
 
 ```quint
 pure def gatheringRsvpRosterAllowed(approved: bool, sameRevision: bool, approvedAt: int, endsAt: int, now: int): bool =

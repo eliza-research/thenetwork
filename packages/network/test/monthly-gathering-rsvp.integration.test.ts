@@ -5,6 +5,7 @@ import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
+import { importPublicEvents } from "../service/import-public-events.ts";
 import { NetworkService } from "../service/service.ts";
 
 // spec/monthlyGatheringRsvp.md, "Choose how to attend the monthly gathering"
@@ -40,9 +41,17 @@ test.skipIf(!pgAvailable)("signed gathering RSVPs bind to the approved app and r
     expect(friend.ok).toBe(true);
     const id = "8dc37920-c390-403b-8489-18bd4cc987ec";
     const startsAt = clock.now() + 2 * HOUR;
+    const listing = { guid: "202", link: { url: "https://www.nycgovparks.org/events/2026/11/16/public-gathering" },
+      title: "Public gathering", location: "Public park", categories: "Sports", coordinates: "40.75,-73.95",
+      starttime: "2026-11-16T15:00:00", endtime: "2026-11-16T16:00:00" };
+    const publish = async (entry: typeof listing) => {
+      const request: typeof fetch = async () => Response.json([entry]);
+      expect(await importPublicEvents(sql, clock, request)).toEqual({ published: true, events: 1 });
+    };
+    await publish(listing);
     await sql`insert into network.monthly_gatherings (app_id,id,city,month,venue_kind,venue_ref,venue_name,
       starts_at,ends_at,capacity,created_by,created_at)
-      values ('ntwrk',${id},'nyc','2026-11','curated','public-park','Public park',${new Date(startsAt)},
+      values ('ntwrk',${id},'nyc','2026-11','listing','nyc-parks:202','Public park',${new Date(startsAt)},
         ${new Date(startsAt + HOUR)},3,'creating-staff',${new Date(clock.now())})`;
     const yes = `RSVP GATHERING ${id} 1 YES`;
     const request = (messageId: string, from: string, text = yes, targetApp: "ntwrk" | "friends" = "ntwrk", receivedAt = clock.now()): TurnRequest =>
@@ -74,6 +83,25 @@ test.skipIf(!pgAvailable)("signed gathering RSVPs bind to the approved app and r
     expect(responds(await post(request("gathering-minor", minor!.e164)))).toBe(false);
     expect(responds(await post(request("gathering-too-early", first!.e164, yes, "ntwrk", approvedAt - 1)))).toBe(false);
     expect(responds(await post(request("gathering-future-clock", first!.e164, yes, "ntwrk", clock.now() + MINUTE)))).toBe(false);
+    const beforeListingChanged = request("gathering-grouping-before-listing-change", first!.e164, `${yes} WITH GROUPING`);
+    expect(responds(await post(beforeListingChanged))).toBe(true);
+    clock.advance(MINUTE);
+    await publish({ ...listing, starttime: "2026-11-16T16:00:00", endtime: "2026-11-16T17:00:00" });
+    expect(await post(beforeListingChanged)).toMatchObject({ status: 409, body: { error: "turn_gathering_rsvp_changed" } });
+    expect(responds(await post(request("gathering-moved-listing", second!.e164)))).toBe(false);
+    expect(await sql`select member_id,choice from network.monthly_gathering_rsvps`).toEqual([{ member_id: first!.memberId, choice: "grouping" }]);
+    expect((await roster()).status).toBe(404);
+    const grouping = await service.fetch(new Request(`http://127.0.0.1/apps/ntwrk/gatherings/${id}/grouping?revision=1`, {
+      headers: { authorization: `Bearer ${admin}` },
+    }));
+    expect(grouping.status).toBe(404);
+    const withdrawnWhileMoved = request("gathering-withdraw-while-listing-moved", first!.e164, `WITHDRAW GATHERING ${id} 1`);
+    const withdrawnReceipt = await post(withdrawnWhileMoved);
+    expect(withdrawnReceipt).toMatchObject({ status: 200, body: { replies: ["Your gathering RSVP is withdrawn."] } });
+    expect(await post(withdrawnWhileMoved)).toEqual(withdrawnReceipt);
+    clock.advance(MINUTE);
+    await publish(listing);
+
     const confirmed = request("gathering-grouping", first!.e164, `${yes} WITH GROUPING`);
     const firstAnswer = await post(confirmed);
     expect(firstAnswer).toMatchObject({ status: 200, body: { replies: ["Your gathering RSVP includes grouping suggestions."] } });
@@ -110,6 +138,7 @@ test.skipIf(!pgAvailable)("signed gathering RSVPs bind to the approved app and r
     clock.advance(startsAt - clock.now());
     const unseated = competitors[seats.findIndex(result => !responds(result))]!;
     expect(responds(await post(request("gathering-past-cutoff", unseated.e164)))).toBe(false);
+    expect((await roster()).body.items).toEqual(items);
   } finally {
     await service.close();
     await sql.close();
