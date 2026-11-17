@@ -68,6 +68,7 @@ import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import { recordedChatAge } from "../../core/src/generated/memberAge.ts";
 import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { atomicMemberReplyMatches } from "../../core/src/generated/signedInbox.ts";
 import type { RecordedMemberAge } from "../../platform/src/store.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
@@ -101,20 +102,19 @@ export type StagedMemberInvitation =
 const gatheringPrivateBody = { gathering_rsvp: "Private gathering RSVP", gathering_followup: "Private gathering follow-up" };
 const gatheringMessage = (type?: string): type is keyof typeof gatheringPrivateBody => !!type && Object.hasOwn(gatheringPrivateBody, type);
 const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type === "inbox_updates" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
+const privateAtomicRequests: Partial<Record<AtomicReplyReason, string>> = {
+  profile_fact_edit: "Private profile fact request.",
+  calendar_invite: "Private calendar invite request.",
+  gathering_rsvp: `${gatheringPrivateBody.gathering_rsvp}.`,
+  gathering_followup: `${gatheringPrivateBody.gathering_followup}.`,
+};
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
   privateInviteTurn?: true;
   privateHomeHelpTurn?: true;
-  atomicHomeHelpReceipt?: true;
-  atomicCofounderReply?: true;
-  atomicProfileFactReply?: true;
-  atomicParticipationReply?: true;
-  atomicCalendarReply?: true;
-  atomicInboxUpdatesReply?: true;
-  atomicGatheringReply?: keyof typeof gatheringPrivateBody;
-  atomicInvitationDeliveryReply?: true;
+  atomicReply?: AtomicReplyReason;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
   legacyIntentState?: NetworkState;
@@ -970,7 +970,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "inbox_updates" | keyof typeof gatheringPrivateBody, publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation_vouch" | AtomicReplyReason, publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -1068,11 +1068,10 @@ export class NetworkRuntime {
       await reconcileLegacyIntentRows(tx, app, this.cities, u.legacyIntentState, this.clock.now(), inactive);
     }
     if (u.inbound && ok(u.inbound.member_id as string)) {
+      const privateRequest = u.atomicReply && privateAtomicRequests[u.atomicReply];
       const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
         : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" }
-          : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" }
-            : u.atomicCalendarReply ? { body: "Private calendar invite request.", type: "calendar_invite" }
-              : u.atomicGatheringReply ? { body: `${gatheringPrivateBody[u.atomicGatheringReply]}.`, type: u.atomicGatheringReply } : {};
+          : privateRequest ? { body: privateRequest, type: u.atomicReply } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -1098,7 +1097,8 @@ export class NetworkRuntime {
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);
-        if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls" || privateMemberMessage(s.type)) {
+        if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls"
+          || privateMemberMessage(s.type) || (u.atomicReply && s.type === u.atomicReply)) {
           // This result was authorized for the signed reply only.
           u.sends = u.sends.filter(message => message.id !== s.id);
           this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
@@ -1106,46 +1106,16 @@ export class NetworkRuntime {
       }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
-    let replyReason: AtomicReplyReason | undefined;
-    if (u.atomicInvitationDeliveryReply) {
-      if (!captured.some(send => send.type === "member_invitation_delivery")) throw new Error("Invitation delivery reply was not collected");
-      replyReason = "member_invitation_delivery";
+    const staged = u.memberInvitation;
+    const replyReason = staged ? (staged.status === "issued" ? "member_invitation" : "member_invitation_review") : u.atomicReply;
+    const [reply] = captured;
+    if (replyReason && !atomicMemberReplyMatches(replyReason, reply?.type ?? "", captured.length, reply?.kind === "reply")) {
+      throw new Error(`Atomic ${replyReason} reply was not collected`);
     }
-    if (u.atomicHomeHelpReceipt) {
-      if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
-      replyReason = "bounded_home_help";
-    }
-    if (u.atomicProfileFactReply) {
-      if (!captured.some(send => send.type === "profile_fact_edit")) throw new Error("Profile fact reply was not collected");
-      replyReason = "profile_fact_edit";
-    }
-    if (u.atomicParticipationReply) {
-      if (!captured.some(send => send.type === "participation_controls")) throw new Error("Participation settings reply was not collected");
-      replyReason = "participation_controls";
-    }
-    if (u.atomicCalendarReply) {
-      if (!captured.some(send => send.type === "calendar_invite")) throw new Error("Calendar invite reply was not collected");
-      replyReason = "calendar_invite";
-    }
-    if (u.atomicInboxUpdatesReply) {
-      if (!captured.some(send => send.type === "inbox_updates")) throw new Error("Inbox updates reply was not collected");
-      replyReason = "inbox_updates";
-    }
-    if (u.atomicGatheringReply) {
-      if (!captured.some(send => send.type === u.atomicGatheringReply)) throw new Error("Gathering reply was not collected");
-      replyReason = u.atomicGatheringReply;
-    }
-    if (u.atomicCofounderReply) {
-      if (!captured.some(send => send.type === "cofounder_intent")) throw new Error("Cofounder intent reply was not collected");
-      replyReason = "cofounder_intent";
-    }
-    if (u.memberInvitation) {
-      const staged = u.memberInvitation;
-      replyReason = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
+    if (staged) {
       const inviterId = staged.status === "issued" ? staged.referral.inviterMemberId : staged.review.inviterMemberId;
-      const reply = captured.find(s => s.type === replyReason && s.memberId === inviterId && ok(s.memberId));
       // The invitation outcome and its allowance must roll back together if the exact reply was withheld.
-      if (!reply || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
+      if (reply?.memberId !== inviterId || !ok(inviterId) || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
       await this.host.saveMemberInvitation(tx, this, staged);
     }
     if (captured.length) {

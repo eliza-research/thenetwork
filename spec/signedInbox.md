@@ -89,6 +89,18 @@ pure def sometimesCanReplay(turn: SignedInbox): bool = turn.phase == Replayed
 pure def sometimesCanRetryCompliance(turn: SignedInbox): bool = turn.phase == RetryCompliance
 ```
 
+### A member command commits its result and its exact reply together
+
+When a member command requires an atomic reply, the service must collect exactly one direct reply of the required kind. If that reply is unavailable, roll back the command's writes. Once the reply and result commit, a subsequent runtime failure leaves the completed response available for an authorized replay. The shell binds the reply to the verified sender and applies each command's current replay policy.
+
+```quint
+pure def atomicMemberReplyMatches(expected: str, actual: str, count: int, directReply: bool): bool =
+  expected == actual and count == 1 and directReply
+
+pure def lawAtomicMemberReplyNeedsExactKind(expected: str, actual: str, count: int, directReply: bool): bool =
+  atomicMemberReplyMatches(expected, actual, count, directReply) implies (expected == actual and count == 1 and directReply)
+```
+
 ### A completed signed row is later scrubbed and then removed
 
 The retention job removes the completed signed row's response and identifying data before it removes the tombstone. Keep the tombstone for the configured purge window plus thirty days.

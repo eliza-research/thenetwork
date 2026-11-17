@@ -173,6 +173,19 @@ export function sometimesCanRetryCompliance(turn: SignedInbox): boolean {
   return turn.phase === "RetryCompliance";
 }
 
+/** Story: Handle each signed message once without delaying consent / A member command commits its result and its exact reply together (spec/signedInbox.md) */
+//@ pure
+export function atomicMemberReplyMatches(expected: string, actual: string, count: number, directReply: boolean): boolean {
+  return expected === actual && count === 1 && directReply;
+}
+
+/** Story: Handle each signed message once without delaying consent / A member command commits its result and its exact reply together (spec/signedInbox.md) */
+//@ pure
+export function lawAtomicMemberReplyNeedsExactKind(expected: string, actual: string, count: number, directReply: boolean): boolean {
+  //@ ensures \result === true
+  return !atomicMemberReplyMatches(expected, actual, count, directReply) || (expected === actual && count === 1 && directReply);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: SignedInbox, event: Event): boolean {

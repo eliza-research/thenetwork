@@ -1056,7 +1056,7 @@ export class NetworkService implements RuntimeHost {
         const shown = page.filter(item => seen.has(item.id));
         const remaining = unread.length - page.length;
         const id = threadUpdateReplyId(this.threadUpdatesTurnHash(rowId, personId), shown, remaining);
-        rt.unit.atomicInboxUpdatesReply = true;
+        rt.unit.atomicReply = "inbox_updates";
         rt.collectedMemberReply(memberId, id, threadUpdateBody(shown, remaining), "inbox_updates");
       };
       return "inbox_updates" as const;
@@ -2063,7 +2063,7 @@ export class NetworkService implements RuntimeHost {
             : gatheringFollowup && await saveGatheringFollowup(tx, accounts, owner, gatheringFollowup, turn, now, this.hashKey);
           if (!body) return;
           rt.unit.inbound = inbound;
-          rt.unit.atomicGatheringReply = reason;
+          rt.unit.atomicReply = reason;
           rt.collectedMemberReply(memberId, `sys:${rowId}`, body, reason);
         };
         return reason;
@@ -2077,7 +2077,7 @@ export class NetworkService implements RuntimeHost {
           const reply = await issueCalendarInvite(tx, this.accountsFor(tx), owner, rt.pg.id, calendar, origin, this.clock.now());
           if (!reply) return;
           rt.unit.inbound = inbound;
-          rt.unit.atomicCalendarReply = true;
+          rt.unit.atomicReply = "calendar_invite";
           rt.collectedMemberReply(memberId, `sys:${rowId}`, reply.body, "calendar_invite", reply.link ? [reply.link] : []);
         };
         return "calendar_invite";
@@ -2090,7 +2090,7 @@ export class NetworkService implements RuntimeHost {
           const body = await saveParticipationControl(tx, this.accountsFor(tx), owner, controls, rt.wiring.prefs(ADULT_AGE).categoriesOptIn, this.clock.now());
           if (body === undefined) return;
           rt.unit.inbound = inbound;
-          rt.unit.atomicParticipationReply = true;
+          rt.unit.atomicReply = "participation_controls";
           rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "participation_controls");
         };
         return "participation_controls";
@@ -2104,7 +2104,7 @@ export class NetworkService implements RuntimeHost {
           if (!profileFactEditMayRead(true, !!binding?.member, signedDirect.app === rt.app.id) || !binding?.member) return;
           const reply = await this.replyToProfileFactEdit(tx, rt, memberId, rowId, factCommand);
           rt.unit.inbound = inbound;
-          rt.unit.atomicProfileFactReply = true;
+          rt.unit.atomicReply = "profile_fact_edit";
           rt.collectedMemberReply(memberId, reply.id, reply.body, "profile_fact_edit");
         };
         return "profile_fact_edit";
@@ -2152,7 +2152,8 @@ export class NetworkService implements RuntimeHost {
             const body = await saveTravelPresence(tx, accounts, owner, travel, now);
             if (body === undefined) return;
             rt.unit.inbound = inbound;
-            rt.system(memberId, `sys:${rowId}`, body, "reply", "travel_presence");
+            rt.unit.atomicReply = "travel_presence";
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "travel_presence");
           } else if (soloEvents) {
             const reply = await soloConciergeReply(tx, accounts, owner, soloEvents, now);
             if (!reply) return;
@@ -2274,7 +2275,7 @@ export class NetworkService implements RuntimeHost {
           ${intent.horizonDays}, ${intent.status}, ${new Date(intent.createdAt)})`;
     }
     const reply = "I noted your cofounder goal. Say LIST MY INTENTS to check it. I'll ask before any introduction.";
-    rt.unit.atomicCofounderReply = true;
+    rt.unit.atomicReply = "cofounder_intent";
     rt.collectedMemberReply(intent.memberId, `sys:${rowId}`, reply, "cofounder_intent");
   }
 
@@ -2361,7 +2362,7 @@ export class NetworkService implements RuntimeHost {
       });
       reply = memberInviteDeliveryReply("queued");
     }
-    rt.unit.atomicInvitationDeliveryReply = true;
+    rt.unit.atomicReply = "member_invitation_delivery";
     rt.collectedMemberReply(memberId, `invite-vouch:${messageId}`, reply, "member_invitation_delivery");
   }
 
@@ -2398,7 +2399,7 @@ export class NetworkService implements RuntimeHost {
   private async replyToHomeHelp(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string, command: BoundedHomeHelpCommand): Promise<void> {
     if (!await this.homeHelpSender(tx, rt, memberId, sender)) return;
     const reply = (text: string, recorded = false) => {
-      if (recorded) rt.unit.atomicHomeHelpReceipt = true;
+      if (recorded) rt.unit.atomicReply = "bounded_home_help";
       rt.collectedMemberReply(memberId, `home-help:${messageId}`, text, "bounded_home_help");
     };
     if (!rt.net.allowedCategories.has("help")) return reply("This app does not take home-help requests.");
@@ -2446,7 +2447,7 @@ export class NetworkService implements RuntimeHost {
     const store = this.homeHelpConsent();
     await reconcileHomeHelpDelivery(tx, store, key.app, actor.memberId, key);
     const result = await store.respond(tx, { ...key, actor, decision: command.decision, receivedAt });
-    if (result) rt.unit.atomicHomeHelpReceipt = true;
+    if (result) rt.unit.atomicReply = "bounded_home_help";
     rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result), "bounded_home_help");
   }
 
