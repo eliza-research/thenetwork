@@ -12,11 +12,11 @@ export interface PartnerPair { first: string; second: string }
 
 /** One variant per transition in the spec. */
 export type Event =
+  | { type: "beginCrewOffers" }
   | { type: "beginRepeats" }
   | { type: "beginNewPlans"; spreadNew: boolean }
   | { type: "beginPartners" }
   | { type: "finishWeek" }
-  | { type: "beginCrewOffers" }
   | { type: "reserveRecurring"; kind: RecurringKind; members: string[] }
   | { type: "reserveNewPlan"; invited: string[]; alternates: string[]; reserveAlternates: boolean }
   | { type: "reservePartner"; pair: PartnerPair; limit: number };
@@ -28,6 +28,44 @@ export const initial: FriendsRun = { phase: "CrewSessions", spreadNew: false, re
 //@ pure
 export function inv(current: FriendsRun): boolean {
   return true;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A split table still belongs to one invitation in the simulator report (spec/friendsWeek.md) */
+//@ pure
+export function friendCountsProposal(additionalTable: boolean): boolean {
+  return !additionalTable;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A split table still belongs to one invitation in the simulator report (spec/friendsWeek.md) */
+//@ pure
+export function friendCountsProbedProposal(additionalTable: boolean, probes: number): boolean {
+  return friendCountsProposal(additionalTable) && probes > 0;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A split table still belongs to one invitation in the simulator report (spec/friendsWeek.md) */
+//@ pure
+export function lawAdditionalTableCannotCountAsProbed(probes: number): boolean {
+  //@ ensures \result === true
+  return !friendCountsProbedProposal(true, probes);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
+//@ pure
+export function canBeginCrewOffers(s: FriendsRun): boolean {
+  return s.phase === "CrewSessions";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
+//@ pure
+export function beginCrewOffers(s: FriendsRun): FriendsRun {
+  //@ ensures (inv(s) && canBeginCrewOffers(s)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, phase: "CrewOffers" };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
+//@ pure
+export function canBeginRepeats(s: FriendsRun): boolean {
+  return s.phase === "CrewOffers";
 }
 
 /** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
@@ -80,25 +118,6 @@ export function finishWeek(s: FriendsRun): FriendsRun {
 //@ pure
 export function stepCompletedWeekStaysClosed(before: FriendsRun, after: FriendsRun): boolean {
   return !(before.phase === "WeekComplete") || after.phase === "WeekComplete";
-}
-
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
-//@ pure
-export function canBeginCrewOffers(s: FriendsRun): boolean {
-  return s.phase === "CrewSessions";
-}
-
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
-//@ pure
-export function beginCrewOffers(s: FriendsRun): FriendsRun {
-  //@ ensures (inv(s) && canBeginCrewOffers(s)) ==> stepCompletedWeekStaysClosed(s, \result)
-  return { ...s, phase: "CrewOffers" };
-}
-
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
-//@ pure
-export function canBeginRepeats(s: FriendsRun): boolean {
-  return s.phase === "CrewOffers";
 }
 
 /** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
@@ -192,11 +211,11 @@ export function sometimesPublishesAPartner(s: FriendsRun): boolean {
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: FriendsRun, event: Event): boolean {
+  if (event.type === "beginCrewOffers") return canBeginCrewOffers(current);
   if (event.type === "beginRepeats") return canBeginRepeats(current);
   if (event.type === "beginNewPlans") return canBeginNewPlans(current);
   if (event.type === "beginPartners") return canBeginPartners(current);
   if (event.type === "finishWeek") return canFinishWeek(current);
-  if (event.type === "beginCrewOffers") return canBeginCrewOffers(current);
   if (event.type === "reserveRecurring") return canReserveRecurring(current, event.kind, event.members);
   if (event.type === "reserveNewPlan") return canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates);
   if (event.type === "reservePartner") return canReservePartner(current, event.pair, event.limit);
@@ -208,11 +227,11 @@ export function enabled(current: FriendsRun, event: Event): boolean {
 export function step(current: FriendsRun, event: Event): FriendsRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
+  if (event.type === "beginCrewOffers" && canBeginCrewOffers(current)) return beginCrewOffers(current);
   if (event.type === "beginRepeats" && canBeginRepeats(current)) return beginRepeats(current);
   if (event.type === "beginNewPlans" && canBeginNewPlans(current)) return beginNewPlans(current, event.spreadNew);
   if (event.type === "beginPartners" && canBeginPartners(current)) return beginPartners(current);
   if (event.type === "finishWeek" && canFinishWeek(current)) return finishWeek(current);
-  if (event.type === "beginCrewOffers" && canBeginCrewOffers(current)) return beginCrewOffers(current);
   if (event.type === "reserveRecurring" && canReserveRecurring(current, event.kind, event.members)) return reserveRecurring(current, event.kind, event.members);
   if (event.type === "reserveNewPlan" && canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates)) return reserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates);
   if (event.type === "reservePartner" && canReservePartner(current, event.pair, event.limit)) return reservePartner(current, event.pair, event.limit);
@@ -234,11 +253,11 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   const is_PartnerPair = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.first === "string" && typeof v.second === "string";
   if (typeof raw !== "object" || raw === null) return undefined;
+  if (raw.type === "beginCrewOffers") return { type: "beginCrewOffers" };
   if (raw.type === "beginRepeats") return { type: "beginRepeats" };
   if (raw.type === "beginNewPlans" && typeof raw.spreadNew === "boolean") return { type: "beginNewPlans", spreadNew: raw.spreadNew };
   if (raw.type === "beginPartners") return { type: "beginPartners" };
   if (raw.type === "finishWeek") return { type: "finishWeek" };
-  if (raw.type === "beginCrewOffers") return { type: "beginCrewOffers" };
   if (raw.type === "reserveRecurring" && (raw.kind === "Session" || raw.kind === "Offer" || raw.kind === "Repeat") && Array.isArray(raw.members) && raw.members.every((x0: any) => typeof x0 === "string")) return { type: "reserveRecurring", kind: raw.kind, members: raw.members.map((x0: any) => x0) };
   if (raw.type === "reserveNewPlan" && Array.isArray(raw.invited) && raw.invited.every((x0: any) => typeof x0 === "string") && Array.isArray(raw.alternates) && raw.alternates.every((x0: any) => typeof x0 === "string") && typeof raw.reserveAlternates === "boolean") return { type: "reserveNewPlan", invited: raw.invited.map((x0: any) => x0), alternates: raw.alternates.map((x0: any) => x0), reserveAlternates: raw.reserveAlternates };
   if (raw.type === "reservePartner" && is_PartnerPair(raw.pair) && Number.isSafeInteger(raw.limit)) return { type: "reservePartner", pair: ({ first: raw.pair.first, second: raw.pair.second }), limit: raw.limit };

@@ -53,6 +53,7 @@ export interface MeetupRecord {
 }
 export interface FlowRecord {
   key: string; week: number; kind: ProposalKind; invited: MemberId[];
+  additionalTable?: true;
   stage: "dropped_policy" | "no_quorum" | "backout" | "no_show" | "held" | "crew_declined";
   probed: number; yes: number; replied: number; going: MemberId[]; booked: MemberId[]; attended: MemberId[];
   declaredMinor: boolean; harms: HarmEvent[]; capDrops: number;
@@ -208,7 +209,8 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         for (const id of [...picks.keys()].filter(id => picks.get(id)!.includes(slot))) if (!going.includes(id) && !pr.split) picks.delete(id);
         for (const id of going) picks.delete(id);
         if (going.length < quorum) { if (table === 0) { f.stage = "no_quorum"; record(key, "declined", invited, slotTime(week, slot)); } break; }
-        const g = table === 0 ? f : { ...f, key: `${key}:t${table}`, probed: 0, yes: 0, replied: 0, capDrops: 0, harms: [], going: [], booked: [], attended: [], stage: "no_quorum" as FlowRecord["stage"] };
+        const g: FlowRecord = table === 0 ? f : { ...f, key: `${key}:t${table}`, additionalTable: true,
+          probed: 0, yes: 0, replied: 0, capDrops: 0, harms: [], going: [], booked: [], attended: [], stage: "no_quorum" };
         if (table > 0) flows.push(g);
         bookTable(g, going, slot);
         table++;

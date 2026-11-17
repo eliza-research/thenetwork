@@ -6,6 +6,20 @@ The weekly Friends planner uses this run state to assign reservations. The [crew
 
 > As a Friends member, I want the weekly planner to offer recurring meetups first and use remaining opportunities for nearby plans and activity partners.
 
+### A split table still belongs to one invitation in the simulator report
+
+Count each proposal once. The quorum denominator includes proposals actually probed. Credit a proposal with reaching quorum once when its first table reaches quorum, even if other tables fill from its replies. Attendance and held meetup totals count all tables.
+
+```quint
+pure def friendCountsProposal(additionalTable: bool): bool = not(additionalTable)
+
+pure def friendCountsProbedProposal(additionalTable: bool, probes: int): bool =
+  friendCountsProposal(additionalTable) and probes > 0
+
+pure def lawAdditionalTableCannotCountAsProbed(probes: int): bool =
+  not(friendCountsProbedProposal(true, probes))
+```
+
 ### Crew sessions, offers, repeats, new plans, and partners run in order
 
 Existing crew sessions come first. A crew offer comes before a repeat. New group and single-slot plans come next. The one-to-one activity partner pass has its own allowance and comes last. The planner can skip any disabled or empty pass. A completed week cannot reserve another plan.

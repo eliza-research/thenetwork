@@ -4,6 +4,7 @@ import { gini } from "@thenetwork/core";
 export { gini };
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
+import { friendCountsProbedProposal, friendCountsProposal } from "../../../../core/src/generated/friendsWeek.ts";
 import type { HarmKind } from "./oracle.ts";
 import { hoodOf, isReal } from "./persona.ts";
 import { visibleRedFlag, weekTime } from "./snapshot.ts";
@@ -80,6 +81,8 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const realIds = new Set(real.map(p => p.id));
   const days = world.weeks * 7;
   const held = meetups.filter(m => m.kind !== "crew_self");
+  const proposals = flows.filter(f => friendCountsProposal(f.additionalTable === true));
+  const probedProposals = flows.filter(f => friendCountsProbedProposal(f.additionalTable === true, f.probed));
   const byKind: Record<string, number> = {};
   for (const m of meetups) byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
   const booked = flows.reduce((s, f) => s + f.booked.length, 0), attended = flows.reduce((s, f) => s + f.attended.length, 0);
@@ -175,8 +178,8 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
 
   return {
     matcher: res.matcher, seed: world.seed, weeks: world.weeks, members: world.personas.length, real: real.length,
-    proposals: flows.length, probes: flows.reduce((s, f) => s + f.probed, 0), probeYesRate: div(flows.reduce((s, f) => s + f.yes, 0), flows.reduce((s, f) => s + f.probed, 0)),
-    quorumRate: div(flows.filter(f => f.going.length > 0 && f.stage !== "no_quorum").length, flows.filter(f => f.probed > 0).length), capDrops: flows.reduce((s, f) => s + f.capDrops, 0),
+    proposals: proposals.length, probes: proposals.reduce((s, f) => s + f.probed, 0), probeYesRate: div(proposals.reduce((s, f) => s + f.yes, 0), proposals.reduce((s, f) => s + f.probed, 0)),
+    quorumRate: div(probedProposals.filter(f => f.going.length > 0).length, probedProposals.length), capDrops: proposals.reduce((s, f) => s + f.capDrops, 0),
     meetups: held.length, meetupsByKind: byKind, attendance: div(attended, booked), meanGroupSize: div(held.reduce((s, m) => s + m.attendees.length, 0), held.length),
     goodRate: div(held.filter(m => m.good).length, held.length), meanEnjoy: div(realE.reduce((s, x) => s + x, 0), realE.length),
     repeatRate: div(rep, base), repeatGroupRate: div(repG, base), repeatRateWithHandoff: div(repH, base),
@@ -188,7 +191,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     travel: { medianGroupMax: median(groupMax) ?? NaN, meanSeat: div(seats.reduce((s, x) => s + x.t, 0), seats.length), overTolerance: div(seats.filter(x => x.t > x.tol).length, seats.length) },
     giniMeetups: gini(meetCount), zeroMeetupShare: div(meetCount.filter(x => x === 0).length, real.length),
     safety: {
-      declaredMinorProposals: flows.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
+      declaredMinorProposals: proposals.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
       adversaryContacts: adv, knownAdversaryContacts: knownAdv, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
       medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported, harmsUndetected: undetected,
     },

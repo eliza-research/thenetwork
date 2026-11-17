@@ -34,7 +34,7 @@ async function main() {
     ["Proposals / seed", m => m.proposals, false, 0],
     ["Probes / seed", m => m.probes, false, 0],
     ["Probe yes rate", m => m.probeYesRate, true],
-    ["Quorum rate (booked / probed)", m => m.quorumRate, true],
+    ["Quorum rate (reached / probed)", m => m.quorumRate, true],
     ["Meetups held / seed", m => m.meetups, false, 1],
     ["  of which crew sessions", m => m.crewSessions, false, 1],
     ["Attendance (came / booked)", m => m.attendance, true],

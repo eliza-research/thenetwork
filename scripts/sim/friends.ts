@@ -20,7 +20,7 @@ import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/frien
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher, planToProposal as toFriendsProposal } from "../../packages/sim/src/apps/friends/packMatcher.ts";
 import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { isReal, SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { runFriendsWorld, slotOfCrew, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
@@ -271,8 +271,32 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
   });
 }
 
+export async function friendsSplitTableMetricGate(b: Block): Promise<void> {
+  await b.run("metrics: a split invitation counts once toward proposal quorum and both tables count as held", () => {
+    const venue = VENUES.find(v => v.activities.includes("coffee_crawl"))!;
+    const options = [SLOTS.indexOf("sat_am"), SLOTS.indexOf("sun_am")];
+    const result = runFriendsWorld({ seed: 5, n: 30, weeks: 1, matcher: world => {
+      const ids = world.personas.filter(isReal).slice(0, 9).map(member => member.id);
+      const accepted = new Map(ids.slice(0, 6).map((id, index) => [id, options[index < 3 ? 0 : 1]!]));
+      world.oracle.answer = id => {
+        const picked = accepted.get(id);
+        return { replied: true, yes: picked !== undefined, picks: picked === undefined ? [] : [picked] };
+      };
+      world.oracle.backsOut = () => false;
+      world.oracle.attends = () => true;
+      const plan = { kind: "plan" as const, activity: "coffee_crawl", venueHood: venue.area, options, alternates: [], quorum: 3, split: true };
+      return { name: "split-table metric fixture", propose: () => [{ ...plan, invited: ids.slice(0, 6) }, { ...plan, invited: ids.slice(6) }] };
+    } });
+    expect(result.flows.map(flow => [flow.stage, flow.probed, flow.attended.length])).toEqual([
+      ["held", 6, 3], ["held", 0, 3], ["no_quorum", 3, 0],
+    ]);
+    expect(friendsMetrics(result)).toMatchObject({ proposals: 2, probes: 9, quorumRate: 0.5, meetups: 2, attendance: 1 });
+  });
+}
+
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await friendsScheduleGates(b);
+  await friendsSplitTableMetricGate(b);
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
