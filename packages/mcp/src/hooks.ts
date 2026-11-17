@@ -16,6 +16,8 @@ export interface SignedIn {
   personId: string | null;
   /** Server-held session hash for signing a confirmation that only this session can submit. */
   browserBinding?: string;
+  /** Server-held binding of this authenticated session's immediate predecessor. */
+  rotatedFromBrowserBinding?: string;
   /** A rotated site session: send this Set-Cookie with the page so the person stays signed in. */
   setCookie?: string;
 }
@@ -227,6 +229,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if (a.session.personId !== null && a.session.personId !== personId) return undefined;
       return {
         e164: a.session.e164, personId, browserBinding: a.session.tokenHash,
+        ...(a.session.rotatedFrom ? { rotatedFromBrowserBinding: a.session.rotatedFrom } : {}),
         ...(a.rotated ? { setCookie: siteCookie(id, a.token) } : {}),
       };
     }),

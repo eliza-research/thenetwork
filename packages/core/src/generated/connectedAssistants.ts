@@ -196,8 +196,28 @@ export function stepOnlyConfirmedRemovalChangesGrants(before: ConsentsPage, via:
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
 //@ pure
+export function browserRemovalProofMatches(currentVerified: boolean, exactBinding: boolean, exactDirectPredecessor: boolean): boolean {
+  return currentVerified && (exactBinding || exactDirectPredecessor);
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
 export function removalFormMayRevoke(ownedLiveGrant: boolean, exactBrowserConfirmation: boolean, asOf: number, confirmationEndsAt: number): boolean {
   return ownedLiveGrant && exactBrowserConfirmation && asOf < confirmationEndsAt;
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function lawRemovalProofRequiresCurrentSession(exactBinding: boolean, exactDirectPredecessor: boolean): boolean {
+  //@ ensures \result === true
+  return !browserRemovalProofMatches(false, exactBinding, exactDirectPredecessor);
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function lawAnotherBrowserSessionCannotConfirm(currentVerified: boolean): boolean {
+  //@ ensures \result === true
+  return !browserRemovalProofMatches(currentVerified, false, false);
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */

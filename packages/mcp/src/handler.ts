@@ -26,7 +26,7 @@ import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
-import { browserOwnsLiveGrant, removalFormMayRevoke, removeConfirmationMs, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
+import { browserOwnsLiveGrant, browserRemovalProofMatches, removalFormMayRevoke, removeConfirmationMs, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
@@ -983,7 +983,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const proof = /^([0-9]{1,15})\.([A-Za-z0-9_-]{43})$/.exec(form?.get("confirmation") ?? "");
       const until = proof ? Number(proof[1]) : 0;
       const sessionHash = who.browserBinding;
-      const matches = !!(grant && proof && sessionHash && safeEqual(proof[2]!, consentRemovalMac(sessionHash, grant, until)));
+      const proves = (binding?: string) => !!(grant && proof && binding && safeEqual(proof[2]!, consentRemovalMac(binding, grant, until)));
+      const matches = browserRemovalProofMatches(!!sessionHash, proves(sessionHash), proves(who.rotatedFromBrowserBinding));
       const currentOwner = matches && who.personId === await o.platform.personForKey(owner.phoneKey);
       const at = now();
       removal = "NothingRemoved";

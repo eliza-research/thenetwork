@@ -9,6 +9,7 @@ import { lastEvents, resolveConsent } from "../../packages/platform/src/consent.
 import { APP_IDS, type AppId } from "../../packages/platform/src/apps.ts";
 import { proxySignature } from "../../packages/platform/src/proxy.ts";
 import { PHOTO_CONSENT } from "../../packages/platform/src/photos.ts";
+import { SESSION_GRACE_MS, SESSION_ROTATE_MS } from "../../packages/platform/src/sessions.ts";
 import { pkceS256, sha256hex } from "../../packages/mcp/src/util.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
@@ -939,6 +940,42 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await st.site("friends", "/api/me/delete", { browser: b, json: { scope: "app" } })).status).toBe(200);
       const after = await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, second.token!.access_token);
       expect(after.res.status).toBe(401);
+    }, T);
+
+    test("keeps an exact removal confirmation through a browser session rotation", async () => {
+      const phone = newPhone();
+      const { b, res } = await webJoin(st, "friends", phone, { age: 29 });
+      expect(res.status).toBe(200);
+      const oldCookie = b.jar.get("sid_friends");
+      if (!oldCookie) throw new Error("missing verified site session");
+      const justBeforeRotation = new Date(st.clock.now() - SESSION_ROTATE_MS + 1000);
+      const aged = await sql`update platform.sessions set created_at=${justBeforeRotation},started_at=${justBeforeRotation}
+        where app_id='friends' and e164=${phone} and revoked_at is null returning token_hash`;
+      expect(aged).toHaveLength(1);
+
+      const connection = await connectMcp(st, "friends", phone, { browser: b });
+      const access = connection.token?.access_token;
+      expect(access).toBeTypeOf("string");
+      const list = await (await st.site("friends", "/oauth/consents", { browser: b })).text();
+      const grant = /name="remove" value="([^"]+)"/.exec(list)?.[1];
+      if (!grant) throw new Error("missing live grant");
+      const confirm = await (await st.site("friends", `/oauth/consents?remove=${encodeURIComponent(grant)}`, { browser: b })).text();
+      const confirmation = /name="confirmation" value="([^"]+)"/.exec(confirm)?.[1];
+      if (!confirmation) throw new Error("missing bound confirmation");
+
+      st.clock.advance(2000);
+      expect((await st.site("friends", "/api/me", { browser: b })).status).toBe(200);
+      expect(b.jar.get("sid_friends")).not.toBe(oldCookie);
+      st.clock.advance(SESSION_GRACE_MS + 1);
+      const staleBrowser = new Browser();
+      staleBrowser.jar.set("sid_friends", oldCookie);
+      const post = (browser: Browser) => st.site("friends", "/oauth/consents/revoke", { browser, form: { grant, confirmation } });
+      expect((await post(staleBrowser)).status).toBe(401);
+      const removed = await post(b);
+      expect(removed.status).toBe(200);
+      expect((await removed.text()).includes("Access removed.")).toBe(true);
+      expect((await rpc(st, "friends", "/mcp", "tools/call", {name: "check_status", arguments: {}}, access)).res.status).toBe(401);
+      expect(await (await post(b)).text()).not.toContain("Access removed.");
     }, T);
 
     test("agent-first sign-up: join on the site, connect, submit_profile reaches the member's own Network; an age in it counts (decision 10)", async () => {
