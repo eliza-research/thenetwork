@@ -614,15 +614,15 @@ export function enabled(current: AuthPage, event: Event): boolean {
 export function step(current: AuthPage, event: Event): AuthPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openPage" && canOpenPage(current, event.reply)) return openPage(current, event.reply, event.turnstileOn);
-  if (event.type === "returnFromCloud" && canReturnFromCloud(current, event.reply)) return returnFromCloud(current, event.reply);
-  if (event.type === "retryConnection" && canRetryConnection(current, event.reply)) return retryConnection(current, event.reply);
-  if (event.type === "solveCheck" && canSolveCheck(current)) return solveCheck(current);
-  if (event.type === "expireCheck" && canExpireCheck(current)) return expireCheck(current);
-  if (event.type === "submitPhone" && canSubmitPhone(current, event.reply)) return submitPhone(current, event.reply);
-  if (event.type === "submitCode" && canSubmitCode(current, event.reply)) return submitCode(current, event.reply);
-  if (event.type === "approve" && canApprove(current, event.reply)) return approve(current, event.reply);
-  if (event.type === "cancelRequest" && canCancelRequest(current, event.reply)) return cancelRequest(current, event.reply);
+  if (event.type === "openPage") return canOpenPage(current, event.reply) ? openPage(current, event.reply, event.turnstileOn) : current;
+  if (event.type === "returnFromCloud") return canReturnFromCloud(current, event.reply) ? returnFromCloud(current, event.reply) : current;
+  if (event.type === "retryConnection") return canRetryConnection(current, event.reply) ? retryConnection(current, event.reply) : current;
+  if (event.type === "solveCheck") return canSolveCheck(current) ? solveCheck(current) : current;
+  if (event.type === "expireCheck") return canExpireCheck(current) ? expireCheck(current) : current;
+  if (event.type === "submitPhone") return canSubmitPhone(current, event.reply) ? submitPhone(current, event.reply) : current;
+  if (event.type === "submitCode") return canSubmitCode(current, event.reply) ? submitCode(current, event.reply) : current;
+  if (event.type === "approve") return canApprove(current, event.reply) ? approve(current, event.reply) : current;
+  if (event.type === "cancelRequest") return canCancelRequest(current, event.reply) ? cancelRequest(current, event.reply) : current;
   return current;
 }
 

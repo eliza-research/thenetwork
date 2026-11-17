@@ -301,11 +301,11 @@ export function enabled(current: ConsentsPage, event: Event): boolean {
 export function step(current: ConsentsPage, event: Event): ConsentsPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "load" && canLoad(current, event.grants)) return load(current, event.loaded, event.grants);
-  if (event.type === "reloadPage" && canReloadPage(current)) return reloadPage(current);
-  if (event.type === "chooseRemoval" && canChooseRemoval(current)) return chooseRemoval(current);
-  if (event.type === "keepAccess" && canKeepAccess(current)) return keepAccess(current);
-  if (event.type === "confirmRemoval" && canConfirmRemoval(current, event.grants)) return confirmRemoval(current, event.removal, event.grants);
+  if (event.type === "load") return canLoad(current, event.grants) ? load(current, event.loaded, event.grants) : current;
+  if (event.type === "reloadPage") return canReloadPage(current) ? reloadPage(current) : current;
+  if (event.type === "chooseRemoval") return canChooseRemoval(current) ? chooseRemoval(current) : current;
+  if (event.type === "keepAccess") return canKeepAccess(current) ? keepAccess(current) : current;
+  if (event.type === "confirmRemoval") return canConfirmRemoval(current, event.grants) ? confirmRemoval(current, event.removal, event.grants) : current;
   return current;
 }
 

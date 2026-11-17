@@ -110,7 +110,7 @@ export function enabled(current: ReceiptJourney, event: Event): boolean {
 export function step(current: ReceiptJourney, event: Event): ReceiptJourneyStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "reportDelivery" && canReportDelivery(current, event.report)) return reportDelivery(current, event.report);
+  if (event.type === "reportDelivery") return canReportDelivery(current, event.report) ? reportDelivery(current, event.report) : { state: current, out: ([] as ReceiptJourneyResult[]) };
   return { state: current, out: ([] as ReceiptJourneyResult[]) };
 }
 

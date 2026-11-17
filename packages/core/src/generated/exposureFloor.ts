@@ -88,8 +88,8 @@ export function enabled(current: FloorAllocation, event: Event): boolean {
 export function step(current: FloorAllocation, event: Event): FloorAllocation {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "allocate" && canAllocate(current, event.slotLimit)) return allocate(current, event.slotLimit);
-  if (event.type === "reserveSlot" && canReserveSlot(current, event.alreadyIncluded, event.priority, event.similarityEligible)) return reserveSlot(current, event.alreadyIncluded, event.priority, event.similarityEligible);
+  if (event.type === "allocate") return canAllocate(current, event.slotLimit) ? allocate(current, event.slotLimit) : current;
+  if (event.type === "reserveSlot") return canReserveSlot(current, event.alreadyIncluded, event.priority, event.similarityEligible) ? reserveSlot(current, event.alreadyIncluded, event.priority, event.similarityEligible) : current;
   return current;
 }
 

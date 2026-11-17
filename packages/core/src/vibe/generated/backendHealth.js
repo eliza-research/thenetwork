@@ -87,12 +87,12 @@ export function enabled(current, event) {
 export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
-    if (event.type === "checkAdmission" && canCheckAdmission(current))
-        return checkAdmission(current, event.serving);
-    if (event.type === "checkDatabase" && canCheckDatabase(current))
-        return checkDatabase(current, event.reachable);
-    if (event.type === "checkTicks" && canCheckTicks(current))
-        return checkTicks(current, event.late);
+    if (event.type === "checkAdmission")
+        return canCheckAdmission(current) ? checkAdmission(current, event.serving) : current;
+    if (event.type === "checkDatabase")
+        return canCheckDatabase(current) ? checkDatabase(current, event.reachable) : current;
+    if (event.type === "checkTicks")
+        return canCheckTicks(current) ? checkTicks(current, event.late) : current;
     return current;
 }
 /**

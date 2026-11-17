@@ -227,12 +227,12 @@ export function enabled(current: ServiceSafetyFlow, event: Event): boolean {
 export function step(current: ServiceSafetyFlow, event: Event): ServiceSafetyFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "readPrimaryHold" && canReadPrimaryHold(current)) return readPrimaryHold(current, event.applied);
-  if (event.type === "recordRequestedSafetyAudit" && canRecordRequestedSafetyAudit(current)) return recordRequestedSafetyAudit(current);
-  if (event.type === "recordCompletedSafetyAction" && canRecordCompletedSafetyAction(current)) return recordCompletedSafetyAction(current);
-  if (event.type === "startStaffBan" && canStartStaffBan(current)) return startStaffBan(current, event.everywhere, event.hasPerson, event.phoneOnly);
-  if (event.type === "readStaffBanPhones" && canReadStaffBanPhones(current)) return readStaffBanPhones(current, event.hasPhone);
-  if (event.type === "checkExistingStaffBan" && canCheckExistingStaffBan(current)) return checkExistingStaffBan(current, event.alreadyBanned, event.pendingProjection);
+  if (event.type === "readPrimaryHold") return canReadPrimaryHold(current) ? readPrimaryHold(current, event.applied) : current;
+  if (event.type === "recordRequestedSafetyAudit") return canRecordRequestedSafetyAudit(current) ? recordRequestedSafetyAudit(current) : current;
+  if (event.type === "recordCompletedSafetyAction") return canRecordCompletedSafetyAction(current) ? recordCompletedSafetyAction(current) : current;
+  if (event.type === "startStaffBan") return canStartStaffBan(current) ? startStaffBan(current, event.everywhere, event.hasPerson, event.phoneOnly) : current;
+  if (event.type === "readStaffBanPhones") return canReadStaffBanPhones(current) ? readStaffBanPhones(current, event.hasPhone) : current;
+  if (event.type === "checkExistingStaffBan") return canCheckExistingStaffBan(current) ? checkExistingStaffBan(current, event.alreadyBanned, event.pendingProjection) : current;
   return current;
 }
 

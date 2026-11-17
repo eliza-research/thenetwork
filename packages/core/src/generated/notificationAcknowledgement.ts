@@ -193,11 +193,11 @@ export function enabled(current: AcknowledgementFlow, event: Event): boolean {
 export function step(current: AcknowledgementFlow, event: Event): AcknowledgementFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "selectInboxRead" && canSelectInboxRead(current)) return selectInboxRead(current, event.withToken);
-  if (event.type === "resolveInboxReadToken" && canResolveInboxReadToken(current)) return resolveInboxReadToken(current, event.valid);
-  if (event.type === "selectShownSubjects" && canSelectShownSubjects(current)) return selectShownSubjects(current, event.hasVisibleItems);
-  if (event.type === "recordInboxSeen" && canRecordInboxSeen(current)) return recordInboxSeen(current);
-  if (event.type === "readDeliveryClosure" && canReadDeliveryClosure(current)) return readDeliveryClosure(current, event.deliveryClosed);
+  if (event.type === "selectInboxRead") return canSelectInboxRead(current) ? selectInboxRead(current, event.withToken) : current;
+  if (event.type === "resolveInboxReadToken") return canResolveInboxReadToken(current) ? resolveInboxReadToken(current, event.valid) : current;
+  if (event.type === "selectShownSubjects") return canSelectShownSubjects(current) ? selectShownSubjects(current, event.hasVisibleItems) : current;
+  if (event.type === "recordInboxSeen") return canRecordInboxSeen(current) ? recordInboxSeen(current) : current;
+  if (event.type === "readDeliveryClosure") return canReadDeliveryClosure(current) ? readDeliveryClosure(current, event.deliveryClosed) : current;
   return current;
 }
 

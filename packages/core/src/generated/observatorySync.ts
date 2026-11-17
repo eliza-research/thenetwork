@@ -141,11 +141,11 @@ export function enabled(current: ObservatorySync, event: Event): boolean {
 export function step(current: ObservatorySync, event: Event): ObservatorySync {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "changeView" && canChangeView(current, event.appName, event.viewMode)) return changeView(current, event.appName, event.viewMode);
-  if (event.type === "publishSnapshot" && canPublishSnapshot(current, event.generation, event.appName, event.viewMode)) return publishSnapshot(current, event.generation, event.appName, event.viewMode, event.version);
-  if (event.type === "failLoad" && canFailLoad(current, event.generation)) return failLoad(current, event.generation);
+  if (event.type === "changeView") return canChangeView(current, event.appName, event.viewMode) ? changeView(current, event.appName, event.viewMode) : current;
+  if (event.type === "publishSnapshot") return canPublishSnapshot(current, event.generation, event.appName, event.viewMode) ? publishSnapshot(current, event.generation, event.appName, event.viewMode, event.version) : current;
+  if (event.type === "failLoad") return canFailLoad(current, event.generation) ? failLoad(current, event.generation) : current;
   if (event.type === "startLoad") return startLoad(current);
-  if (event.type === "acceptDelta" && canAcceptDelta(current, event.version)) return acceptDelta(current, event.version);
+  if (event.type === "acceptDelta") return canAcceptDelta(current, event.version) ? acceptDelta(current, event.version) : current;
   return current;
 }
 

@@ -263,13 +263,13 @@ export function enabled(current: Enrollment, event: Event): boolean {
 export function step(current: Enrollment, event: Event): Enrollment {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkAccountView" && canCheckAccountView(current)) return checkAccountView(current, event.viewMatches);
-  if (event.type === "decodeProfile" && canDecodeProfile(current)) return decodeProfile(current, event.decoded);
-  if (event.type === "confirmConsent" && canConfirmConsent(current)) return confirmConsent(current, event.consentMatches);
-  if (event.type === "checkEligibility" && canCheckEligibility(current)) return checkEligibility(current, event.eligible);
-  if (event.type === "checkMembership" && canCheckMembership(current)) return checkMembership(current, event.membershipFacts);
-  if (event.type === "checkJoinAge" && canCheckJoinAge(current)) return checkJoinAge(current, event.ageEligible);
-  if (event.type === "finishJoin" && canFinishJoin(current)) return finishJoin(current, event.hookSucceeded);
+  if (event.type === "checkAccountView") return canCheckAccountView(current) ? checkAccountView(current, event.viewMatches) : current;
+  if (event.type === "decodeProfile") return canDecodeProfile(current) ? decodeProfile(current, event.decoded) : current;
+  if (event.type === "confirmConsent") return canConfirmConsent(current) ? confirmConsent(current, event.consentMatches) : current;
+  if (event.type === "checkEligibility") return canCheckEligibility(current) ? checkEligibility(current, event.eligible) : current;
+  if (event.type === "checkMembership") return canCheckMembership(current) ? checkMembership(current, event.membershipFacts) : current;
+  if (event.type === "checkJoinAge") return canCheckJoinAge(current) ? checkJoinAge(current, event.ageEligible) : current;
+  if (event.type === "finishJoin") return canFinishJoin(current) ? finishJoin(current, event.hookSucceeded) : current;
   return current;
 }
 

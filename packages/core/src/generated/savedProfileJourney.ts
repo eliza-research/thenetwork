@@ -106,8 +106,8 @@ export function enabled(current: ProfileMemberships, event: Event): boolean {
 export function step(current: ProfileMemberships, event: Event): ProfileTurn {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "readProfile" && canReadProfile(current, event.app, event.kind)) return readProfile(current, event.app, event.kind);
-  if (event.type === "leaveProfileApp" && canLeaveProfileApp(current, event.app)) return leaveProfileApp(current, event.app);
+  if (event.type === "readProfile") return canReadProfile(current, event.app, event.kind) ? readProfile(current, event.app, event.kind) : { state: current, out: ([] as ProfileShown[]) };
+  if (event.type === "leaveProfileApp") return canLeaveProfileApp(current, event.app) ? leaveProfileApp(current, event.app) : { state: current, out: ([] as ProfileShown[]) };
   return { state: current, out: ([] as ProfileShown[]) };
 }
 

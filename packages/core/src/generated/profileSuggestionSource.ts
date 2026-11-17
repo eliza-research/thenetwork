@@ -213,14 +213,14 @@ export function enabled(current: SourceFlow, event: Event): boolean {
 export function step(current: SourceFlow, event: Event): SourceFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "readCollectionTurn" && canReadCollectionTurn(current)) return readCollectionTurn(current, event.matches);
-  if (event.type === "readLiveSourceConsent" && canReadLiveSourceConsent(current)) return readLiveSourceConsent(current, event.allowed);
-  if (event.type === "startSourceCollection" && canStartSourceCollection(current)) return startSourceCollection(current, event.eligible, event.claimed);
-  if (event.type === "readCollectionReceipt" && canReadCollectionReceipt(current)) return readCollectionReceipt(current, event.prior, event.matches);
-  if (event.type === "startSourceCleanup" && canStartSourceCleanup(current)) return startSourceCleanup(current, event.authorized, event.ownerWithdrawal);
-  if (event.type === "readWithdrawalTurn" && canReadWithdrawalTurn(current)) return readWithdrawalTurn(current, event.matches);
-  if (event.type === "readCleanupReceipt" && canReadCleanupReceipt(current)) return readCleanupReceipt(current, event.prior, event.matches);
-  if (event.type === "confirmSourceCleanup" && canConfirmSourceCleanup(current)) return confirmSourceCleanup(current, event.authorized);
+  if (event.type === "readCollectionTurn") return canReadCollectionTurn(current) ? readCollectionTurn(current, event.matches) : current;
+  if (event.type === "readLiveSourceConsent") return canReadLiveSourceConsent(current) ? readLiveSourceConsent(current, event.allowed) : current;
+  if (event.type === "startSourceCollection") return canStartSourceCollection(current) ? startSourceCollection(current, event.eligible, event.claimed) : current;
+  if (event.type === "readCollectionReceipt") return canReadCollectionReceipt(current) ? readCollectionReceipt(current, event.prior, event.matches) : current;
+  if (event.type === "startSourceCleanup") return canStartSourceCleanup(current) ? startSourceCleanup(current, event.authorized, event.ownerWithdrawal) : current;
+  if (event.type === "readWithdrawalTurn") return canReadWithdrawalTurn(current) ? readWithdrawalTurn(current, event.matches) : current;
+  if (event.type === "readCleanupReceipt") return canReadCleanupReceipt(current) ? readCleanupReceipt(current, event.prior, event.matches) : current;
+  if (event.type === "confirmSourceCleanup") return canConfirmSourceCleanup(current) ? confirmSourceCleanup(current, event.authorized) : current;
   return current;
 }
 

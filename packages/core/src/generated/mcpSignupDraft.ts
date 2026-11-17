@@ -194,11 +194,11 @@ export function enabled(current: DraftPreparation, event: Event): boolean {
 export function step(current: DraftPreparation, event: Event): DraftPreparation {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "observeConnection" && canObserveConnection(current)) return observeConnection(current, event.grantReady, event.guardReady);
-  if (event.type === "observeAge" && canObserveAge(current)) return observeAge(current, event.allowed);
-  if (event.type === "observeOwner" && canObserveOwner(current)) return observeOwner(current, event.ownerMatches);
-  if (event.type === "observeMembership" && canObserveMembership(current)) return observeMembership(current, event.status);
-  if (event.type === "observeWrite" && canObserveWrite(current)) return observeWrite(current, event.saved);
+  if (event.type === "observeConnection") return canObserveConnection(current) ? observeConnection(current, event.grantReady, event.guardReady) : current;
+  if (event.type === "observeAge") return canObserveAge(current) ? observeAge(current, event.allowed) : current;
+  if (event.type === "observeOwner") return canObserveOwner(current) ? observeOwner(current, event.ownerMatches) : current;
+  if (event.type === "observeMembership") return canObserveMembership(current) ? observeMembership(current, event.status) : current;
+  if (event.type === "observeWrite") return canObserveWrite(current) ? observeWrite(current, event.saved) : current;
   return current;
 }
 

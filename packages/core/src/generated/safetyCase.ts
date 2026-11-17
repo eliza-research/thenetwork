@@ -188,10 +188,10 @@ export function enabled(current: SafetyCase, event: Event): boolean {
 export function step(current: SafetyCase, event: Event): SafetyCase {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordCaseEvent" && canRecordCaseEvent(current)) return recordCaseEvent(current, event.liftEvent, event.decayEvent);
-  if (event.type === "markCaseHeld" && canMarkCaseHeld(current)) return markCaseHeld(current);
-  if (event.type === "markCaseLifted" && canMarkCaseLifted(current)) return markCaseLifted(current);
-  if (event.type === "closeCase" && canCloseCase(current)) return closeCase(current);
+  if (event.type === "recordCaseEvent") return canRecordCaseEvent(current) ? recordCaseEvent(current, event.liftEvent, event.decayEvent) : current;
+  if (event.type === "markCaseHeld") return canMarkCaseHeld(current) ? markCaseHeld(current) : current;
+  if (event.type === "markCaseLifted") return canMarkCaseLifted(current) ? markCaseLifted(current) : current;
+  if (event.type === "closeCase") return canCloseCase(current) ? closeCase(current) : current;
   return current;
 }
 

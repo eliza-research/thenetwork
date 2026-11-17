@@ -225,15 +225,15 @@ export function enabled(current: BrowserFlow, event: Event): boolean {
 export function step(current: BrowserFlow, event: Event): BrowserFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "bindBrowser" && canBindBrowser(current)) return bindBrowser(current, event.matchesDigest);
-  if (event.type === "readBrowserClient" && canReadBrowserClient(current)) return readBrowserClient(current, event.clientExists);
-  if (event.type === "chooseEntry" && canChooseEntry(current)) return chooseEntry(current, event.session, event.cloudRequired);
-  if (event.type === "readBrowserForm" && canReadBrowserForm(current)) return readBrowserForm(current, event.page, event.hasPhone, event.form, event.approve);
-  if (event.type === "recordOtpSend" && canRecordOtpSend(current)) return recordOtpSend(current, event.sent);
-  if (event.type === "recordOtpVerification" && canRecordOtpVerification(current)) return recordOtpVerification(current, event.verified);
-  if (event.type === "recordBrowserIdentity" && canRecordBrowserIdentity(current)) return recordBrowserIdentity(current, event.identity);
-  if (event.type === "readConsentOwner" && canReadConsentOwner(current)) return readConsentOwner(current, event.verdict);
-  if (event.type === "readConsentAuthority" && canReadConsentAuthority(current)) return readConsentAuthority(current, event.verdict);
+  if (event.type === "bindBrowser") return canBindBrowser(current) ? bindBrowser(current, event.matchesDigest) : current;
+  if (event.type === "readBrowserClient") return canReadBrowserClient(current) ? readBrowserClient(current, event.clientExists) : current;
+  if (event.type === "chooseEntry") return canChooseEntry(current) ? chooseEntry(current, event.session, event.cloudRequired) : current;
+  if (event.type === "readBrowserForm") return canReadBrowserForm(current) ? readBrowserForm(current, event.page, event.hasPhone, event.form, event.approve) : current;
+  if (event.type === "recordOtpSend") return canRecordOtpSend(current) ? recordOtpSend(current, event.sent) : current;
+  if (event.type === "recordOtpVerification") return canRecordOtpVerification(current) ? recordOtpVerification(current, event.verified) : current;
+  if (event.type === "recordBrowserIdentity") return canRecordBrowserIdentity(current) ? recordBrowserIdentity(current, event.identity) : current;
+  if (event.type === "readConsentOwner") return canReadConsentOwner(current) ? readConsentOwner(current, event.verdict) : current;
+  if (event.type === "readConsentAuthority") return canReadConsentAuthority(current) ? readConsentAuthority(current, event.verdict) : current;
   return current;
 }
 

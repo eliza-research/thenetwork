@@ -253,14 +253,14 @@ export function enabled(current: FriendsRun, event: Event): boolean {
 export function step(current: FriendsRun, event: Event): FriendsRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginCrewOffers" && canBeginCrewOffers(current)) return beginCrewOffers(current);
-  if (event.type === "beginRepeats" && canBeginRepeats(current)) return beginRepeats(current);
-  if (event.type === "beginNewPlans" && canBeginNewPlans(current)) return beginNewPlans(current, event.spreadNew);
-  if (event.type === "beginPartners" && canBeginPartners(current)) return beginPartners(current);
-  if (event.type === "finishWeek" && canFinishWeek(current)) return finishWeek(current);
-  if (event.type === "reserveRecurring" && canReserveRecurring(current, event.kind, event.members)) return reserveRecurring(current, event.kind, event.members);
-  if (event.type === "reserveNewPlan" && canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates)) return reserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates);
-  if (event.type === "reservePartner" && canReservePartner(current, event.pair, event.limit)) return reservePartner(current, event.pair, event.limit);
+  if (event.type === "beginCrewOffers") return canBeginCrewOffers(current) ? beginCrewOffers(current) : current;
+  if (event.type === "beginRepeats") return canBeginRepeats(current) ? beginRepeats(current) : current;
+  if (event.type === "beginNewPlans") return canBeginNewPlans(current) ? beginNewPlans(current, event.spreadNew) : current;
+  if (event.type === "beginPartners") return canBeginPartners(current) ? beginPartners(current) : current;
+  if (event.type === "finishWeek") return canFinishWeek(current) ? finishWeek(current) : current;
+  if (event.type === "reserveRecurring") return canReserveRecurring(current, event.kind, event.members) ? reserveRecurring(current, event.kind, event.members) : current;
+  if (event.type === "reserveNewPlan") return canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates) ? reserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates) : current;
+  if (event.type === "reservePartner") return canReservePartner(current, event.pair, event.limit) ? reservePartner(current, event.pair, event.limit) : current;
   return current;
 }
 

@@ -290,9 +290,9 @@ export function enabled(current: Entry, event: Event): boolean {
 export function step(current: Entry, event: Event): Entry {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "arrive" && canArrive(current, event.entryKind)) return arrive(current, event.entryKind, event.app);
-  if (event.type === "resolveSkill" && canResolveSkill(current)) return resolveSkill(current, event.wantsSignup);
-  if (event.type === "resolveUpdate" && canResolveUpdate(current)) return resolveUpdate(current, event.connected, event.referenceOwn);
+  if (event.type === "arrive") return canArrive(current, event.entryKind) ? arrive(current, event.entryKind, event.app) : current;
+  if (event.type === "resolveSkill") return canResolveSkill(current) ? resolveSkill(current, event.wantsSignup) : current;
+  if (event.type === "resolveUpdate") return canResolveUpdate(current) ? resolveUpdate(current, event.connected, event.referenceOwn) : current;
   return current;
 }
 

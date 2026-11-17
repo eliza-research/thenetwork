@@ -1087,25 +1087,25 @@ export function enabled(current: JoinPage, event: Event): boolean {
 export function step(current: JoinPage, event: Event): JoinPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openPage" && canOpenPage(current)) return openPage(current, event.viaAgent, event.fragmentName, event.ageDigitsOnly, event.ageDigitCount, event.fragmentAge);
-  if (event.type === "loaded" && canLoaded(current, event.view)) return loaded(current, event.view, event.appUnreachable, event.inviteOnly);
-  if (event.type === "readAuthMode" && canReadAuthMode(current)) return readAuthMode(current, event.lookup, event.checkOn);
-  if (event.type === "expireCheck" && canExpireCheck(current)) return expireCheck(current);
-  if (event.type === "submitPhone" && canSubmitPhone(current)) return submitPhone(current, event.phoneValid);
-  if (event.type === "settleCheck" && canSettleCheck(current)) return settleCheck(current, event.passed);
-  if (event.type === "answerCodeStart" && canAnswerCodeStart(current)) return answerCodeStart(current, event.started);
-  if (event.type === "submitCode" && canSubmitCode(current)) return submitCode(current, event.codeDigitCount);
-  if (event.type === "answerVerify" && canAnswerVerify(current)) return answerVerify(current, event.verifyAnswer);
-  if (event.type === "resendCode" && canResendCode(current)) return resendCode(current);
-  if (event.type === "changeNumber" && canChangeNumber(current)) return changeNumber(current);
-  if (event.type === "answerResend" && canAnswerResend(current)) return answerResend(current, event.resent);
-  if (event.type === "continueWithPhone" && canContinueWithPhone(current)) return continueWithPhone(current);
-  if (event.type === "answerCloudStart" && canAnswerCloudStart(current)) return answerCloudStart(current, event.opened);
-  if (event.type === "recheck" && canRecheck(current, event.view)) return recheck(current, event.view);
-  if (event.type === "editProfile" && canEditProfile(current)) return editProfile(current);
-  if (event.type === "submitProfile" && canSubmitProfile(current)) return submitProfile(current, event.form);
-  if (event.type === "answerJoin" && canAnswerJoin(current)) return answerJoin(current, event.joinAnswer);
-  if (event.type === "restoreCloudPrefill" && canRestoreCloudPrefill(current, event.view)) return restoreCloudPrefill(current, event.view, event.fromAgent, event.hasFields);
+  if (event.type === "openPage") return canOpenPage(current) ? openPage(current, event.viaAgent, event.fragmentName, event.ageDigitsOnly, event.ageDigitCount, event.fragmentAge) : current;
+  if (event.type === "loaded") return canLoaded(current, event.view) ? loaded(current, event.view, event.appUnreachable, event.inviteOnly) : current;
+  if (event.type === "readAuthMode") return canReadAuthMode(current) ? readAuthMode(current, event.lookup, event.checkOn) : current;
+  if (event.type === "expireCheck") return canExpireCheck(current) ? expireCheck(current) : current;
+  if (event.type === "submitPhone") return canSubmitPhone(current) ? submitPhone(current, event.phoneValid) : current;
+  if (event.type === "settleCheck") return canSettleCheck(current) ? settleCheck(current, event.passed) : current;
+  if (event.type === "answerCodeStart") return canAnswerCodeStart(current) ? answerCodeStart(current, event.started) : current;
+  if (event.type === "submitCode") return canSubmitCode(current) ? submitCode(current, event.codeDigitCount) : current;
+  if (event.type === "answerVerify") return canAnswerVerify(current) ? answerVerify(current, event.verifyAnswer) : current;
+  if (event.type === "resendCode") return canResendCode(current) ? resendCode(current) : current;
+  if (event.type === "changeNumber") return canChangeNumber(current) ? changeNumber(current) : current;
+  if (event.type === "answerResend") return canAnswerResend(current) ? answerResend(current, event.resent) : current;
+  if (event.type === "continueWithPhone") return canContinueWithPhone(current) ? continueWithPhone(current) : current;
+  if (event.type === "answerCloudStart") return canAnswerCloudStart(current) ? answerCloudStart(current, event.opened) : current;
+  if (event.type === "recheck") return canRecheck(current, event.view) ? recheck(current, event.view) : current;
+  if (event.type === "editProfile") return canEditProfile(current) ? editProfile(current) : current;
+  if (event.type === "submitProfile") return canSubmitProfile(current) ? submitProfile(current, event.form) : current;
+  if (event.type === "answerJoin") return canAnswerJoin(current) ? answerJoin(current, event.joinAnswer) : current;
+  if (event.type === "restoreCloudPrefill") return canRestoreCloudPrefill(current, event.view) ? restoreCloudPrefill(current, event.view, event.fromAgent, event.hasFields) : current;
   return current;
 }
 

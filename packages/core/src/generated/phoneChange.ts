@@ -249,17 +249,17 @@ export function enabled(current: PhoneChange, event: Event): boolean {
 export function step(current: PhoneChange, event: Event): PhoneChange {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "requestChallenge" && canRequestChallenge(current)) return requestChallenge(current, event.sameNumber);
-  if (event.type === "beginConfirmation" && canBeginConfirmation(current)) return beginConfirmation(current);
-  if (event.type === "checkCurrentPhone" && canCheckCurrentPhone(current)) return checkCurrentPhone(current, event.ownership);
-  if (event.type === "checkStartPolicy" && canCheckStartPolicy(current)) return checkStartPolicy(current, event.oldNumberAllowed);
-  if (event.type === "checkStartRate" && canCheckStartRate(current)) return checkStartRate(current, event.slotGranted);
-  if (event.type === "recordCodeSend" && canRecordCodeSend(current)) return recordCodeSend(current, event.sendAccepted);
-  if (event.type === "recordPendingWrite" && canRecordPendingWrite(current)) return recordPendingWrite(current);
-  if (event.type === "readPending" && canReadPending(current)) return readPending(current, event.hasTarget, event.elapsedMs);
-  if (event.type === "recordVerification" && canRecordVerification(current)) return recordVerification(current, event.otpVerified);
-  if (event.type === "checkMovePolicy" && canCheckMovePolicy(current)) return checkMovePolicy(current, event.policy);
-  if (event.type === "recordMove" && canRecordMove(current)) return recordMove(current, event.moveResult);
+  if (event.type === "requestChallenge") return canRequestChallenge(current) ? requestChallenge(current, event.sameNumber) : current;
+  if (event.type === "beginConfirmation") return canBeginConfirmation(current) ? beginConfirmation(current) : current;
+  if (event.type === "checkCurrentPhone") return canCheckCurrentPhone(current) ? checkCurrentPhone(current, event.ownership) : current;
+  if (event.type === "checkStartPolicy") return canCheckStartPolicy(current) ? checkStartPolicy(current, event.oldNumberAllowed) : current;
+  if (event.type === "checkStartRate") return canCheckStartRate(current) ? checkStartRate(current, event.slotGranted) : current;
+  if (event.type === "recordCodeSend") return canRecordCodeSend(current) ? recordCodeSend(current, event.sendAccepted) : current;
+  if (event.type === "recordPendingWrite") return canRecordPendingWrite(current) ? recordPendingWrite(current) : current;
+  if (event.type === "readPending") return canReadPending(current) ? readPending(current, event.hasTarget, event.elapsedMs) : current;
+  if (event.type === "recordVerification") return canRecordVerification(current) ? recordVerification(current, event.otpVerified) : current;
+  if (event.type === "checkMovePolicy") return canCheckMovePolicy(current) ? checkMovePolicy(current, event.policy) : current;
+  if (event.type === "recordMove") return canRecordMove(current) ? recordMove(current, event.moveResult) : current;
   return current;
 }
 

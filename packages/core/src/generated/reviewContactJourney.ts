@@ -97,8 +97,8 @@ export function enabled(current: ReviewContactJourney, event: Event): boolean {
 export function step(current: ReviewContactJourney, event: Event): ReviewContactStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "runServiceTick" && canRunServiceTick(current)) return runServiceTick(current);
-  if (event.type === "decideProposal" && canDecideProposal(current, event.approve, event.atDeadline)) return decideProposal(current, event.approve, event.atDeadline);
+  if (event.type === "runServiceTick") return canRunServiceTick(current) ? runServiceTick(current) : { state: current, out: ([] as ReviewReply[]) };
+  if (event.type === "decideProposal") return canDecideProposal(current, event.approve, event.atDeadline) ? decideProposal(current, event.approve, event.atDeadline) : { state: current, out: ([] as ReviewReply[]) };
   return { state: current, out: ([] as ReviewReply[]) };
 }
 

@@ -286,12 +286,12 @@ export function enabled(current: HomeHelpPlan, event: Event): boolean {
 export function step(current: HomeHelpPlan, event: Event): HomeHelpPlan {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "submitHomeHelp" && canSubmitHomeHelp(current, event.draftAllowed, event.expiresAt)) return submitHomeHelp(current, event.draftAllowed, event.expiresAt);
-  if (event.type === "setHomeHelpRoster" && canSetHomeHelpRoster(current, event.now, event.revision, event.rosterKey, event.rosterAllowed)) return setHomeHelpRoster(current, event.now, event.revision, event.rosterKey, event.rosterAllowed);
-  if (event.type === "reviseHomeHelp" && canReviseHomeHelp(current, event.now, event.revision, event.draftAllowed, event.expiresAt)) return reviseHomeHelp(current, event.now, event.revision, event.draftAllowed, event.expiresAt);
-  if (event.type === "approveHomeHelp" && canApproveHomeHelp(current, event.now, event.revision, event.rosterKey, event.reviewerAuthorized, event.rosterAllowed)) return approveHomeHelp(current, event.now, event.revision, event.rosterKey, event.reviewerAuthorized, event.rosterAllowed);
-  if (event.type === "closeHomeHelp" && canCloseHomeHelp(current, event.now, event.revision, event.authorized)) return closeHomeHelp(current, event.now, event.revision, event.authorized);
-  if (event.type === "expireHomeHelp" && canExpireHomeHelp(current, event.now)) return expireHomeHelp(current, event.now);
+  if (event.type === "submitHomeHelp") return canSubmitHomeHelp(current, event.draftAllowed, event.expiresAt) ? submitHomeHelp(current, event.draftAllowed, event.expiresAt) : current;
+  if (event.type === "setHomeHelpRoster") return canSetHomeHelpRoster(current, event.now, event.revision, event.rosterKey, event.rosterAllowed) ? setHomeHelpRoster(current, event.now, event.revision, event.rosterKey, event.rosterAllowed) : current;
+  if (event.type === "reviseHomeHelp") return canReviseHomeHelp(current, event.now, event.revision, event.draftAllowed, event.expiresAt) ? reviseHomeHelp(current, event.now, event.revision, event.draftAllowed, event.expiresAt) : current;
+  if (event.type === "approveHomeHelp") return canApproveHomeHelp(current, event.now, event.revision, event.rosterKey, event.reviewerAuthorized, event.rosterAllowed) ? approveHomeHelp(current, event.now, event.revision, event.rosterKey, event.reviewerAuthorized, event.rosterAllowed) : current;
+  if (event.type === "closeHomeHelp") return canCloseHomeHelp(current, event.now, event.revision, event.authorized) ? closeHomeHelp(current, event.now, event.revision, event.authorized) : current;
+  if (event.type === "expireHomeHelp") return canExpireHomeHelp(current, event.now) ? expireHomeHelp(current, event.now) : current;
   return current;
 }
 

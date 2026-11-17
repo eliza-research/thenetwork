@@ -925,21 +925,21 @@ export function enabled(current: AgentSignup, event: Event): boolean {
 export function step(current: AgentSignup, event: Event): AgentSignup {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "chooseTransport" && canChooseTransport(current)) return chooseTransport(current, event.skillKind, event.httpsSession, event.connectorTools);
-  if (event.type === "readAppFacts" && canReadAppFacts(current)) return readAppFacts(current, event.appMatches, event.inviteMode);
-  if (event.type === "draftProfile" && canDraftProfile(current, event.statedAge)) return draftProfile(current, event.statedAge);
-  if (event.type === "decideApproval" && canDecideApproval(current)) return decideApproval(current, event.decision);
-  if (event.type === "checkSession" && canCheckSession(current)) return checkSession(current, event.sessionLive);
-  if (event.type === "readAuthMode" && canReadAuthMode(current)) return readAuthMode(current, event.codeMode);
-  if (event.type === "startCode" && canStartCode(current)) return startCode(current, event.codeStart);
-  if (event.type === "checkCode" && canCheckCode(current)) return checkCode(current, event.verified);
-  if (event.type === "requestNewCode" && canRequestNewCode(current)) return requestNewCode(current);
-  if (event.type === "readAccount" && canReadAccount(current, event.account)) return readAccount(current, event.account, event.invitation);
-  if (event.type === "joinApp" && canJoinApp(current, event.joinResult, event.invitationSubmitted)) return joinApp(current, event.joinResult, event.invitationSubmitted);
-  if (event.type === "readBack" && canReadBack(current)) return readBack(current, event.readBackMatches);
-  if (event.type === "checkSiteStatus" && canCheckSiteStatus(current)) return checkSiteStatus(current, event.siteApp, event.siteStatus);
-  if (event.type === "submitProfile" && canSubmitProfile(current)) return submitProfile(current, event.accepted);
-  if (event.type === "confirmProfile" && canConfirmProfile(current)) return confirmProfile(current, event.stillLive);
+  if (event.type === "chooseTransport") return canChooseTransport(current) ? chooseTransport(current, event.skillKind, event.httpsSession, event.connectorTools) : current;
+  if (event.type === "readAppFacts") return canReadAppFacts(current) ? readAppFacts(current, event.appMatches, event.inviteMode) : current;
+  if (event.type === "draftProfile") return canDraftProfile(current, event.statedAge) ? draftProfile(current, event.statedAge) : current;
+  if (event.type === "decideApproval") return canDecideApproval(current) ? decideApproval(current, event.decision) : current;
+  if (event.type === "checkSession") return canCheckSession(current) ? checkSession(current, event.sessionLive) : current;
+  if (event.type === "readAuthMode") return canReadAuthMode(current) ? readAuthMode(current, event.codeMode) : current;
+  if (event.type === "startCode") return canStartCode(current) ? startCode(current, event.codeStart) : current;
+  if (event.type === "checkCode") return canCheckCode(current) ? checkCode(current, event.verified) : current;
+  if (event.type === "requestNewCode") return canRequestNewCode(current) ? requestNewCode(current) : current;
+  if (event.type === "readAccount") return canReadAccount(current, event.account) ? readAccount(current, event.account, event.invitation) : current;
+  if (event.type === "joinApp") return canJoinApp(current, event.joinResult, event.invitationSubmitted) ? joinApp(current, event.joinResult, event.invitationSubmitted) : current;
+  if (event.type === "readBack") return canReadBack(current) ? readBack(current, event.readBackMatches) : current;
+  if (event.type === "checkSiteStatus") return canCheckSiteStatus(current) ? checkSiteStatus(current, event.siteApp, event.siteStatus) : current;
+  if (event.type === "submitProfile") return canSubmitProfile(current) ? submitProfile(current, event.accepted) : current;
+  if (event.type === "confirmProfile") return canConfirmProfile(current) ? confirmProfile(current, event.stillLive) : current;
   return current;
 }
 

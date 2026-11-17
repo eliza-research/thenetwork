@@ -319,12 +319,12 @@ export function enabled(current: ExpectedInvite, event: Event): boolean {
 export function step(current: ExpectedInvite, event: Event): ExpectedInvite {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "stageExpectedInvite" && canStageExpectedInvite(current, event.request)) return stageExpectedInvite(current, event.request);
-  if (event.type === "recordExpectedInviteReceipt" && canRecordExpectedInviteReceipt(current, event.exactPositiveReceipt)) return recordExpectedInviteReceipt(current, event.exactPositiveReceipt);
-  if (event.type === "requeueExpectedInvite" && canRequeueExpectedInvite(current, event.neverAdmitted, event.sameKey)) return requeueExpectedInvite(current, event.neverAdmitted, event.sameKey);
-  if (event.type === "dispatchExpectedInvite" && canDispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload)) return dispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload);
-  if (event.type === "acceptExpectedInvite" && canAcceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed)) return acceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed);
-  if (event.type === "closeExpectedInvite" && canCloseExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined)) return closeExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined);
+  if (event.type === "stageExpectedInvite") return canStageExpectedInvite(current, event.request) ? stageExpectedInvite(current, event.request) : current;
+  if (event.type === "recordExpectedInviteReceipt") return canRecordExpectedInviteReceipt(current, event.exactPositiveReceipt) ? recordExpectedInviteReceipt(current, event.exactPositiveReceipt) : current;
+  if (event.type === "requeueExpectedInvite") return canRequeueExpectedInvite(current, event.neverAdmitted, event.sameKey) ? requeueExpectedInvite(current, event.neverAdmitted, event.sameKey) : current;
+  if (event.type === "dispatchExpectedInvite") return canDispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload) ? dispatchExpectedInvite(current, event.now, event.issuerCurrent, event.recipientAllowed, event.exactPayload) : current;
+  if (event.type === "acceptExpectedInvite") return canAcceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed) ? acceptExpectedInvite(current, event.now, event.exactApp, event.verifiedRecipient, event.issuerCurrent, event.recipientAllowed) : current;
+  if (event.type === "closeExpectedInvite") return canCloseExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined) ? closeExpectedInvite(current, event.now, event.invalidated, event.exactRecipientDeclined) : current;
   return current;
 }
 

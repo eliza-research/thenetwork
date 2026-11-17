@@ -114,12 +114,12 @@ export function enabled(current, event) {
 export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
-    if (event.type === "recordHandled" && canRecordHandled(current))
-        return recordHandled(current, event.stopCommand);
-    if (event.type === "recordCompletion" && canRecordCompletion(current))
-        return recordCompletion(current);
-    if (event.type === "recordFailure" && canRecordFailure(current))
-        return recordFailure(current, event.attempts, event.stopCommand);
+    if (event.type === "recordHandled")
+        return canRecordHandled(current) ? recordHandled(current, event.stopCommand) : current;
+    if (event.type === "recordCompletion")
+        return canRecordCompletion(current) ? recordCompletion(current) : current;
+    if (event.type === "recordFailure")
+        return canRecordFailure(current) ? recordFailure(current, event.attempts, event.stopCommand) : current;
     return current;
 }
 /**

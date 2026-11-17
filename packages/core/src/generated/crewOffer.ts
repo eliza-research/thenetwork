@@ -163,12 +163,12 @@ export function enabled(current: CrewOfferState, event: Event): boolean {
 export function step(current: CrewOfferState, event: Event): CrewOfferState {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "extendOffer" && canExtendOffer(current, event.memberId, event.enjoyedPlan)) return extendOffer(current, event.memberId, event.enjoyedPlan);
-  if (event.type === "openOffer" && canOpenOffer(current)) return openOffer(current, event.invitees);
-  if (event.type === "recordCrewAnswer" && canRecordCrewAnswer(current, event.memberId)) return recordCrewAnswer(current, event.memberId, event.accepted);
-  if (event.type === "finishCrewAnswers" && canFinishCrewAnswers(current)) return finishCrewAnswers(current);
-  if (event.type === "expireCrewOffer" && canExpireCrewOffer(current, event.elapsedMs)) return expireCrewOffer(current, event.elapsedMs);
-  if (event.type === "forgetCrewInvitee" && canForgetCrewInvitee(current)) return forgetCrewInvitee(current, event.memberId);
+  if (event.type === "extendOffer") return canExtendOffer(current, event.memberId, event.enjoyedPlan) ? extendOffer(current, event.memberId, event.enjoyedPlan) : current;
+  if (event.type === "openOffer") return canOpenOffer(current) ? openOffer(current, event.invitees) : current;
+  if (event.type === "recordCrewAnswer") return canRecordCrewAnswer(current, event.memberId) ? recordCrewAnswer(current, event.memberId, event.accepted) : current;
+  if (event.type === "finishCrewAnswers") return canFinishCrewAnswers(current) ? finishCrewAnswers(current) : current;
+  if (event.type === "expireCrewOffer") return canExpireCrewOffer(current, event.elapsedMs) ? expireCrewOffer(current, event.elapsedMs) : current;
+  if (event.type === "forgetCrewInvitee") return canForgetCrewInvitee(current) ? forgetCrewInvitee(current, event.memberId) : current;
   return current;
 }
 

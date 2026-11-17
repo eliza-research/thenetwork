@@ -251,18 +251,18 @@ export function enabled(current: PhotoChange, event: Event): boolean {
 export function step(current: PhotoChange, event: Event): PhotoChange {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginUpload" && canBeginUpload(current)) return beginUpload(current, event.appAllowed, event.consentCurrent);
-  if (event.type === "checkUploader" && canCheckUploader(current)) return checkUploader(current, event.eligible);
-  if (event.type === "screenFile" && canScreenFile(current)) return screenFile(current, event.tooLarge, event.typeKnown);
-  if (event.type === "checkSlots" && canCheckSlots(current)) return checkSlots(current, event.available);
-  if (event.type === "cleanImage" && canCleanImage(current)) return cleanImage(current, event.cleaned);
-  if (event.type === "recordUploadBytes" && canRecordUploadBytes(current)) return recordUploadBytes(current);
-  if (event.type === "recordUploadRow" && canRecordUploadRow(current)) return recordUploadRow(current);
-  if (event.type === "finishRerate" && canFinishRerate(current)) return finishRerate(current);
-  if (event.type === "beginRemoval" && canBeginRemoval(current)) return beginRemoval(current, event.owned, event.rerate);
-  if (event.type === "recordRemovedBytes" && canRecordRemovedBytes(current)) return recordRemovedBytes(current);
-  if (event.type === "recordRemovedRow" && canRecordRemovedRow(current)) return recordRemovedRow(current);
-  if (event.type === "recordRatingClear" && canRecordRatingClear(current)) return recordRatingClear(current);
+  if (event.type === "beginUpload") return canBeginUpload(current) ? beginUpload(current, event.appAllowed, event.consentCurrent) : current;
+  if (event.type === "checkUploader") return canCheckUploader(current) ? checkUploader(current, event.eligible) : current;
+  if (event.type === "screenFile") return canScreenFile(current) ? screenFile(current, event.tooLarge, event.typeKnown) : current;
+  if (event.type === "checkSlots") return canCheckSlots(current) ? checkSlots(current, event.available) : current;
+  if (event.type === "cleanImage") return canCleanImage(current) ? cleanImage(current, event.cleaned) : current;
+  if (event.type === "recordUploadBytes") return canRecordUploadBytes(current) ? recordUploadBytes(current) : current;
+  if (event.type === "recordUploadRow") return canRecordUploadRow(current) ? recordUploadRow(current) : current;
+  if (event.type === "finishRerate") return canFinishRerate(current) ? finishRerate(current) : current;
+  if (event.type === "beginRemoval") return canBeginRemoval(current) ? beginRemoval(current, event.owned, event.rerate) : current;
+  if (event.type === "recordRemovedBytes") return canRecordRemovedBytes(current) ? recordRemovedBytes(current) : current;
+  if (event.type === "recordRemovedRow") return canRecordRemovedRow(current) ? recordRemovedRow(current) : current;
+  if (event.type === "recordRatingClear") return canRecordRatingClear(current) ? recordRatingClear(current) : current;
   return current;
 }
 

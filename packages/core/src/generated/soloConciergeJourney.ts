@@ -166,9 +166,9 @@ export function enabled(current: SoloConciergeJourney, event: Event): boolean {
 export function step(current: SoloConciergeJourney, event: Event): ConciergeStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "publishCatalog" && canPublishCatalog(current, event.catalog)) return publishCatalog(current, event.catalog);
-  if (event.type === "askForIdeas" && canAskForIdeas(current, event.who)) return askForIdeas(current, event.who);
-  if (event.type === "retryIdeas" && canRetryIdeas(current, event.who)) return retryIdeas(current, event.who);
+  if (event.type === "publishCatalog") return canPublishCatalog(current, event.catalog) ? publishCatalog(current, event.catalog) : { state: current, out: ([] as ConciergeEffect[]) };
+  if (event.type === "askForIdeas") return canAskForIdeas(current, event.who) ? askForIdeas(current, event.who) : { state: current, out: ([] as ConciergeEffect[]) };
+  if (event.type === "retryIdeas") return canRetryIdeas(current, event.who) ? retryIdeas(current, event.who) : { state: current, out: ([] as ConciergeEffect[]) };
   return { state: current, out: ([] as ConciergeEffect[]) };
 }
 

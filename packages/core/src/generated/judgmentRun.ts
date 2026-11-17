@@ -141,10 +141,10 @@ export function enabled(current: JudgmentRun, event: Event): boolean {
 export function step(current: JudgmentRun, event: Event): JudgmentRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "configureRun" && canConfigureRun(current)) return configureRun(current, event.rubricOption, event.screenOption);
-  if (event.type === "finishScreen" && canFinishScreen(current)) return finishScreen(current);
-  if (event.type === "finishRubric" && canFinishRubric(current)) return finishRubric(current, event.deepOption);
-  if (event.type === "finishDeepReview" && canFinishDeepReview(current)) return finishDeepReview(current);
+  if (event.type === "configureRun") return canConfigureRun(current) ? configureRun(current, event.rubricOption, event.screenOption) : current;
+  if (event.type === "finishScreen") return canFinishScreen(current) ? finishScreen(current) : current;
+  if (event.type === "finishRubric") return canFinishRubric(current) ? finishRubric(current, event.deepOption) : current;
+  if (event.type === "finishDeepReview") return canFinishDeepReview(current) ? finishDeepReview(current) : current;
   return current;
 }
 

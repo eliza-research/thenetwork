@@ -116,8 +116,8 @@ export function enabled(current: SeatLedger, event: Event): boolean {
 export function step(current: SeatLedger, event: Event): SeatLedger {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "publishLedger" && canPublishLedger(current)) return publishLedger(current);
-  if (event.type === "observeCandidate" && canObserveCandidate(current, event.candidate, event.occupies)) return observeCandidate(current, event.candidate, event.occupies);
+  if (event.type === "publishLedger") return canPublishLedger(current) ? publishLedger(current) : current;
+  if (event.type === "observeCandidate") return canObserveCandidate(current, event.candidate, event.occupies) ? observeCandidate(current, event.candidate, event.occupies) : current;
   return current;
 }
 

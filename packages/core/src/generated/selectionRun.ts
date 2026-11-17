@@ -275,11 +275,11 @@ export function enabled(current: SelectionRun, event: Event): boolean {
 export function step(current: SelectionRun, event: Event): SelectionRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "beginExploration" && canBeginExploration(current)) return beginExploration(current);
-  if (event.type === "beginGreedy" && canBeginGreedy(current)) return beginGreedy(current);
-  if (event.type === "completeRun" && canCompleteRun(current)) return completeRun(current);
-  if (event.type === "reserveSelection" && canReserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value)) return reserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value);
-  if (event.type === "refuseSelection" && canRefuseSelection(current, event.choice, event.value, event.blockedMember)) return refuseSelection(current, event.choice, event.value, event.blockedMember);
+  if (event.type === "beginExploration") return canBeginExploration(current) ? beginExploration(current) : current;
+  if (event.type === "beginGreedy") return canBeginGreedy(current) ? beginGreedy(current) : current;
+  if (event.type === "completeRun") return canCompleteRun(current) ? completeRun(current) : current;
+  if (event.type === "reserveSelection") return canReserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value) ? reserveSelection(current, event.choice, event.timeFree, event.exploring, event.packAllows, event.value) : current;
+  if (event.type === "refuseSelection") return canRefuseSelection(current, event.choice, event.value, event.blockedMember) ? refuseSelection(current, event.choice, event.value, event.blockedMember) : current;
   return current;
 }
 

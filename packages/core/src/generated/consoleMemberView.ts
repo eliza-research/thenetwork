@@ -129,7 +129,7 @@ export function step(current: DetailGate, event: Event): DetailGate {
   //@ ensures inv(\result)
   if (event.type === "beginDetail") return beginDetail(current);
   if (event.type === "cancelDetails") return cancelDetails(current);
-  if (event.type === "finishDetail" && canFinishDetail(current, event.readTicket)) return finishDetail(current, event.readTicket);
+  if (event.type === "finishDetail") return canFinishDetail(current, event.readTicket) ? finishDetail(current, event.readTicket) : current;
   return current;
 }
 

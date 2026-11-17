@@ -1195,29 +1195,29 @@ export function enabled(current: ConsoleNav, event: Event): boolean {
 export function step(current: ConsoleNav, event: Event): ConsoleNav {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "receiveViewer" && canReceiveViewer(current, event.viewMode, event.heldApps, event.crossAppRole, event.adminRole, event.realOnlyServer)) return receiveViewer(current, event.viewMode, event.heldApps, event.crossAppRole, event.adminRole, event.analystRole, event.simRoleHeld, event.safetyRole, event.realOnlyServer);
-  if (event.type === "openAllApps" && canOpenAllApps(current)) return openAllApps(current);
-  if (event.type === "selectApp" && canSelectApp(current)) return selectApp(current, event.sameApp);
-  if (event.type === "openPerson" && canOpenPerson(current)) return openPerson(current);
-  if (event.type === "closePerson" && canClosePerson(current)) return closePerson(current);
-  if (event.type === "switchMode" && canSwitchMode(current, event.viewMode)) return switchMode(current, event.viewMode);
-  if (event.type === "receiveModeChange" && canReceiveModeChange(current, event.viewMode)) return receiveModeChange(current, event.viewMode);
-  if (event.type === "replaceFocus" && canReplaceFocus(current, event.target)) return replaceFocus(current, event.target);
-  if (event.type === "focusOn" && canFocusOn(current, event.target, event.sameAsShown)) return focusOn(current, event.target, event.sameAsShown);
-  if (event.type === "goBack" && canGoBack(current, event.previous)) return goBack(current, event.previous);
-  if (event.type === "clearFocus" && canClearFocus(current)) return clearFocus(current);
-  if (event.type === "dropMissingSubjects" && canDropMissingSubjects(current, event.droppedEntries)) return dropMissingSubjects(current, event.subjectExists, event.droppedEntries);
+  if (event.type === "receiveViewer") return canReceiveViewer(current, event.viewMode, event.heldApps, event.crossAppRole, event.adminRole, event.realOnlyServer) ? receiveViewer(current, event.viewMode, event.heldApps, event.crossAppRole, event.adminRole, event.analystRole, event.simRoleHeld, event.safetyRole, event.realOnlyServer) : current;
+  if (event.type === "openAllApps") return canOpenAllApps(current) ? openAllApps(current) : current;
+  if (event.type === "selectApp") return canSelectApp(current) ? selectApp(current, event.sameApp) : current;
+  if (event.type === "openPerson") return canOpenPerson(current) ? openPerson(current) : current;
+  if (event.type === "closePerson") return canClosePerson(current) ? closePerson(current) : current;
+  if (event.type === "switchMode") return canSwitchMode(current, event.viewMode) ? switchMode(current, event.viewMode) : current;
+  if (event.type === "receiveModeChange") return canReceiveModeChange(current, event.viewMode) ? receiveModeChange(current, event.viewMode) : current;
+  if (event.type === "replaceFocus") return canReplaceFocus(current, event.target) ? replaceFocus(current, event.target) : current;
+  if (event.type === "focusOn") return canFocusOn(current, event.target, event.sameAsShown) ? focusOn(current, event.target, event.sameAsShown) : current;
+  if (event.type === "goBack") return canGoBack(current, event.previous) ? goBack(current, event.previous) : current;
+  if (event.type === "clearFocus") return canClearFocus(current) ? clearFocus(current) : current;
+  if (event.type === "dropMissingSubjects") return canDropMissingSubjects(current, event.droppedEntries) ? dropMissingSubjects(current, event.subjectExists, event.droppedEntries) : current;
   if (event.type === "toggleHelp") return toggleHelp(current);
   if (event.type === "pressEscape") return pressEscape(current);
-  if (event.type === "typeQuery" && canTypeQuery(current)) return typeQuery(current, event.characters);
-  if (event.type === "pickHit" && canPickHit(current, event.target, event.sameAsShown)) return pickHit(current, event.target, event.sameAsShown);
-  if (event.type === "togglePick" && canTogglePick(current, event.alreadyPicked, event.minorMember)) return togglePick(current, event.alreadyPicked, event.minorMember);
-  if (event.type === "showStage" && canShowStage(current, event.target)) return showStage(current, event.target);
-  if (event.type === "flyToVenue" && canFlyToVenue(current)) return flyToVenue(current);
-  if (event.type === "receiveQueues" && canReceiveQueues(current)) return receiveQueues(current, event.humanReview, event.reviewItems, event.requestsKnown);
-  if (event.type === "jumpToTab" && canJumpToTab(current, event.tab)) return jumpToTab(current, event.tab);
-  if (event.type === "toggleDrawer" && canToggleDrawer(current)) return toggleDrawer(current);
-  if (event.type === "chooseTab" && canChooseTab(current, event.tab)) return chooseTab(current, event.tab);
+  if (event.type === "typeQuery") return canTypeQuery(current) ? typeQuery(current, event.characters) : current;
+  if (event.type === "pickHit") return canPickHit(current, event.target, event.sameAsShown) ? pickHit(current, event.target, event.sameAsShown) : current;
+  if (event.type === "togglePick") return canTogglePick(current, event.alreadyPicked, event.minorMember) ? togglePick(current, event.alreadyPicked, event.minorMember) : current;
+  if (event.type === "showStage") return canShowStage(current, event.target) ? showStage(current, event.target) : current;
+  if (event.type === "flyToVenue") return canFlyToVenue(current) ? flyToVenue(current) : current;
+  if (event.type === "receiveQueues") return canReceiveQueues(current) ? receiveQueues(current, event.humanReview, event.reviewItems, event.requestsKnown) : current;
+  if (event.type === "jumpToTab") return canJumpToTab(current, event.tab) ? jumpToTab(current, event.tab) : current;
+  if (event.type === "toggleDrawer") return canToggleDrawer(current) ? toggleDrawer(current) : current;
+  if (event.type === "chooseTab") return canChooseTab(current, event.tab) ? chooseTab(current, event.tab) : current;
   return current;
 }
 

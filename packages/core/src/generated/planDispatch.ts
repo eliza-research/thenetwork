@@ -150,12 +150,12 @@ export function enabled(current: PlanDispatch, event: Event): boolean {
 export function step(current: PlanDispatch, event: Event): PlanDispatch {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkSeat" && canCheckSeat(current)) return checkSeat(current, event.eligible);
-  if (event.type === "checkPresence" && canCheckPresence(current)) return checkPresence(current, event.present);
-  if (event.type === "checkWindow" && canCheckWindow(current)) return checkWindow(current, event.busy, event.windowOpen, event.awaitingAnswer, event.sentToday);
-  if (event.type === "checkAllowance" && canCheckAllowance(current)) return checkAllowance(current, event.admitted);
-  if (event.type === "renderInvite" && canRenderInvite(current)) return renderInvite(current, event.usable);
-  if (event.type === "recordSend" && canRecordSend(current)) return recordSend(current, event.sent);
+  if (event.type === "checkSeat") return canCheckSeat(current) ? checkSeat(current, event.eligible) : current;
+  if (event.type === "checkPresence") return canCheckPresence(current) ? checkPresence(current, event.present) : current;
+  if (event.type === "checkWindow") return canCheckWindow(current) ? checkWindow(current, event.busy, event.windowOpen, event.awaitingAnswer, event.sentToday) : current;
+  if (event.type === "checkAllowance") return canCheckAllowance(current) ? checkAllowance(current, event.admitted) : current;
+  if (event.type === "renderInvite") return canRenderInvite(current) ? renderInvite(current, event.usable) : current;
+  if (event.type === "recordSend") return canRecordSend(current) ? recordSend(current, event.sent) : current;
   return current;
 }
 

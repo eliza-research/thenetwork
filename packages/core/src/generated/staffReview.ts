@@ -123,10 +123,10 @@ export function enabled(current: ReviewCtl, event: Event): boolean {
 export function step(current: ReviewCtl, event: Event): ReviewCtl {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "bindCard" && canBindCard(current, event.cardKey)) return bindCard(current, event.cardKey);
-  if (event.type === "changeReviewMode" && canChangeReviewMode(current)) return changeReviewMode(current, event.requestedMode, event.togglePanel);
-  if (event.type === "requireReviewNote" && canRequireReviewNote(current)) return requireReviewNote(current);
-  if (event.type === "settleReview" && canSettleReview(current, event.cardKey, event.revision)) return settleReview(current, event.cardKey, event.revision);
+  if (event.type === "bindCard") return canBindCard(current, event.cardKey) ? bindCard(current, event.cardKey) : current;
+  if (event.type === "changeReviewMode") return canChangeReviewMode(current) ? changeReviewMode(current, event.requestedMode, event.togglePanel) : current;
+  if (event.type === "requireReviewNote") return canRequireReviewNote(current) ? requireReviewNote(current) : current;
+  if (event.type === "settleReview") return canSettleReview(current, event.cardKey, event.revision) ? settleReview(current, event.cardKey, event.revision) : current;
   return current;
 }
 

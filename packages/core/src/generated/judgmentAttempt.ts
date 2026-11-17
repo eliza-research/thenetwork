@@ -143,10 +143,10 @@ export function enabled(current: JudgmentAttempt, event: Event): boolean {
 export function step(current: JudgmentAttempt, event: Event): JudgmentAttempt {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "readCache" && canReadCache(current)) return readCache(current, event.available);
-  if (event.type === "receiveVerdict" && canReceiveVerdict(current)) return receiveVerdict(current);
-  if (event.type === "completeWrite" && canCompleteWrite(current)) return completeWrite(current);
-  if (event.type === "failAttempt" && canFailAttempt(current)) return failAttempt(current);
+  if (event.type === "readCache") return canReadCache(current) ? readCache(current, event.available) : current;
+  if (event.type === "receiveVerdict") return canReceiveVerdict(current) ? receiveVerdict(current) : current;
+  if (event.type === "completeWrite") return canCompleteWrite(current) ? completeWrite(current) : current;
+  if (event.type === "failAttempt") return canFailAttempt(current) ? failAttempt(current) : current;
   return current;
 }
 

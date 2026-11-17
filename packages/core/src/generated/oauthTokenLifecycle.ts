@@ -208,15 +208,15 @@ export function enabled(current: TokenFlow, event: Event): boolean {
 export function step(current: TokenFlow, event: Event): TokenFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "readCode" && canReadCode(current)) return readCode(current, event.clientMatches, event.used, event.live);
-  if (event.type === "readCodeBinding" && canReadCodeBinding(current)) return readCodeBinding(current, event.redirectMatches, event.verifierMatches, event.resourceMatches);
-  if (event.type === "readRefresh" && canReadRefresh(current)) return readRefresh(current, event.refreshMatches);
-  if (event.type === "readGrant" && canReadGrant(current)) return readGrant(current, event.grantLive, event.eligible);
-  if (event.type === "readAuthority" && canReadAuthority(current)) return readAuthority(current, event.credentialLive, event.authority);
-  if (event.type === "readRefreshBinding" && canReadRefreshBinding(current)) return readRefreshBinding(current, event.scopeAllowed, event.resourceMatches, event.bothLive);
-  if (event.type === "recordTokens" && canRecordTokens(current)) return recordTokens(current);
-  if (event.type === "recordRotation" && canRecordRotation(current)) return recordRotation(current, event.succeeded);
-  if (event.type === "readConsumption" && canReadConsumption(current)) return readConsumption(current, event.consumption, event.bothLive);
+  if (event.type === "readCode") return canReadCode(current) ? readCode(current, event.clientMatches, event.used, event.live) : current;
+  if (event.type === "readCodeBinding") return canReadCodeBinding(current) ? readCodeBinding(current, event.redirectMatches, event.verifierMatches, event.resourceMatches) : current;
+  if (event.type === "readRefresh") return canReadRefresh(current) ? readRefresh(current, event.refreshMatches) : current;
+  if (event.type === "readGrant") return canReadGrant(current) ? readGrant(current, event.grantLive, event.eligible) : current;
+  if (event.type === "readAuthority") return canReadAuthority(current) ? readAuthority(current, event.credentialLive, event.authority) : current;
+  if (event.type === "readRefreshBinding") return canReadRefreshBinding(current) ? readRefreshBinding(current, event.scopeAllowed, event.resourceMatches, event.bothLive) : current;
+  if (event.type === "recordTokens") return canRecordTokens(current) ? recordTokens(current) : current;
+  if (event.type === "recordRotation") return canRecordRotation(current) ? recordRotation(current, event.succeeded) : current;
+  if (event.type === "readConsumption") return canReadConsumption(current) ? readConsumption(current, event.consumption, event.bothLive) : current;
   return current;
 }
 

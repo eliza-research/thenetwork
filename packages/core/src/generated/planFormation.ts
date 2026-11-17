@@ -171,8 +171,8 @@ export function enabled(current: CityPlanRun, event: Event): boolean {
 export function step(current: CityPlanRun, event: Event): CityPlanRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "reservePlan" && canReservePlan(current, event.invited, event.limit)) return reservePlan(current, event.invited, event.limit);
-  if (event.type === "publishPlans" && canPublishPlans(current)) return publishPlans(current);
+  if (event.type === "reservePlan") return canReservePlan(current, event.invited, event.limit) ? reservePlan(current, event.invited, event.limit) : current;
+  if (event.type === "publishPlans") return canPublishPlans(current) ? publishPlans(current) : current;
   return current;
 }
 

@@ -146,9 +146,9 @@ export function enabled(current: MutualConsentJourney, event: Event): boolean {
 export function step(current: MutualConsentJourney, event: Event): ConsentStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "replyToProbe" && canReplyToProbe(current, event.byMember, event.answer)) return replyToProbe(current, event.byMember, event.answer);
-  if (event.type === "reachLateSendWindow" && canReachLateSendWindow(current)) return reachLateSendWindow(current);
-  if (event.type === "recordBookingReceipt" && canRecordBookingReceipt(current)) return recordBookingReceipt(current);
+  if (event.type === "replyToProbe") return canReplyToProbe(current, event.byMember, event.answer) ? replyToProbe(current, event.byMember, event.answer) : { state: current, out: ([] as ReceiptResult[]) };
+  if (event.type === "reachLateSendWindow") return canReachLateSendWindow(current) ? reachLateSendWindow(current) : { state: current, out: ([] as ReceiptResult[]) };
+  if (event.type === "recordBookingReceipt") return canRecordBookingReceipt(current) ? recordBookingReceipt(current) : { state: current, out: ([] as ReceiptResult[]) };
   return { state: current, out: ([] as ReceiptResult[]) };
 }
 

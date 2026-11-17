@@ -188,11 +188,11 @@ export function enabled(current: ReviewedGroupJourney, event: Event): boolean {
 export function step(current: ReviewedGroupJourney, event: Event): GroupStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "reviewGroup" && canReviewGroup(current, event.approved)) return reviewGroup(current, event.approved);
-  if (event.type === "expireGroup" && canExpireGroup(current)) return expireGroup(current);
-  if (event.type === "answerGroup" && canAnswerGroup(current, event.hiker, event.agrees)) return answerGroup(current, event.hiker, event.agrees);
-  if (event.type === "withdrawFromGroup" && canWithdrawFromGroup(current, event.hiker)) return withdrawFromGroup(current, event.hiker);
-  if (event.type === "restartGroup" && canRestartGroup(current)) return restartGroup(current);
+  if (event.type === "reviewGroup") return canReviewGroup(current, event.approved) ? reviewGroup(current, event.approved) : { state: current, out: ([] as GroupEffect[]) };
+  if (event.type === "expireGroup") return canExpireGroup(current) ? expireGroup(current) : { state: current, out: ([] as GroupEffect[]) };
+  if (event.type === "answerGroup") return canAnswerGroup(current, event.hiker, event.agrees) ? answerGroup(current, event.hiker, event.agrees) : { state: current, out: ([] as GroupEffect[]) };
+  if (event.type === "withdrawFromGroup") return canWithdrawFromGroup(current, event.hiker) ? withdrawFromGroup(current, event.hiker) : { state: current, out: ([] as GroupEffect[]) };
+  if (event.type === "restartGroup") return canRestartGroup(current) ? restartGroup(current) : { state: current, out: ([] as GroupEffect[]) };
   return { state: current, out: ([] as GroupEffect[]) };
 }
 

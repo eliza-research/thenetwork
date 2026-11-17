@@ -175,12 +175,12 @@ export function enabled(current: AuthorityCheck, event: Event): boolean {
 export function step(current: AuthorityCheck, event: Event): AuthorityCheck {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkSiteProof" && canCheckSiteProof(current)) return checkSiteProof(current, event.bindingValid, event.proofLive, event.productionCloud, event.cacheLive);
-  if (event.type === "useLocalSession" && canUseLocalSession(current)) return useLocalSession(current, event.cloudToken);
-  if (event.type === "finishCloudCheck" && canFinishCloudCheck(current)) return finishCloudCheck(current, event.answer, event.proofLive);
-  if (event.type === "checkGrantEnvelope" && canCheckGrantEnvelope(current)) return checkGrantEnvelope(current, event.envelopeValid);
-  if (event.type === "checkGrantDelegation" && canCheckGrantDelegation(current)) return checkGrantDelegation(current, event.delegationBound);
-  if (event.type === "checkGrantOwner" && canCheckGrantOwner(current)) return checkGrantOwner(current, event.phoneEligible);
+  if (event.type === "checkSiteProof") return canCheckSiteProof(current) ? checkSiteProof(current, event.bindingValid, event.proofLive, event.productionCloud, event.cacheLive) : current;
+  if (event.type === "useLocalSession") return canUseLocalSession(current) ? useLocalSession(current, event.cloudToken) : current;
+  if (event.type === "finishCloudCheck") return canFinishCloudCheck(current) ? finishCloudCheck(current, event.answer, event.proofLive) : current;
+  if (event.type === "checkGrantEnvelope") return canCheckGrantEnvelope(current) ? checkGrantEnvelope(current, event.envelopeValid) : current;
+  if (event.type === "checkGrantDelegation") return canCheckGrantDelegation(current) ? checkGrantDelegation(current, event.delegationBound) : current;
+  if (event.type === "checkGrantOwner") return canCheckGrantOwner(current) ? checkGrantOwner(current, event.phoneEligible) : current;
   return current;
 }
 

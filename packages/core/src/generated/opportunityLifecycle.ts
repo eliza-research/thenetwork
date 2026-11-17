@@ -229,10 +229,10 @@ export function enabled(current: OpportunityLifecycle, event: Event): boolean {
 export function step(current: OpportunityLifecycle, event: Event): OpportunityLifecycle {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "startProbing" && canStartProbing(current, event.approvalRecorded, event.eligible)) return startProbing(current, event.approvalRecorded, event.eligible);
-  if (event.type === "book" && canBook(current, event.hasConsent)) return book(current, event.hasConsent);
-  if (event.type === "complete" && canComplete(current, event.feedbackDue)) return complete(current, event.feedbackDue);
-  if (event.type === "close" && canClose(current)) return close(current);
+  if (event.type === "startProbing") return canStartProbing(current, event.approvalRecorded, event.eligible) ? startProbing(current, event.approvalRecorded, event.eligible) : current;
+  if (event.type === "book") return canBook(current, event.hasConsent) ? book(current, event.hasConsent) : current;
+  if (event.type === "complete") return canComplete(current, event.feedbackDue) ? complete(current, event.feedbackDue) : current;
+  if (event.type === "close") return canClose(current) ? close(current) : current;
   return current;
 }
 

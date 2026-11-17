@@ -174,11 +174,11 @@ export function enabled(current: SignIn, event: Event): boolean {
 export function step(current: SignIn, event: Event): SignIn {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkHandoff" && canCheckHandoff(current)) return checkHandoff(current, event.handoffFacts);
-  if (event.type === "recordExchange" && canRecordExchange(current)) return recordExchange(current, event.exchangeAccepted);
-  if (event.type === "checkIdentity" && canCheckIdentity(current)) return checkIdentity(current, event.identityAvailable, event.identityValid);
-  if (event.type === "checkPhone" && canCheckPhone(current)) return checkPhone(current, event.phoneAllowed);
-  if (event.type === "recordSession" && canRecordSession(current)) return recordSession(current);
+  if (event.type === "checkHandoff") return canCheckHandoff(current) ? checkHandoff(current, event.handoffFacts) : current;
+  if (event.type === "recordExchange") return canRecordExchange(current) ? recordExchange(current, event.exchangeAccepted) : current;
+  if (event.type === "checkIdentity") return canCheckIdentity(current) ? checkIdentity(current, event.identityAvailable, event.identityValid) : current;
+  if (event.type === "checkPhone") return canCheckPhone(current) ? checkPhone(current, event.phoneAllowed) : current;
+  if (event.type === "recordSession") return canRecordSession(current) ? recordSession(current) : current;
   return current;
 }
 

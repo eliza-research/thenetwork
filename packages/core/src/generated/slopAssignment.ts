@@ -186,10 +186,10 @@ export function enabled(current: AssignmentRun, event: Event): boolean {
 export function step(current: AssignmentRun, event: Event): AssignmentRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "configureAssignment" && canConfigureAssignment(current, event.totalRounds, event.baseRounds)) return configureAssignment(current, event.totalRounds, event.baseRounds);
-  if (event.type === "openRound" && canOpenRound(current)) return openRound(current);
-  if (event.type === "closeRound" && canCloseRound(current)) return closeRound(current);
-  if (event.type === "reservePair" && canReservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree)) return reservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree);
+  if (event.type === "configureAssignment") return canConfigureAssignment(current, event.totalRounds, event.baseRounds) ? configureAssignment(current, event.totalRounds, event.baseRounds) : current;
+  if (event.type === "openRound") return canOpenRound(current) ? openRound(current) : current;
+  if (event.type === "closeRound") return canCloseRound(current) ? closeRound(current) : current;
+  if (event.type === "reservePair") return canReservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree) ? reservePair(current, event.pairKey, event.memberA, event.memberB, event.withinBackupDegree) : current;
   return current;
 }
 

@@ -140,18 +140,18 @@ export function enabled(current, event) {
 export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
-    if (event.type === "recordAcceptance" && canRecordAcceptance(current, event.providerPhase))
-        return recordAcceptance(current, event.providerPhase);
-    if (event.type === "applyReceipt" && canApplyReceipt(current, event.providerPhase))
-        return applyReceipt(current, event.providerPhase);
-    if (event.type === "holdUnrecordedReceipt" && canHoldUnrecordedReceipt(current))
-        return holdUnrecordedReceipt(current);
-    if (event.type === "confirmNeverAdmitted" && canConfirmNeverAdmitted(current, event.neverAdmitted))
-        return confirmNeverAdmitted(current, event.neverAdmitted);
-    if (event.type === "expireUnknown" && canExpireUnknown(current, event.pastLimit))
-        return expireUnknown(current, event.pastLimit);
-    if (event.type === "recordProviderError" && canRecordProviderError(current))
-        return recordProviderError(current, event.failure, event.hasAttemptsLeft);
+    if (event.type === "recordAcceptance")
+        return canRecordAcceptance(current, event.providerPhase) ? recordAcceptance(current, event.providerPhase) : current;
+    if (event.type === "applyReceipt")
+        return canApplyReceipt(current, event.providerPhase) ? applyReceipt(current, event.providerPhase) : current;
+    if (event.type === "holdUnrecordedReceipt")
+        return canHoldUnrecordedReceipt(current) ? holdUnrecordedReceipt(current) : current;
+    if (event.type === "confirmNeverAdmitted")
+        return canConfirmNeverAdmitted(current, event.neverAdmitted) ? confirmNeverAdmitted(current, event.neverAdmitted) : current;
+    if (event.type === "expireUnknown")
+        return canExpireUnknown(current, event.pastLimit) ? expireUnknown(current, event.pastLimit) : current;
+    if (event.type === "recordProviderError")
+        return canRecordProviderError(current) ? recordProviderError(current, event.failure, event.hasAttemptsLeft) : current;
     return current;
 }
 /**

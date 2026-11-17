@@ -152,9 +152,9 @@ export function enabled(current: AskRun, event: Event): boolean {
 export function step(current: AskRun, event: Event): AskRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "publishQuestions" && canPublishQuestions(current)) return publishQuestions(current);
-  if (event.type === "setAvailability" && canSetAvailability(current)) return setAvailability(current, event.configured);
-  if (event.type === "reserveQuestion" && canReserveQuestion(current, event.memberId, event.adult, event.supportedMarket)) return reserveQuestion(current, event.memberId, event.adult, event.supportedMarket);
+  if (event.type === "publishQuestions") return canPublishQuestions(current) ? publishQuestions(current) : current;
+  if (event.type === "setAvailability") return canSetAvailability(current) ? setAvailability(current, event.configured) : current;
+  if (event.type === "reserveQuestion") return canReserveQuestion(current, event.memberId, event.adult, event.supportedMarket) ? reserveQuestion(current, event.memberId, event.adult, event.supportedMarket) : current;
   return current;
 }
 

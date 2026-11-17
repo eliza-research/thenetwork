@@ -677,19 +677,19 @@ export function enabled(current: Connection, event: Event): boolean {
 export function step(current: Connection, event: Event): Connection {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "authorize" && canAuthorize(current)) return authorize(current, event.withWrite);
-  if (event.type === "callWithoutAccess" && canCallWithoutAccess(current, event.tool)) return callWithoutAccess(current, event.tool);
-  if (event.type === "callPublicTool" && canCallPublicTool(current, event.tool)) return callPublicTool(current, event.tool, event.app);
-  if (event.type === "connect" && canConnect(current)) return connect(current, event.host, event.surface);
-  if (event.type === "callAfterOwnerChange" && canCallAfterOwnerChange(current)) return callAfterOwnerChange(current);
-  if (event.type === "callCheckStatus" && canCallCheckStatus(current)) return callCheckStatus(current);
-  if (event.type === "changeMemberStatus" && canChangeMemberStatus(current, event.newStatus)) return changeMemberStatus(current, event.newStatus);
-  if (event.type === "approveProfile" && canApproveProfile(current)) return approveProfile(current);
-  if (event.type === "startNewDay" && canStartNewDay(current)) return startNewDay(current);
-  if (event.type === "callSubmitProfile" && canCallSubmitProfile(current)) return callSubmitProfile(current, event.accepted);
-  if (event.type === "callPrepareSignup" && canCallPrepareSignup(current)) return callPrepareSignup(current, event.joinAgeAllowed);
-  if (event.type === "receiveUpdate" && canReceiveUpdate(current)) return receiveUpdate(current, event.forReference);
-  if (event.type === "callGetUpdates" && canCallGetUpdates(current)) return callGetUpdates(current, event.tokenGiven, event.tokenOwn);
+  if (event.type === "authorize") return canAuthorize(current) ? authorize(current, event.withWrite) : current;
+  if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool) ? callWithoutAccess(current, event.tool) : current;
+  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app) : current;
+  if (event.type === "connect") return canConnect(current) ? connect(current, event.host, event.surface) : current;
+  if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current) ? callAfterOwnerChange(current) : current;
+  if (event.type === "callCheckStatus") return canCallCheckStatus(current) ? callCheckStatus(current) : current;
+  if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus) ? changeMemberStatus(current, event.newStatus) : current;
+  if (event.type === "approveProfile") return canApproveProfile(current) ? approveProfile(current) : current;
+  if (event.type === "startNewDay") return canStartNewDay(current) ? startNewDay(current) : current;
+  if (event.type === "callSubmitProfile") return canCallSubmitProfile(current) ? callSubmitProfile(current, event.accepted) : current;
+  if (event.type === "callPrepareSignup") return canCallPrepareSignup(current) ? callPrepareSignup(current, event.joinAgeAllowed) : current;
+  if (event.type === "receiveUpdate") return canReceiveUpdate(current) ? receiveUpdate(current, event.forReference) : current;
+  if (event.type === "callGetUpdates") return canCallGetUpdates(current) ? callGetUpdates(current, event.tokenGiven, event.tokenOwn) : current;
   return current;
 }
 

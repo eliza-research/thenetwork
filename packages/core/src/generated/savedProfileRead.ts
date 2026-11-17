@@ -124,8 +124,8 @@ export function enabled(current: ProfileRead, event: Event): boolean {
 export function step(current: ProfileRead, event: Event): ProfileRead {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "classifyRead" && canClassifyRead(current)) return classifyRead(current, event.facts);
-  if (event.type === "resolveRead" && canResolveRead(current)) return resolveRead(current, event.sameMember, event.optedOut, event.requestedAppMatches);
+  if (event.type === "classifyRead") return canClassifyRead(current) ? classifyRead(current, event.facts) : current;
+  if (event.type === "resolveRead") return canResolveRead(current) ? resolveRead(current, event.sameMember, event.optedOut, event.requestedAppMatches) : current;
   return current;
 }
 

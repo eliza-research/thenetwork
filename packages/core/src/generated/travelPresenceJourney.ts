@@ -144,10 +144,10 @@ export function enabled(current: TravelPresenceJourney, event: Event): boolean {
 export function step(current: TravelPresenceJourney, event: Event): TravelStep {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "declareTrip" && canDeclareTrip(current, event.city, event.hasDates)) return declareTrip(current, event.city, event.hasDates);
-  if (event.type === "reachTripEnd" && canReachTripEnd(current)) return reachTripEnd(current);
-  if (event.type === "retryTripSave" && canRetryTripSave(current)) return retryTripSave(current);
-  if (event.type === "leaveTravelApp" && canLeaveTravelApp(current)) return leaveTravelApp(current);
+  if (event.type === "declareTrip") return canDeclareTrip(current, event.city, event.hasDates) ? declareTrip(current, event.city, event.hasDates) : { state: current, out: ([] as TravelEffect[]) };
+  if (event.type === "reachTripEnd") return canReachTripEnd(current) ? reachTripEnd(current) : { state: current, out: ([] as TravelEffect[]) };
+  if (event.type === "retryTripSave") return canRetryTripSave(current) ? retryTripSave(current) : { state: current, out: ([] as TravelEffect[]) };
+  if (event.type === "leaveTravelApp") return canLeaveTravelApp(current) ? leaveTravelApp(current) : { state: current, out: ([] as TravelEffect[]) };
   return { state: current, out: ([] as TravelEffect[]) };
 }
 

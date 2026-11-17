@@ -231,9 +231,9 @@ export function enabled(current: SeedInvitation, event: Event): boolean {
 export function step(current: SeedInvitation, event: Event): SeedInvitation {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "issueSeedInvitation" && canIssueSeedInvitation(current, event.batch, event.issuedAt)) return issueSeedInvitation(current, event.batch, event.issuedAt);
-  if (event.type === "redeemSeedInvitation" && canRedeemSeedInvitation(current, event.recipient, event.redemption)) return redeemSeedInvitation(current, event.recipient, event.redemption);
-  if (event.type === "closeSeedInvitation" && canCloseSeedInvitation(current, event.now, event.exactDecline, event.suppressedOrBanned)) return closeSeedInvitation(current, event.now, event.exactDecline, event.suppressedOrBanned);
+  if (event.type === "issueSeedInvitation") return canIssueSeedInvitation(current, event.batch, event.issuedAt) ? issueSeedInvitation(current, event.batch, event.issuedAt) : current;
+  if (event.type === "redeemSeedInvitation") return canRedeemSeedInvitation(current, event.recipient, event.redemption) ? redeemSeedInvitation(current, event.recipient, event.redemption) : current;
+  if (event.type === "closeSeedInvitation") return canCloseSeedInvitation(current, event.now, event.exactDecline, event.suppressedOrBanned) ? closeSeedInvitation(current, event.now, event.exactDecline, event.suppressedOrBanned) : current;
   return current;
 }
 

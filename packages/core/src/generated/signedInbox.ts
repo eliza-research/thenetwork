@@ -170,12 +170,12 @@ export function enabled(current: SignedInbox, event: Event): boolean {
 export function step(current: SignedInbox, event: Event): SignedInbox {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordClaim" && canRecordClaim(current)) return recordClaim(current, event.inserted);
-  if (event.type === "readPrior" && canReadPrior(current)) return readPrior(current, event.rowPresent, event.sameRequest, event.responseAvailable, event.processing);
-  if (event.type === "recordCompletion" && canRecordCompletion(current)) return recordCompletion(current, event.saved);
-  if (event.type === "handleFailure" && canHandleFailure(current)) return handleFailure(current, event.compliance);
-  if (event.type === "checkRescue" && canCheckRescue(current)) return checkRescue(current, event.processing, event.effectCommitted);
-  if (event.type === "recordRescue" && canRecordRescue(current)) return recordRescue(current, event.changed);
+  if (event.type === "recordClaim") return canRecordClaim(current) ? recordClaim(current, event.inserted) : current;
+  if (event.type === "readPrior") return canReadPrior(current) ? readPrior(current, event.rowPresent, event.sameRequest, event.responseAvailable, event.processing) : current;
+  if (event.type === "recordCompletion") return canRecordCompletion(current) ? recordCompletion(current, event.saved) : current;
+  if (event.type === "handleFailure") return canHandleFailure(current) ? handleFailure(current, event.compliance) : current;
+  if (event.type === "checkRescue") return canCheckRescue(current) ? checkRescue(current, event.processing, event.effectCommitted) : current;
+  if (event.type === "recordRescue") return canRecordRescue(current) ? recordRescue(current, event.changed) : current;
   return current;
 }
 

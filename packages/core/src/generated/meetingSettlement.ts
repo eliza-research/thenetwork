@@ -229,8 +229,8 @@ export function enabled(current: MeetingSettlement, event: Event): boolean {
 export function step(current: MeetingSettlement, event: Event): MeetingSettlement {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "requestFeedback" && canRequestFeedback(current, event.unsent, event.asOf, event.feedbackAt)) return requestFeedback(current, event.unsent, event.asOf, event.feedbackAt);
-  if (event.type === "resolveAttendance" && canResolveAttendance(current, event.timedOut, event.everyoneResponded)) return resolveAttendance(current, event.timedOut, event.everyoneResponded);
+  if (event.type === "requestFeedback") return canRequestFeedback(current, event.unsent, event.asOf, event.feedbackAt) ? requestFeedback(current, event.unsent, event.asOf, event.feedbackAt) : current;
+  if (event.type === "resolveAttendance") return canResolveAttendance(current, event.timedOut, event.everyoneResponded) ? resolveAttendance(current, event.timedOut, event.everyoneResponded) : current;
   return current;
 }
 

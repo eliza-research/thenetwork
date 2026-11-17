@@ -165,13 +165,13 @@ export function enabled(current: RatingAttempt, event: Event): boolean {
 export function step(current: RatingAttempt, event: Event): RatingAttempt {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "supplyPhotos" && canSupplyPhotos(current)) return supplyPhotos(current, event.hasPhotos);
-  if (event.type === "receiveScore" && canReceiveScore(current)) return receiveScore(current, event.hasScore);
-  if (event.type === "screenSubject" && canScreenSubject(current)) return screenSubject(current, event.eligible);
-  if (event.type === "checkReturnedScore" && canCheckReturnedScore(current)) return checkReturnedScore(current, event.eligible);
-  if (event.type === "recordScoreWrite" && canRecordScoreWrite(current)) return recordScoreWrite(current);
-  if (event.type === "checkWrittenScore" && canCheckWrittenScore(current)) return checkWrittenScore(current, event.eligible);
-  if (event.type === "recordScoreRemoval" && canRecordScoreRemoval(current)) return recordScoreRemoval(current);
+  if (event.type === "supplyPhotos") return canSupplyPhotos(current) ? supplyPhotos(current, event.hasPhotos) : current;
+  if (event.type === "receiveScore") return canReceiveScore(current) ? receiveScore(current, event.hasScore) : current;
+  if (event.type === "screenSubject") return canScreenSubject(current) ? screenSubject(current, event.eligible) : current;
+  if (event.type === "checkReturnedScore") return canCheckReturnedScore(current) ? checkReturnedScore(current, event.eligible) : current;
+  if (event.type === "recordScoreWrite") return canRecordScoreWrite(current) ? recordScoreWrite(current) : current;
+  if (event.type === "checkWrittenScore") return canCheckWrittenScore(current) ? checkWrittenScore(current, event.eligible) : current;
+  if (event.type === "recordScoreRemoval") return canRecordScoreRemoval(current) ? recordScoreRemoval(current) : current;
   return current;
 }
 

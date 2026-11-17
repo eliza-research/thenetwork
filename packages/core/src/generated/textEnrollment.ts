@@ -226,12 +226,12 @@ export function enabled(current: TextJoin, event: Event): boolean {
 export function step(current: TextJoin, event: Event): TextJoin {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkJoinBan" && canCheckJoinBan(current)) return checkJoinBan(current, event.banned);
-  if (event.type === "checkInvitation" && canCheckInvitation(current)) return checkInvitation(current, event.inviteOnly, event.invited, event.sharedNetwork);
-  if (event.type === "readJoinAnswer" && canReadJoinAnswer(current)) return readJoinAnswer(current, event.answerFacts);
-  if (event.type === "checkTextJoinAge" && canCheckTextJoinAge(current)) return checkTextJoinAge(current, event.ageAllowed);
-  if (event.type === "recordTextMembership" && canRecordTextMembership(current)) return recordTextMembership(current, event.membershipActive);
-  if (event.type === "recordWelcome" && canRecordWelcome(current)) return recordWelcome(current, event.hasOtherApp, event.sharedNetwork, event.invited);
+  if (event.type === "checkJoinBan") return canCheckJoinBan(current) ? checkJoinBan(current, event.banned) : current;
+  if (event.type === "checkInvitation") return canCheckInvitation(current) ? checkInvitation(current, event.inviteOnly, event.invited, event.sharedNetwork) : current;
+  if (event.type === "readJoinAnswer") return canReadJoinAnswer(current) ? readJoinAnswer(current, event.answerFacts) : current;
+  if (event.type === "checkTextJoinAge") return canCheckTextJoinAge(current) ? checkTextJoinAge(current, event.ageAllowed) : current;
+  if (event.type === "recordTextMembership") return canRecordTextMembership(current) ? recordTextMembership(current, event.membershipActive) : current;
+  if (event.type === "recordWelcome") return canRecordWelcome(current) ? recordWelcome(current, event.hasOtherApp, event.sharedNetwork, event.invited) : current;
   return current;
 }
 

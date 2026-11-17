@@ -150,10 +150,10 @@ export function enabled(current: MemberRequestJourney, event: Event): boolean {
 export function step(current: MemberRequestJourney, event: Event): RequestUpdate {
   //@ requires inv(current)
   //@ ensures inv(\result.state)
-  if (event.type === "textRequest" && canTextRequest(current)) return textRequest(current);
-  if (event.type === "candidateArrives" && canCandidateArrives(current)) return candidateArrives(current);
-  if (event.type === "restartJourney" && canRestartJourney(current)) return restartJourney(current);
-  if (event.type === "textWithdrawal" && canTextWithdrawal(current)) return textWithdrawal(current);
+  if (event.type === "textRequest") return canTextRequest(current) ? textRequest(current) : { state: current, out: ([] as RequestEffect[]) };
+  if (event.type === "candidateArrives") return canCandidateArrives(current) ? candidateArrives(current) : { state: current, out: ([] as RequestEffect[]) };
+  if (event.type === "restartJourney") return canRestartJourney(current) ? restartJourney(current) : { state: current, out: ([] as RequestEffect[]) };
+  if (event.type === "textWithdrawal") return canTextWithdrawal(current) ? textWithdrawal(current) : { state: current, out: ([] as RequestEffect[]) };
   return { state: current, out: ([] as RequestEffect[]) };
 }
 

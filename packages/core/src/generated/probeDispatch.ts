@@ -271,12 +271,12 @@ export function enabled(current: ParticipantProbe, event: Event): boolean {
 export function step(current: ParticipantProbe, event: Event): ParticipantProbe {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "openTurn" && canOpenTurn(current, event.first, event.firstAvailable)) return openTurn(current, event.first, event.firstAvailable);
-  if (event.type === "usePriorIntent" && canUsePriorIntent(current, event.primed, event.contacted, event.needsTimes)) return usePriorIntent(current, event.primed, event.contacted, event.needsTimes);
-  if (event.type === "markUnavailable" && canMarkUnavailable(current)) return markUnavailable(current);
-  if (event.type === "recordReply" && canRecordReply(current)) return recordReply(current, event.agreed);
-  if (event.type === "offerOtherTimes" && canOfferOtherTimes(current, event.hasFreshTimes)) return offerOtherTimes(current, event.hasFreshTimes);
-  if (event.type === "expireProbe" && canExpireProbe(current, event.expired)) return expireProbe(current, event.expired, event.timeQuestion);
+  if (event.type === "openTurn") return canOpenTurn(current, event.first, event.firstAvailable) ? openTurn(current, event.first, event.firstAvailable) : current;
+  if (event.type === "usePriorIntent") return canUsePriorIntent(current, event.primed, event.contacted, event.needsTimes) ? usePriorIntent(current, event.primed, event.contacted, event.needsTimes) : current;
+  if (event.type === "markUnavailable") return canMarkUnavailable(current) ? markUnavailable(current) : current;
+  if (event.type === "recordReply") return canRecordReply(current) ? recordReply(current, event.agreed) : current;
+  if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes) ? offerOtherTimes(current, event.hasFreshTimes) : current;
+  if (event.type === "expireProbe") return canExpireProbe(current, event.expired) ? expireProbe(current, event.expired, event.timeQuestion) : current;
   return current;
 }
 
