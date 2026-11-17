@@ -67,7 +67,7 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README
 //   readBackBeforeMatch (SD-060, skipped: founder decision), readBackHasPath (SD-418, not reproduced:
 //   the designed read-back cap), locatedBeforeMatchStrict (the 7-day silent fallback of the SD-209 fix,
 //   by design), noBasicsAfterAnswer (the SD-419 fix bounds the ask, it does not remove it),
-//   activeIsLive (SD-121, skipped), postedCanMatch (SD-226, skipped), inFlightMatchesPosting (SD-440, skipped).
+//   activeIsLive (SD-121, skipped), postedCanMatch (SD-226, skipped).
 module matching_engine {
 
   // ------------------------------------------------------------------ constants
@@ -117,7 +117,7 @@ module matching_engine {
   }
   type Posting = { status: str, openings: int, stated: int, reason: str, createdAt: int, version: int, seniority: bool, areaOk: bool }
   type Draft = { kind: str, id: str, openings: int, seniority: bool, areaOk: bool, mustDup: bool, said: str }
-  type Seat = { stage: str, yesVersion: int }
+  type Seat = { stage: str, reviewedVersion: int, yesVersion: int }
   type Peon = {
     env: str, posting: str -> Posting, draft: Draft, verified: bool, candDraft: bool, candOn: bool, mgrHeld: bool,
     // A no is kept per seat (network.ts seatSide, markDeclined): the pair is (candidate, seat).
@@ -275,7 +275,7 @@ module matching_engine {
     // Peon matching runs locally only. "prod" exercises serving ingress, while "harness" can seed candidate rows.
     peon' = {
       env: env, posting: POSTINGS.mapBy(p => noPosting), draft: noDraft, verified: false, candDraft: false, candOn: false, mgrHeld: false,
-      seat: POSTINGS.mapBy(p => { stage: "none", yesVersion: 0 }), declAt: POSTINGS.mapBy(p => NONE), introduced: Set(),
+      seat: POSTINGS.mapBy(p => { stage: "none", reviewedVersion: 0, yesVersion: 0 }), declAt: POSTINGS.mapBy(p => NONE), introduced: Set(),
     },
     ph' = { reopened: false, openingsLost: false, mcpConfirmed: false, filledLost: false, saveFailed: false,
             crossJobBlock: false, engineSelectedHeld: false, seatFilled: false, candidateConfirmed: false },
@@ -593,7 +593,7 @@ module matching_engine {
     val gateOk = not(peon.mgrHeld) and not(seatDeclined(id))
     all {
       peon' = { ...peon,
-        seat: if (gateOk) peon.seat.set(id, { stage: "review", yesVersion: 0 }) else peon.seat,
+        seat: if (gateOk) peon.seat.set(id, { stage: "review", reviewedVersion: peon.posting.get(id).version, yesVersion: 0 }) else peon.seat,
         introduced: if (gateOk) peon.introduced.union(Set(id)) else peon.introduced },
       ph' = { ...ph,
         engineSelectedHeld: ph.engineSelectedHeld or peon.mgrHeld,
@@ -601,26 +601,37 @@ module matching_engine {
     },
     keepSlop, keepOther, now' = now, lastAction' = "peonEngineRun",
   }
+  // peonHireDispatch.md also binds the exact search and current company exclusion. candOn abstracts search authority here.
+  val reviewedHireCurrent = POSTINGS.filter(id => peon.candOn and peon.verified and not(peon.mgrHeld)
+    and peon.posting.get(id).status == "active" and peon.posting.get(id).version == peon.seat.get(id).reviewedVersion)
   // A no (review reject, candidate no, manager no) marks (candidate, seat) declined (network.ts markDeclined with seatSide).
   action seatReview(id: str, approve: bool): bool = all {
     peon.seat.get(id).stage == "review",
-    peon' = { ...peon, seat: peon.seat.set(id, { ...peon.seat.get(id), stage: if (approve) "probing" else "closed" }),
+    peon' = { ...peon, seat: peon.seat.set(id, { ...peon.seat.get(id), stage: if (approve and reviewedHireCurrent.contains(id)) "probing" else "closed" }),
               declAt: if (approve) peon.declAt else peon.declAt.set(id, now) },
     ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "seatReview",
   }
   action candAnswer(id: str, yes: bool): bool = all {
     peon.seat.get(id).stage == "probing",
+    val seat = peon.seat.get(id)
+    val accepted = yes and reviewedHireCurrent.contains(id)
+    all {
     peon' = { ...peon,
-      seat: peon.seat.set(id, if (yes) { stage: "candYes", yesVersion: peon.posting.get(id).version } else { ...peon.seat.get(id), stage: "closed" }),
+      seat: peon.seat.set(id, if (accepted) { ...seat, stage: "candYes", yesVersion: peon.posting.get(id).version } else { ...seat, stage: "closed" }),
       declAt: if (yes) peon.declAt else peon.declAt.set(id, now) },
     ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "candAnswer",
+    },
   }
   action mgrAnswer(id: str, yes: bool): bool = all {
     peon.seat.get(id).stage == "candYes",
-    peon' = { ...peon, seat: peon.seat.set(id, { ...peon.seat.get(id), stage: if (yes) "booked" else "closed" }),
+    val seat = peon.seat.get(id)
+    val accepted = yes and reviewedHireCurrent.contains(id) and seat.yesVersion == seat.reviewedVersion
+    all {
+    peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: if (accepted) "booked" else "closed" }),
               declAt: if (yes) peon.declAt else peon.declAt.set(id, now) },
-    ph' = { ...ph, seatFilled: ph.seatFilled or yes },
+    ph' = { ...ph, seatFilled: ph.seatFilled or accepted },
     keepSlop, keepOther, now' = now, lastAction' = "mgrAnswer",
+    },
   }
 
   // ================================================================== probe flow library (probe-flow)
@@ -759,6 +770,8 @@ module matching_engine {
   // postingProblem accepts it and the member hears "Posted": the rows must commit. SD-227.
   val acceptedPostingPersists = not(ph.saveFailed)
   val candidateProfileRequiresConfirmation = (peon.env == "prod" and peon.candOn) implies ph.candidateConfirmed
+  val hireBookingMatchesApprovedPosting = POSTINGS.forall(id =>
+    peon.seat.get(id).stage == "booked" implies peon.seat.get(id).yesVersion == peon.seat.get(id).reviewedVersion)
   // A no is about one job (seat copy jobs.ts); the engine keys it by seat. SD-439.
   val declineScopedToJob = not(ph.crossJobBlock)
   // A held manager's seat is never selected (filters.ts memberReason safety_hold; managerProblem). SD-296.
@@ -777,7 +790,7 @@ module matching_engine {
     answersReachLoop, askTerminates, engineAgreesWithGate, unsentNotBilled, budgetAcrossAssign,
     activityFitsSlot,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
-    declineScopedToJob, engineNeverSelectsHeld, seatCapacity, candidateProfileRequiresConfirmation,
+    declineScopedToJob, engineNeverSelectsHeld, seatCapacity, candidateProfileRequiresConfirmation, hireBookingMatchesApprovedPosting,
     probeFlowProgresses, planSeatHonorsHoldout, judgeCacheReused,
   }
 
@@ -808,8 +821,6 @@ module matching_engine {
   // SD-226 (skipped: founder decision, intake questions or matching rules). jobs.ts copy "Posted": a job
   // saved must be able to pass the pack's own filters (the Hire band, locationOk).
   val postedCanMatch = POSTINGS.forall(id => peon.posting.get(id).status == "active" implies (peon.posting.get(id).seniority and peon.posting.get(id).areaOk))
-  // SD-440 (skipped: founder decision and new copy). A yes is consent to the text the member saw.
-  val inFlightMatchesPosting = POSTINGS.forall(id => peon.seat.get(id).stage == "candYes" implies peon.seat.get(id).yesVersion == peon.posting.get(id).version)
 
   // ================================================================== witnesses (must be reachable)
   val witness_readBackConfirmed = not(SLOP_MEMBERS.exists(m => slop.ob.get(m).confirmed))
@@ -996,12 +1007,12 @@ module matching_engine {
   run silentExpiryTest = initWith("prod", false, "peon").then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms"))
     .then(tick(30)).then(tick(30)).then(tick(30)).expect(not(activeIsLive))
 
-  // SD-440 (skipped; harness): the candidate says yes, the manager then edits the post; the item goes on.
+  // SD-440: a later edit cannot authorize contact based on a candidate's earlier yes.
   run staleYesTest = initWith("harness", false, "peon")
     .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
     .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true))
-    .then(mgrDraftUpdate("A", 0)).then(mgrYes("sms"))
-    .expect(not(inFlightMatchesPosting))
+    .then(mgrDraftUpdate("A", 0)).then(mgrYes("sms")).then(mgrAnswer("A", true))
+    .expect(peon.seat.get("A").stage == "closed" and hireBookingMatchesApprovedPosting)
 
   // SD-439 fixed (scripts/sim/peon-seats.ts gate; harness): the candidate says no to job A; job B of the
   // same manager still gets an item, and job A does not come back.

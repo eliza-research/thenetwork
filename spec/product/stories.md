@@ -382,7 +382,7 @@ Models: [Friends weekly repeats](../friendsWeek.md#a-friends-repeat-uses-its-own
 
 Only verified employers with pay ranges can reach a candidate. Exclude protected traits and proxies from automated matching. Respect current-employer blocks and qualification filters. Ask candidates first and send unranked slates with must-have checks after consent. Staff review introductions. Hiring teams make the decisions.
 
-Models: [Peon job search](../peonCandidateSearch.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
+Models: [Peon job search](../peonCandidateSearch.md), [Peon hiring dispatch](../peonHireDispatch.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
 
 ### Role level and candidate level fit both ways
 

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { peonPack, PEON_ENGINE_CONFIG, runEngine } from "@thenetwork/engine";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
 import { appWiring } from "../service/packs.ts";
 import { NetworkService } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
@@ -21,12 +21,25 @@ const candidate = "+12125550183";
 const manager = "+12125550184";
 const minor = "+12125550185";
 let admin: SQL, db: SQL, service: NetworkService;
+let holdPeonQueue = false;
+const accepted = new Set<string>();
+
+class PeonTestCarrier extends BlooioAdapter {
+  override async deliver(messages: Outbound[]): Promise<Delivery[]> {
+    return holdPeonQueue ? [] : super.deliver(messages);
+  }
+}
 
 function start() {
   service = new NetworkService({ url, clock, instance: "peon-candidate-search", log: () => {}, photoStorage: null, notify: false,
     tokens: "admin:adm-tok", env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
-    networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
-    adapter: () => new DryRunAdapter(() => {}),
+    networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "peon:nyc" }],
+    adapter: (_net, rt) => rt.app.id === "peon" ? new PeonTestCarrier({ from: "+12125550100", clock, app: "peon", liveGate: () => true,
+      log: () => {}, provider: { kind: "sim", send: async request => {
+        accepted.add(request.idempotencyKey);
+        return { providerMessageId: request.idempotencyKey, status: "sent" };
+      } },
+    }) : new DryRunAdapter(() => {}),
   });
   return service.start();
 }
@@ -39,6 +52,19 @@ async function turn(messageId: string, from: string, text: string, receivedAt = 
     ...await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) }),
   } }));
   return { status: res.status, body: await res.json() };
+}
+
+async function peonReviewItem(memberId: string) {
+  await service.runtimeFor("peon")!.tick();
+  const review = await (await service.fetch(new Request("http://127.0.0.1/apps/peon/review", {
+    headers: { authorization: "Bearer adm-tok" },
+  }))).json();
+  return review.items.find((item: { proposal: { participants: string[] } }) => item.proposal.participants.includes(memberId));
+}
+
+async function queuedProbe(oppId: string, memberId: string) {
+  return (await db`select o.id,o.status from platform.outbound o join network.messages m on m.app_id=o.app_id and m.id=o.id
+    where o.app_id='peon' and m.opportunity_id=${oppId} and m.member_id=${memberId} and m.type='probe'`)[0];
 }
 
 const staff = (path: string, body: object) => service.fetch(new Request(`http://127.0.0.1/apps/peon${path}`, {
@@ -108,13 +134,44 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
     participants: expect.arrayContaining([owner!.memberId, expect.stringMatching(/^job:/)]),
   })]));
 
+  // Staff reviews an ordinary generated opportunity. The candidate alone sees the first question.
+  expect((await staff("/matching", { on: true })).status).toBe(200);
+  const runtime = service.runtimeFor("peon")!;
+  const queue = (runtime.adapter as PeonTestCarrier).queue;
+  await queue.inbound(candidate);
+  await queue.inbound(manager);
+  clock.advance(26 * HOUR);
+  const item = await peonReviewItem(owner!.memberId);
+  expect(item).toBeDefined();
+  holdPeonQueue = true;
+  expect(await (await staff(`/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", revision: item.revision })).json()).toEqual({ ok: true });
+  const queuedFor = (memberId: string) => queuedProbe(item.oppId, memberId);
+  const first = await queuedFor(owner!.memberId);
+  expect(first?.status).toBe("pending");
+  await turn("early-candidate-yes", candidate, "Yes");
+  expect(await queuedFor(employer!.memberId)).toBeUndefined();
+  holdPeonQueue = false;
+  await runtime.deliver();
+  expect(accepted.has(`tn:${first.id}`)).toBe(true);
+  expect(await queuedFor(employer!.memberId)).toBeUndefined();
+  clock.advance(MINUTE);
+  holdPeonQueue = true;
+  await turn("candidate-yes-to-delivered-role", candidate, "Yes");
+  const pendingForEmployer = await queuedFor(employer!.memberId);
+  expect(pendingForEmployer?.status).toBe("pending");
+
   // A new approved private company exclusion removes the fit. A draft alone does not.
   const replacement = await turn("draft-b", candidate, search.replace("OtherCo", "Acme & Sons, Inc."));
-  expect(await matching()).toHaveLength(1);
+  expect((await db`select tags from network.facets where app_id='peon' and member_id=${owner!.memberId} and kind='boundary'`)
+    .flatMap(row => row.tags)).toContain("peon:exclude:otherco");
   const replacementProof = replacement.body.replies[0].match(/CONFIRM PEON JOB SEARCH search_[a-p]{16}/)[0];
   expect((await turn("use-older-reference", candidate, confirmation)).body.replies[0]).toContain("no longer available");
   expect((await turn("confirm-b", candidate, replacementProof)).status).toBe(200);
   expect(await matching()).toEqual([]);
+  holdPeonQueue = false;
+  await runtime.deliver();
+  expect(accepted.has(`tn:${pendingForEmployer.id}`)).toBe(false);
+  expect((await queuedFor(employer!.memberId))?.status).toBe("suppressed_ineligible");
 
   const expired = await turn("draft-c", candidate, search);
   const expiredProof = expired.body.replies[0].match(/CONFIRM PEON JOB SEARCH search_[a-p]{16}/)[0];
@@ -123,4 +180,30 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
   expect(await db`select reference from network.peon_candidate_search_drafts where member_id=${owner!.memberId}`).toEqual([]);
   expect((await turn("confirm-c", candidate, expiredProof)).body.replies[0]).toContain("no longer available");
   expect(await matching()).toEqual([]);
+
+  // A second candidate pauses through the normal owned-intent command while their first probe is queued.
+  const pausedPhone = "+12125550186";
+  await turn("join-pause-candidate", pausedPhone, "join peon\nMy name is Vic. I am 31 years old.");
+  const [pausedOwner] = await service.memberApps(pausedPhone);
+  const pausingDraft = await turn("pause-candidate-draft", pausedPhone, search);
+  const pausingProof = pausingDraft.body.replies[0].match(/CONFIRM PEON JOB SEARCH search_[a-p]{16}/)[0];
+  expect((await turn("pause-candidate-confirm", pausedPhone, pausingProof)).status).toBe(200);
+  await queue.inbound(pausedPhone);
+  clock.advance(24 * HOUR);
+  const pausedItem = await peonReviewItem(pausedOwner!.memberId);
+  expect(pausedItem).toBeDefined();
+  holdPeonQueue = true;
+  expect(await (await staff(`/review/${encodeURIComponent(pausedItem.oppId)}`, { decision: "approve", revision: pausedItem.revision })).json()).toEqual({ ok: true });
+  const pausedProbe = await queuedProbe(pausedItem.oppId, pausedOwner!.memberId);
+  expect(pausedProbe?.status).toBe("pending");
+  const listed = await turn("list-search", pausedPhone, "LIST MY INTENTS");
+  const searchLine = listed.body.replies.join("\n").split("\n").find((line: string) => line.includes("Find work as a data analyst"));
+  const searchRef = /I-[A-F0-9]{12}/.exec(searchLine ?? "")?.[0];
+  expect(searchRef).toBeDefined();
+  await turn("pause-search", pausedPhone, `PAUSE INTENT ${searchRef}`);
+  expect((await db`select status from network.intents where app_id='peon' and member_id=${pausedOwner!.memberId} and details='peon:search'`)[0]?.status).toBe("paused");
+  holdPeonQueue = false;
+  await runtime.deliver();
+  expect(accepted.has(`tn:${pausedProbe.id}`)).toBe(false);
+  expect((await queuedProbe(pausedItem.oppId, pausedOwner!.memberId))?.status).toMatch(/^(suppressed_ineligible|expired)$/);
 });

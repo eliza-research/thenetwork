@@ -3474,6 +3474,10 @@ export class NetworkService implements RuntimeHost {
           bookingRuntime.gatheringRepeatRepliesCurrent(tx, memberId, input.from, replyIds, handled.replies))) {
           return json({ error: "turn_gathering_repeat_changed", retryable: false }, 409);
         }
+        if (bookingRuntime?.app.id === "peon" && !await bookingRuntime.scoped(tx =>
+          bookingRuntime.peonHireRepliesCurrent(tx, memberId, replyIds, handled.replies))) {
+          return json({ error: "turn_peon_search_changed", retryable: false }, 409);
+        }
         const schedulingIds = replyIds.filter(id => id.startsWith(RESCHEDULE_QUEUE_PREFIX));
         if (schedulingIds.length) {
           const current = await rt?.readState(async net => {

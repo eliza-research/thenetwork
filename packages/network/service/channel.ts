@@ -519,6 +519,10 @@ export class BlooioAdapter implements ChannelAdapter {
           const authority = await rt.slopPairAdmission(tx, row);
           if (!authority.ok) return authority;
         }
+        if (row.app === "peon" && row.oppId) {
+          const authority = await rt.peonHireAdmission(tx, row);
+          if (!authority.ok) return authority;
+        }
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) return rt.gatheringNoticeAdmission(tx, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix) && !await rt.gatheringRepeatClaim(tx, row)) return { ok: false, reason: "gathering_repeat_changed" };

@@ -30,6 +30,7 @@ import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwo
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
+import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalMinimumRoster, lateArrivalNotice, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
@@ -47,6 +48,8 @@ import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRe
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
+import { hireSeatCurrent, readHireEvidence } from "../src/peon-hire-dispatch.ts";
+import { lockPeerOpportunityContact } from "./peer-opportunity-admission.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
@@ -89,6 +92,7 @@ import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
 interface GatheringRepeatMessage { id: string; opportunity_id: string; type: string; body: string }
+interface HireContact { id: string; opportunity_id: string; type: "probe" | "proposal"; body: string }
 interface StoredSendReceipt {
   id: string; member_id: string | null; opportunity_id: string | null; type: string | null;
   outbound_member_id: string | null; status: string; sent_at: Date | null; accepted_at: Date | null;
@@ -419,6 +423,58 @@ export class NetworkRuntime {
     const active = cofounderPairCurrent(first !== second, true, true, eligible);
     const bothAccepted = opp.participants.every(id => opp.status.some(([key, status]) => key === id && status === "yes") && opp.contacted.includes(id));
     return cofounderDeliveryAllowed(active, opp.review?.decision === "approve", revealing, bothAccepted) ? { ok: true } : refused;
+  }
+
+  private peonHireContacts(tx: SQL, memberId: MemberId, ids: readonly string[]) {
+    return tx<HireContact[]>`select id,opportunity_id,type,body from network.messages
+      where app_id='peon' and member_id=${memberId} and id in ${tx([...ids])} and direction='outbound'
+        and opportunity_id is not null and type in ('probe','proposal') order by opportunity_id,id`;
+  }
+
+  /** The carrier's claim already locks the exact peer roster in state/person order. */
+  private async peonHireContactCurrent(tx: SQL, contact: HireContact, memberId: MemberId, body: string): Promise<boolean> {
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id='peon' for share`;
+    const opp = saved?.state.opps.find(item => item.id === contact.opportunity_id);
+    if (!opp) return false;
+    if (!opp.seat) return true;
+    const { seat, participants, review } = opp;
+    const candidate = participants.find(id => id !== seat.manager);
+    if (contact.body !== body || !candidate || participants.length !== 2 || !participants.includes(seat.manager)
+      || !participants.includes(memberId) || !this.matchingAllowed || !saved?.state.matchingEnabled) return false;
+    const now = this.clock.now(), reveal = contact.type === "proposal", statuses = new Map(opp.status);
+    const phase = reveal ? opp.stage === "scheduled" && now < (opp.meetingAt ?? 0) && opp.bookedTold?.includes(memberId) === true
+      : opp.stage === "probing" && now < opp.deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
+    const accepted = (id: MemberId) => statuses.get(id) === (reveal ? "yes" : "available") && opp.contacted.includes(id);
+    const humanReview = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
+    if (!hireContactAllowed(true, humanReview, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;
+    if (await this.canonicalPairBlocked(tx, candidate, seat.manager)) return false;
+    const parties = await this.relayParties(participants, tx);
+    if (!participants.every(id => {
+      const party = parties.get(id);
+      return party?.adult === true && !party.held && !party.optedOut && storedInviteNoticePartyCurrent(saved.state, id);
+    })) return false;
+    const [intents, facets] = await Promise.all([
+      tx`select * from network.intents where app_id='peon' and member_id in ${tx(participants)} order by member_id,id`,
+      tx`select * from network.facets where app_id='peon' and member_id in ${tx(participants)} and status<>'rejected'
+        and ${automatedFacetPredicate(tx)} order by member_id,id`,
+    ]);
+    return hireSeatCurrent(seat, readHireEvidence({ intents: intents.map(intentOf), facets: facets.map(facetOf) }, seat, candidate, now, false));
+  }
+
+  async peonHireAdmission(tx: SQL, row: Pick<QueueRow, "id" | "app" | "memberId" | "oppId" | "text">): Promise<RecipientCheck> {
+    if (this.app.id !== "peon" || row.app !== "peon" || !row.memberId || !row.oppId) return { ok: true };
+    const [contact] = await this.peonHireContacts(tx, row.memberId, [row.id]);
+    const current = !contact || (contact.opportunity_id === row.oppId && await this.peonHireContactCurrent(tx, contact, row.memberId, row.text));
+    return current ? { ok: true } : { ok: false, reason: "peon_search_changed" };
+  }
+
+  async peonHireRepliesCurrent(tx: SQL, memberId: MemberId, ids: readonly string[], bodies: readonly string[]): Promise<boolean> {
+    if (this.app.id !== "peon" || !ids.length) return true;
+    for (const contact of await this.peonHireContacts(tx, memberId, ids)) {
+      await lockPeerOpportunityContact(tx, this.app.id, this.pg.id, memberId, contact.id);
+      if (!await this.peonHireContactCurrent(tx, contact, memberId, bodies[ids.indexOf(contact.id)] ?? "")) return false;
+    }
+    return true;
   }
 
   private async slopContact(tx: SQL, row: QueueRow) {
@@ -787,11 +843,11 @@ export class NetworkRuntime {
     };
   }
 
-  /** Resolve exact questions before processing a plan or Slop reply. Older state can use a unique row at its probe time. */
+  /** Resolve exact questions before processing a plan, Slop or Hire reply. Older state can use a unique row at its probe time. */
   private async refreshProbeReplyReceipts(state: NetworkState | undefined) {
     if (!state) return;
     const open = new Map(state.opps.filter(opp => (opp.plan && !opp.replacementFor && (opp.stage === "probing" || opp.stage === "scheduled"))
-      || (this.app.id === "slop" && opp.stage === "probing" && opp.category === "romance")).map(opp => [opp.id, opp]));
+      || (opp.stage === "probing" && ((this.app.id === "slop" && opp.category === "romance") || (this.app.id === "peon" && !!opp.seat)))).map(opp => [opp.id, opp]));
     if (!open.size) return;
     const pending = state.members.flatMap(member => {
       const slot = member.awaiting;

@@ -77,6 +77,7 @@ import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGather
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
+import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
@@ -147,6 +148,7 @@ import { HOLD, Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import { appTagFacet, type AppHooks, type AppTag, type HookOpp } from "./apphooks.ts";
 import { confirmPosting, postingDraftCurrent } from "../../core/src/generated/postingPolicy.ts";
 import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
+import { hireSeatCurrent, readHireEvidence, type HireSeat } from "./peon-hire-dispatch.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -590,7 +592,7 @@ interface Opp {
    * manager who owns it and stands in for it here: they get the blind review after the candidate's
    * yes and the intro only after both yeses. The engine's own views (capacity, pair rules) see the seat.
    */
-  seat?: { id: MemberId; manager: MemberId };
+  seat?: HireSeat;
 }
 /** A member request. The member's own words are not kept: only what the classifier read from them. */
 interface Request {
@@ -1184,6 +1186,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (aw?.kind === "probe") {
       const o = this.opps.get(aw.oppId!);
       const options = o?.offered?.[m.id] ?? [];
+      if (o?.seat) {
+        if (!this.currentHireSeat(o.seat, o.participants)) return this.close(o, "peon_search_changed", { releasePartial: true });
+        const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
+        const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+        if (!hireAnswerAllowed(this.memberReply && !msg.reaction, acceptedAt !== undefined,
+          msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now, o.deadline)) return "open" as const;
+      }
       if (this.app.id === "slop" && o?.category === "romance") {
         const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
         const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
@@ -2945,6 +2954,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
     if (!this.currentDatingPair(o)) return "slop_pair_changed";
+    if (o.seat && !this.currentHireSeat(o.seat, o.participants)) return "peon_search_changed";
     if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor,
       lane: o.lane, cofounderIntents: o.cofounderIntents, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
@@ -2964,8 +2974,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
-    const next = stepOpportunity(opportunityLifecycle(o), { type: "reroll", replacementFound: !!alt });
+    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60))
+      && (!o.seat || !!this.hireSeatFor(o.seat, a)));
+    const nextSeat = alt && o.seat ? this.hireSeatFor(o.seat, alt) : undefined;
+    const next = stepOpportunity(opportunityLifecycle(o), { type: "reroll", replacementFound: !!alt && (!o.seat || !!nextSeat) });
     this.counters.reviewRerolled++;
     o.review!.rerolls = [...(o.review!.rerolls ?? []), { at: now, out, in: alt, reviewer, note: opts.note }];
     this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: next.phase === "InReview" ? "review" : "engine" });
@@ -2978,6 +2990,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.stage = STAGE_BY_PHASE[next.phase];
     o.alternates = o.alternates.filter(a => a !== alt);
     o.participants = o.participants.map(p => (p === out ? alt : p));
+    if (nextSeat) o.seat = nextSeat;
     o.status.delete(out!); o.status.set(alt, "queued");
     o.primed.delete(out!);
     delete o.explanations[out!];
@@ -3089,6 +3102,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
     if (!this.currentDatingPair(o)) return this.close(o, "slop_pair_changed", { releasePartial: true });
+    if (o.seat && !this.currentHireSeat(o.seat, o.participants)) return this.close(o, "peon_search_changed", { releasePartial: true });
     if (isGatheringRepeat(o) && !this.repeatSourceCurrent(o)) return this.close(o, "gathering repeat consent changed");
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", false, false)) {
@@ -3129,6 +3143,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * for their send window; a requester's own confirm-probe is not an invite and waits only for quiet hours.
    */
   private probe(o: Opp, id: MemberId) {
+    if (o.seat && !this.hireContactCurrent(o, id, false)) return this.close(o, "peon_search_changed", { releasePartial: true });
     const m = this.member(id);
     const now = this.now();
     const pending = participantProbe(o.status.get(id));
@@ -3406,6 +3421,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (route === "IgnoreReplacement") return;
     if (route === "CloseRequester") return this.close(o, "requester unavailable");
     if (route === "CloseManager") return this.close(o, "manager unavailable", { releasePartial: true });
+    if (o.seat) return this.close(o, "candidate unavailable", { releasePartial: true });
     const group = o.participants.length > 2;
     let alt: MemberId | undefined;
     while (!alt && mayTryAlternate(o.alternates.length > 0, o.replacements)) {
@@ -3449,6 +3465,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private reveal(o: Opp) {
     if (!this.currentDatingPair(o)) return this.close(o, "slop_pair_changed", { releasePartial: true });
+    if (o.seat && !this.hireContactCurrent(o, o.seat.manager, true)) return this.close(o, "peon_search_changed", { releasePartial: true });
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", true,
       o.participants.every(p => o.status.get(p) === "available" && o.contacted.has(p)))) {
@@ -6003,6 +6020,10 @@ export class ConsentNetwork implements NetworkUnderTest {
         return this.refuse(m.id, kind, "slop_pair_changed", this.hookFns(m, o.hook));
       }
     }
+    if (opportunity?.seat && (o.hook?.t === "probe" || o.hook?.t === "reveal")
+      && !this.hireContactCurrent(opportunity, m.id, o.hook.t === "reveal")) {
+      return this.refuse(m.id, kind, "peon_search_changed", this.hookFns(m, o.hook));
+    }
     if (opportunity?.lane === "Cofounder" && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal")) {
       const revealing = meta.type === "proposal" || o.key?.startsWith(RESCHEDULE_QUEUE_PREFIX) === true;
       const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes" && opportunity.contacted.has(id));
@@ -6302,7 +6323,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         valid: () => !!o && o.stage === "probing" && o.participants.includes(h.id) && o.status.get(h.id) === "probing",
         onSent: messageId => {
           if (!o) return;
-          m.awaiting = { kind: "probe", oppId: o.id, at: now(), ...(this.app.id === "slop" && o.category === "romance" ? { probeReceiptId: messageId } : {}) };
+          m.awaiting = { kind: "probe", oppId: o.id, at: now(), ...(o.seat || (this.app.id === "slop" && o.category === "romance") ? { probeReceiptId: messageId } : {}) };
           m.asked++; o.contacted.add(h.id);
           o.sentAt = { ...o.sentAt, [h.id]: now() };
           this.counters.probesSent++;
@@ -6753,12 +6774,36 @@ export class ConsentNetwork implements NetworkUnderTest {
     const rec = this.record(seat);
     const manager = rec ? seatOwnerOf(rec) : undefined;
     if (!manager || p.participants.includes(manager) || p.participants.filter(isSeatId).length !== 1) return undefined;
+    const candidate = p.participants.find(id => id !== seat);
+    const bound = candidate && p.participants.length === 2 ? this.hireSeatFor({ id: seat, manager }, candidate) : undefined;
+    if (!bound) return undefined;
     const swap = (id: MemberId) => (id === seat ? manager : id);
     const keys = <T>(o: Record<MemberId, T> | undefined): Record<MemberId, T> => Object.fromEntries(Object.entries(o ?? {}).map(([k, v]) => [swap(k), v]));
     return {
       ...p, participants: p.participants.map(swap), alternates: (p.alternates ?? []).filter(a => !isSeatId(a) && a !== manager),
-      explanations: keys(p.explanations), roles: keys(p.roles), ...(p.anchor ? { anchor: { ...p.anchor, id: swap(p.anchor.id) } } : {}), seat: { id: seat, manager },
+      explanations: keys(p.explanations), roles: keys(p.roles), ...(p.anchor ? { anchor: { ...p.anchor, id: swap(p.anchor.id) } } : {}), seat: bound,
     };
+  }
+
+  private hireSeatFor(seat: HireSeat, candidate: MemberId): HireSeat | undefined {
+    const evidence = readHireEvidence(this.snapshotCached(), seat, candidate, this.now(), true);
+    const bound = { ...seat, evidence: { search: evidence.search, posting: evidence.posting } };
+    if (seat.evidence && seat.evidence.posting !== evidence.posting) return;
+    return hireSeatCurrent(bound, evidence) ? bound : undefined;
+  }
+
+  private currentHireSeat(seat: HireSeat, members: readonly MemberId[]): boolean {
+    const job = this.record(seat.id), candidate = members.find(id => id !== seat.manager);
+    return members.length === 2 && members.includes(seat.manager) && !!job && seatOwnerOf(job) === seat.manager && !!candidate
+      && hireSeatCurrent(seat, readHireEvidence(this.snapshotCached(), seat, candidate, this.now(), true));
+  }
+
+  private hireContactCurrent(o: Opp, to: MemberId, reveal: boolean): boolean {
+    const seat = o.seat!;
+    const candidate = o.participants.find(id => id !== seat.manager);
+    const accepted = (id: MemberId) => o.status.get(id) === (o.stage === "scheduled" ? "yes" : "available") && o.contacted.has(id);
+    return !!candidate && hireContactAllowed(this.currentHireSeat(seat, o.participants), o.review?.decision === "approve" && !o.review.invalidated,
+      o.stage === "probing" || (reveal && o.stage === "scheduled"), to === seat.manager, reveal, accepted(candidate), accepted(seat.manager));
   }
 
   /** The job title of a seat (its posting's "Hire: <title>"), for the seat copy. */
@@ -7368,7 +7413,7 @@ export interface NetworkState {
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
 type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string };
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
-type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
+type SeatProposal = EngineProposal & { seat?: HireSeat };
 
 function interestLabel(tag: string) { return INTERESTS.find(i => i.tag === tag)?.label ?? tag.replace(/_/g, " "); }
 function skillLabel(tag: string) { const l = SKILLS.find(s => s.tag === tag)?.label ?? tag; return l; }
