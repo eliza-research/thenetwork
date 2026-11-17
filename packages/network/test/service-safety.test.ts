@@ -132,6 +132,85 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   });
   const fresh = async () => { await applySchema(URL_, { reset: true, lockTimeout: "5s" }); };
 
+  // spec/staffSafetyService.md, "Live enrollment and ban projection use the current person"
+  test("a membership that joins during a staff ban is restricted in its Network runtime", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Ari, 32")).toBe("joined");
+    const primary = (await memberOf("slop", phone))!;
+    const person = (await s.accounts.personFor(phone))!;
+    await web.login("friends", phone);
+
+    let entered!: () => void, release!: () => void;
+    const atPersist = new Promise<void>(resolve => { entered = resolve; });
+    const allowPersist = new Promise<void>(resolve => { release = resolve; });
+    const persistBan = s.people.ban.bind(s.people);
+    let snapshotStatus: string | undefined;
+    s.people.ban = async ban => {
+      entered();
+      await allowPersist;
+      await persistBan(ban);
+      const rt = s.runtimeFor("friends")!;
+      const member = (await memberOf("friends", phone))!;
+      const snapshot = await rt.scoped(tx => loadSnapshot(tx, clock.now(), { app: "friends" }));
+      snapshotStatus = (snapshot.members.find(candidate => candidate.id === member.id) as { accountStatus?: string } | undefined)?.accountStatus;
+    };
+    const banning = staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: primary.id, by: "person", note: "confirmed by staff" });
+    try {
+      await Promise.race([atPersist, banning.then(() => { throw new Error("Ban ended before persistence"); })]);
+      expect((await web.join("friends", 32, "Ari")).status).toBe(200);
+      expect(await memberOf("friends", phone)).toMatchObject({ account_status: "active" });
+      release();
+      expect(await (await banning).json()).toEqual({ ok: true });
+      const member = (await memberOf("friends", phone))!;
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "restricted" });
+      expect(member.account_status).toBe("restricted");
+      expect(snapshotStatus).toBe("restricted");
+      const rt = s.runtimeFor("friends")!;
+      expect(await rt.readState(n => n.trust.level(member.id))).toBe("hold");
+    } finally {
+      release();
+      await banning;
+    }
+  });
+
+  test("a ban prevents an already admitted enrollment from creating an active Network member", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Nila, 32")).toBe("joined");
+    const primary = (await memberOf("slop", phone))!;
+    const person = (await s.accounts.personFor(phone))!;
+    await web.login("friends", phone);
+
+    let entered!: () => void, release!: () => void;
+    const atProjection = new Promise<void>(resolve => { entered = resolve; });
+    const allowProjection = new Promise<void>(resolve => { release = resolve; });
+    const createMember = s.createMember.bind(s);
+    s.createMember = async (...args) => { entered(); await allowProjection; return createMember(...args); };
+    const joining = web.join("friends", 32, "Nila");
+    try {
+      await Promise.race([atProjection, joining.then(() => { throw new Error("Enrollment ended before projection"); })]);
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "active" });
+      const banned = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: primary.id, by: "phone", note: "confirmed by staff" });
+      expect(await banned.json()).toEqual({ ok: true });
+      release();
+      expect((await joining).body).toMatchObject({ ok: false, error: "review" });
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "restricted" });
+      expect(await memberOf("friends", phone)).toBeUndefined();
+    } finally {
+      release();
+      await joining;
+    }
+  });
+
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {
     await fresh();
     const clock = new SimClock(START);

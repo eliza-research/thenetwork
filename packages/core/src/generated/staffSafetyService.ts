@@ -177,6 +177,25 @@ export function sometimesAppliesPersonBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ApplyingPersonBan";
 }
 
+/** Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person (spec/staffSafetyService.md) */
+//@ pure
+export function staffBanEnrollmentAllowed(liveOwner: boolean, verifiedBinding: boolean, banned: boolean): boolean {
+  return liveOwner && verifiedBinding && !banned;
+}
+
+/** Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person (spec/staffSafetyService.md) */
+//@ pure
+export function staffBanSnapshotStatus(accountStatus: string, banned: boolean): string {
+  return banned ? "restricted" : accountStatus;
+}
+
+/** Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person (spec/staffSafetyService.md) */
+//@ pure
+export function lawBannedEnrollmentCannotCommit(liveOwner: boolean, verifiedBinding: boolean): boolean {
+  //@ ensures \result === true
+  return !staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ServiceSafetyFlow, event: Event): boolean {

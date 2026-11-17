@@ -86,7 +86,7 @@ pure def staffAgeClearSummary(refused: bool, anyCleared: bool): StaffClearSummar
 
 ### Both ban scopes require authority on every app and a linked person
 
-A phone ban requires at least one keyed phone hash. Check whether every selected phone is already banned. A person ban can proceed without a phone and checks for an existing person ban. An already-applied ban is refused. After admission the service records ban rows, suppresses the person's current phones, drops private appearance ratings, and restricts live memberships in its existing order.
+A phone ban requires at least one keyed phone hash. Check whether every selected phone is already banned. A person ban can proceed without a phone and checks for an existing person ban. An already-applied ban is refused. After admission the service records ban rows, suppresses the person's current phones and drops private appearance ratings.
 
 ```quint
 pure def canStartStaffBan(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting
@@ -104,4 +104,19 @@ pure def checkExistingStaffBan(flow: ServiceSafetyFlow, alreadyBanned: bool): Se
 
 pure def sometimesAppliesPhoneBan(flow: ServiceSafetyFlow): bool = flow.phase == ApplyingPhoneBan
 pure def sometimesAppliesPersonBan(flow: ServiceSafetyFlow): bool = flow.phase == ApplyingPersonBan
+```
+
+### Live enrollment and ban projection use the current person
+
+Check a live person, the authorized phone binding and the canonical ban when committing membership or Network enrollment. An enrollment already in progress can finish only if that check still allows it. Serialize these admission writes and ban recording for the same person. After the ban commits, restrict the current live memberships and discover their current runtime records. A matching snapshot treats a canonical ban as restricted even while runtime projection is pending.
+
+```quint
+pure def staffBanEnrollmentAllowed(liveOwner: bool, verifiedBinding: bool, banned: bool): bool =
+  liveOwner and verifiedBinding and not(banned)
+
+pure def staffBanSnapshotStatus(accountStatus: str, banned: bool): str =
+  if (banned) "restricted" else accountStatus
+
+pure def lawBannedEnrollmentCannotCommit(liveOwner: bool, verifiedBinding: bool): bool =
+  not(staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true))
 ```

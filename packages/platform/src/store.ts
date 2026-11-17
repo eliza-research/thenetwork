@@ -5,6 +5,7 @@ import type { City } from "../../core/src/types.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
+import { staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -114,6 +115,9 @@ export interface PeopleStore {
   memberships(personId: string): Promise<Membership[]>;
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
+  /** Commit the exact member, opt-in and session binding if current ownership and bans allow enrollment. */
+  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean>;
+  restrictBannedMemberships(personId: string): Promise<void>;
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
   addConsent(e: ConsentEvent): Promise<boolean>;
@@ -269,6 +273,22 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
+    return this.withLock(`person-phone-binding:${m.personId}`, async () => {
+      const owner = this.people.get(m.personId);
+      const phone = this.phones.get(consent.e164);
+      const owned = phone?.personId === m.personId && phone.hold === null;
+      if (!staffBanEnrollmentAllowed(!!owner && owner.deletedAt === null, owned, await this.isBanned(phoneHash, m.personId))) return false;
+      await this.unsuppress(phoneHash);
+      await this.putMembership(m);
+      await this.addConsent(consent);
+      await this.attachPerson(consent.e164, m.personId);
+      return true;
+    });
+  }
+  async restrictBannedMemberships(personId: string): Promise<void> {
+    for (const m of this.members.values()) if (m.personId === personId && m.state !== "invited" && m.state !== "removed") m.state = "restricted";
+  }
 
   async addConsent(e: ConsentEvent) {
     if (e.ref && this.consent.some(x => x.e164 === e.e164 && x.ref === e.ref)) return false;
@@ -303,7 +323,7 @@ export class MemoryPeopleStore implements PeopleStore {
       const hashes = [...(b.phoneHash ? [b.phoneHash] : []), ...(b.personId ? await this.phoneHashesOf(b.personId) : [])];
       for (const h of hashes) await this.deletePending(h);
     };
-    if (b.personId) await this.withLock(`profile-share:${b.personId}`, recordBan);
+    if (b.personId) await this.withLock(`profile-share:${b.personId}`, () => this.withLock(`person-phone-binding:${b.personId}`, recordBan));
     else await recordBan();
   }
   async isBanned(phoneHash: string, personId?: string | null) {

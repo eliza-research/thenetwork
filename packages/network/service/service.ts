@@ -113,7 +113,7 @@ import { BlooioAdapter, originalBookingNoticeStale, type ChannelAdapter, type Di
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { Accounts, homeCityOf, joinProfileText, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
+import { Accounts, homeCityOf, joinProfileText, JoinReviewRequired, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
 import {
   consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
   memberInvitationHash, memberInvitationReviewId, memberInvitationReviewStatus, newMemberInvitation, purgeExpiredMemberInvitationReviews,
@@ -1087,6 +1087,7 @@ export class NetworkService implements RuntimeHost {
     const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
     const referral = invitation?.referral;
     const write = async (tx: SQL) => {
+      if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, m.personId)) return false;
       if (referral && !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) throw new InvitationUnavailable();
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, invited_by)
         values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
@@ -1106,13 +1107,14 @@ export class NetworkService implements RuntimeHost {
           values (${rt.app.id}, ${`${m.memberId}:join:${tag}`}, ${m.memberId}, 'interest', ${tag}, ${tx.array([tag], "TEXT")}, 'matchable', 'said', 'web_join', 0.8, 'confirmed', ${now})
           on conflict (id) do nothing`;
       }
+      return true;
     };
-    if (invitation) await write(invitation.tx);
-    else await rt.scoped(write);
+    if (!(invitation ? await write(invitation.tx) : await rt.scoped(write))) return false;
     const turn = this.inboundTurn();
     if (turn && (await this.accounts.personFor(turn.from))?.id === m.personId) {
       turn.app = rt.app.id; turn.memberId = m.memberId;
     }
+    return true;
   }
 
   /** The platform hooks: a join creates the network member and sends the welcome; stop, forget and export reach the network. */
@@ -1167,7 +1169,7 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
-    await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age });
+    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age })) throw new JoinReviewRequired();
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
     await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
   }
@@ -1200,14 +1202,17 @@ export class NetworkService implements RuntimeHost {
     const memberReferral = "inviterMemberId" in referral ? referral : undefined;
     // A verified person can already exist. The active membership, consent and referral are one outcome.
     await rt.scoped(async tx => {
+      const accounts = this.accountsFor(tx);
+      if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, ctx.person.id, ctx.e164, accounts.phoneHash(ctx.e164))) {
+        throw new JoinReviewRequired();
+      }
       const verifiedRecipientHash = memberReferral ? await this.expectedInvitationBinding(tx, ctx.app.id, memberReferral.tokenHash, ctx.e164) : undefined;
       if (!memberReferral && !await this.invitationRecipientMayRedeem(tx, ctx.app.id, ctx.e164)) throw new InvitationUnavailable();
-      const accounts = this.accountsFor(tx);
       if (memberReferral && verifiedRecipientHash === undefined) await accounts.store.unsuppress(accounts.phoneHash(ctx.e164));
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
-      await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: memberReferral, verifiedRecipientHash });
+      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
       }
@@ -2438,19 +2443,18 @@ export class NetworkService implements RuntimeHost {
     // Join: the person (new or known), the membership, the opt-in (with the words they answered), then the member and the welcome.
     const who: Person = person ?? (await this.accounts.createPerson(e164, "inbound_message", check.effective ?? age));
     await this.accounts.recordAge(e164, who, age);
-    // Their answer is a new opt-in: a delete of everything no longer suppresses the number.
-    await this.people.unsuppress(key);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
     const membership: Membership = {
       app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
-    await this.people.putMembership(membership);
-    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });
+    const admitted = await this.people.admitMembership(membership, { e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null,
+      state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) }, key);
+    if (!admitted) return "held";
     const stored = stepTextJoin(ageCheck, { type: "recordTextMembership", membershipActive: membership.state === "active" });
     if (stored.phase !== "AwaitingWelcome") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
-    await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity });
+    if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity })) return "held";
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
@@ -2494,9 +2498,9 @@ export class NetworkService implements RuntimeHost {
           app: id, personId: person.id, memberId: existing?.state === "invited" ? existing.memberId : `${id}_${randomUUID()}`,
           state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: ntwrk.firstName, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
         };
-        await this.people.putMembership(m);
-        await this.accounts.recordConsent({ e164, app: id, state: "opted_in", source: "looking_for", wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) });
-        if (m.state === "active") await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there", homeCity });
+        const admitted = await this.people.admitMembership(m, { e164, app: id, state: "opted_in", source: "looking_for",
+          wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key);
+        if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
         joined.push(app);
       }
     }
@@ -2690,8 +2694,8 @@ export class NetworkService implements RuntimeHost {
   safetyReports(rt: NetworkRuntime) { return rt.readState(n => n.safetyReports()); }
 
   /** The runtimes and member ids of a person, on every app (live memberships). A member from before the platform: this app only. */
-  private async membersOfPerson(rt: NetworkRuntime, memberId: MemberId): Promise<{ personId?: string; members: { rt: NetworkRuntime; memberId: MemberId }[] }> {
-    const personId = await this.personOfMember(rt, memberId);
+  private async membersOfPerson(rt: NetworkRuntime, memberId: MemberId, knownPersonId?: string): Promise<{ personId?: string; members: { rt: NetworkRuntime; memberId: MemberId }[] }> {
+    const personId = knownPersonId ?? await this.personOfMember(rt, memberId);
     if (!personId) return { members: [{ rt, memberId }] };
     const members: { rt: NetworkRuntime; memberId: MemberId }[] = [];
     for (const m of await this.people.memberships(personId)) {
@@ -2772,7 +2776,7 @@ export class NetworkService implements RuntimeHost {
    * texted again but for safety notices), and the numbers are suppressed. Audited before and after.
    */
   async ban(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, by: "phone" | "person", note: string, reportId?: string): Promise<ActionResult> {
-    const { personId, members } = await this.membersOfPerson(rt, memberId);
+    const personId = await this.personOfMember(rt, memberId);
     const target = { type: "member" as const, id: memberId };
     // A ban stops the number on every app: only safety@* (or admin@*) may do it. Staff of one app hold.
     const admission = stepStaffSafety(initialStaffSafety, {
@@ -2798,7 +2802,8 @@ export class NetworkService implements RuntimeHost {
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
-      for (const m of await this.people.memberships(personId)) if (staffSafetyMembershipLive(m.state)) await this.people.putMembership({ ...m, state: "restricted" });
+      await this.people.restrictBannedMemberships(personId);
+      const { members } = await this.membersOfPerson(rt, memberId, personId);
       let out: ActionResult = { ok: true };
       for (const x of members) {
         await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);

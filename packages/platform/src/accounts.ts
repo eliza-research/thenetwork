@@ -93,6 +93,7 @@ export interface JoinInput {
 }
 
 export type JoinError = "under_age" | "invite_only" | "invalid_invitation" | "invalid" | "review" | "consent_wording" | "account_changed";
+export class JoinReviewRequired extends Error {}
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 /** True when the client's consent names this app's canonical opt-in text (by its words or its version). */
@@ -470,11 +471,8 @@ export class Accounts {
     };
     const referredJoin = ageCheck.referred && referral;
     if (!referredJoin) {
-      // A new opt-in by the person: a delete of everything no longer suppresses the number.
-      await this.store.unsuppress(this.phoneHash(who.e164));
-      await this.store.putMembership(membership);
-      await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at });
-      await this.store.attachPerson(who.e164, person.id);
+      const consent = { e164: who.e164, app: app.id, state: "opted_in" as const, source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
+      if (!await this.store.admitMembership(membership, consent, this.phoneHash(who.e164))) return { ok: false, error: "review" };
     }
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
@@ -488,10 +486,11 @@ export class Accounts {
     }
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
     if (result.phase === "JoinHookFailed" && !hook.ok) {
+      if (hook.error instanceof JoinReviewRequired) return { ok: false, error: "review" };
       if (referredJoin) {
         if (hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
       } else {
-        await this.store.forgetMembership(person.id, app.id, at);
+        await this.store.forgetMembership(person.id, app.id, at, membership.memberId);
         await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
       }
       throw hook.error;

@@ -8,6 +8,7 @@ import { DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type F
 
 import { participationOverride, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
+import { staffBanSnapshotStatus } from "../../core/src/generated/staffSafetyService.ts";
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
 import { peonSeats } from "@thenetwork/engine";
 import { readPublicEvents } from "./public-events.ts";
@@ -94,7 +95,7 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks, events] = await Promise.all([
-    sql`select m.*, a.age as matching_age from network.members m
+    sql`select m.*, a.age as matching_age, a.banned as canonical_banned from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
     // Acceptance authorizes private intake, not matching or downstream automated use. Privacy scope is independent.
@@ -130,7 +131,8 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     // The account status rides along (the Network reads it): a paused or restricted account is never matched and gets no
     // proactive message; replies to its own messages, compliance texts and safety notices still go (founder, 2026-10-11).
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
-      id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs, accountStatus: r.account_status,
+      id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs,
+      accountStatus: staffBanSnapshotStatus(r.account_status, r.canonical_banned === true),
       ...(isAppId(app) ? { apps: [app] } : {}),
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).

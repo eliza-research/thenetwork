@@ -3,6 +3,7 @@
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
+import { staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
@@ -130,11 +131,36 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select * from platform.memberships where person_id = ${personId} and app_id = ${app}`;
     return r ? membership(r) : undefined;
   }
-  async putMembership(m: Membership) {
-    await this.sql`insert into platform.memberships (app_id, person_id, member_id, state, review, first_name, profile, joined_at, left_at)
+  async putMembership(m: Membership, db = this.sql) {
+    await db`insert into platform.memberships (app_id, person_id, member_id, state, review, first_name, profile, joined_at, left_at)
       values (${m.app}, ${m.personId}, ${m.memberId}, ${m.state}, ${m.review}, ${m.firstName}, ${m.profile}::jsonb, ${ts(m.joinedAt)}, ${ts(m.leftAt)})
       on conflict (app_id, person_id) do update set member_id = excluded.member_id, state = excluded.state, review = excluded.review,
         first_name = excluded.first_name, profile = excluded.profile, joined_at = excluded.joined_at, left_at = excluded.left_at`;
+  }
+
+  async restrictBannedMemberships(personId: string): Promise<void> {
+    await this.sql`update platform.memberships set state='restricted' where person_id=${personId}::uuid and state not in ('removed','invited')`;
+  }
+
+  async enrollmentOwnerAllowed(tx: SQL, personId: string, e164?: string, phoneHash?: string): Promise<boolean> {
+    await lockPersonPhone(tx, personId);
+    const [owner] = await tx<{ phone_hash: string | null; verified: boolean }[]>`select p.phone_hash,
+        exists (select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is null
+          ${e164 === undefined ? tx`` : tx`and ph.e164=${e164}`}) as verified
+      from platform.people p where p.id=${personId}::uuid and p.deleted_at is null`;
+    const banned = !!owner && await this.isBanned(phoneHash ?? owner.phone_hash ?? "", personId, tx);
+    return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned);
+  }
+
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
+    return this.sql.begin(async tx => {
+      if (!await this.enrollmentOwnerAllowed(tx, m.personId, consent.e164, phoneHash)) return false;
+      await tx`delete from platform.suppression where phone_hash=${phoneHash}`;
+      await this.putMembership(m, tx);
+      await this.addConsent(consent, tx);
+      await tx`update platform.sessions set person_id=${m.personId}::uuid where e164=${consent.e164} and person_id is null`;
+      return true;
+    });
   }
 
   async addConsent(e: ConsentEvent, db = this.sql) {
@@ -199,7 +225,10 @@ export class PgPeopleStore implements PeopleStore {
     // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
     await this.sql.begin(async tx => {
       // The same key as Accounts.share's withLock: a share in flight finishes first or sees the ban.
-      if (b.personId) await tx`select pg_advisory_xact_lock(hashtext(${`platform:profile-share:${b.personId}`}))`;
+      if (b.personId) {
+        await tx`select pg_advisory_xact_lock(hashtext(${`platform:profile-share:${b.personId}`}))`;
+        await lockPersonPhone(tx, b.personId);
+      }
       await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
         values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
       if (b.personId) await tx`update platform.share_grants set revoked_at = ${ts(b.at)} where person_id = ${b.personId} and revoked_at is null`;
@@ -207,8 +236,8 @@ export class PgPeopleStore implements PeopleStore {
         or phone_hash in (select phone_hash from platform.people where id = ${b.personId}::uuid and phone_hash is not null)`;
     });
   }
-  async isBanned(phoneHash: string, personId?: string | null) {
-    const [r] = await this.sql`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;
+  async isBanned(phoneHash: string, personId?: string | null, db = this.sql) {
+    const [r] = await db`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;
     return !!r;
   }
   async phoneHashesOf(personId: string) {
