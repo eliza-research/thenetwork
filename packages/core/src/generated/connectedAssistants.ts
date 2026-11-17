@@ -2,6 +2,8 @@
 //@ backend dafny
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+export type BrowserGrantVisibility = "ShowBrowserGrant" | "HideBrowserGrant" | "RetryBrowserGrantList";
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 export type LoadReply = "LoadedSignedOut" | "LoadedUnavailable" | "LoadedList";
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 export type ConsentsView = "Loading" | "SignInFirstView" | "RetryLaterView" | "NotAllowedView" | "ListView" | "EmptyView" | "ConfirmingRemoval";
@@ -16,7 +18,7 @@ export interface ConsentsOffers { removeAccess: boolean; confirmRemove: boolean;
 /** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
 export interface PageChrome { brandMark: boolean; legalLinks: boolean }
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
-export type RemoveReply = "Removed" | "NothingRemoved" | "RemoveSignedOut" | "RemoveUnavailable" | "RemoveRefused";
+export type RemoveReply = "Removed" | "NothingRemoved" | "RemoveSignedOut" | "RemoveUnavailable" | "RemoveRefused" | "RemovedListUnavailable";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -36,7 +38,7 @@ export const initial: ConsentsPage = { view: "Loading", grants: 0, signedIn: fal
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: ConsentsPage): boolean {
-  return alwaysGrantsShowOnlyWithSession(current) && alwaysListMatchesGrants(current) && alwaysNoticeOnlyOnTheList(current);
+  return alwaysGrantsShowOnlyWithSession(current) && alwaysListMatchesGrants(current) && alwaysNoticeOnlyForSignedInRemoval(current);
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -50,6 +52,12 @@ export function browserOwnsLiveGrant(sameApp: boolean, samePhone: boolean, sameP
 export function lawAnEarlierPhoneOwnerHasNoGrant(sameApp: boolean, samePhone: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
   //@ ensures \result === true
   return !browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt);
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function browserGrantVisibility(ownedLiveGrant: boolean, authority: string): BrowserGrantVisibility {
+  return !ownedLiveGrant || authority === "invalid" ? "HideBrowserGrant" : (authority === "valid" ? "ShowBrowserGrant" : "RetryBrowserGrantList");
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -78,10 +86,17 @@ export function viewForGrants(grants: number): ConsentsView {
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 //@ pure
+export function lawShownGrantHasCurrentAuthority(ownedLiveGrant: boolean, authority: string): boolean {
+  //@ ensures \result === true
+  return !(browserGrantVisibility(ownedLiveGrant, authority) === "ShowBrowserGrant") || (ownedLiveGrant && authority === "valid");
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
 export function load(page: ConsentsPage, loaded: LoadReply, grants: number): ConsentsPage {
   //@ ensures (inv(page) && canLoad(page, grants)) ==> alwaysGrantsShowOnlyWithSession(\result)
   //@ ensures (inv(page) && canLoad(page, grants)) ==> alwaysListMatchesGrants(\result)
-  //@ ensures (inv(page) && canLoad(page, grants)) ==> alwaysNoticeOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canLoad(page, grants)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
   //@ ensures (inv(page) && canLoad(page, grants)) ==> stepKeepAccessChangesNothing(page, "load", \result)
   //@ ensures (inv(page) && canLoad(page, grants)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "load", \result)
   //@ ensures (inv(page) && canLoad(page, grants)) ==> stepNoticeFollowsConfirmedRemoval(page, "load", \result)
@@ -119,7 +134,7 @@ export function chromeFor(view: ConsentsView): PageChrome {
 export function reloadPage(page: ConsentsPage): ConsentsPage {
   //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysGrantsShowOnlyWithSession(\result)
   //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysListMatchesGrants(\result)
-  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysNoticeOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
   //@ ensures (inv(page) && canReloadPage(page)) ==> stepKeepAccessChangesNothing(page, "reloadPage", \result)
   //@ ensures (inv(page) && canReloadPage(page)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "reloadPage", \result)
   //@ ensures (inv(page) && canReloadPage(page)) ==> stepNoticeFollowsConfirmedRemoval(page, "reloadPage", \result)
@@ -157,7 +172,7 @@ export function canChooseRemoval(page: ConsentsPage): boolean {
 export function chooseRemoval(page: ConsentsPage): ConsentsPage {
   //@ ensures (inv(page) && canChooseRemoval(page)) ==> alwaysGrantsShowOnlyWithSession(\result)
   //@ ensures (inv(page) && canChooseRemoval(page)) ==> alwaysListMatchesGrants(\result)
-  //@ ensures (inv(page) && canChooseRemoval(page)) ==> alwaysNoticeOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canChooseRemoval(page)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
   //@ ensures (inv(page) && canChooseRemoval(page)) ==> stepKeepAccessChangesNothing(page, "chooseRemoval", \result)
   //@ ensures (inv(page) && canChooseRemoval(page)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "chooseRemoval", \result)
   //@ ensures (inv(page) && canChooseRemoval(page)) ==> stepNoticeFollowsConfirmedRemoval(page, "chooseRemoval", \result)
@@ -175,7 +190,7 @@ export function canKeepAccess(page: ConsentsPage): boolean {
 export function keepAccess(page: ConsentsPage): ConsentsPage {
   //@ ensures (inv(page) && canKeepAccess(page)) ==> alwaysGrantsShowOnlyWithSession(\result)
   //@ ensures (inv(page) && canKeepAccess(page)) ==> alwaysListMatchesGrants(\result)
-  //@ ensures (inv(page) && canKeepAccess(page)) ==> alwaysNoticeOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canKeepAccess(page)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
   //@ ensures (inv(page) && canKeepAccess(page)) ==> stepKeepAccessChangesNothing(page, "keepAccess", \result)
   //@ ensures (inv(page) && canKeepAccess(page)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "keepAccess", \result)
   //@ ensures (inv(page) && canKeepAccess(page)) ==> stepNoticeFollowsConfirmedRemoval(page, "keepAccess", \result)
@@ -242,14 +257,20 @@ export function lawCannotRevokeWithoutConfirmation(ownedLiveGrant: boolean, asOf
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
 //@ pure
+export function removalListRetry(removal: string): RemoveReply {
+  return removal === "Removed" ? "RemovedListUnavailable" : "RemoveUnavailable";
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
 export function canConfirmRemoval(page: ConsentsPage, grants: number): boolean {
   return page.view === "ConfirmingRemoval" && grants >= 0;
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
 //@ pure
-export function alwaysNoticeOnlyOnTheList(page: ConsentsPage): boolean {
-  return !page.notice || (page.view === "ListView" || page.view === "EmptyView");
+export function alwaysNoticeOnlyForSignedInRemoval(page: ConsentsPage): boolean {
+  return !page.notice || (page.signedIn && (page.view === "ListView" || page.view === "EmptyView" || page.view === "RetryLaterView"));
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
@@ -263,11 +284,23 @@ export function stepNoticeFollowsConfirmedRemoval(before: ConsentsPage, via: str
 export function confirmRemoval(page: ConsentsPage, removal: RemoveReply, grants: number): ConsentsPage {
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> alwaysGrantsShowOnlyWithSession(\result)
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> alwaysListMatchesGrants(\result)
-  //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> alwaysNoticeOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> stepKeepAccessChangesNothing(page, "confirmRemoval", \result)
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "confirmRemoval", \result)
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> stepNoticeFollowsConfirmedRemoval(page, "confirmRemoval", \result)
-  return removal === "RemoveSignedOut" ? ({ view: "SignInFirstView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (removal === "RemoveUnavailable" ? ({ view: "RetryLaterView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (removal === "RemoveRefused" ? ({ view: "NotAllowedView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : ({ view: viewForGrants(grants), grants: grants, signedIn: true, notice: removal === "Removed" } as ConsentsPage)));
+  return removal === "RemoveSignedOut" ? ({ view: "SignInFirstView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (removal === "RemoveUnavailable" ? ({ view: "RetryLaterView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (removal === "RemovedListUnavailable" ? ({ view: "RetryLaterView", grants: 0, signedIn: true, notice: true } as ConsentsPage) : (removal === "RemoveRefused" ? ({ view: "NotAllowedView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : ({ view: viewForGrants(grants), grants: grants, signedIn: true, notice: removal === "Removed" } as ConsentsPage))));
+}
+
+/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
+//@ pure
+export function sometimesAccessRemoved(page: ConsentsPage): boolean {
+  return page.view === "ListView" && page.notice;
+}
+
+/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
+//@ pure
+export function sometimesLastAccessRemoved(page: ConsentsPage): boolean {
+  return page.view === "EmptyView" && page.notice;
 }
 
 /** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
@@ -304,18 +337,6 @@ export function sometimesListed(page: ConsentsPage): boolean {
 //@ pure
 export function sometimesConfirming(page: ConsentsPage): boolean {
   return page.view === "ConfirmingRemoval";
-}
-
-/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
-//@ pure
-export function sometimesAccessRemoved(page: ConsentsPage): boolean {
-  return page.view === "ListView" && page.notice;
-}
-
-/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
-//@ pure
-export function sometimesLastAccessRemoved(page: ConsentsPage): boolean {
-  return page.view === "EmptyView" && page.notice;
 }
 
 /** Do the rules allow this event in this state? */
@@ -360,7 +381,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "reloadPage") return { type: "reloadPage" };
   if (raw.type === "chooseRemoval") return { type: "chooseRemoval" };
   if (raw.type === "keepAccess") return { type: "keepAccess" };
-  if (raw.type === "confirmRemoval" && (raw.removal === "Removed" || raw.removal === "NothingRemoved" || raw.removal === "RemoveSignedOut" || raw.removal === "RemoveUnavailable" || raw.removal === "RemoveRefused") && Number.isSafeInteger(raw.grants)) return { type: "confirmRemoval", removal: raw.removal, grants: raw.grants };
+  if (raw.type === "confirmRemoval" && (raw.removal === "Removed" || raw.removal === "NothingRemoved" || raw.removal === "RemoveSignedOut" || raw.removal === "RemoveUnavailable" || raw.removal === "RemoveRefused" || raw.removal === "RemovedListUnavailable") && Number.isSafeInteger(raw.grants)) return { type: "confirmRemoval", removal: raw.removal, grants: raw.grants };
   return undefined;
 }
 

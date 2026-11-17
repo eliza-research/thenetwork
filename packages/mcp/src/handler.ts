@@ -26,7 +26,10 @@ import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
-import { browserOwnsLiveGrant, browserRemovalProofMatches, removalConfirmationEndsAt, removalFormMayRevoke, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
+import {
+  browserGrantVisibility, browserOwnsLiveGrant, browserRemovalProofMatches, removalConfirmationEndsAt,
+  removalFormMayRevoke, removalListRetry, type RemoveReply,
+} from "../../core/src/generated/connectedAssistants.ts";
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
@@ -959,7 +962,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   async function consents(c: Ctx, revokeOne: boolean): Promise<Response> {
-    const who = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
+    const who = await readAuthorizationSession(c);
     if (who === "unavailable") return browserUnavailable(c, "/oauth/consents");
     const signInFirst = () => messagePage(c.app, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
     if (!who) return signInFirst();
@@ -988,16 +991,36 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         removal = "Removed";
       }
     }
-    const at = now();
-    const grants = (await store.grantsFor(owner.phoneKey, owner.app, at)).filter(grant => owns(grant, at));
-    const named = await Promise.all(grants.map(async grant => ({ ...grant, clientName: (await store.getClient(grant.clientId))?.name ?? null })));
+    const startedAt = now();
+    const candidates = (await store.grantsFor(owner.phoneKey, owner.app, startedAt)).filter(grant => owns(grant, startedAt));
+    const checked = new Map(await Promise.all(candidates.map(async grant => {
+      const [authority, client] = await Promise.all([
+        usesCloudGrantAuthority(grant) ? cloudGrantCurrent(grant) : "valid" as const,
+        store.getClient(grant.clientId),
+      ]);
+      return [grant.id, { authority, clientName: client?.name ?? null }] as const;
+    })));
+    const current = candidates.length ? await store.grantsFor(owner.phoneKey, owner.app, now()) : [];
     if (who.personId !== await o.platform.personForKey(owner.phoneKey)) return signInFirst();
+    const at = now();
+    const grants: Array<Grant & { clientName: string | null }> = [];
+    for (const grant of current) {
+      const check = checked.get(grant.id);
+      if (!check) continue;
+      const visibility = browserGrantVisibility(owns(grant, at), check.authority);
+      if (visibility === "RetryBrowserGrantList") {
+        const response = browserUnavailable(c, "/oauth/consents", removalListRetry(removal ?? "") === "RemovedListUnavailable");
+        if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
+        return response;
+      }
+      if (visibility === "ShowBrowserGrant") grants.push({ ...grant, clientName: check.clientName });
+    }
     const selected = revokeOne ? undefined : grants.find(grant => grant.id === c.url.searchParams.get("remove"));
     const until = selected ? removalConfirmationEndsAt(at, selected.expiresAt) : 0;
     const confirmation = selected && who.browserBinding ? {
       grantId: selected.id, proof: `${until}.${consentRemovalMac(who.browserBinding, selected, until)}`,
     } : undefined;
-    const page = consentsPage(c.app, named, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirmation });
+    const page = consentsPage(c.app, grants, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirmation });
     if (who.setCookie) page.headers.append("set-cookie", who.setCookie);
     return page;
   }
@@ -1066,12 +1089,16 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return cloudGrantCurrent(grant);
   }
 
+  function usesCloudGrantAuthority(grant: Grant): boolean {
+    return grant.id.startsWith("grant_cloud_") || grant.cloudAuthority != null;
+  }
+
   async function cloudGrantCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
     // spec/oauthTokenLifecycle.md, "The request needs current grant authority and must stay within its consent"
     let banned: boolean;
     try { banned = await o.platform.grantIsBanned(grant.phoneKey, grant.personId); } catch { return "unavailable"; }
     if(banned)return "invalid";
-    if(!grant.id.startsWith("grant_cloud_") && grant.cloudAuthority==null)return "valid";
+    if(!usesCloudGrantAuthority(grant))return "valid";
     const authority=grant.cloudAuthority;
     if(!authority || grant.expiresAt<=now() || grant.expiresAt>authority.expiresAt || authority.expiresAt<=now())return "invalid";
     if(!o.platform.validateCloudGrant)return "unavailable";
@@ -1081,9 +1108,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return grant.expiresAt>now() && authority.expiresAt>now()?status:"invalid";
   }
 
-  function browserUnavailable(c: Ctx,retryPath?:string): Response {
-    const response=messagePage(c.app,"Please try again","We can’t check your connection right now. Try again shortly, or return to your agent or text conversation.",503,retryPath);
-    response.headers.set("retry-after","5");return response;
+  function browserUnavailable(c: Ctx, retryPath?: string, accessRemoved = false): Response {
+    const text = accessRemoved
+      ? "Access removed. We can’t check your other connections right now. Try again shortly."
+      : "We can’t check your connection right now. Try again shortly, or return to your agent or text conversation.";
+    const response = messagePage(c.app, "Please try again", text, accessRemoved ? 200 : 503, retryPath);
+    if (!accessRemoved) response.headers.set("retry-after", "5");
+    return response;
   }
 
   function consentUnavailable(c:Ctx,r:AuthRequest,client:OAuthClient):Response {
