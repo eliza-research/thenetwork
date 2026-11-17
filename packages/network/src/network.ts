@@ -5810,7 +5810,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A pending yes/no (a probe or a booked plan) is the open question: an ask now would make the
     // member's next answer ambiguous ("Free Tuesday evening" read as a yes to the probe).
     if (ask && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked")) return this.refuse(m.id, kind, "one_question", fns);
-    const outreach = o.gatheringRsvpLogistics ? "solicited" : kind === "worthwhile" ? "unsolicited" : this.classifyOutreach(m, meta, now);
+    // A survey always goes as an unsolicited message (spec/interruptionFeedback.md), whatever its timing says.
+    const byTiming = this.classifyOutreach(m, meta, now);
+    const outreach = o.gatheringRsvpLogistics ? "solicited" : kind === "worthwhile" ? "unsolicited" : byTiming;
     const unsol = outreach === "unsolicited";
     const timing = this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
@@ -5915,7 +5917,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       const lane = this.laneOf(meta);
       m.unsol = { ...m.unsol, [lane]: [...(m.unsol?.[lane] ?? []), now].slice(-20) };
       m.unsolStreak = (m.unsolStreak ?? 0) + 1;
-    } else if (outreach === "followup") m.askUsed = (m.askUsed ?? 0) + 1;
+    }
+    // A survey inside the member's ask window also uses one of the ask's follow-ups, as the judge counts
+    // it by its timing. Without this, a third message there would go out as a follow-up, with no pause path.
+    if (byTiming === "followup" && outreach !== "solicited") m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
     if (o.memberInviteLink && approvedLink(text) === o.memberInviteLink) meta = { ...meta, approvedInviteLink: o.memberInviteLink };
