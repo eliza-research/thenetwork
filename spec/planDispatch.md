@@ -8,16 +8,25 @@ The [whole plan model](models/plan_run.md) follows plan quorum, fallback, and la
 
 ### Only an open plan can invite a pending member
 
-Allow probing plans to proceed. A booked plan may invite another member through the late-join cutoff. Ask only members whose turn is pending and who have not been contacted about this plan.
+An approved probing plan may invite before its probe deadline. A booked plan may invite another member through the late-join cutoff. Ask only members whose turn is pending and who have not been contacted about this plan. A queued invitation still needs an approved open lane and its exact pending seat when the provider claim runs.
 
 ```quint
 pure def planLaneOpen(probing: bool, booked: bool, lateJoinOpen: bool): bool =
   probing or (booked and lateJoinOpen)
 
+pure def planInvitationOpen(probing: bool, booked: bool, now: int, probeDeadline: int, lateJoinAt: int): bool =
+  planLaneOpen(probing and now < probeDeadline, booked, now <= lateJoinAt)
+
+pure def queuedPlanProbeAllowed(approvalCurrent: bool, pendingSeat: bool, laneOpen: bool): bool =
+  approvalCurrent and pendingSeat and laneOpen
+
 pure def planTurnDue(pending: bool, contacted: bool): bool = pending and not(contacted)
 
 pure def lawBookedLaneRespectsLateJoinCutoff(booked: bool): bool =
   not(planLaneOpen(false, booked, false))
+
+pure def lawProbingLaneClosesAtDeadline(deadline: int, lateJoinAt: int): bool =
+  not(planInvitationOpen(true, false, deadline, deadline, lateJoinAt))
 ```
 
 ### A missing seat or an absence rules out the invitation
@@ -105,4 +114,21 @@ pure def planProbeReplyCurrent(memberReply: bool, accepted: bool, receivedAt: in
 
 pure def lawPlanReplyNeedsAcceptance(memberReply: bool, receivedAt: int, acceptedAt: int, now: int): bool =
   not(planProbeReplyCurrent(memberReply, false, receivedAt, acceptedAt, now))
+```
+
+### A terminal unsent invitation releases the exact pending seat
+
+When the exact persisted invitation is known never to have gone out, clear its pending reply and apply the normal unavailable-seat rule. It can open a reviewed alternate before the deadline. Do not count it as a decline or unanswered invitation. A retry, a review hold or uncertain acceptance keeps the seat pending until the normal deadline.
+
+```quint
+type PendingPlanInviteDecision = WaitForPlanAnswer | PlanInviteUnsent | PlanAnswerExpired
+
+pure def pendingPlanInviteDecision(staged: bool, knownUnsent: bool, responseExpired: bool): PendingPlanInviteDecision =
+  if (not(staged)) WaitForPlanAnswer
+  else if (knownUnsent) PlanInviteUnsent
+  else if (responseExpired) PlanAnswerExpired
+  else WaitForPlanAnswer
+
+pure def lawUnsentIsDifferentFromAnExpiredReply(responseExpired: bool): bool =
+  pendingPlanInviteDecision(true, true, responseExpired) == PlanInviteUnsent
 ```

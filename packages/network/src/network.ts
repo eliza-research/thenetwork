@@ -78,7 +78,7 @@ import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/bou
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
-import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, planTurnDue, statedPlanWindowAllows, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, statedPlanWindowAllows, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
@@ -733,6 +733,14 @@ export function probeReplyReceiptKey(oppId: string, memberId: MemberId, slot: { 
   return `probe-reply-receipt:${oppId}:${memberId}:${slot.probeReceiptId ?? slot.at}`;
 }
 
+/** Resolve the same invitation even after another turn has replaced its open question. */
+export function planProbeReceiptSlot(oppId: string, sentAt: number, member?: Pick<MemberState, "awaiting" | "pendingAsks">) {
+  const question = member?.awaiting;
+  const questionId = question?.kind === "probe" && question.oppId === oppId ? question.probeReceiptId : undefined;
+  const deliveryId = questionId ?? member?.pendingAsks.find(ask => ask.kind === "probe" && ask.opportunityId === oppId)?.deliveryId;
+  return { at: sentAt, probeReceiptId: deliveryId };
+}
+
 function isGatheringRepeat(o: Pick<Opp, "id" | "gatheringRepeat">): boolean {
   return o.id.startsWith(gatheringRepeatOppPrefix) || o.gatheringRepeat !== undefined;
 }
@@ -1174,7 +1182,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
-      const receiptKey = po.replacementFor ? replacementProbeKey(po.id, m.id) : probeReplyReceiptKey(po.id, m.id, aw);
+      const receiptKey = po.replacementFor ? replacementProbeKey(po.id, m.id)
+        : probeReplyReceiptKey(po.id, m.id, planProbeReceiptSlot(po.id, po.sentAt?.[m.id] ?? aw.at, m));
       const delivery = this.ctx.initialInviteReceipt?.(receiptKey);
       const acceptedAt = this.ctx.initialInviteReceipt ? (delivery?.kind === "accepted" ? delivery.at : undefined) : aw.at;
       const allowed = po.replacementFor ? replacementAnswerAllowed(this.memberReply, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)
@@ -4446,6 +4455,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.planLane(o, this.now());
   }
 
+  /** The in-process invitation and the provider claim use this app's same cutoffs. */
+  planProbeWindowOpen(stage: string, plan: { window: { start: number }; probeDeadline: number }, now: number): boolean {
+    return planInvitationOpen(stage === "probing", stage === "scheduled", now, plan.probeDeadline,
+      plan.window.start - this.pcfg.lateJoinHours * HOUR);
+  }
+
   /** Probes whose turn has come go out when the member's plan lane allows (send window, one a day, allowance). */
   private planLane(o: Opp, now: number) {
     if (o.stage === "probing" && o.replacementFor && !this.replacementPlanCurrent(o, now)) return this.planFallback(o);
@@ -4467,8 +4482,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const m = this.members.get(id);
     if (!m || !o.plan || !o.planRun) return;
     // A prior seat can close or backfill the plan while the same pass is in progress.
-    const booked = o.stage === "scheduled";
-    if (!planLaneOpen(o.stage === "probing", booked, booked && now <= o.plan.window.start - this.pcfg.lateJoinHours * HOUR)
+    if (!this.planProbeWindowOpen(o.stage, o.plan, now)
       || !planTurnDue(o.planRun.answers[id] === "pending", o.contacted.has(id))) return;
     const about = o.participants.filter(peer => peer === id || (o.stage === "scheduled"
       ? o.status.get(peer) === "yes" : activeOpportunityParticipant(o, peer)));
@@ -5115,14 +5129,24 @@ export class ConsentNetwork implements NetworkUnderTest {
       const lateJoinAt = o.plan.window.start - this.pcfg.lateJoinHours * HOUR;
       if (o.stage === "probing" && now >= deadline) this.expirePlanInvitations(o, deadline, now);
       if (o.stage === "scheduled" && now > lateJoinAt) this.expirePlanInvitations(o, lateJoinAt, now);
-      for (const [p, a] of Object.entries(o.planRun.answers)) {
+      for (const p of Object.keys(o.planRun.answers)) {
         const sent = o.sentAt?.[p];
-        if (a !== "pending" || sent === undefined || !probeExpired(now, sent + probeResponseMs) || !o.planRun) continue;
-        this.expireInitialInvitation(o, p, sent + probeResponseMs, now);
-        this.counters.probeExpired++;
-        this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true, plan: true });
+        if (o.planRun.answers[p] !== "pending" || sent === undefined) continue;
         const m = this.members.get(p);
-        if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
+        const receiptKey = o.replacementFor ? replacementProbeKey(o.id, p)
+          : probeReplyReceiptKey(o.id, p, planProbeReceiptSlot(o.id, sent, m));
+        const receipt = this.ctx.initialInviteReceipt?.(receiptKey);
+        const decision = pendingPlanInviteDecision(true, receipt?.kind === "not_sent", probeExpired(now, sent + probeResponseMs));
+        if (decision === "WaitForPlanAnswer") continue;
+        if (decision === "PlanInviteUnsent") {
+          if (m) this.refreshUnanswered(m, now);
+          this.ctx.log("plan_probe_unavailable", { oppId: o.id, memberId: p, reason: "not_delivered" });
+        } else {
+          this.expireInitialInvitation(o, p, sent + probeResponseMs, now);
+          this.counters.probeExpired++;
+          this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true, plan: true });
+        }
+        if (m?.awaiting?.kind === "probe" && m.awaiting.oppId === o.id) m.awaiting = undefined;
         this.planAnswer(o, p, false, true);
       }
       if (o.stage === "probing" && o.planRun.stage === "probing") {

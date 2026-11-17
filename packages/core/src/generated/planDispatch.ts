@@ -5,6 +5,8 @@
 export type InvitePhase = "CheckingSeat" | "CheckingPresence" | "CheckingAvailability" | "CheckingWindow" | "CheckingAllowance" | "RenderingInvite" | "SendingInvite" | "InviteSent" | "DeliveryNotConfirmed" | "Deferred" | "Unavailable";
 /** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 export interface PlanDispatch { phase: InvitePhase; reason: string }
+/** Story: Ask me about one group plan during my send window / A terminal unsent invitation releases the exact pending seat (spec/planDispatch.md) */
+export type PendingPlanInviteDecision = "WaitForPlanAnswer" | "PlanInviteUnsent" | "PlanAnswerExpired";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -33,8 +35,20 @@ export function planLaneOpen(probing: boolean, booked: boolean, lateJoinOpen: bo
 
 /** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
 //@ pure
+export function queuedPlanProbeAllowed(approvalCurrent: boolean, pendingSeat: boolean, laneOpen: boolean): boolean {
+  return approvalCurrent && pendingSeat && laneOpen;
+}
+
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
+//@ pure
 export function planTurnDue(pending: boolean, contacted: boolean): boolean {
   return pending && !contacted;
+}
+
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
+//@ pure
+export function planInvitationOpen(probing: boolean, booked: boolean, now: number, probeDeadline: number, lateJoinAt: number): boolean {
+  return planLaneOpen(probing && now < probeDeadline, booked, now <= lateJoinAt);
 }
 
 /** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
@@ -42,6 +56,13 @@ export function planTurnDue(pending: boolean, contacted: boolean): boolean {
 export function lawBookedLaneRespectsLateJoinCutoff(booked: boolean): boolean {
   //@ ensures \result === true
   return !planLaneOpen(false, booked, false);
+}
+
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
+//@ pure
+export function lawProbingLaneClosesAtDeadline(deadline: number, lateJoinAt: number): boolean {
+  //@ ensures \result === true
+  return !planInvitationOpen(true, false, deadline, deadline, lateJoinAt);
 }
 
 /** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
@@ -171,6 +192,19 @@ export function planProbeReplyCurrent(memberReply: boolean, accepted: boolean, r
 export function lawPlanReplyNeedsAcceptance(memberReply: boolean, receivedAt: number, acceptedAt: number, now: number): boolean {
   //@ ensures \result === true
   return !planProbeReplyCurrent(memberReply, false, receivedAt, acceptedAt, now);
+}
+
+/** Story: Ask me about one group plan during my send window / A terminal unsent invitation releases the exact pending seat (spec/planDispatch.md) */
+//@ pure
+export function pendingPlanInviteDecision(staged: boolean, knownUnsent: boolean, responseExpired: boolean): PendingPlanInviteDecision {
+  return !staged ? "WaitForPlanAnswer" : (knownUnsent ? "PlanInviteUnsent" : (responseExpired ? "PlanAnswerExpired" : "WaitForPlanAnswer"));
+}
+
+/** Story: Ask me about one group plan during my send window / A terminal unsent invitation releases the exact pending seat (spec/planDispatch.md) */
+//@ pure
+export function lawUnsentIsDifferentFromAnExpiredReply(responseExpired: boolean): boolean {
+  //@ ensures \result === true
+  return pendingPlanInviteDecision(true, true, responseExpired) === "PlanInviteUnsent";
 }
 
 /** Do the rules allow this event in this state? */

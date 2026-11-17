@@ -12,7 +12,7 @@ import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
 
-const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability"] as const;
+const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "changed queued availability", "expired generic invite"] as const;
 
 test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current admission (%s)", async scene => {
   // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
@@ -118,7 +118,8 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       id: "booked_group_replacement_original", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
       place: { name: "Inwood Hill Park", area: "Inwood" }, window: { start: now + 5 * DAY, end: now + 5 * DAY + 4 * HOUR },
       invited, alternates: checksDisclosure ? [] : [drew, elliot], partner: false, size: { min: 3, target: invited.length, max: invited.length }, quorum: 3,
-      probeDeadline: now + 3 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
+      probeDeadline: now + (scene === "expired generic invite" ? 2 * HOUR : 3 * DAY),
+      score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
     await runtime().unitOfWork(net => {
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members.map(member => ({ ...member, stated })) });
@@ -128,8 +129,21 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     if (!original) throw new Error("The original plan did not reach staff review");
     expect(original.proposal.participants).toEqual(invited);
     expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
-    if (scene === "changed queued availability") await adapter.queue.setLineSafety("review");
+    if (scene === "changed queued availability" || scene === "expired generic invite") await adapter.queue.setLineSafety("review");
     expect((await approve(original)).status).toBe(200);
+    if (scene === "expired generic invite") {
+      // The queued messages still have delivery time left, but the reviewed probe deadline has arrived.
+      const waiting = await messages(original.oppId, "plan_probe");
+      expect(waiting).toHaveLength(3);
+      expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+      clock.set(plan.probeDeadline);
+      await adapter.queue.setLineSafety(undefined);
+      await runtime().deliver();
+      expect((await booking(original.oppId))?.stage).toBe("probing");
+      for (const row of waiting) expect(await adapter.queue.statusOf(row.id)).toBe("suppressed_ineligible");
+      expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
+      return;
+    }
     if (scene === "changed queued availability") {
       // spec/planDispatch.md, "Recheck the member's current availability before contacting them"
       const waiting = await messages(original.oppId, "plan_probe");
@@ -152,6 +166,11 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
         where outbound.app_id=${app.id} and outbound.member_id=${ari} and msg.opportunity_id=${original.oppId} and msg.type='plan_probe'`;
       expect(withheld).toEqual({ status: "suppressed_ineligible", attempts: 0 });
       expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual([people[1].e164, people[2].e164]);
+      expect((await booking(original.oppId))?.planRun?.answers[ari]).toBe("pending");
+      await runtime().tick();
+      const reconciled = await booking(original.oppId);
+      expect(reconciled?.planRun?.answers).toMatchObject({ [ari]: "no", [elliot]: "pending" });
+      expect((await delivered(original.oppId, "plan_probe")).map(call => call.to).sort()).toEqual([people[1].e164, people[2].e164, people[4].e164]);
       return;
     }
     const probed = people.filter((_, index) => invited.includes(ids[index]!));

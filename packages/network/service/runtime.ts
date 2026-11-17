@@ -46,7 +46,7 @@ import {
 } from "../../core/src/generated/sharedContext.ts";
 import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
-import { probeReplyReceiptKey } from "../src/network.ts";
+import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
 import { hireSeatCurrent, readHireEvidence } from "../src/peon-hire-dispatch.ts";
 import { lockPeerOpportunityContact } from "./peer-opportunity-admission.ts";
@@ -843,47 +843,71 @@ export class NetworkRuntime {
     };
   }
 
-  /** Resolve exact questions before processing a plan, Slop or Hire reply. Older state can use a unique row at its probe time. */
-  private async refreshProbeReplyReceipts(state: NetworkState | undefined) {
-    if (!state) return;
-    const open = new Map(state.opps.filter(opp => (opp.plan && !opp.replacementFor && (opp.stage === "probing" || opp.stage === "scheduled"))
-      || (opp.stage === "probing" && ((this.app.id === "slop" && opp.category === "romance") || (this.app.id === "peon" && !!opp.seat)))).map(opp => [opp.id, opp]));
-    if (!open.size) return;
+  /** Resolve each plan invitation and exact Slop or Hire reply from its provider record. */
+  private async refreshProbeReplyReceipts(state: NetworkState | undefined): Promise<Set<string>> {
+    const exactPlanIds = new Set<string>();
+    if (!state) return exactPlanIds;
+    const open = new Map(state.opps.filter(opp => !opp.plan && opp.stage === "probing"
+      && ((this.app.id === "slop" && opp.category === "romance") || (this.app.id === "peon" && !!opp.seat))).map(opp => [opp.id, opp]));
     const pending = state.members.flatMap(member => {
       const slot = member.awaiting;
       const opp = slot?.kind === "probe" && slot.oppId ? open.get(slot.oppId) : undefined;
       if (!slot || !opp) return [];
-      const matches = opp.plan ? opp.planRun?.answers[member.id] === "pending"
-        : opp.status.some(([id, status]) => id === member.id && status === "probing");
-      if (!matches) return [];
+      if (!opp.status.some(([id, status]) => id === member.id && status === "probing")) return [];
       const formerInvite = opp.timeRetry?.includes(member.id) ? undefined
         : member.pendingAsks.find(invite => invite.kind === "probe" && invite.opportunityId === opp.id);
       return [{ key: probeReplyReceiptKey(opp.id, member.id, slot), id: slot.probeReceiptId ?? formerInvite?.deliveryId ?? null,
-        member_id: member.id, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: !!opp.plan }];
+        member_id: member.id, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: false }];
     });
-    if (!pending.length) return;
+    const members = new Map(state.members.map(member => [member.id, member]));
+    for (const opp of state.opps) {
+      if (!opp.plan || !opp.planRun || (opp.stage !== "probing" && opp.stage !== "scheduled")) continue;
+      for (const memberId of opp.participants) {
+        const member = members.get(memberId);
+        const question = member?.awaiting;
+        const sentAt = opp.sentAt?.[memberId] ?? (question?.kind === "probe" && question.oppId === opp.id ? question.at : undefined);
+        if (opp.planRun.answers[memberId] !== "pending" || sentAt === undefined) continue;
+        const slot = planProbeReceiptSlot(opp.id, sentAt, member);
+        const replacement = opp.replacementFor ? replacementProbeKey(opp.id, memberId) : undefined;
+        const id = replacement ?? slot.probeReceiptId ?? null;
+        if (id) exactPlanIds.add(id);
+        pending.push({ key: replacement ?? probeReplyReceiptKey(opp.id, memberId, slot), id,
+          member_id: memberId, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: true });
+      }
+    }
+    if (!pending.length) return exactPlanIds;
     const rows = await this.scoped(tx => tx<{
-      key: string; matched: number; status: string; outbound_member_id: string | null; sent_at: Date | null; ts: Date;
-    }[]>`select probe.key,count(*) over (partition by probe.key)::int as matched,
-        coalesce(o.status,m.status) as status,o.member_id as outbound_member_id,o.sent_at,m.ts
+      key: string; id: string; plan: boolean; matched: number; status: string; outbound_member_id: string | null;
+      sent_at: Date | null; ended_at: Date | null; provider_message_id: string | null; in_doubt: boolean | null; ts: Date;
+    }[]>`select probe.key,probe.plan,m.id,count(*) over (partition by probe.key)::int as matched,
+        coalesce(o.status,m.status) as status,o.member_id as outbound_member_id,o.sent_at,o.ended_at,o.provider_message_id,o.in_doubt,m.ts
       from jsonb_to_recordset(${pending}::jsonb) as probe(key text,id text,member_id text,opportunity_id text,opened_at timestamptz,plan boolean)
       join network.messages m on m.app_id=${this.app.id} and m.member_id=probe.member_id and m.opportunity_id=probe.opportunity_id
         and m.direction='outbound' and (case when probe.plan then m.type='plan_probe' else m.type in ('probe','scheduling') end)
         and (m.id=probe.id or (probe.id is null and m.ts=probe.opened_at))
-      left join platform.outbound o on o.app_id=m.app_id and o.id=m.id and o.member_id=m.member_id`);
+      left join platform.outbound o on o.app_id=m.app_id and o.id=m.id and o.member_id=m.member_id
+        and (not probe.plan or (o.opportunity_id=m.opportunity_id and o.kind='proactive'))`);
     for (const row of rows) {
+      if (row.plan) exactPlanIds.add(row.id);
       if (row.matched !== 1) continue;
       const acceptedAt = row.outbound_member_id && /^(accepted|sent|delivered|read)$/.test(row.status) ? row.sent_at
         : this.adapter.name === "dry_run" && row.status === "dry_run" ? row.ts : undefined;
-      if (acceptedAt) this.initialInviteReceipts.set(row.key, { kind: "accepted", at: acceptedAt.getTime() });
+      const receipt: InitialInviteReceipt | undefined = acceptedAt ? { kind: "accepted", at: acceptedAt.getTime() }
+        : row.plan && row.outbound_member_id && row.ended_at && row.sent_at === null && row.provider_message_id === null
+          && row.in_doubt === false && row.status !== "failed_unknown" && row.status !== "parked_leak_review" && NOT_SENT.test(row.status)
+          ? { kind: "not_sent" } : undefined;
+      if (!receipt) continue;
+      this.initialInviteReceipts.set(row.key, receipt);
+      // The attention ledger may be tracking the same invitation by its raw message ID.
+      if (row.plan) this.initialInviteReceipts.set(row.id, receipt);
     }
+    return exactPlanIds;
   }
 
   /** Read receipts for exact committed sends whose acceptance is still unresolved in Network state. */
   private async refreshInitialInviteReceipts(state: NetworkState | undefined) {
     this.initialInviteReceipts.clear();
-    await this.refreshProbeReplyReceipts(state);
-    const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
+    const exactPlanIds = await this.refreshProbeReplyReceipts(state);
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
@@ -923,7 +947,8 @@ export class NetworkRuntime {
     }
     const gatheringIds: string[] = [];
     const ids = (state?.members ?? []).flatMap(member => {
-      const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []);
+      const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined
+        && !exactPlanIds.has(invite.deliveryId) ? [invite.deliveryId] : []);
       const awaiting = member.awaiting;
       if (awaiting?.kind === "booked" && awaiting.oppId && awaiting.bookedCheckIn) {
         const key = bookedReminderKey("day-of-checkin", awaiting.oppId, member.id, awaiting.bookedCheckIn.revision);
@@ -933,8 +958,6 @@ export class NetworkRuntime {
         const key = awaiting.crewOfferReceiptId;
         exactReplies.set(key, { key, memberId: member.id, oppId: null, type: "crew_offer" });
       }
-      // An unrelated inbound clears the unanswered ledger, but the exact open replacement question can still be answered.
-      if (awaiting?.kind === "probe" && awaiting.oppId && replacements.has(awaiting.oppId)) pending.push(replacementProbeKey(awaiting.oppId, member.id));
       const repeat = awaiting?.kind === "probe" && awaiting.oppId ? gathering.get(awaiting.oppId) : undefined;
       if (repeat) gatheringIds.push(gatheringRepeatProbeKey(repeat.id, member.id, !!repeat.timeRetry?.includes(member.id)));
       const survey = member.interruptionSurvey;
