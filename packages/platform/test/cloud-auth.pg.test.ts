@@ -55,10 +55,10 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       {NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:59999"},
     ]) expect(() => createPublicApi({...options, env: {...options.env, ...change}})).toThrow();
     // The real dev router signs the canonical domain while the browser Origin stays loopback.
-    const call = async (app: AppId, method: string, path: string, body?: unknown, cookie?: string) => routerHandle(new Request(`http://${HOST[app]}${path}`, {
+    const call = async (app: AppId, method: string, path: string, body?: unknown, cookie?: string, boundary = api) => routerHandle(new Request(`http://${HOST[app]}${path}`, {
       method, headers: {origin: app === "slop" ? "http://127.0.0.1:5102" : `http://${HOST[app]}`, ...(body ? {"content-type": "application/json"} : {}), ...(cookie ? {cookie} : {})}, ...(body ? {body: JSON.stringify(body)} : {}),
     }), {ASSETS: {fetch: async () => new Response(null, {status: 404})}, BACKEND_ORIGIN: "http://127.0.0.1:8790", APP_ID: app, SITE_HOST: APPS[app].domain, PLATFORM_PROXY_SECRET: proxySecret},
-    (async (url, init) => (await api.fetch(new Request(String(url), init)))!) as typeof fetch, () => now);
+    (async (url, init) => (await boundary.fetch(new Request(String(url), init)))!) as typeof fetch, () => now);
     expect(await (await call("friends", "GET", "/api/auth/mode")).json()).toEqual({mode: "otp"});
     expect((await call("friends", "POST", "/api/auth/otp/start", {phone})).status).toBe(200);
     expect(await (await call("slop", "GET", "/api/auth/mode")).json()).toEqual({mode: "cloud"});
@@ -161,6 +161,16 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     expect(freshLogin.headers.get("location")).toBe("/join");
     let freshCookie = freshLogin.headers.getSetCookie().filter(value => !value.startsWith("cloud_pending_")).map(value => value.split(";")[0]).join("; ");
     expect((await call("slop", "GET", "/api/me", undefined, freshCookie)).status).toBe(200);
+    // spec/cloudAuthority.md, "Only a positive live Cloud response updates the cache"
+    const cachedApi = createPublicApi({ ...options, cloudValidationTtlMs: 60_000 });
+    const validateFresh = () => call("slop", "GET", "/api/me", undefined, freshCookie, cachedApi);
+    const checksBefore = validations;
+    expect((await validateFresh()).status).toBe(200);
+    expect((await validateFresh()).status).toBe(200);
+    expect(validations).toBe(checksBefore + 1);
+    now += 60_000;
+    expect((await validateFresh()).status).toBe(200);
+    expect(validations).toBe(checksBefore + 2);
     // The source proof is checked against the original cookie, then rotated and resealed together.
     now += 25*3_600_000;
     const rotated = await call("slop", "GET", "/api/me", undefined, freshCookie);

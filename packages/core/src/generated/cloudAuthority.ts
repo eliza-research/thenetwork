@@ -7,6 +7,8 @@ export type CheckPhase = "AwaitingProof" | "AwaitingDelegation" | "AwaitingGrant
 export interface AuthorityCheck { phase: CheckPhase; fromCache: boolean }
 /** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 export type CloudResponse = "CloudAccepted" | "CloudDenied" | "CloudUnavailable";
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
+export type CloudCachePublication = "PublishCloudValidation" | "ClearCloudValidation" | "KeepCloudValidation";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -102,6 +104,33 @@ export function sometimesAcceptsAuthority(check: AuthorityCheck): boolean {
 //@ pure
 export function sometimesCloudIsUnavailable(check: AuthorityCheck): boolean {
   return check.phase === "AuthorityUnavailable";
+}
+
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
+//@ pure
+export function cloudCachePublication(productionCloud: boolean, validationAccepted: boolean, roundCurrent: boolean): CloudCachePublication {
+  return productionCloud ? "KeepCloudValidation" : (!validationAccepted ? "ClearCloudValidation" : (roundCurrent ? "PublishCloudValidation" : "KeepCloudValidation"));
+}
+
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
+//@ pure
+export function lawInvalidatedCloudRoundCannotPublish(productionCloud: boolean, validationAccepted: boolean): boolean {
+  //@ ensures \result === true
+  return cloudCachePublication(productionCloud, validationAccepted, false) !== "PublishCloudValidation";
+}
+
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
+//@ pure
+export function lawCurrentStagingCloudRoundCanPublish(roundCurrent: boolean): boolean {
+  //@ ensures \result === true
+  return (cloudCachePublication(false, true, roundCurrent) === "PublishCloudValidation") === roundCurrent;
+}
+
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
+//@ pure
+export function lawProductionLeavesCloudCacheUnchanged(validationAccepted: boolean, roundCurrent: boolean): boolean {
+  //@ ensures \result === true
+  return cloudCachePublication(true, validationAccepted, roundCurrent) === "KeepCloudValidation";
 }
 
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */

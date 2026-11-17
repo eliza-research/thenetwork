@@ -8,7 +8,7 @@ An Eliza Cloud member needs to authorize their own access to The Network.
 
 Check grant ownership and expiry, ban checks, auth mode, and validation cache behavior. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback permits up to 30 seconds of future issue time. The production delegation parser checks the issue time before the callback rule runs. It requires an issue time no later than the local clock, as do grant and profile proof checks. This standalone model also covers app configuration, concurrent requests, and storage-level interactions.
+The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback permits up to 30 seconds of future issue time. The production delegation parser checks the issue time before the callback rule runs. It requires an issue time no later than the local clock, as do grant and profile proof checks. This standalone model compares a request's start with the latest cache invalidation to represent the runtime's in-flight validation rounds. It also covers app configuration and storage-level interactions.
 
 Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -128,9 +128,9 @@ module cloud_auth {
   type Flight = {
     reqs: int -> Req,
     nextReq: int,
-    seq: int,                  // event counter: Cloud answers and delivered denials
+    seq: int,                  // event counter for Cloud answers and cache invalidations
     deniedAns: int -> int,     // ghost, per session: the event number of the newest Cloud denial a request delivered
-    deniedAt: int -> int,      // per session: the event number at which that denial was delivered (the fix reads it)
+    invalidatedAt: int -> int, // per session: the event number of the latest cache invalidation
   }
   type ProofClockCheck = { kind: str, offset: int, accepted: bool }
   type Ghost = {
@@ -212,7 +212,7 @@ module cloud_auth {
     },
     sess' = { rows: Map(), nextSid: 1 },
     cache' = Map(),
-    flight' = { reqs: Map(), nextReq: 1, seq: 0, deniedAns: Map(), deniedAt: Map() },
+    flight' = { reqs: Map(), nextReq: 1, seq: 0, deniedAns: Map(), invalidatedAt: Map() },
     ghost' = {
       cloudLogins: 0, staleLogin: false, freshAccepts: 0, cacheAccepts: 0, prodCacheAccept: false,
       revokedCacheAccept: false, wrongModeAccept: false, wrongModeLogin: false, foreignAct: false,
@@ -241,7 +241,7 @@ module cloud_auth {
     cfg' = cfgNamed(n),
     world' = world, sess' = sess,
     cache' = Map(),
-    flight' = { ...flight, reqs: Map() },
+    flight' = { ...flight, reqs: Map(), invalidatedAt: Map() },
     ghost' = ghost,
   }
 
@@ -289,7 +289,7 @@ module cloud_auth {
                         .put(sid, { app: a, phone: p, human: h, person: world.person.get(p), proof: pid, kind: "cloud",
                                     created: now, expires: imin(now + SESSION_TTL, now + PROOF_LIFE), revoked: false }),
                 nextSid: sid + 1 },
-      cache' = cache.put(sid, { until: now + VALIDATION_TTL, answered: flight.seq + 1 }),
+      cache' = if (cfg.prod) cache else cache.put(sid, { until: now + VALIDATION_TTL, answered: flight.seq + 1 }),
       flight' = { ...flight, seq: flight.seq + 1 },
       ghost' = { ...ghost, cloudLogins: ghost.cloudLogins + 1,
                  staleLogin: ghost.staleLogin or world.holder.get(p) != h,
@@ -325,7 +325,8 @@ module cloud_auth {
       if (invalidNow) all {
         sess' = if (path == "auth") { ...sess, rows: sess.rows.set(sid, { ...s, revoked: true }) } else sess,
         cache' = if (badIdentity) cache.keys().filter(k => k != sid).mapBy(k => cache.get(k)) else cache,
-        flight' = flight,
+        flight' = if (badIdentity and not(cfg.prod)) { ...flight, seq: flight.seq + 1,
+                    invalidatedAt: flight.invalidatedAt.put(sid, flight.seq + 1) } else flight,
         world' = world,
         ghost' = { ...ghost, otpRefusedOnCloud: ghost.otpRefusedOnCloud or (cloudApp and s.kind == "otp") },
       } else if (noCloudValid or cacheHit) all {
@@ -370,41 +371,41 @@ module cloud_auth {
     }
   }
 
-  // api.ts:278-283: the end of cloudSessionStatus, then the caller. An expired proof is "invalid" (278).
-  // "valid" writes the cache entry (281); anything else deletes it (282). Then:
+  // The end of cloudSessionStatus, then the caller. An expired proof is "invalid".
+  // A positive result may publish only in the non-production cache and only if its round is current.
+  // Denial, expiry or unavailability clears the positive cache and invalidates its in-flight round. Then:
   //  auth():                   "invalid" revokes the row (320), "unavailable" answers 503 (319, 706),
   //                            "valid" runs sessions.authenticate (321).
   //  authenticatedSiteSession: "invalid" answers undefined and does NOT revoke the row (665).
   //  cloudGrantAuthority:      "valid" and a live row give the grant authority (675-679).
-  // `genFix` is the proposed fix of W3-671 (a generation counter): a positive answer is stored only when
-  // no denial for the session was delivered after this request began. The code today is genFix = false.
-  action reqEndWith(rid: int, genFix: bool): bool = {
+  action reqEnd(rid: int): bool = {
     val r = flight.reqs.get(rid)
     val s = sess.rows.get(r.sess)
     val status = if (proofExpired(world, s.proof, now)) "invalid" else r.answer
-    val store = status == "valid" and (not(genFix) or lookup(flight.deniedAt, r.sess, NONE) < r.startSeq)
+    val currentRound = lookup(flight.invalidatedAt, r.sess, NONE) <= r.startSeq
+    val store = not(cfg.prod) and status == "valid" and currentRound
+    val clear = not(cfg.prod) and status != "valid"
     val cloudDenial = r.answer == "invalid"
+    val newerDenial = cloudDenial and r.answerSeq > lookup(flight.deniedAns, r.sess, NONE)
     val accept = status == "valid" and rowLive(s, now)
     all {
       flight.reqs.keys().contains(rid),
       r.grant == NONE,
       r.answer != "",
       cache' = if (store) cache.put(r.sess, { until: now + VALIDATION_TTL, answered: r.answerSeq })
-               else if (status == "valid") cache
-               else cache.keys().filter(k => k != r.sess).mapBy(k => cache.get(k)),
+               else if (clear) cache.keys().filter(k => k != r.sess).mapBy(k => cache.get(k))
+               else cache,
       flight' = { ...flight,
                   reqs: flight.reqs.keys().filter(k => k != rid).mapBy(k => flight.reqs.get(k)),
-                  seq: if (cloudDenial) flight.seq + 1 else flight.seq,
-                  deniedAns: if (cloudDenial) flight.deniedAns.put(r.sess, r.answerSeq) else flight.deniedAns,
-                  deniedAt: if (cloudDenial) flight.deniedAt.put(r.sess, flight.seq + 1) else flight.deniedAt },
+                  seq: if (clear) flight.seq + 1 else flight.seq,
+                  deniedAns: if (newerDenial) flight.deniedAns.put(r.sess, r.answerSeq) else flight.deniedAns,
+                  invalidatedAt: if (clear) flight.invalidatedAt.put(r.sess, flight.seq + 1) else flight.invalidatedAt },
       sess' = if (status == "invalid" and r.path == "auth") { ...sess, rows: sess.rows.set(r.sess, { ...s, revoked: true }) } else sess,
       world' = if (accept and r.path == "grant") grantFrom(world, s) else world,
       ghost' = if (accept) acceptGhost(ghost, s, false) else ghost,
       now' = now, cfg' = cfg,
     }
   }
-
-  action reqEnd(rid: int): bool = reqEndWith(rid, false)
 
   // ------------------------------------------------------------------ Cloud MCP grants (validateCloudGrant)
 
@@ -553,17 +554,13 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ invariants
 
-  // W3-671 / W3-373. api.ts:264-265: "A positive Cloud validation is reused for 60 seconds per session
-  // ... A denial is never cached." So a live cache entry never comes from a Cloud answer that is older
-  // than a Cloud denial for the same session that a request already delivered. VIOLATED by the code
-  // (staging-local and dev only): a late positive answer overwrites the denial (Q trace in
-  // quint-findings/cloud_auth.md, run test w3_671LateValidTest).
+  // A cache invalidation ends the current validation round. A live cache entry cannot come from a
+  // Cloud answer older than a denial that the same session already received.
   val denialNeverCached = cache.keys().forall(k =>
     cache.get(k).until <= now or cache.get(k).answered > lookup(flight.deniedAns, k, NONE))
 
-  // api.ts:275 and auth_edge `unavailableNoAccess`: in a production Cloud mode every request asks Cloud;
-  // no request is accepted from the cache.
-  val prodNoCacheAccept = not(ghost.prodCacheAccept)
+  // In production every request asks Cloud and leaves the cache empty.
+  val prodNoCacheAccept = not(ghost.prodCacheAccept) and (cfg.prod implies cache.keys().size() == 0)
 
   // W3-125. api.ts:193 cloudFor, 270, 273, 465, 483, 405, 414: each app has one auth mode at a time. A
   // login path runs only on an app of its mode, and a session is accepted only on an app of its mode
@@ -612,8 +609,7 @@ module cloud_auth {
   val witness_freshAccept = ghost.freshAccepts == 0
   // Outside production a request is accepted from the cache.
   val witness_cacheAccept = ghost.cacheAccepts == 0
-  // By design (api.ts:264): a revocation that no request has seen yet is accepted from the cache for up
-  // to VALIDATION_TTL. This is not the W3-671 defect (no denial was delivered).
+  // Outside production a cached validation lasts up to VALIDATION_TTL before its next authority check.
   val witness_revokedWithinTtl = not(ghost.revokedCacheAccept)
   val witness_grantValid = ghost.grantsValid == 0
   val witness_lateBanGrantValid = not(ghost.lateBanGrantValid)
@@ -634,42 +630,24 @@ module cloud_auth {
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 1 and ghost.cloudLogins == 1 and safety)
 
-  // W3-671 (code, staging-local or dev): request A's validate() is in flight; Cloud revokes the
-  // delegation; request B (authenticatedSiteSession: the MCP authorize page) gets "invalid" and deletes
-  // the cache entry, but does not revoke the row (api.ts:665); A's late "valid" writes the entry again
-  // (api.ts:281). Request C is then accepted from the cache with no Cloud call, after a denial.
-  run w3_671LateValidTest =
-    initWith("staging-local")
-      .then(cloudLogin("alice", "slop"))
-      .then(tick(61))
-      .then(reqBegin(1, "auth"))                 // A, rid 1
-      .then(cloudAnswer(1, true))                // Cloud says valid for A
-      .then(cloudRevoke(1))                      // Cloud revokes the delegation
-      .then(reqBegin(1, "site"))                 // B, rid 2
-      .then(cloudAnswer(2, true))                // Cloud denies B
-      .then(reqEnd(2))                           // B deletes the entry; the row stays live
-      .expect(not(cache.keys().contains(1)) and denialNeverCached)
-      .then(reqEnd(1))                           // A's late valid writes the entry
-      .expect(cache.keys().contains(1) and not(denialNeverCached))
-      .then(reqBegin(1, "auth"))                 // C: accepted from the cache
-      .expect(ghost.cacheAccepts == 1 and ghost.revokedCacheAccept and not(denialNeverCached))
-
-  // The proposed fix (generation counter): A's answer is not stored, because a denial arrived after A
-  // began. C then asks Cloud again.
-  run w3_671FixTest =
+  // An unavailable validation ends the current cache round. A later round can refresh normally.
+  run stagingCacheRoundOrderingTest =
     initWith("staging-local")
       .then(cloudLogin("alice", "slop"))
       .then(tick(61))
       .then(reqBegin(1, "auth"))
       .then(cloudAnswer(1, true))
-      .then(cloudRevoke(1))
       .then(reqBegin(1, "site"))
-      .then(cloudAnswer(2, true))
-      .then(reqEndWith(2, true))
-      .then(reqEndWith(1, true))
-      .expect(not(cache.keys().contains(1)) and denialNeverCached)
+      .then(cloudAnswer(2, false))
+      .then(reqEnd(2))
+      .then(reqEnd(1))
+      .expect(not(cache.keys().contains(1)) and safety)
       .then(reqBegin(1, "auth"))
-      .expect(ghost.cacheAccepts == 0 and flight.reqs.keys() == Set(3) and denialNeverCached)
+      .expect(ghost.cacheAccepts == 0 and flight.reqs.keys() == Set(3) and safety)
+      .then(cloudAnswer(3, true))
+      .then(reqEnd(3))
+      .then(reqBegin(1, "auth"))
+      .expect(ghost.cacheAccepts == 1 and flight.reqs.keys().size() == 0 and safety)
 
   // Production has no such window: the same trace accepts nothing from the cache (api.ts:275).
   run w3_671ProductionTest =
