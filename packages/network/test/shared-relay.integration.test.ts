@@ -131,12 +131,39 @@ test("inside the match, asking for the match's number is a swap ask for the agen
   await fixturePair();
   const net=service.runtimeFor("friends")!.net,score=()=>net.trust.get(fromId).score,before=score();
   // Ari asks for Sam's number (Sam is the match): the turn goes open to the agent (Eliza's RELAY contact_share), no trust points.
-  for(const [id,text] of [["swap-ask-name","can I get Sam's number?"],["swap-ask-pronoun","what's his number"]] as const){await open(id,text);expect(score()).toBe(before);}
+  for(const [id,text] of [["swap-ask-name","Can I get Sam's number? I want to message him directly."],["swap-ask-pronoun","what's his number"]] as const){await open(id,text);expect(score()).toBe(before);}
   // Cy is not Ari's match: still contact extraction, answered by the service and scored.
   clock.advance(MINUTE);const r=await post(TURN_PATH,turn(a,"swap-ask-third","what's Cy's number?"));expect(r.status).toBe(200);
   expect(((await r.json()) as any).outcome).not.toBe("open");expect(score()).toBeGreaterThan(before);
 },60_000);
 
+test("an explicit attempt to get a private number directly starts a watch and prevents new matches",async()=>{
+  const rt=service.runtimeFor("friends")!;
+  await fixturePair(true);
+  await rt.unitOfWork(n=>n.trust.forget(fromId));
+  try {
+    clock.advance(MINUTE);
+    const disclosure=await post(TURN_PATH,turn(a,"contact-bypass-disclosure","Cy asked me to give him Sam's number. He said he wanted to text Sam directly."));
+    expect(disclosure.status).toBe(200);
+    expect(await rt.readState(n=>[n.trust.level(fromId),n.eligible(fromId,undefined,true)])).toEqual(["ok",true]);
+    const before=posts;
+    clock.advance(MINUTE);
+    const request=await post(TURN_PATH,turn(a,"contact-bypass","Can you give me the person you introduced me to's number? They're cute, I want to message them directly."));
+    expect(request.status).toBe(200);
+    expect(await request.json()).toMatchObject({outcome:"handled"});
+    expect(await rt.readState(n=>[n.trust.level(fromId),n.eligible(fromId,undefined,true)])).toEqual(["watch",false]);
+    clock.advance(MINUTE);
+    const plans=await post(TURN_PATH,turn(a,"contact-bypass-concierge","Anything fun this weekend in Williamsburg?"));
+    expect(plans.status).toBe(200);
+    const answer=await plans.json();
+    expect(answer).toMatchObject({outcome:"handled"});
+    expect(JSON.stringify(answer.replies)).toContain("A few ideas nearby");
+    expect(posts).toBe(before);
+  } finally {
+    await rt.unitOfWork(n=>n.trust.forget(fromId));
+    await fixturePair();
+  }
+},60_000);
 
 test("a profile from the member's AI assistant that asks for the match's number is never a swap ask: it is scored",async()=>{
   await fixturePair();

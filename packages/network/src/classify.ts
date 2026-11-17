@@ -11,6 +11,7 @@ import { parseReply, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
+import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
 
@@ -93,6 +94,13 @@ const RX = {
  */
 const DISCLOSURE = /\b(he|she|they|someone|somebody|this (guy|girl|person|dude|man|woman)|[a-z]+) (asked|asks|wanted|wants|told|tells|keeps? asking|kept asking|tried|said|says|is asking|was asking|messaged|texted|dm'?d|demanded|threatened)\b/i;
 const NOT_A_PERSON = /^(i|we|you|it|that|this|which|what|who|mom|dad|the|a|an)$/i;
+const ASK_FOR_NUMBER = /^\s*(?:please\s+)?(?:(?:(?:can|could|would) you\s+)?(?:give|send|pass|get) me|can i (?:get|have))\s+[^.!?]{1,100}\b(?:number|phone|cell)\b/i;
+const INTENT_TO_CONTACT_DIRECTLY = /(?:^|,|\bso\b)\s*(?:i (?:want to|need to|would like to|can|could)|i'd like to) (?:call|text|message|dm|contact) (?:him|her|them) (?:directly|off[- ]platform)\b/i;
+
+function describesAnotherPerson(text: string): boolean {
+  const speaker = DISCLOSURE.exec(text)?.[1];
+  return !!speaker && !NOT_A_PERSON.test(speaker);
+}
 
 /** Teachers, coaches and parents talk about school; that is not a sign the sender is a minor (network-consent-10). */
 const ADULT_SCHOOL_CTX = /\b(teach|teacher|teaching|coach|coaching|tutor|tutoring|professor|my (kid|kids|son|daughter|students?|class|child|children)|our (kids|students)|i work (at|in) a (high |middle )?school|went to (high|middle) school|in high school i|back in (high|middle) school|my high school (days|years|friends))\b/;
@@ -126,7 +134,7 @@ export function classify(body: string): Classified {
   const sents = sentencesOf(t);
   const hit = (rx: RegExp, kind: Abuse, points: number) => {
     let own = false, told = false;
-    for (const s of sents) if (rx.test(s.text)) { if (DISCLOSURE.test(s.text) && !NOT_A_PERSON.test(DISCLOSURE.exec(s.text)![1]!)) told = true; else own = true; }
+    for (const s of sents) if (rx.test(s.text)) { if (describesAnotherPerson(s.text)) told = true; else own = true; }
     if (own) { abuse.push(kind); risk += points; } else if (told) disclosed.push(kind);
   };
   const link = RX.link.test(t);
@@ -134,7 +142,10 @@ export function classify(body: string): Classified {
   hit(RX.blast, "mass_recruit", 3);
   // Money asked for the sender ("send me $100") is the sender's own ask even inside a story about someone else.
   if (RX.scamToMe.test(t)) { abuse.push("scam_money"); risk += 6; } else hit(RX.scam, "scam_money", 6);
-  hit(RX.extraction, "contact_extraction", 2);
+  // spec/trustLevel.md, "An explicit attempt to bypass contact consent triggers watch"
+  const explicitContactBypass = sents.some(({ text }) => ASK_FOR_NUMBER.test(text) && RX.extraction.test(text) && !describesAnotherPerson(text))
+    && sents.some(({ text }) => INTENT_TO_CONTACT_DIRECTLY.test(text) && !describesAnotherPerson(text));
+  hit(RX.extraction, "contact_extraction", contactExtractionRisk(explicitContactBypass));
   if (RX.injection.test(t)) { abuse.push("prompt_injection"); risk += 3; }
   hit(RX.harassment, "harassment", 3);
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);

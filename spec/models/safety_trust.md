@@ -723,6 +723,7 @@ module safety_trust {
   }
 
   // The member's own abusive message (handleAbuse): a clean record takes at most HOLD - 1 points.
+  // The classifier assigns WATCH points to an explicit attempt to bypass contact consent (trustLevel.md).
   action abuse(m: Mid, risk: int): bool = {
     val s0 = sync(s, m)
     val clean = s0.trust.get(m).score <= 0
@@ -1458,6 +1459,13 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "peon", "ben", "report", "harassment", false).fail())
+
+  run explicitContactBypassTest =
+    init
+      .expect(matchable(s, BEN_S))
+      .then(abuse(BEN_S, WATCH))
+      .expect(lvl(s, BEN_S) == "watch" and not(matchable(s, BEN_S)))
+      .then(bookDate("o1", "slop", "ana", "ben").fail())
 
   // SD-141 (fixed): score 1 on day 0, +2 on day 13 (watch); the watch lasts 14 days, to day 27.
   run sd141WatchLastsTest =

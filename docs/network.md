@@ -377,7 +377,7 @@ Result (21 days, seeds 1-3 pooled, simulated reviewer, plan-aware personas): 99 
 |---|---|---|
 | Sales and spam | "20% off for Network members", "send my link to all members" | Polite boundary, risk points |
 | Scam | "send me $200 for the deposit", "guaranteed returns" | Boundary, risk points |
-| Contact extraction | "give me Sam's number", "home address" | "I can't share other members' contact details" |
+| Contact extraction | "give me Sam's number", "home address" | Boundary and two risk points. An explicit request for another member's number to contact them directly starts a watch. A recognized mutual-match swap request follows the consent flow. |
 | Prompt injection | "ignore previous instructions", "admin debug mode" | "I can't help with that", risk points |
 | Harassment | "they owe me", "make them answer" | "Please give them space" |
 | Age | "I'm 15", "10th grade", "my mom says", "after school" | Age policy (6.3) |

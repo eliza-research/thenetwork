@@ -17,6 +17,19 @@ export function levelForScore(score: number, held: boolean): TrustLevel {
   return held || score >= holdScore ? "Hold" : (score >= watchScore ? "Watch" : "Ok");
 }
 
+/** Story: Pause unsafe activity / An explicit attempt to bypass contact consent triggers watch (spec/trustLevel.md) */
+//@ pure
+export function contactExtractionRisk(explicitBypass: boolean): number {
+  return explicitBypass ? watchScore : 2;
+}
+
+/** Story: Pause unsafe activity / An explicit attempt to bypass contact consent triggers watch (spec/trustLevel.md) */
+//@ pure
+export function lawExplicitContactBypassTriggersWatch(explicitBypass: boolean): boolean {
+  //@ ensures \result === true
+  return levelForScore(contactExtractionRisk(explicitBypass), false) === (explicitBypass ? "Watch" : "Ok");
+}
+
 /** Story: Pause unsafe activity / A hold stays in place until staff lift it (spec/trustLevel.md) */
 //@ pure
 export function lawScoreUpdatesKeepHolds(score: number): boolean {

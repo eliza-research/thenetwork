@@ -20,6 +20,18 @@ pure def levelForScore(score: int, held: bool): TrustLevel =
   if (held or score >= holdScore) Hold else if (score >= watchScore) Watch else Ok
 ```
 
+### An explicit attempt to bypass contact consent triggers watch
+
+The classifier distinguishes a request for another member’s private phone number with an explicit intention to contact them directly. One such attempt reaches watch on a clean record. An ordinary extraction signal adds two points. A recognized request to start a consented swap within a mutual match follows the relay path without adding trust points. A report that quotes someone else’s behavior does not add points to the reporter.
+
+```quint
+pure def contactExtractionRisk(explicitBypass: bool): int =
+  if (explicitBypass) watchScore else 2
+
+pure def lawExplicitContactBypassTriggersWatch(explicitBypass: bool): bool =
+  levelForScore(contactExtractionRisk(explicitBypass), false) == (if (explicitBypass) Watch else Ok)
+```
+
 ### A hold stays in place until staff lift it
 
 Score updates and decay cannot release a hold. Staff release a hold through the separate review path.
