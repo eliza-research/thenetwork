@@ -119,6 +119,8 @@ export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string;
 
 export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
 
+export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
+
 export interface OAuthStore {
   /** One draft per grant; no overwrite/replay. Grant liveness and scope checked atomically. */
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
@@ -145,6 +147,8 @@ export interface OAuthStore {
   getGrant(id: string): Promise<Grant | undefined>;
   /** The live grants of a phone in one app (the person's consent page). */
   grantsFor(phoneKey: string, app: McpAppId, at: number): Promise<Grant[]>;
+  /** Read the person's live grants and publish one assistant signal while holding the same projection lock. */
+  projectAssistantGrants(personId: string, now: () => number, publish: (candidates: AssistantGrantCandidate[]) => Promise<void>): Promise<void>;
   /** Revoke the grant and every token of it. False if it was not live. */
   revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval): Promise<boolean>;
 
@@ -190,6 +194,7 @@ const copy = <T extends object>(v: T | undefined): T | undefined => (v ? structu
 export class MemoryOAuthStore implements OAuthStore {
   readonly signupDrafts = new Map<string, SignupDraft>();
   private readonly profileSubmissions = new Map<string, Map<string, boolean>>();
+  private readonly assistantProjections = new Map<string, Promise<void>>();
   readonly clients = new Map<string, OAuthClient>();
   readonly requests = new Map<string, AuthRequest>();
   readonly grants = new Map<string, Grant>();
@@ -278,6 +283,23 @@ export class MemoryOAuthStore implements OAuthStore {
   async getGrant(id: string) { return copy(this.grants.get(id)); }
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return [...this.grants.values()].filter(g => g.phoneKey === phoneKey && g.app === app && g.revokedAt === null && g.expiresAt > at).map(g => structuredClone(g));
+  }
+  async projectAssistantGrants(personId: string, now: () => number, publish: (candidates: AssistantGrantCandidate[]) => Promise<void>) {
+    const project = (this.assistantProjections.get(personId) ?? Promise.resolve()).then(async () => {
+      const at = now();
+      const candidates: AssistantGrantCandidate[] = [];
+      for (const grant of this.grants.values()) {
+        if (grant.personId !== personId || grant.revokedAt !== null || grant.expiresAt <= at) continue;
+        const client = this.clients.get(grant.clientId);
+        if (client) candidates.push({ grant: structuredClone(grant), client: structuredClone(client) });
+      }
+      await publish(candidates);
+    });
+    const settled = project.catch(() => {});
+    this.assistantProjections.set(personId, settled);
+    try { await project; } finally {
+      if (this.assistantProjections.get(personId) === settled) this.assistantProjections.delete(personId);
+    }
   }
   async revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {
     const g = this.grants.get(id);

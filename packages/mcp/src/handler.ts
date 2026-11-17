@@ -28,6 +28,7 @@ import {
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import { browserOwnsLiveGrant, removalFormMayRevoke, removeConfirmationMs, type RemoveReply } from "../../core/src/generated/connectedAssistants.ts";
 import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
+import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
@@ -242,20 +243,45 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
   const log = o.log ?? (s => console.log(s));
-  /** Tell the inbox an assistant was connected or disconnected for the grant's person (never blocks OAuth). */
-  async function linked(grant: Grant | undefined, active: boolean) {
-    if (!grant?.personId || !o.platform.assistantLinked) return;
+  /** Recompute the affected assistant from all of the person's grants after an OAuth change. */
+  async function reconcileAssistantSignal(grant: Grant | undefined) {
+    const personId = grant?.personId;
+    const publish = o.platform.assistantLinked?.bind(o.platform);
+    if (!grant || !personId || !publish) return;
     try {
       const client = await store.getClient(grant.clientId);
-      await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active);
+      if (!client) return;
+      const assistant = assistantOf(client);
+      // spec/notificationDelivery.md, "One app's removal keeps an assistant active while another grant remains"
+      await store.projectAssistantGrants(personId, now, async candidates => {
+        let hasEligibleGrant = false;
+        let checksComplete = true;
+        const owners = new Map<string, boolean | undefined>();
+        for (const { grant: candidate, client: caller } of candidates) {
+          if (!assistantGrantCounts(candidate.personId === personId, assistantOf(caller) === assistant,
+            grantAllowsUpdates(candidate, caller), candidate.revokedAt === null && candidate.expiresAt > now())) continue;
+          if (!owners.has(candidate.phoneKey)) owners.set(candidate.phoneKey, await assistantGrantOwnerCurrent(candidate));
+          const owner = owners.get(candidate.phoneKey);
+          if (owner === undefined) checksComplete = false;
+          if (owner && candidate.expiresAt > now()) { hasEligibleGrant = true; break; }
+        }
+        const activity = projectAssistantActivity(hasEligibleGrant, checksComplete);
+        if (activity !== "AssistantUnchanged") await publish(personId, assistant, activity === "AssistantActive");
+      });
     } catch (error) {
-      log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(error as Error).message}`);
+      log(`[mcp] assistant signal could not be reconciled: ${(error as Error).message}`);
     }
+  }
+  async function assistantGrantOwnerCurrent(grant: Grant): Promise<boolean | undefined> {
+    const owner = await checkGrantOwner(o.platform, grant);
+    if (owner === "GrantOwnerUnavailable") return;
+    if (owner !== "GrantOwnerMatches") return false;
+    try { return !await o.platform.grantIsBanned(grant.phoneKey, grant.personId); } catch { return; }
   }
   /** Every revocation goes through here, so the inbox always hears about it. */
   async function revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {
     const ok = await store.revokeGrant(id, at, owner);
-    if (ok) await linked(await store.getGrant(id), false);
+    if (ok) await reconcileAssistantSignal(await store.getGrant(id));
     return ok;
   }
   const hostMap = o.hostMap ?? defaultHostMap(apps);
@@ -314,7 +340,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   // ---------------------------------------------------------------- clients
   // Private pilot is DCR-only. Re-check persisted clients on every auth/write path so an
   // operator disabling the opt-in suspends access without deleting consent or blocking revoke.
-  function openAiUnavailable(c: Ctx, client: OAuthClient): boolean {
+  function openAiUnavailable(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
     const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
     return openAi && !c.app.openai && !customSlopClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
   }
@@ -326,13 +352,23 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     });
   }
 
-  function customSlopClient(c: Ctx, client: OAuthClient): boolean {
+  function customSlopClient(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
     return customSlopPeople !== null && c.app.id === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
   }
 
   async function customSlopEligible(c: Ctx, client: OAuthClient, personId: string | null, phoneKey: string): Promise<boolean> {
     if (!customSlopClient(c, client)) return true;
     return !!personId && customSlopPeople!.has(personId) && await o.platform.customChatGptSlopEligible!(personId, phoneKey);
+  }
+
+  function grantAllowsUpdates(grant: Grant, client: OAuthClient): boolean {
+    const app = apps[grant.app];
+    if (!app || app.id !== client.app || !tokenCovers("get_updates", grant.scopes)) return false;
+    const pathSurface = grant.resource.endsWith("/mcp/openai") ? "openai" : o.surface ?? "full";
+    if (grant.resource !== resourceFor(issuerOf(app), pathSurface)) return false;
+    const surface = pathSurface === "openai" || client.surface === "openai" ? "openai" : "full";
+    return configuredHostServes(connectorSurface[surface], connectorApp[app.id], app.openai)
+      && !openAiUnavailable({ app }, client) && !customSlopClient({ app }, client);
   }
 
 
@@ -723,7 +759,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "denied":
         return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
       case "issued":
-        await linked(issued.grant, true);
+        await reconcileAssistantSignal(issued.grant);
         return redirectTo(r.redirectUri, { code: issued.code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
     }
   }
@@ -1242,7 +1278,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const at = now();
       const active = removed.filter(g => g.revokedAt === null && g.expiresAt > at);
       for (const grant of active) {
-        await linked(grant, false);
+        await reconcileAssistantSignal(grant);
         await store.audit({ at, kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail: "account change" });
       }
       return active.length;
