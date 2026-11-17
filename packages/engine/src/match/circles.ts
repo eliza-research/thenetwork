@@ -91,7 +91,8 @@ export function buildCircles(
     const circle = rankCircle && complete(group);
     if (!circle) return;
     const rank = rankCircle?.(circle);
-    return rank === undefined ? undefined : { circle, rank };
+    if (rank === undefined || !Number.isFinite(rank)) return;
+    return { circle, rank };
   };
   const circles: Circle[] = [];
   for (const seed of seeds) {
@@ -111,7 +112,7 @@ export function buildCircles(
       options.sort(byStrength);
       if (!options.length) break;
       let next = options[0]!.item;
-      if (rankCircle) {
+      if (rankCircle && group.length + 1 >= limits.circleMinimum) {
         let extension: ReturnType<typeof qualified>;
         for (const { item } of options) {
           const candidate = qualified([...group, item]);
