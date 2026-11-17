@@ -25,8 +25,21 @@ pure def lawRequestedIsDueAtCreation(createdAt: int, urgentDelay: int, digestDel
 When a digest includes a proactive item and the member has reached the cap, remove proactive items. If that leaves nothing to send, hold the digest until a slot opens. A requested-only digest uses no proactive slot.
 
 ```quint
-pure def removeProactiveItems(recentSends: int, weeklyCap: int, containsProactive: bool): bool =
-  recentSends >= weeklyCap and containsProactive
+type WeeklyDigest = KeepDigest | KeepRequested | HoldDigest
+
+pure def digestUsesProactiveSlot(itemCount: int, requestedCount: int): bool =
+  requestedCount < itemCount
+
+pure def weeklyDigest(recentSends: int, weeklyCap: int, itemCount: int, requestedCount: int): WeeklyDigest =
+  if (recentSends < weeklyCap or not(digestUsesProactiveSlot(itemCount, requestedCount))) KeepDigest
+  else if (requestedCount > 0) KeepRequested
+  else HoldDigest
+
+pure def lawRequestedOnlyDigestUsesNoSlot(itemCount: int): bool =
+  not(digestUsesProactiveSlot(itemCount, itemCount))
+
+pure def lawWeeklyCapPreservesRequestedItems(recentSends: int, weeklyCap: int, itemCount: int, requestedCount: int): bool =
+  (requestedCount > 0 and requestedCount <= itemCount) implies weeklyDigest(recentSends, weeklyCap, itemCount, requestedCount) != HoldDigest
 ```
 
 ## Story: Receive updates on a surface I use

@@ -16,7 +16,7 @@ import { createHash, randomInt } from "node:crypto";
 import {
   appAllowsInboxItem, canRecordInboxSeen, inboxTokenMayRecordRedemption, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
 } from "../../core/src/generated/notificationAcknowledgement.ts";
-import { assistantDigestCanLink, inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
+import { assistantDigestCanLink, digestUsesProactiveSlot, inboxDueAt, weeklyDigest } from "../../core/src/generated/notificationDelivery.ts";
 import { inboxItemAllowedForRecipient, inboxItemExpired, queuedDigestClaimAllowed } from "../../core/src/generated/notificationDispatch.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
@@ -149,14 +149,13 @@ export class Notifier {
       if (this.cfg.isQuiet(now, r.timeZone)) { holds.push({ personId, reason: "quiet_hours" }); continue; }
 
       const recent = await this.store.capSendsSince(personId, now - WEEK_MS + 1);
-      if (removeProactiveItems(recent.length, this.cfg.weeklyCap, items.some(i => i.urgency !== "requested"))) {
-        const requested = items.filter(i => i.urgency === "requested");
-        if (requested.length === 0) {
-          holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
-          continue;
-        }
-        items = requested;
+      const requested = items.filter(i => i.urgency === "requested");
+      const budget = weeklyDigest(recent.length, this.cfg.weeklyCap, items.length, requested.length);
+      if (budget === "HoldDigest") {
+        holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
+        continue;
       }
+      if (budget === "KeepRequested") items = requested;
       sends.push(await this.build(r, items, now));
     }
     return { sends, holds };
@@ -213,7 +212,7 @@ export class Notifier {
       token,
       assistantLink,
       text,
-      countsTowardCap: items.some(i => i.urgency !== "requested"),
+      countsTowardCap: digestUsesProactiveSlot(items.length, items.filter(i => i.urgency === "requested").length),
     };
   }
 
