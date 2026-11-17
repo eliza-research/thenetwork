@@ -39,6 +39,12 @@ test("the generic planner checks availability through the end of a four-hour hik
   expect(run(makeStanding(14))).toMatchObject([{ activityId: "day_hike", window: hike, invited: expect.arrayContaining(ids) }]);
   expect(run(makeStanding(12))).toEqual([]);
 
+  const updatedWeek = makeStanding(14);
+  for (const member of updatedWeek.values()) member.stated = { windows: [], at: START, until: START + 7 * DAY, confidence: 0.5 };
+  expect(run(updatedWeek)).toEqual([]);
+  for (const member of updatedWeek.values()) member.stated = { windows: [], at: START, until: start };
+  expect(run(updatedWeek)).toMatchObject([{ activityId: "day_hike", window: hike, invited: expect.arrayContaining(ids) }]);
+
   const event: NetworkEvent = { id: "guided-walk", title: "Ranger-guided hike", city: "nyc", category: "social", tags: ["hiking"], start, end: start + HOUR };
   const eventWorld = new World({ ...snapshot, events: [event] }, cfg, localEmbed);
   const published = plans.planProposals(eventWorld, { now: START, city: "nyc", tz, venues: [], evidence: makeEvidence(1, 1) });

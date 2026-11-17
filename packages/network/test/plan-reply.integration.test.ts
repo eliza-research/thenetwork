@@ -39,7 +39,7 @@ async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
 }
 
 describe("plan probe replies", () => {
-  test("a reviewed generic plan backfills a seat whose new stated window excludes the activity", async () => {
+  test.each(["I'm free Sunday afternoon.", "Busy week, nothing free."])("a reviewed generic plan backfills a seat after %s", async reply => {
     const primary = ["a", "b", "c"];
     const ids = [...primary, "d"];
     const w = new Mini(ids.map(id => ({ ...climber(id), area: "Inwood" })), { review: "human", plans: false });
@@ -61,10 +61,13 @@ describe("plan probe replies", () => {
     const item = w.net.reviewQueue()[0]!;
     expect(item.proposal.participants).toEqual(primary);
     w.clock.advance(MINUTE);
-    await w.say("a", "I'm free Sunday afternoon.");
+    await w.say("a", reply);
     const latest = w.net.exportState().members.find(member => member.id === "a")!.stated;
-    expect(latest?.windows).toHaveLength(1);
-    expect(latest!.windows[0]!.start).toBeGreaterThan(window.end);
+    expect(latest).toMatchObject({ at: w.clock.now(), until: w.clock.now() + 7 * DAY });
+    if (reply.startsWith("I'm free")) {
+      expect(latest?.windows).toHaveLength(1);
+      expect(latest!.windows[0]!.start).toBeGreaterThan(window.end);
+    } else expect(latest?.windows).toEqual([]);
     w.restart();
 
     expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);

@@ -51,15 +51,9 @@ pure def checkPresence(invite: PlanDispatch, present: bool): PlanDispatch =
 
 ### Recheck the member's current availability before contacting them
 
-The member's latest check-in applies when it has already been recorded and its period includes the start of the reviewed activity. When it applies, one stated window must cover the whole activity. A current calendar conflict also makes the seat unavailable. An unavailable seat can open a reviewed alternate without recording a member refusal. Recheck the recipient's stated window again on a persisted provider claim. This rule controls new invitations. A later explicit yes to a delivered invitation is still consent for its exact slot.
+Apply the [same check-in rule as formation](planFormation.md#the-members-latest-weekly-answer-takes-precedence). A current calendar conflict also makes the seat unavailable. An unavailable seat can open a reviewed alternate without recording a member refusal. Recheck the recipient's stated window again on a persisted provider claim. This rule controls new invitations. A later explicit yes to a delivered invitation is still consent for its exact slot.
 
 ```quint
-pure def statedPlanWindowAllows(statedAt: int, statedUntil: int, now: int, slotStart: int, coversSlot: bool): bool =
-  statedAt > now or statedUntil <= slotStart or coversSlot
-
-pure def lawCurrentExcludedWindowStopsPlan(statedAt: int, statedUntil: int, now: int, slotStart: int): bool =
-  (statedAt <= now and statedUntil > slotStart) implies not(statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false))
-
 pure def canCheckAvailability(invite: PlanDispatch): bool = invite.phase == CheckingAvailability
 
 pure def checkAvailability(invite: PlanDispatch, statedAllows: bool, calendarAllows: bool): PlanDispatch =

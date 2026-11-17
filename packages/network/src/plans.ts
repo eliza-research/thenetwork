@@ -6,8 +6,9 @@
 // MVP light touch (growth doc section 3): public places only (parks, libraries, plazas, markets,
 // museums, courts), never a member's home, and no money through the Network (everyone pays their
 // own way). Volunteer shifts are activities at public parks.
-import { DAY, fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
+import { fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
 import { plans, type AttentionLedgerEntry } from "@thenetwork/engine";
+import { weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
 import { VENUES, type Venue as GeoVenue } from "./geo.ts";
 import { NY } from "./outreach.ts";
 
@@ -64,7 +65,7 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
       if (end > now) windows.push({ start: Math.max(start, now), end });
     }
   }
-  return windows.length ? { windows: windows.sort((a, b) => a.start - b.start), at: now, until: now + 7 * DAY } : undefined;
+  return windows.length ? { windows: windows.sort((a, b) => a.start - b.start), at: now, until: now + weeklyCheckinEvidenceMs } : undefined;
 }
 
 /** Activities a member named in a check-in ("into live music"): interest tags -> plan activity ids. */

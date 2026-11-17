@@ -11,7 +11,8 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, planWindowMatchesStated, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
+import { plans } from "@thenetwork/engine";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
@@ -277,7 +278,7 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
   const [current] = await tx<{
     stage: string | null; review_decision: string | null; review_invalidated: string | null;
     pending_seat: boolean | null; probe_deadline: number | null;
-    activity_window: Parameters<typeof planWindowMatchesStated>[1] | null; stated: Parameters<typeof planWindowMatchesStated>[0] | null;
+    activity_window: plans.StatedWindows["windows"][number] | null; stated: plans.StatedWindows | null;
   }[]>`select plan.stage, plan.review->>'decision' as review_decision, plan.review->'invalidated' as review_invalidated,
       plan."planRun"->'answers'->>${row.memberId}::text='pending' as pending_seat,
       (plan.plan->>'probeDeadline')::double precision as probe_deadline, plan.plan->'window' as activity_window, member.stated
@@ -290,7 +291,7 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
   if (!queuedPlanProbeAllowed(current.review_decision === "approve" && !current.review_invalidated, current.pending_seat === true, laneOpen)) {
     return { ok: false, reason: "plan_probe_changed" };
   }
-  return planWindowMatchesStated(current.stated ?? undefined, current.activity_window, now)
+  return plans.planWindowMatchesStated(current.stated ?? undefined, current.activity_window, now)
     ? { ok: true } : { ok: false, reason: "plan_availability_changed" };
 }
 

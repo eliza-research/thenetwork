@@ -23,7 +23,7 @@ import {
 import {
   cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
   planActivityWindowEnd, planCanFitPlace, planGroupCanReserve, planInviteLimit, planScoreQualifies, planSlotPairCanConnect,
-  searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
+  searchForPlanGroup, searchForPlanPartner, statedPlanWindowAllows, step as stepCityPlanRun,
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
@@ -63,6 +63,12 @@ export interface StatedWindows { windows: TimeSlot[]; at: number; until: number;
 export interface PlanEvidence extends AvailabilityEvidence { stated?: StatedWindows }
 export type WindowSource = "stated" | "standing" | "learned" | "prior";
 
+/** Exact activity-window admission shared by formation, rescheduling, and dispatch. */
+export function planWindowMatchesStated(stated: StatedWindows | undefined, slot: TimeSlot, now: number): boolean {
+  return !stated || statedPlanWindowAllows(stated.at, stated.until, now, slot.start,
+    stated.windows.some(window => window.start <= slot.start && window.end >= slot.end));
+}
+
 const jsDay = (t: number, tz: string) => (localParts(t, tz).weekday + 1) % 7;
 export function daypartOf(t: number, tz: string, att: AttentionConfig = DEFAULT_ATTENTION): Daypart | "weekday_day" {
   const weekend = att.sendTime.weekendDays.includes(jsDay(t, tz));
@@ -95,6 +101,7 @@ export function planFreeProb(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg
 
 /** Demand: the slot is a stated or inferred window for the member (not the daypart prior alone) and P(free) >= minFree. */
 export function hasWindow(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg: PlansConfig = DEFAULT_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): number {
+  if (!planWindowMatchesStated(ev.stated, slot, now)) return 0;
   const r = planFreeProb(ev, slot, now, pcfg, att);
   return r.source !== "prior" && r.p >= pcfg.minFree ? r.p : 0;
 }

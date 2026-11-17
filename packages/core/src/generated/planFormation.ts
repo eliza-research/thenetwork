@@ -5,12 +5,16 @@
 export type PlanRunPhase = "ReservingPlans" | "PlansPublished";
 /** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 export interface CityPlanRun { phase: PlanRunPhase; count: number; occupied: Record<string, boolean> }
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+export type WeeklyCheckinEvidence = "KeepEarlier" | "RecordWindows" | "RecordUnavailable";
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "reservePlan"; invited: string[]; limit: number }
   | { type: "publishPlans" };
 
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+export const weeklyCheckinEvidenceMs: number = 604800000;
 /** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 export const initial: CityPlanRun = { phase: "ReservingPlans", count: 0, occupied: ({} as Record<string, boolean>) };
 
@@ -194,6 +198,32 @@ export function lawPlanActivityWindowEndsAfterStart(startsAt: number, durationMi
 //@ pure
 export function planStandingWindowCoversSlot(windowStart: number, windowEnd: number, slotStart: number, slotEnd: number): boolean {
   return windowStart <= slotStart && slotStart < slotEnd && slotEnd <= windowEnd;
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
+export function statedPlanWindowAllows(statedAt: number, statedUntil: number, now: number, slotStart: number, coversSlot: boolean): boolean {
+  return statedAt > now || statedUntil <= slotStart || coversSlot;
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
+export function weeklyCheckinEvidence(directAnswer: boolean, hasWindows: boolean, wholeWeekBusy: boolean): WeeklyCheckinEvidence {
+  return !directAnswer ? "KeepEarlier" : (hasWindows ? "RecordWindows" : (wholeWeekBusy ? "RecordUnavailable" : "KeepEarlier"));
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
+export function lawCurrentExcludedWindowStopsPlan(statedAt: number, statedUntil: number, now: number, slotStart: number): boolean {
+  //@ ensures \result === true
+  return !(statedAt <= now && statedUntil > slotStart) || !statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false);
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
+export function lawUnclearWeeklyAnswerKeepsEarlier(directAnswer: boolean): boolean {
+  //@ ensures \result === true
+  return weeklyCheckinEvidence(directAnswer, false, false) === "KeepEarlier";
 }
 
 /** Do the rules allow this event in this state? */

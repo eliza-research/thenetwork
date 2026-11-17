@@ -78,7 +78,8 @@ import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/bou
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
-import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, statedPlanWindowAllows, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
+import { weeklyCheckinEvidence, weeklyCheckinEvidenceMs } from "../../core/src/generated/planFormation.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { organizingReachSeatTaken } from "../../core/src/generated/capitalLevers.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
@@ -126,7 +127,7 @@ import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext,
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, availabilityTags, checkinTags, classify, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -1286,14 +1287,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!msg.reaction && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {
-      m.awaiting = undefined;
-      const tags = checkinTags(body);
-      if (tags.length) {
-        m.availability = [...(m.availability ?? []), { tags, at: now }].slice(-8);
-        // This week's stated windows and any activities they named (plans ask 1).
-        const st = statedWindows(tags, now);
-        if (st) { m.stated = st; m.hints = activityHints(extractProfile(body).interests); }
-        this.ctx.log("availability_stated", { memberId: m.id, tags, windows: st?.windows.length ?? 0 });
+      const directAnswer = this.memberReply && !msg.reaction;
+      if (directAnswer) m.awaiting = undefined;
+      const tags = availabilityTags(body);
+      const evidence = weeklyCheckinEvidence(directAnswer, tags.length > 0, explicitlyBusyThisWeek(body));
+      if (evidence !== "KeepEarlier") {
+        const stated = evidence === "RecordWindows"
+          ? statedWindows(tags, now) : { windows: [], at: now, until: now + weeklyCheckinEvidenceMs };
+        if (evidence === "RecordWindows") m.availability = [...(m.availability ?? []), { tags, at: now }].slice(-8);
+        if (stated) {
+          m.stated = stated;
+          m.hints = evidence === "RecordWindows" ? activityHints(extractProfile(body).interests) : [];
+        }
+        this.ctx.log("availability_stated", { memberId: m.id, tags, windows: stated?.windows.length ?? 0 });
         if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks."); return; }
       }
     }
@@ -1413,7 +1419,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!member || !this.checkRecipient(id, "scheduling", { about: [...roster], reply: false }).ok
         || this.bookedNear(id, start, o.id)) return false;
       const availability = this.evidence(member, now, o.id);
-      return planWindowMatchesStated(member.stated, slot, now)
+      return plans.planWindowMatchesStated(member.stated, slot, now)
         && attention.availabilityProb(availability, slot, now) > 0;
     });
   }
@@ -4395,7 +4401,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     return roster.every(id => {
       const evidence = this.planEvidence(this.member(id), now);
       return this.inNyc(id, now, slot.end) && !this.bookedNear(id, slot.start)
-        && planWindowMatchesStated(evidence.stated, slot, now)
         && plans.hasWindow(evidence, slot, now, this.pcfg) > 0;
     });
   }
@@ -4521,7 +4526,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       return this.planAnswer(o, id, false, true);
     }
     const availability = stepPlanDispatch(presence, { type: "checkAvailability",
-      statedAllows: planWindowMatchesStated(m.stated, o.plan.window, now), calendarAllows: this.calendarAllows([id], o.plan.window, now) });
+      statedAllows: plans.planWindowMatchesStated(m.stated, o.plan.window, now), calendarAllows: this.calendarAllows([id], o.plan.window, now) });
     if (availability.phase !== "CheckingWindow") {
       this.refuse(id, "probe", availability.reason);
       return this.planAnswer(o, id, false, true);
@@ -4876,9 +4881,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private crewWindowAvailable(member: MemberState, slot: attention.TimeSlot, now: number): boolean {
-    const stated = member.stated;
-    const statedAllows = !stated || stated.at > now || stated.until <= slot.start
-      || stated.windows.some(window => window.start <= slot.start && window.end >= slot.end);
+    const statedAllows = plans.planWindowMatchesStated(member.stated, slot, now);
     // spec/crewOffer.md, "A new recurring session needs a currently usable time"
     return crewMemberWindowAvailable(this.inNyc(member.id, now, slot.end), !this.bookedNear(member.id, slot.start), statedAllows);
   }
@@ -7361,12 +7364,6 @@ export function storedGroupLateArrivalCurrent(state: NetworkState, delivery: Lat
 }
 
 /** The stored member's calendar choice still applies to an adult who can schedule meetings. */
-/** Exact activity-window admission for the planner, live dispatch and a persisted provider claim. */
-export function planWindowMatchesStated(stated: plans.StatedWindows | undefined, slot: attention.TimeSlot, now: number): boolean {
-  return !stated || statedPlanWindowAllows(stated.at, stated.until, now, slot.start,
-    stated.windows.some(window => window.start <= slot.start && window.end >= slot.end));
-}
-
 export function storedCalendarOwnerOptedIn(state: NetworkState | undefined, id: MemberId): boolean {
   const member = state?.members.find(m => m.id === id);
   if (!state || !member?.calendar || state.declinedIds.includes(id)) return false;

@@ -1039,5 +1039,8 @@ export function planAgainOf(body: string): "yes" | "no" | "unclear" {
 /** "Nobody else came": the member came and found nobody (a report about the others). */
 export const NOBODY_CAME = /\b(nobody|no one) else (came|showed)\b/i;
 
-/** Stated windows in a check-in answer ("Free Tuesday evening and Saturday afternoon." -> evening:Tue, afternoon:Sat). */
-export const checkinTags = (body: string): string[] => availabilityTags(body);
+/** A clear answer that the member has no availability for the current week. */
+export function explicitlyBusyThisWeek(body: string): boolean {
+  const text = body.trim().toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ");
+  return /^(?:(?:i'm |i am )?(?:busy|not free|(?:pretty |completely )?packed) this week|busy week,? nothing free|this week is full|(?:no free time|nothing free) this week)(?:[,!.]? (?:sorry|thanks))?[.!]?$/.test(text);
+}

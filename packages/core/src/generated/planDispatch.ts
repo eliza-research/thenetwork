@@ -93,19 +93,6 @@ export function checkPresence(invite: PlanDispatch, present: boolean): PlanDispa
 
 /** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
 //@ pure
-export function statedPlanWindowAllows(statedAt: number, statedUntil: number, now: number, slotStart: number, coversSlot: boolean): boolean {
-  return statedAt > now || statedUntil <= slotStart || coversSlot;
-}
-
-/** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
-//@ pure
-export function lawCurrentExcludedWindowStopsPlan(statedAt: number, statedUntil: number, now: number, slotStart: number): boolean {
-  //@ ensures \result === true
-  return !(statedAt <= now && statedUntil > slotStart) || !statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false);
-}
-
-/** Story: Ask me about one group plan during my send window / Recheck the member's current availability before contacting them (spec/planDispatch.md) */
-//@ pure
 export function canCheckAvailability(invite: PlanDispatch): boolean {
   return invite.phase === "CheckingAvailability";
 }

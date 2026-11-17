@@ -158,3 +158,34 @@ window supplies no positive standing evidence for the activity.
 pure def planStandingWindowCoversSlot(windowStart: int, windowEnd: int, slotStart: int, slotEnd: int): bool =
   windowStart <= slotStart and slotStart < slotEnd and slotEnd <= windowEnd
 ```
+
+### The member's latest weekly answer takes precedence
+
+Record this week's windows from the member's own text answer to their weekly
+check-in. A clear answer that the whole week is busy records an empty week.
+An unclear answer leaves the earlier record in place. A recorded answer applies
+for seven days. When that period includes the activity's start, a stated window
+must contain the whole activity. Standing or learned availability cannot make
+an excluded activity eligible. Formation, rescheduling, and dispatch use the
+same rule for this record.
+
+```quint
+type WeeklyCheckinEvidence = KeepEarlier | RecordWindows | RecordUnavailable
+
+pure val weeklyCheckinEvidenceMs: int = 604800000
+
+pure def weeklyCheckinEvidence(directAnswer: bool, hasWindows: bool, wholeWeekBusy: bool): WeeklyCheckinEvidence =
+  if (not(directAnswer)) KeepEarlier
+  else if (hasWindows) RecordWindows
+  else if (wholeWeekBusy) RecordUnavailable
+  else KeepEarlier
+
+pure def statedPlanWindowAllows(statedAt: int, statedUntil: int, now: int, slotStart: int, coversSlot: bool): bool =
+  statedAt > now or statedUntil <= slotStart or coversSlot
+
+pure def lawUnclearWeeklyAnswerKeepsEarlier(directAnswer: bool): bool =
+  weeklyCheckinEvidence(directAnswer, false, false) == KeepEarlier
+
+pure def lawCurrentExcludedWindowStopsPlan(statedAt: int, statedUntil: int, now: int, slotStart: int): bool =
+  (statedAt <= now and statedUntil > slotStart) implies not(statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false))
+```
