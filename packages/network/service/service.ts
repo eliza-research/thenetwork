@@ -36,10 +36,11 @@ import { storedInviterCurrent, type ActionResult, type NetworkOptions, type Netw
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
-  initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
+  durableStaffHoldLiftAllowed, durableStaffHoldScope, initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
   staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetyReportFor, staffSafetySelectsTarget,
   step as stepStaffSafety,
 } from "../../core/src/generated/staffSafetyService.ts";
+import { checkStaffHoldProjection, currentStaffHold, liftStaffHold, recordStaffHold, StaffHoldStateChanged } from "./staff-safety-holds.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
@@ -111,7 +112,7 @@ import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
-import { peerOpportunityContactBlocked } from "./peer-opportunity-admission.ts";
+import { peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -193,7 +194,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -2706,7 +2707,23 @@ export class NetworkService implements RuntimeHost {
   }
 
   liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main) {
-    return this.staffAction(rt, user, "safety", { type: "member", id: memberId }, { safety: "lift_hold" }, n => n.liftHold(memberId, user.id, note));
+    const everywhere = crossAppSafety(user);
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "lift_hold" }, async () => {
+      try {
+        return await rt.unitOfWork(async n => {
+          const personId = await this.personOfMember(rt, memberId);
+          if (!personId) return n.liftHold(memberId, user.id, note);
+          const expected = await rt.scoped(tx => currentStaffHold(tx, rt.app.id, personId));
+          if (!durableStaffHoldLiftAllowed(expected.global !== null, everywhere)) return { ok: false, reason: "needs_safety_everywhere" };
+          const result = n.liftHold(memberId, user.id, note, expected.local !== null || expected.global !== null);
+          if (result.ok) rt.unit.memberCommand = tx => liftStaffHold(tx, rt.app.id, memberId, personId, expected, everywhere);
+          return result;
+        });
+      } catch (error) {
+        if (error instanceof StaffHoldStateChanged) return { ok: false, reason: "hold_changed" };
+        throw error;
+      }
+    });
   }
 
   closeCase(user: StaffUser, caseId: string, note?: string, rt = this.main) {
@@ -2888,13 +2905,41 @@ export class NetworkService implements RuntimeHost {
     const all = await this.membersOfPerson(rt, memberId);
     const everywhere = crossAppSafety(user);
     const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, x.rt === rt));
-    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: staffSafetyAuditScope(members.length) }, async () => {
-      const r = await rt.unitOfWork(n => n.holdMember(memberId, user.id, note, reportId));
+    const { personId } = all;
+    const scope = durableStaffHoldScope(!!personId && everywhere, rt.app.id);
+    const decisionId = randomUUID();
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null,
+      scope: scope === "*" ? "every_app" : "this_app" }, async () => {
+      let r: ActionResult;
+      try {
+        r = await rt.unitOfWork(n => {
+          const result = n.holdMember(memberId, user.id, note, reportId);
+          if (personId && result.ok) {
+            const at = this.clock.now();
+            rt.unit.memberCommand = tx => recordStaffHold(tx, rt.app.id, memberId, personId, scope, decisionId, at);
+          }
+          return result;
+        });
+      } catch (error) {
+        if (error instanceof StaffHoldStateChanged) return { ok: false, reason: "hold_changed" };
+        throw error;
+      }
       const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
       if (hold.phase !== "HoldRemainingTargets") return r;
       // One network at a time (never one unit inside another: no lock order to get wrong).
       const relatedReport = staffSafetyReportFor(false, reportId ?? "") || undefined;
-      for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note, relatedReport));
+      for (const x of members) {
+        if (!personId || (x.rt === rt && x.memberId === memberId)) continue;
+        try {
+          await x.rt.unitOfWork(n => {
+            const result = n.holdMember(x.memberId, user.id, note, relatedReport);
+            if (result.ok) x.rt.unit.memberCommand = tx => checkStaffHoldProjection(tx, x.rt.app.id, x.memberId, personId, decisionId);
+            return result;
+          });
+        } catch (error) {
+          if (!(error instanceof StaffHoldStateChanged)) throw error;
+        }
+      }
       return r;
     });
   }
@@ -3373,7 +3418,7 @@ export class NetworkService implements RuntimeHost {
         const rt = await this.runtimeOfMember(handled.app, memberId);
         const replyIds = handled.replyIds;
         const bookingRuntime = rt ?? this.runtimeFor(handled.app);
-        if (bookingRuntime && await bookingRuntime.scoped(tx => peerOpportunityContactBlocked(tx, bookingRuntime.app.id, memberId, replyIds))) {
+        if (bookingRuntime && await bookingRuntime.scoped(tx => peerOpportunityContactRestricted(tx, bookingRuntime.app.id, memberId, replyIds))) {
           return json({ error: "turn_opportunity_blocked", retryable: false }, 409);
         }
         if (bookingRuntime && await bookingRuntime.scoped(tx =>

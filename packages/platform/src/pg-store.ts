@@ -517,6 +517,7 @@ export class PgPeopleStore implements PeopleStore {
       }
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
+        await tx`delete from platform.staff_safety_holds where person_id = ${personId}::uuid`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;
         // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
         await tx`delete from platform.phone_identities where person_id = ${personId}`;

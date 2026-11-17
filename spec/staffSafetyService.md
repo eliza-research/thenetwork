@@ -8,7 +8,7 @@ The [case and report spec](safetyCase.md) governs decisions inside one Network r
 
 ### Staff act within their resolved scope
 
-Staff with safety authority on every app may act on the person's relevant memberships. An app-scoped action only includes the requested runtime. Discovery skips invited and removed memberships. The requested member remains the fallback target when there is no linked person. The audit records whether the action covers one runtime or more than one without recording a membership count.
+Staff with safety authority on every app may act on the person's relevant memberships. An app-scoped action only includes the requested runtime. Discovery skips invited and removed memberships. The requested member remains the fallback target when there is no linked person. The hold audit records the authorized scope without recording a membership count.
 
 ```quint
 pure def staffSafetyMembershipLive(membership: str): bool =
@@ -44,6 +44,32 @@ pure def staffSafetyReportFor(ownsReport: bool, reportId: str): str = if (ownsRe
 pure def lawOtherTargetsGetNoReport(reportId: str): bool = staffSafetyReportFor(false, reportId) == ""
 
 pure def sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): bool = flow.phase == HoldRemainingTargets
+```
+
+### A staff hold survives ordinary app membership changes
+
+Commit a successful staff hold for a linked person with the primary runtime decision. An app-scoped actor sets a hold for the requested app. An all-app actor can place a global hold. An authorized lift clears the requested app only. An app-scoped actor can lift a local hold but cannot release global coverage. An all-app actor can release one app from global coverage while the other apps retain it. A new global hold covers all apps again. Recheck ownership and the exact current decision when committing a lift or projecting a related runtime. Keep the scope and decision data private. When migrating older records, preserve an active, identifiable prior staff hold in the app that recorded it.
+
+An ordinary leave removes the app membership and personal data while retaining the scoped restriction. The person can join again and receive permitted replies and safety notices. The matching snapshot and final contact claims check the current app's restriction even if its runtime projection is pending. Whole-account erasure removes the hold record with the other personal data under the existing account privacy procedure.
+
+```quint
+pure def durableStaffHoldScope(allAppsAuthority: bool, currentApp: str): str =
+  if (allAppsAuthority) "*" else currentApp
+
+pure def durableStaffHoldCoversApp(localHold: bool, globalHold: bool, appReleased: bool): bool =
+  localHold or (globalHold and not(appReleased))
+
+pure def durableStaffHoldLiftAllowed(globallyCovered: bool, allAppsAuthority: bool): bool =
+  not(globallyCovered) or allAppsAuthority
+
+pure def durableStaffHoldSnapshotStatus(accountStatus: str, staffHeld: bool): str =
+  if (staffHeld) "restricted" else accountStatus
+
+pure def lawLocalStaffCannotReleaseGlobalHold(globallyCovered: bool): bool =
+  globallyCovered implies not(durableStaffHoldLiftAllowed(globallyCovered, false))
+
+pure def lawReleaseOfOneAppLeavesOtherAppsHeld(globalHold: bool): bool =
+  globalHold implies (not(durableStaffHoldCoversApp(false, globalHold, true)) and durableStaffHoldCoversApp(false, globalHold, false))
 ```
 
 ### Keep the requested and result audits in order

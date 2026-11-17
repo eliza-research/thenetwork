@@ -12,7 +12,7 @@ Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md
 
 Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
 
-The current matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is still being projected. Durable hold carryover remains a product requirement under [PRD §40.3](../product/source/prd.md#403-shared-platform). The carryover transitions and witness preserve the intended behavior. Production staff holds currently apply to live runtime memberships, and app leave removes that runtime's member state. Preserving an unresolved hold through leave and rejoin needs durable person and app scope.
+The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. Automatic and report-only carryover in these traces describes the intended behavior and still needs production work.
 
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
@@ -220,7 +220,7 @@ module safety_trust {
     st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind) and repLvl(st, r.reporter) != "hold")
   // SD-021 desired hold coverage: the historical runtime carried these reasons across an app leave.
   pure def safetyHeld(st: State, m: Mid): bool = lvl(st, m) == "hold" or reportHeld(st, m) or st.minorF.get(m)
-  // Intended durable hold coverage for this app or every app. Production needs this store.
+  // Durable coverage for this app or every app. Production preserves global authority on the other apps after a lift.
   pure def covered(st: State, m: Mid): bool = st.personHolds.exists(h => h._1 == m.p and (h._2 == m.app or h._2 == "*"))
   // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
   pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()

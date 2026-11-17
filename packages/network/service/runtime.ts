@@ -328,9 +328,10 @@ export class NetworkRuntime {
   async relayParties(ids: MemberId[], tx?: SQL): Promise<Map<MemberId, RelayCanonical>> {
     const out = new Map<MemberId, RelayCanonical>();
     if (!ids.length) return out;
-    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,
+    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,authority.staff_held,
       (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164
-      from network.members m where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
+      from network.members m left join platform.matching_ages authority on authority.app_id=m.app_id and authority.member_id=m.id
+      where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
     const rows = (tx ? await read(tx) : await this.scoped(read)) as Row[];
     const accounts = tx ? this.host.accountsFor?.(tx) ?? this.host.accounts : this.host.accounts;
     for (const id of ids) {
@@ -340,7 +341,7 @@ export class NetworkRuntime {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
         if (binding?.membership.memberId === id) { bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person)); }
       }
-      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" });
+      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" || r.staff_held === true });
     }
     return out;
   }

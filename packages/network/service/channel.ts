@@ -33,7 +33,7 @@ import { effectiveParticipation } from "./snapshot.ts";
 import { lockGatheringAdmission, monthlyGatheringInvitePrefix } from "./monthly-gathering-delivery.ts";
 import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./monthly-gathering-notices.ts";
 import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
-import { lockPeerOpportunityContact, peerOpportunityContactBlocked } from "./peer-opportunity-admission.ts";
+import { lockPeerOpportunityContact, peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -526,7 +526,7 @@ export class BlooioAdapter implements ChannelAdapter {
           const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, this.o.clock.now());
           if (!event.ok) return event;
         }
-        if (row.oppId && row.memberId && await peerOpportunityContactBlocked(tx, row.app, row.memberId, [row.id])) {
+        if (row.oppId && row.memberId && await peerOpportunityContactRestricted(tx, row.app, row.memberId, [row.id])) {
           return { ok: false, reason: "opportunity_roster_blocked" };
         }
         if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], this.o.clock)) return { ok: false, reason: "booking_changed" };

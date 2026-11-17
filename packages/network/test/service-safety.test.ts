@@ -11,14 +11,15 @@ import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { LocalDiskPhotoStorage, PHOTO_CONSENT, type PhotoRater } from "../../platform/src/photos.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
-import { START } from "./mini.ts";
+import { Mini, START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { presentInNyc } from "../src/network.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
@@ -730,5 +731,142 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Safety on every app: the hold reaches every app.
     expect((await staff(s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: peon, note: "cross-app review" })).status).toBe(200);
     expect(await held("slop", slop)).toBe(true);
+  }, T);
+
+  test("scoped staff holds survive leave, restart and rejoin until an authorized app lift", async () => {
+    // spec/staffSafetyService.md, "A staff hold survives ordinary app membership changes"
+    await fresh();
+    const clock = new SimClock(START);
+    const tokens = "safety@peon:peon-safety-tok,safety@slop:slop-safety-tok,safety:saf-tok";
+    const initial = service(clock, { tokens });
+    const phone = newPhone();
+    let web = site(initial.s, clock, initial.otp);
+    await web.login("slop", phone);
+    expect((await web.join("slop", 30, "Ari")).status).toBe(200);
+    await web.login("peon", phone);
+    expect((await web.join("peon", 30, "Ari")).status).toBe(200);
+    const former = (await memberOf("peon", phone))!.id;
+    const slopId = (await memberOf("slop", phone))!.id;
+    const status = async (app: AppId, id: string) => {
+      const snapshot = await loadSnapshot(sql, clock.now(), { app });
+      return (snapshot.members.find(member => member.id === id) as { accountStatus: string } | undefined)?.accountStatus;
+    };
+    expect(await (await staff(initial.s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: former, note: "local safety review" })).json()).toEqual({ ok: true });
+    expect(await status("peon", former)).toBe("restricted");
+    expect(await status("slop", slopId)).toBe("active");
+    expect(await text(initial.s, clock, phone, "leave peon.biz")).toBe("left");
+    expect(await memberOf("peon", phone)).toBeUndefined();
+    await initial.s.close();
+
+    const restarted = service(clock, { tokens });
+    await restarted.s.start();
+    web = site(restarted.s, clock, restarted.otp);
+    await web.login("peon", phone);
+    expect((await web.join("peon", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("peon", phone))!.id;
+    expect(current).not.toBe(former);
+    expect(await status("peon", current)).toBe("restricted");
+    const [serviceProjection] = await sql.begin(async tx => {
+      await tx`set local role network_service`;
+      await tx`select set_config('app.app_id','peon',true)`;
+      return tx`select staff_held from platform.matching_ages where app_id='peon' and member_id=${current}`;
+    });
+    expect(serviceProjection).toEqual({ staff_held: true });
+    const lift = (app: AppId, token: string, memberId: string) => staff(restarted.s, token, "POST", `/apps/${app}/safety/lift`, { memberId, note: "staff resolved review" });
+    expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: true });
+    expect(await status("peon", current)).toBe("active");
+
+    expect(await (await staff(restarted.s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: current, note: "global safety review" })).json()).toEqual({ ok: true });
+    expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
+    expect(await status("peon", current)).toBe("restricted");
+    expect(await (await lift("peon", "saf-tok", current)).json()).toEqual({ ok: true });
+    expect(await status("peon", current)).toBe("active");
+    expect(await status("slop", slopId)).toBe("restricted");
+    expect(await (await lift("slop", "slop-safety-tok", slopId)).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
+
+    clock.advance(HOUR);
+    await web.login("friends", phone);
+    expect((await web.join("friends", 30, "Ari")).status).toBe(200);
+    const friendsId = (await memberOf("friends", phone))!.id;
+    expect(await status("friends", friendsId)).toBe("restricted");
+    expect(await (await lift("friends", "saf-tok", friendsId)).json()).toEqual({ ok: true });
+    expect(await status("friends", friendsId)).toBe("active");
+    expect(await status("slop", slopId)).toBe("restricted");
+
+    const person = (await restarted.s.accounts.personFor(phone))!;
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
+    expect(await restarted.s.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+  }, T);
+
+  test("a committed global hold stops queued peer delivery while a related runtime is still waiting", async () => {
+    // spec/staffSafetyService.md, "A staff hold survives ordinary app membership changes"
+    await fresh();
+    const clock = new SimClock(START);
+    const delivered: SendRequest[] = [];
+    const { s, otp } = service(clock, {
+      adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
+        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `safety-fixture:${request.idempotencyKey}`, status: "sent" };
+        } },
+      }),
+    });
+    const phone = newPhone(), recipientPhone = newPhone();
+    const web = site(s, clock, otp);
+    for (const [app, e164, name] of [["slop", phone, "Ari"], ["friends", phone, "Ari"], ["friends", recipientPhone, "Blair"]] as const) {
+      await web.login(app, e164);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const slopId = (await memberOf("slop", phone))!.id;
+    const peerId = (await memberOf("friends", phone))!.id, recipient = (await memberOf("friends", recipientPhone))!.id;
+    const rt = s.runtimeFor("friends")!;
+    const adapter = rt.adapter as BlooioAdapter;
+    const world = new Mini([{ id: peerId, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
+      { id: recipient, name: "Blair", age: 30, area: "Greenpoint", interests: ["hiking"] }],
+      { app: "friends", review: "auto", plans: false, growth: false });
+    world.clock.set(clock.now());
+    await world.onboard(peerId, recipient);
+    const opportunityId = world.propose([peerId, recipient]);
+    await world.answerProbes([peerId, recipient]);
+    const ready = world.net.exportState();
+    const booked = ready.opps.find(opportunity => opportunity.id === opportunityId)!;
+    expect(booked.stage).toBe("scheduled");
+    clock.set(booked.meetingAt! - 2 * HOUR);
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
+    await adapter.engaged(recipientPhone);
+    await adapter.lineSafety("review");
+    const notice = "staff-hold-queued-booking-fixture";
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: ready.members, opps: ready.opps });
+      rt.unit.sends.push({ id: notice, memberId: recipient, to: recipientPhone, kind: "transactional", type: "proposal",
+        oppId: opportunityId, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+    });
+    expect(await adapter.queue.statusOf(notice)).toBe("retry_scheduled");
+
+    let encountered!: () => void, resume!: () => void;
+    const pendingProjection = new Promise<void>(resolve => { encountered = resolve; });
+    const allowProjection = new Promise<void>(resolve => { resume = resolve; });
+    const unit = rt.unitOfWork.bind(rt);
+    rt.unitOfWork = async (fn, scheduling) => {
+      encountered();
+      await allowProjection;
+      return unit(fn, scheduling);
+    };
+    const holding = staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: slopId, note: "reviewed global hold" });
+    try {
+      await Promise.race([pendingProjection, holding.then(() => { throw new Error("The hold did not reach the related runtime"); })]);
+      expect((await rt.pg.load())!.trust?.find(entry => entry.id === peerId)?.level).not.toBe("hold");
+      await adapter.lineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      expect(await adapter.queue.statusOf(notice)).toBe("suppressed_ineligible");
+      expect(delivered.some(call => call.idempotencyKey === `tn:${notice}`)).toBe(false);
+    } finally {
+      resume();
+      expect(await (await holding).json()).toEqual({ ok: true });
+      rt.unitOfWork = unit;
+    }
   }, T);
 });

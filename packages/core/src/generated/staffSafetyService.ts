@@ -83,6 +83,44 @@ export function sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): boolean
   return flow.phase === "HoldRemainingTargets";
 }
 
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldScope(allAppsAuthority: boolean, currentApp: string): string {
+  return allAppsAuthority ? "*" : currentApp;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldCoversApp(localHold: boolean, globalHold: boolean, appReleased: boolean): boolean {
+  return localHold || (globalHold && !appReleased);
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldLiftAllowed(globallyCovered: boolean, allAppsAuthority: boolean): boolean {
+  return !globallyCovered || allAppsAuthority;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function durableStaffHoldSnapshotStatus(accountStatus: string, staffHeld: boolean): string {
+  return staffHeld ? "restricted" : accountStatus;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function lawLocalStaffCannotReleaseGlobalHold(globallyCovered: boolean): boolean {
+  //@ ensures \result === true
+  return !globallyCovered || !durableStaffHoldLiftAllowed(globallyCovered, false);
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function lawReleaseOfOneAppLeavesOtherAppsHeld(globalHold: boolean): boolean {
+  //@ ensures \result === true
+  return !globalHold || (!durableStaffHoldCoversApp(false, globalHold, true) && durableStaffHoldCoversApp(false, globalHold, false));
+}
+
 /** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function canRecordRequestedSafetyAudit(flow: ServiceSafetyFlow): boolean {

@@ -123,6 +123,7 @@ interface MemberDeliverySettings {
   id: string;
   person_id: string | null;
   account_status: string;
+  staff_held: boolean;
   opted_out: boolean;
   quiet_hours: unknown;
   time_zone: string | null;
@@ -418,8 +419,10 @@ export class OutboundQueue {
   private async memberDeliverySettings(tx: SQL, row: QueueRow, lock = false): Promise<MemberDeliverySettings | undefined> {
     if (!row.memberId) return;
     const [member] = await tx<MemberDeliverySettings[]>`select member.id,member.person_id,member.account_status,member.opted_out,
+      coalesce(authority.staff_held,false) as staff_held,
       member.prefs->'quietHours' as quiet_hours,city.tz as time_zone
       from network.members member left join platform.cities city on city.id=member.home_city
+      left join platform.matching_ages authority on authority.app_id=member.app_id and authority.member_id=member.id
       where member.app_id=${row.app} and member.id=${row.memberId} ${lock ? tx`for update of member` : tx``}`;
     return member;
   }
@@ -551,7 +554,7 @@ export class OutboundQueue {
         if (!member || member.account_status==='removed' || member.account_status==='invited') return "dropped_forgotten";
         // A paused or restricted account still gets replies to its own messages, compliance texts and
         // safety notices (snapshot.ts); the engine already decides those. The fence stops only proactive sends.
-        if (row.kind==="proactive" && member.account_status!=="active") return "suppressed_ineligible";
+        if (row.kind==="proactive" && (member.account_status!=="active" || member.staff_held)) return "suppressed_ineligible";
         if (this.o.provider.receipt) {
           const [binding] = await tx`select membership.member_id from platform.memberships membership
             join platform.people person on person.id=membership.person_id and person.deleted_at is null

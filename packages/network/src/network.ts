@@ -1955,10 +1955,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Staff lift a member's hold (only a person can). Their case stays open as "lifted" until staff close it. */
-  liftHold(memberId: MemberId, actor: string, note?: string): ActionResult {
-    const decision = holdLiftResult(!!actor.trim(), this.trust.level(memberId) === "hold");
+  liftHold(memberId: MemberId, actor: string, note?: string, durableStaffHold = false): ActionResult {
+    const runtimeHeld = this.trust.level(memberId) === "hold";
+    const decision = holdLiftResult(!!actor.trim(), runtimeHeld || durableStaffHold);
     if (decision !== "AllowedAction") return { ok: false, reason: SAFETY_REFUSAL[decision] };
-    if (!this.trust.lift(memberId, this.now())) return { ok: false, reason: "not_on_hold" };
+    if (runtimeHeld && !this.trust.lift(memberId, this.now())) return { ok: false, reason: "not_on_hold" };
     const c = this.openCase(memberId);
     if (c) c.status = CASE_STATUS[stepSafetyCase({ phase: CASE_PHASE[c.status] }, { type: "markCaseLifted" }).phase];
     this.ctx.log("safety_action", { action: "lift_hold", caseId: c?.id ?? null, memberId, actor, note: note ?? null });
