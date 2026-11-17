@@ -128,3 +128,15 @@ pure val limitValues = Set(0, 1, 2)
 
 pure def sometimesPublishesAPartner(s: FriendsRun): bool = s.phase == WeekComplete and partnerCount(s, "one") > 0
 ```
+
+### The simulator counts contact after a visible concern
+
+A known-adversary contact depends on the evidence available at the start of the proposal week. An uncleared safety cue, incomplete verification, or a hold already in effect makes the offender known. Count every affected offender–member pair once. Check every contact so a previous interaction before the hold cannot hide a later violation.
+
+```quint
+pure def friendAdversaryKnownAtProposal(visibleConcern: bool, holdAlreadyInEffect: bool): bool =
+  visibleConcern or holdAlreadyInEffect
+
+pure def lawFriendExistingHoldMakesAdversaryKnown(visibleConcern: bool): bool =
+  friendAdversaryKnownAtProposal(visibleConcern, true)
+```

@@ -19,7 +19,7 @@ import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher, planToProposal as toFriendsProposal } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, visibleRedFlag, weekTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
 import { isReal, SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { runFriendsWorld, slotOfCrew, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
@@ -294,9 +294,26 @@ export async function friendsSplitTableMetricGate(b: Block): Promise<void> {
   });
 }
 
+export async function friendsKnownContactMetricGate(b: Block): Promise<void> {
+  await b.run("metrics: a pair contacted again after a visible hold counts once as a known-adversary contact", () => {
+    const result = runFriendsWorld({ seed: 5, n: 100, weeks: 3, adversaryShares: { harasser: 0.2 },
+      matcher: { name: "known contact metric fixture", propose: () => [] } });
+    const offender = result.world.personas.find(member => member.hidden.adversary === "harasser" && !visibleRedFlag(member, 0))!;
+    const member = result.world.personas.find(isReal)!;
+    expect(offender).toBeTruthy();
+    result.world.state.safetyHolds.push({ memberId: offender.id, from: weekTime(1, 0, 9) });
+    const contact = { a: offender.id, b: member.id };
+    result.contacts.push({ ...contact, day: 2, key: "before-hold" });
+    expect(friendsMetrics(result).safety).toMatchObject({ adversaryContacts: 1, knownAdversaryContacts: 0 });
+    result.contacts.push({ ...contact, day: 9, key: "after-hold" }, { ...contact, day: 16, key: "repeated-after-hold" });
+    expect(friendsMetrics(result).safety).toMatchObject({ adversaryContacts: 1, knownAdversaryContacts: 1 });
+  });
+}
+
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await friendsScheduleGates(b);
   await friendsSplitTableMetricGate(b);
+  await friendsKnownContactMetricGate(b);
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };

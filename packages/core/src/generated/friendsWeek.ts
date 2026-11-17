@@ -208,6 +208,19 @@ export function sometimesPublishesAPartner(s: FriendsRun): boolean {
   return s.phase === "WeekComplete" && partnerCount(s, "one") > 0;
 }
 
+/** Story: Find time with familiar people or meet someone nearby / The simulator counts contact after a visible concern (spec/friendsWeek.md) */
+//@ pure
+export function friendAdversaryKnownAtProposal(visibleConcern: boolean, holdAlreadyInEffect: boolean): boolean {
+  return visibleConcern || holdAlreadyInEffect;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / The simulator counts contact after a visible concern (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendExistingHoldMakesAdversaryKnown(visibleConcern: boolean): boolean {
+  //@ ensures \result === true
+  return friendAdversaryKnownAtProposal(visibleConcern, true);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: FriendsRun, event: Event): boolean {

@@ -4,7 +4,7 @@ import { gini } from "@thenetwork/core";
 export { gini };
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
-import { friendCountsProbedProposal, friendCountsProposal } from "../../../../core/src/generated/friendsWeek.ts";
+import { friendAdversaryKnownAtProposal, friendCountsProbedProposal, friendCountsProposal } from "../../../../core/src/generated/friendsWeek.ts";
 import type { HarmKind } from "./oracle.ts";
 import { hoodOf, isReal } from "./persona.ts";
 import { visibleRedFlag, weekTime } from "./snapshot.ts";
@@ -146,24 +146,27 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const known = (id: MemberId, day: number) => {
     const week = Math.floor(day / 7);
     const h = holdAt(id);
-    return visibleRedFlag(O.p(id), week) || (!!h && h.from <= weekTime(week, 0, 9));
+    return friendAdversaryKnownAtProposal(visibleRedFlag(O.p(id), week), !!h && h.from <= weekTime(week, 0, 9));
   };
-  // Contacts are distinct (offender, real member) pairs: a second meetup with the same person is not a new contact.
-  let adv = 0, knownAdv = 0, hidMinor = 0, decl = 0;
+  // Count distinct pairs. The first contact may predate a hold that was visible at a later contact.
+  let adv = 0, hidMinor = 0, decl = 0;
   const seenC = new Set<string>();
+  const knownContacts = new Set<string>();
   const reach = new Map<MemberId, Set<MemberId>>();
   const byAdvKind: Record<string, number> = {};
   for (const c of contacts) {
     for (const [x, y] of [[c.a, c.b], [c.b, c.a]] as const) {
       const px = O.p(x);
       if (!realIds.has(y)) continue;
-      if (seenC.has(`${x}>${y}`)) continue;
-      seenC.add(`${x}>${y}`);
+      const pair = `${x}>${y}`;
+      const adversary = px.hidden.adversary === "age_liar" ? undefined : px.hidden.adversary;
+      if (adversary && !knownContacts.has(pair) && known(x, c.day)) knownContacts.add(pair);
+      if (seenC.has(pair)) continue;
+      seenC.add(pair);
       if (!canBeMatched(px.stated.claimedAge)) decl++;
       if (px.hidden.isMinor) hidMinor++;
-      if (px.hidden.adversary && px.hidden.adversary !== "age_liar") {
-        adv++; byAdvKind[px.hidden.adversary] = (byAdvKind[px.hidden.adversary] ?? 0) + 1;
-        if (known(x, c.day)) knownAdv++;
+      if (adversary) {
+        adv++; byAdvKind[adversary] = (byAdvKind[adversary] ?? 0) + 1;
         if (!reach.has(x)) reach.set(x, new Set());
         reach.get(x)!.add(y);
       }
@@ -192,7 +195,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     giniMeetups: gini(meetCount), zeroMeetupShare: div(meetCount.filter(x => x === 0).length, real.length),
     safety: {
       declaredMinorProposals: proposals.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
-      adversaryContacts: adv, knownAdversaryContacts: knownAdv, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
+      adversaryContacts: adv, knownAdversaryContacts: knownContacts.size, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
       medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported, harmsUndetected: undetected,
     },
     selfHangouts: world.selfHangouts,
