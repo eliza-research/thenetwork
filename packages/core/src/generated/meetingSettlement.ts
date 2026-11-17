@@ -98,8 +98,28 @@ export function lawDayBeforeReminderDoesNotRepeat(accepted: boolean, bookingDeli
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
 //@ pure
+export function dayOfCheckInAnswerCurrent(exactReceipt: boolean, acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  return exactReceipt && 0 <= acceptedAt && acceptedAt <= receivedAt && receivedAt <= handledAt;
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
 export function dayOfCheckInWindow(sameLocalDay: boolean, remainingMs: number): boolean {
   return sameLocalDay && nearMeetingReminderWindow(remainingMs);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function lawPendingCheckInCannotAuthorizeAnswer(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !dayOfCheckInAnswerCurrent(false, acceptedAt, receivedAt, handledAt);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function lawEarlyCheckInAnswerCannotChangeBooking(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !(receivedAt < acceptedAt) || !dayOfCheckInAnswerCurrent(true, acceptedAt, receivedAt, handledAt);
 }
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */

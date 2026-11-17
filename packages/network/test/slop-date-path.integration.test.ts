@@ -10,6 +10,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
@@ -289,6 +291,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const clock = new SimClock(START);
     const queued = phase === "before queued reveal";
     const attempted: string[] = [];
+    const turnSecret = "synthetic-slop-probe-receipt-signing-secret";
     const adapter = new BlooioAdapter({ app: "slop", from: "+12125550169", clock, liveGate: () => true, log: () => {}, provider: {
       kind: "sim", send: async request => {
         attempted.push(request.idempotencyKey);
@@ -296,7 +299,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       },
     } });
     const s = svc = new NetworkService({
-      url: URL_, clock, instance: "slop-current-limits", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
+      url: URL_, clock, instance: "slop-current-limits", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret }, networks: [{ id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 4 }, photoStorage: null, notify: false,
       adapter: () => adapter,
     });
@@ -325,6 +328,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     }
     expect(item).toBeDefined();
     const { oppId, revision } = item!;
+    if (!queued) await adapter.queue.setLineSafety("review");
     expect(await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(oppId)}`, { decision: "approve", revision })).json()).toEqual({ ok: true });
     const probes = () => sql<{ id: string; member_id: string }[]>`select id,member_id from network.messages where app_id='slop' and opportunity_id=${oppId} and type='probe' and direction='outbound' order by ts,id`;
     for (let hour = 0; hour < 24 && !(await probes()).length; hour++) await run(s, clock, HOUR);
@@ -332,6 +336,33 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect(first).toBeDefined();
     const firstPhone = phones[ids.indexOf(first!.member_id)]!;
     const secondPhone = phones.find(phone => phone !== firstPhone)!;
+    if (!queued) {
+      // A queued probe is an open turn in memory, but its recipient has never seen it.
+      expect(await adapter.queue.statusOf(first!.id)).toBe("retry_scheduled");
+      expect(attempted).not.toContain(`tn:${first!.id}`);
+      const earlyAt = clock.now();
+      const rt = s.runtimeFor("slop")!;
+      const firstStatus = async () => (await rt.pg.load())?.opps.find(o => o.id === oppId)?.status.find(([id]) => id === first!.member_id)?.[1];
+      await text(s, clock, firstPhone, "Yes, the first time works");
+      expect(await firstStatus()).toBe("probing");
+      expect(await probes()).toHaveLength(1);
+      await adapter.queue.setLineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      expect(await adapter.queue.statusOf(first!.id)).toBe("sent");
+      const late: TurnRequest = { app: "slop", channel: "blooio", from: firstPhone, messageId: "slop-early-answer-replayed-late",
+        text: "Yes, the first time works", transport: "imessage", receivedAt: earlyAt, to: null };
+      const body = JSON.stringify(late);
+      const signed = await svcSign(turnSecret, { id: late.messageId, path: TURN_PATH, method: "POST", body, nowS: Math.floor(clock.now() / 1000) });
+      expect((await s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...signed }, body }))).status).toBe(200);
+      expect(await firstStatus()).toBe("probing");
+      // Older stored probe slots recover only this same recipient's unique message at the recorded time.
+      await rt.unitOfWork(net => {
+        const state = net.exportState();
+        delete state.members.find(member => member.id === first!.member_id)?.awaiting?.probeReceiptId;
+        net.importState(state);
+      });
+    }
     await text(s, clock, firstPhone, "Yes, the first time works");
     for (let hour = 0; hour < 24 && (await probes()).length < 2; hour++) await run(s, clock, HOUR);
     const deliveredProbes = await probes();

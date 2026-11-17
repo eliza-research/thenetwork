@@ -42,8 +42,9 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
+import { slopProbeReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
@@ -737,24 +738,60 @@ export class NetworkRuntime {
     };
   }
 
+  /** Read only the exact current Slop questions. An older state may resolve a unique row at its probe time. */
+  private async refreshSlopProbeReceipts(state: NetworkState | undefined) {
+    if (this.app.id !== "slop" || !state) return;
+    const open = new Map(state.opps.filter(item => item.stage === "probing" && item.category === "romance").map(item => [item.id, item]));
+    const pending = state.members.flatMap(member => {
+      const slot = member.awaiting;
+      const opp = slot?.kind === "probe" && slot.oppId ? open.get(slot.oppId) : undefined;
+      if (!slot || !opp || !opp.status.some(([id, status]) => id === member.id && status === "probing")) return [];
+      const formerInvite = opp.timeRetry?.includes(member.id) ? undefined
+        : member.pendingAsks.find(invite => invite.kind === "probe" && invite.opportunityId === opp.id);
+      return [{ key: slopProbeReceiptKey(opp.id, member.id, slot), id: slot.probeReceiptId ?? formerInvite?.deliveryId ?? null,
+        member_id: member.id, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString() }];
+    });
+    if (!pending.length) return;
+    const rows = await this.scoped(tx => tx<{
+      key: string; matched: number; status: string; outbound_member_id: string | null; sent_at: Date | null; ts: Date;
+    }[]>`select probe.key,count(*) over (partition by probe.key)::int as matched,
+        coalesce(o.status,m.status) as status,o.member_id as outbound_member_id,o.sent_at,m.ts
+      from jsonb_to_recordset(${pending}::jsonb) as probe(key text,id text,member_id text,opportunity_id text,opened_at timestamptz)
+      join network.messages m on m.app_id=${this.app.id} and m.member_id=probe.member_id and m.opportunity_id=probe.opportunity_id
+        and m.direction='outbound' and m.type in ('probe','scheduling')
+        and (m.id=probe.id or (probe.id is null and m.ts=probe.opened_at))
+      left join platform.outbound o on o.app_id=m.app_id and o.id=m.id and o.member_id=m.member_id`);
+    for (const row of rows) {
+      if (row.matched !== 1) continue;
+      const acceptedAt = row.outbound_member_id && /^(accepted|sent|delivered|read)$/.test(row.status) ? row.sent_at
+        : this.adapter.name === "dry_run" && row.status === "dry_run" ? row.ts : undefined;
+      if (acceptedAt) this.initialInviteReceipts.set(row.key, { kind: "accepted", at: acceptedAt.getTime() });
+    }
+  }
+
   /** Read receipts for exact committed sends whose acceptance is still unresolved in Network state. */
   private async refreshInitialInviteReceipts(state: NetworkState | undefined) {
     this.initialInviteReceipts.clear();
+    await this.refreshSlopProbeReceipts(state);
     const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
-    const reschedule = new Map<string, { key: string; memberId: MemberId; oppId: string }>();
+    const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string; type: "scheduling" | "reminder" }>();
     for (const opp of state?.opps ?? []) {
       const draft = opp.reschedule;
       if (!draft || opp.stage !== "scheduled") continue;
       for (const memberId of draft.offered) {
         const key = rescheduleOfferKey(draft, memberId);
-        reschedule.set(opp.lane === "Cofounder" ? cofounderRevealDeliveryId(key) : key, { key, memberId, oppId: opp.id });
+        exactReplies.set(opp.lane === "Cofounder" ? cofounderRevealDeliveryId(key) : key, { key, memberId, oppId: opp.id, type: "scheduling" });
       }
     }
     const gatheringIds: string[] = [];
     const ids = (state?.members ?? []).flatMap(member => {
       const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []);
       const awaiting = member.awaiting;
+      if (awaiting?.kind === "booked" && awaiting.oppId && awaiting.bookedCheckIn) {
+        const key = bookedReminderKey("day-of-checkin", awaiting.oppId, member.id, awaiting.bookedCheckIn.revision);
+        exactReplies.set(key, { key, memberId: member.id, oppId: awaiting.oppId, type: "reminder" });
+      }
       // An unrelated inbound clears the unanswered ledger, but the exact open replacement question can still be answered.
       if (awaiting?.kind === "probe" && awaiting.oppId && replacements.has(awaiting.oppId)) pending.push(replacementProbeKey(awaiting.oppId, member.id));
       const repeat = awaiting?.kind === "probe" && awaiting.oppId ? gathering.get(awaiting.oppId) : undefined;
@@ -763,7 +800,7 @@ export class NetworkRuntime {
       if (survey?.sentAt !== undefined) pending.push(interruptionFeedbackKey(this.app.id, member.id, survey.opportunityId));
       return pending;
     });
-    if (!ids.length && !gatheringIds.length && !reschedule.size) return;
+    if (!ids.length && !gatheringIds.length && !exactReplies.size) return;
     const rows = await this.scoped(tx => tx<StoredSendReceipt[]>`select m.id,m.member_id,m.opportunity_id,m.type,o.member_id as outbound_member_id,o.sent_at,
       coalesce(o.status, m.status) as status,
       case when o.id is null then m.ts else o.sent_at end as accepted_at
@@ -771,16 +808,16 @@ export class NetworkRuntime {
       where m.app_id=${this.app.id} and m.direction='outbound' and (
         (m.id=any(${tx.array(ids, "TEXT")}) and m.proactive) or
         (m.id=any(${tx.array(gatheringIds, "TEXT")}) and m.type in ('probe','scheduling')) or
-        (m.id=any(${tx.array([...reschedule.keys()], "TEXT")}) and m.type='scheduling'))`);
+        (m.id=any(${tx.array([...exactReplies.keys()], "TEXT")}) and m.type in ('scheduling','reminder')))`);
     for (const row of rows) {
-      const offer = reschedule.get(row.id);
-      if (offer && (row.type !== "scheduling" || row.member_id !== offer.memberId || row.outbound_member_id !== offer.memberId
-        || row.opportunity_id !== offer.oppId)) continue;
-      // Reschedule consent requires provider acceptance for either a queued or collected offer.
-      const acceptedAt = offer ? row.sent_at : row.accepted_at;
+      const exact = exactReplies.get(row.id);
+      if (exact && (row.type !== exact.type || row.member_id !== exact.memberId || row.outbound_member_id !== exact.memberId
+        || row.opportunity_id !== exact.oppId)) continue;
+      // Check-in replies and reschedule votes require provider acceptance of their exact prompt.
+      const acceptedAt = exact ? row.sent_at : row.accepted_at;
       if (acceptedAt && /^(accepted|sent|delivered|read)$/.test(row.status)) {
-        this.initialInviteReceipts.set(offer?.key ?? row.id, { kind: "accepted", at: acceptedAt.getTime() });
-      } else if (!offer && row.status !== "parked_leak_review" && (row.status === "dry_run" || NOT_SENT.test(row.status))) {
+        this.initialInviteReceipts.set(exact?.key ?? row.id, { kind: "accepted", at: acceptedAt.getTime() });
+      } else if (!exact && row.status !== "parked_leak_review" && (row.status === "dry_run" || NOT_SENT.test(row.status))) {
         this.initialInviteReceipts.set(row.id, { kind: "not_sent" });
       }
     }

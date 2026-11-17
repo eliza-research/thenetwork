@@ -49,7 +49,7 @@ import {
 import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
-  dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
+  dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
@@ -81,7 +81,7 @@ import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented
 import {
   alternateAllowed, canRecordReply, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
   needsProbeSend, probeAvailability, probeExpired, probeExpiryDeadline, probeIsInvite, probeQuestionHoldUntil, probeResponseMs,
-  probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
+  probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
 import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
@@ -414,6 +414,7 @@ interface MemberState {
   awaiting?: {
     kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting";
     oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean;
+    probeReceiptId?: string;
     bookedCheckIn?: { meetingAt: number; revision: number };
   };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
@@ -646,7 +647,7 @@ type MemberInviteDraft = Pick<MemberInviteRequest, "firstName" | "relationship" 
 };
 const INVITE_REPLY_MAX_CHARS = 1600;
 type EmptyIntentNotice = { t: "empty_intent"; intentId: string; statedAt: number; searchDay: string; reason: string };
-interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
+interface HookFns { valid?: () => boolean; onSent?: (messageId: string) => void; onRefused?: () => void }
 interface Deferred { memberId: MemberId; body: string; meta: SimMeta; kind: SendKind; o: SendOpts; timing?: Timing }
 /** When a send may go out: at once (replies, safety), in the member's send slot (interruptions), or outside quiet hours (logistics). */
 type Timing = "now" | "slot" | "logistics";
@@ -710,6 +711,11 @@ export function gatheringRepeatOppId(source: GatheringRepeatSource): string {
 
 export function gatheringRepeatProbeKey(oppId: string, memberId: MemberId, retry = false): string {
   return `${oppId}:${retry ? "times" : "probe"}:${memberId}`;
+}
+
+/** The exact Slop consent receipt stays separate from generic unanswered-message tracking. */
+export function slopProbeReceiptKey(oppId: string, memberId: MemberId, slot: { at: number; probeReceiptId?: string }): string {
+  return `slop-probe-receipt:${oppId}:${memberId}:${slot.probeReceiptId ?? slot.at}`;
 }
 
 function isGatheringRepeat(o: Pick<Opp, "id" | "gatheringRepeat">): boolean {
@@ -1152,6 +1158,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (aw?.kind === "probe") {
       const o = this.opps.get(aw.oppId!);
       const options = o?.offered?.[m.id] ?? [];
+      if (this.app.id === "slop" && o?.category === "romance") {
+        const receipt = this.ctx.initialInviteReceipt?.(slopProbeReceiptKey(o.id, m.id, aw));
+        const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+        // spec/probeDispatch.md, "A Slop answer follows acceptance of the exact question"
+        if (!slopProbeReplyCurrent(this.memberReply && !msg.reaction, acceptedAt !== undefined, msg.ts, acceptedAt ?? now)) return "open" as const;
+      }
       const gathering = !!o && isGatheringRepeat(o);
       if (gathering) {
         if (!this.repeatSourceCurrent(o)) return this.close(o, "gathering repeat consent changed");
@@ -1183,10 +1195,22 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.awaiting = undefined;
       } else {
         const yn = this.yesNoOf(body);
-        if (c.kind === "cancel" || yn === "no") {
+        const declines = c.kind === "cancel" || yn === "no";
+        const confirms = yn === "yes" || c.kind === "ack";
+        if (checkIn && (declines || confirms)) {
+          const receipt = this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", o.id, m.id, checkIn.revision));
+          const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+          const receivedAt = msg.signedReceivedAt ?? msg.ts;
+          if (!dayOfCheckInAnswerCurrent(acceptedAt !== undefined, acceptedAt ?? 0, receivedAt, now)) {
+            // An independent cancellation request still uses the upcoming-booking selector.
+            if (cancellation) this.handleExplicitCancellation(m, cancellation, now, false);
+            return;
+          }
+        }
+        if (declines) {
           return this.handleDrop(m, o, true, !msg.reaction && (c.kind === "cancel" || consentOf(body).answer === "no"));
         }
-        if (yn === "yes" || c.kind === "ack") {
+        if (confirms) {
           m.awaiting = undefined;
           this.confirmPlan(o, m.id, true);
           this.ack(m, copy.bookedThanks);
@@ -1271,7 +1295,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     return true;
   }
 
-  private handleExplicitCancellation(m: MemberState, request: BookingCancellation, now: number): boolean {
+  private handleExplicitCancellation(m: MemberState, request: BookingCancellation, now: number,
+    bookedSlotAvailable = m.awaiting?.kind === "booked"): boolean {
     const matches: Opp[] = [];
     for (const o of this.opps.values()) {
       const startAt = o.meetingAt;
@@ -1281,7 +1306,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       matches.push(o);
       if (matches.length === 2) break;
     }
-    const action = unlinkedCancellation(this.memberReply, true, m.awaiting?.kind === "booked", request.localStart !== undefined, matches.length);
+    const action = unlinkedCancellation(this.memberReply, true, bookedSlotAvailable, request.localStart !== undefined, matches.length);
     if (action === "NoCancellation") return false;
     if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!, true, true);
     else this.send(m, action === "AskWhichBooking" ? this.copy.whichBookingToCancel : this.copy.noBookingToCancel, { type: "info" }, "reply");
@@ -3257,7 +3282,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.sentAt = { ...o.sentAt, [m.id]: this.now() };
         const gathering = isGatheringRepeat(o);
         this.send(m, copy.timesRetry(attention.timeOptionsPhrase(fresh, NY)), { type: "scheduling", proactive: false, timeOptions: fresh,
-          ...(gathering ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
+          ...(gathering || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
           ...(gathering ? { key: gatheringRepeatProbeKey(o.id, m.id, true), noDefer: true } : {}) });
         return;
       }
@@ -5968,7 +5993,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const hook = o.hook;
     const consentProbe = hook?.t === "probe" || hook?.t === "plan_probe" || hook?.t === "times" ? hook.oppId : null;
     m.lastSent = { body: storedText, at: now, consentProbe, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
-    if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.();
+    if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.(delivery.id);
     return "sent";
   }
 
@@ -6103,9 +6128,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       };
       case "probe": return {
         valid: () => !!o && o.stage === "probing" && o.participants.includes(h.id) && o.status.get(h.id) === "probing",
-        onSent: () => {
+        onSent: messageId => {
           if (!o) return;
-          m.awaiting = { kind: "probe", oppId: o.id, at: now() };
+          m.awaiting = { kind: "probe", oppId: o.id, at: now(), ...(this.app.id === "slop" && o.category === "romance" ? { probeReceiptId: messageId } : {}) };
           m.asked++; o.contacted.add(h.id);
           o.sentAt = { ...o.sentAt, [h.id]: now() };
           this.counters.probesSent++;
@@ -6121,7 +6146,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       };
       case "times": return {
         valid: () => !!o && o.stage === "probing" && o.status.get(h.id) === "probing",
-        onSent: () => { if (o) m.awaiting = { kind: "probe", oppId: o.id, at: now() }; },
+        onSent: messageId => {
+          if (o) m.awaiting = { kind: "probe", oppId: o.id, at: now(), ...(this.app.id === "slop" && o.category === "romance" ? { probeReceiptId: messageId } : {}) };
+        },
         onRefused: () => {
           if (!o || o.stage !== "probing" || o.status.get(h.id) !== "probing") return;
           if (isGatheringRepeat(o)) return this.closeNoCommonTime(o, h.id);

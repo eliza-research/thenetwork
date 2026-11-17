@@ -216,6 +216,19 @@ export function sometimesSettledNo(participant: ParticipantProbe): boolean {
   return participant.phase === "Unavailable";
 }
 
+/** Story: Hear about one reviewed opportunity at a time / A Slop answer follows acceptance of the exact question (spec/probeDispatch.md) */
+//@ pure
+export function slopProbeReplyCurrent(direct: boolean, transportAccepted: boolean, receivedAt: number, acceptedAt: number): boolean {
+  return direct && transportAccepted && receivedAt >= acceptedAt;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A Slop answer follows acceptance of the exact question (spec/probeDispatch.md) */
+//@ pure
+export function lawSlopProbeNeedsAcceptance(direct: boolean, receivedAt: number, acceptedAt: number): boolean {
+  //@ ensures \result === true
+  return !slopProbeReplyCurrent(direct, false, receivedAt, acceptedAt);
+}
+
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
 export function mayTryAlternate(alternatesRemain: boolean, replaced: number): boolean {

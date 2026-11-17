@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
@@ -33,6 +33,13 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
     env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
   });
+  const sendTurn = async (messageId: string, text: string, receivedAt = clock.now()) => {
+    const input: TurnRequest = { app: app.id, channel: "blooio", from: phones[0]!, to: null, messageId,
+      transport: "imessage", receivedAt, text };
+    const body = JSON.stringify(input);
+    const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
+    return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }));
+  };
   try {
     await service.start();
     const members = [];
@@ -126,6 +133,10 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     });
     const firstCheckIn = `day-of-checkin:${planId}:r0:${first}`;
     expect(await adapter.queue.statusOf(firstCheckIn)).toBe("retry_scheduled");
+    const booking = async () => (await rt.pg.load())?.opps.find(opp => opp.id === planId);
+    expect((await sendTurn("held-check-in-no", "no")).status).toBe(200);
+    expect(await booking()).toMatchObject({ stage: "scheduled", status: expect.arrayContaining([[first, "yes"]]) });
+    expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
     const revised = { ...booked, scheduleRevision: 1, meetingAt: booked.meetingAt! + HOUR };
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised] }));
     clock.advance(HOUR);
@@ -135,6 +146,10 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     await rt.unitOfWork(net => net.tick(clock.now()));
     const revisedCheckIn = `day-of-checkin:${planId}:r1:${first}`;
     expect(await adapter.queue.statusOf(revisedCheckIn)).toBe("sent");
+    expect((await sendTurn("delayed-check-in-no", "no", clock.now() - MINUTE)).status).toBe(200);
+    expect(await booking()).toMatchObject({ stage: "scheduled", status: expect.arrayContaining([[first, "yes"]]) });
+    expect((await sendTurn("delivered-check-in-yes", "yes")).status).toBe(200);
+    expect((await booking())?.explicit).toContain(first);
     await rt.deliver();
     expect(calls.filter(call => call.idempotencyKey === `tn:${revisedCheckIn}`)).toHaveLength(1);
     expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
@@ -148,14 +163,8 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     });
     const pendingSlot = async () => (await rt.pg.load())?.members.find(member => member.id === first)?.awaiting;
     expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
-    const cancelAt = async (messageId: string, at: number) => {
-      const text = `Please cancel my meeting on ${localBookingStart(at).replace(" ", " at ")}`;
-      const input: TurnRequest = { app: app.id, channel: "blooio", from: phones[0]!, to: null, messageId,
-        transport: "imessage", receivedAt: clock.now(), text };
-      const body = JSON.stringify(input);
-      const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
-      return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }));
-    };
+    const cancelAt = (messageId: string, at: number) =>
+      sendTurn(messageId, `Please cancel my meeting on ${localBookingStart(at).replace(" ", " at ")}`);
     const unknown = await cancelAt("unknown-meeting-time", another.meetingAt + HOUR);
     expect(await unknown.json()).toMatchObject({ replies: [expect.stringContaining("couldn't find")] });
     expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });

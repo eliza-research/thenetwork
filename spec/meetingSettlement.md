@@ -62,7 +62,7 @@ pure def lawDayBeforeReminderDoesNotRepeat(accepted: bool, bookingDelivered: boo
 
 ### The day-of check-in uses one near-meeting message
 
-If the near reminder falls on the meeting's local day, ask whether the participant is still coming and tell them they can report a delay or change. The check-in uses the same message slot as the near reminder. A reminder sent on the previous day stays informational. Keep an unrelated pending question intact. Use the existing booked reply when its slot is free or already refers to this meeting. Bind that reply to the meeting's current schedule and accept it only before the meeting starts. Sending the check-in and receiving no reply leave the confirmation and attendance rules as they were. A replacement schedule gets its own reminder IDs. The queue checks both the current schedule and the check-in window before delivery.
+If the near reminder falls on the meeting's local day, ask whether the participant is still coming and tell them they can report a delay or change. The check-in uses the same message slot as the near reminder. A reminder sent on the previous day stays informational. Keep an unrelated pending question intact. Use the existing booked reply when its slot is free or already refers to this meeting. Bind that reply to the meeting's current schedule. Require a positive receipt for the exact check-in and accept only an answer received at or after receipt, within the current check-in window and no later than handling. The participant can still use an explicit cancellation under the [booking selector](opportunityLifecycle.md). Sending the check-in and receiving no reply leave the confirmation and attendance rules as they were. A replacement schedule gets its own reminder IDs. The queue checks both the current schedule and the check-in window before delivery.
 
 ```quint
 pure def dayOfCheckInWindow(sameLocalDay: bool, remainingMs: int): bool =
@@ -70,6 +70,15 @@ pure def dayOfCheckInWindow(sameLocalDay: bool, remainingMs: int): bool =
 
 pure def dayOfCheckInDue(sameLocalDay: bool, replySlotAvailable: bool, remainingMs: int): bool =
   replySlotAvailable and dayOfCheckInWindow(sameLocalDay, remainingMs)
+
+pure def dayOfCheckInAnswerCurrent(exactReceipt: bool, acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  exactReceipt and 0 <= acceptedAt and acceptedAt <= receivedAt and receivedAt <= handledAt
+
+pure def lawPendingCheckInCannotAuthorizeAnswer(acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  not(dayOfCheckInAnswerCurrent(false, acceptedAt, receivedAt, handledAt))
+
+pure def lawEarlyCheckInAnswerCannotChangeBooking(acceptedAt: int, receivedAt: int, handledAt: int): bool =
+  receivedAt < acceptedAt implies not(dayOfCheckInAnswerCurrent(true, acceptedAt, receivedAt, handledAt))
 
 pure def lawDayOfCheckInNeedsAFutureMeeting(sameLocalDay: bool, replySlotAvailable: bool, remainingMs: int): bool =
   dayOfCheckInDue(sameLocalDay, replySlotAvailable, remainingMs) implies (sameLocalDay and remainingMs > 0)
