@@ -5,7 +5,7 @@
 export type OpportunityPhase = "InReview" | "Probing" | "Scheduled" | "Done" | "Closed";
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 export interface OpportunityLifecycle { phase: OpportunityPhase; approved: boolean }
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 export type UnlinkedCancellation = "NoCancellation" | "NoMatchingBooking" | "AskWhichBooking" | "CancelMatchingBooking";
 
 /** One variant per transition in the spec. */
@@ -103,26 +103,33 @@ export function lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecy
   return !bookedReplyCurrent(proposal, accepted) || (proposal.phase === "Scheduled" && accepted);
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, matching: number): UnlinkedCancellation {
-  return !ownText || !explicit || activeBookedSlot ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
+export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, namedStart: boolean, matching: number): UnlinkedCancellation {
+  return !ownText || !explicit || (activeBookedSlot && !namedStart) ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
 export function upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
   return onRoster && bookedReplyCurrent(proposal, accepted) && startKnown && startAt > now;
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function lawUnlinkedCancellationNeedsOneMatch(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, matching: number): boolean {
+export function lawUnlinkedCancellationNeedsOneMatch(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, namedStart: boolean, matching: number): boolean {
   //@ ensures \result === true
-  return !(unlinkedCancellation(ownText, explicit, activeBookedSlot, matching) === "CancelMatchingBooking") || (ownText && explicit && !activeBookedSlot && matching === 1);
+  return !(unlinkedCancellation(ownText, explicit, activeBookedSlot, namedStart, matching) === "CancelMatchingBooking") || (ownText && explicit && (namedStart || !activeBookedSlot) && matching === 1);
 }
 
-/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawNamedCancellationCanSelectWithPendingReply(activeBookedSlot: boolean): boolean {
+  //@ ensures \result === true
+  return unlinkedCancellation(true, true, activeBookedSlot, true, 1) === "CancelMatchingBooking";
+}
+
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
 export function lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
   //@ ensures \result === true

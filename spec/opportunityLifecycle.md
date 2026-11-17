@@ -74,9 +74,9 @@ pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, ac
   bookedReplyCurrent(proposal, accepted) implies (proposal.phase == Scheduled and accepted)
 ```
 
-### An explicit cancellation without a reply slot selects one upcoming meeting
+### An explicit cancellation selects the named upcoming meeting
 
-Read the member's own explicit cancellation in the current app. When no booked reply slot applies, consider only accepted bookings on the member's current roster with a known start later than now. A request can name the exact date and time in New York local time. If it does, consider only bookings with that local start. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. Keep the normal routing for an active booked reply slot and for a probe answer.
+Read the member's own explicit cancellation in the current app. A request with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
 
 ```quint
 type UnlinkedCancellation = NoCancellation | NoMatchingBooking | AskWhichBooking | CancelMatchingBooking
@@ -85,15 +85,18 @@ pure def upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: 
     startKnown: bool, startAt: int, now: int): bool =
   onRoster and bookedReplyCurrent(proposal, accepted) and startKnown and startAt > now
 
-pure def unlinkedCancellation(ownText: bool, explicit: bool, activeBookedSlot: bool, matching: int): UnlinkedCancellation =
-  if (not(ownText) or not(explicit) or activeBookedSlot) NoCancellation
+pure def unlinkedCancellation(ownText: bool, explicit: bool, activeBookedSlot: bool, namedStart: bool, matching: int): UnlinkedCancellation =
+  if (not(ownText) or not(explicit) or (activeBookedSlot and not(namedStart))) NoCancellation
   else if (matching == 1) CancelMatchingBooking
   else if (matching > 1) AskWhichBooking
   else NoMatchingBooking
 
-pure def lawUnlinkedCancellationNeedsOneMatch(ownText: bool, explicit: bool, activeBookedSlot: bool, matching: int): bool =
-  unlinkedCancellation(ownText, explicit, activeBookedSlot, matching) == CancelMatchingBooking
-    implies (ownText and explicit and not(activeBookedSlot) and matching == 1)
+pure def lawUnlinkedCancellationNeedsOneMatch(ownText: bool, explicit: bool, activeBookedSlot: bool, namedStart: bool, matching: int): bool =
+  unlinkedCancellation(ownText, explicit, activeBookedSlot, namedStart, matching) == CancelMatchingBooking
+    implies (ownText and explicit and (namedStart or not(activeBookedSlot)) and matching == 1)
+
+pure def lawNamedCancellationCanSelectWithPendingReply(activeBookedSlot: bool): bool =
+  unlinkedCancellation(true, true, activeBookedSlot, true, 1) == CancelMatchingBooking
 
 pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRoster: bool, accepted: bool,
     startKnown: bool, startAt: int, now: int): bool =

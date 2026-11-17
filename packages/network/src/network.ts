@@ -138,7 +138,7 @@ import { standingIntentReference, type StandingIntentCommand } from "./standing-
 type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventInput ? Omit<E, "t"> : never) : never;
 import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustLevel, type TrustState } from "./trust.ts";
-import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
+import { appTagFacet, type AppHooks, type AppTag, type HookOpp } from "./apphooks.ts";
 import { confirmPosting, postingDraftCurrent } from "../../core/src/generated/postingPolicy.ts";
 import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
@@ -476,8 +476,9 @@ const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|per
 
 const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this) (?:meeting|date|plan|booking)(?: on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d))?(?: please)?[.!?]?$/i;
 const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:need to cancel|can'?t make it(?: anymore)?|can'?t come(?: anymore)?|have to bail)[.!]?$/i;
+type BookingCancellation = { localStart?: string };
 
-function explicitBookingCancellation(text: string): { localStart?: string } | undefined {
+function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
   const booking = BOOKING_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
@@ -1129,6 +1130,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
     const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body) : undefined;
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
+    const cancellation = this.memberReply && !msg.reaction ? explicitBookingCancellation(body) : undefined;
+    // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
+    if (cancellation?.localStart && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
@@ -1190,7 +1194,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     if (!msg.reaction && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
-    if (this.handleUnlinkedCancellation(m, body, now)) return;
+    if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
       const tags = checkinTags(body);
@@ -1266,10 +1270,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return true;
   }
 
-  private handleUnlinkedCancellation(m: MemberState, body: string, now: number): boolean {
-    // spec/opportunityLifecycle.md, "An explicit cancellation without a reply slot selects one upcoming meeting"
-    const request = explicitBookingCancellation(body);
-    if (!request) return false;
+  private handleExplicitCancellation(m: MemberState, request: BookingCancellation, now: number): boolean {
     const matches: Opp[] = [];
     for (const o of this.opps.values()) {
       const startAt = o.meetingAt;
@@ -1279,7 +1280,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       matches.push(o);
       if (matches.length === 2) break;
     }
-    const action = unlinkedCancellation(this.memberReply, true, m.awaiting?.kind === "booked", matches.length);
+    const action = unlinkedCancellation(this.memberReply, true, m.awaiting?.kind === "booked", request.localStart !== undefined, matches.length);
     if (action === "NoCancellation") return false;
     if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!, true, true);
     else this.send(m, action === "AskWhichBooking" ? this.copy.whichBookingToCancel : this.copy.noBookingToCancel, { type: "info" }, "reply");

@@ -2,10 +2,13 @@ import { expect, test } from "vitest";
 import { DAY, HOUR, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
+import { localBookingStart } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
@@ -16,6 +19,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   const url = await migratedDb("participation_outbound");
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
+  const secret = "synthetic-named-cancellation-fixture";
   const app = APPS.friends;
   const phones = ["+12125550381", "+12125550382"];
   const calls: SendRequest[] = [];
@@ -27,7 +31,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
   });
   try {
     await service.start();
@@ -134,6 +138,35 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     await rt.deliver();
     expect(calls.filter(call => call.idempotencyKey === `tn:${revisedCheckIn}`)).toHaveLength(1);
     expect(calls.some(call => call.idempotencyKey === `tn:${firstCheckIn}`)).toBe(false);
+
+    // A signed cancellation with an exact time belongs to that meeting, even with another reply pending.
+    const another = { ...booked, id: `${planId}-another`, meetingAt: booked.meetingAt! + DAY };
+    await sql`update network.members set participation_state='normal' where app_id=${app.id} and id=${first!}`;
+    for (const phone of phones) await adapter.engaged(phone);
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: pairedMembers, opps: [revised, another] });
+    });
+    const pendingSlot = async () => (await rt.pg.load())?.members.find(member => member.id === first)?.awaiting;
+    expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
+    const cancelAt = async (messageId: string, at: number) => {
+      const text = `Please cancel my meeting on ${localBookingStart(at).replace(" ", " at ")}`;
+      const input: TurnRequest = { app: app.id, channel: "blooio", from: phones[0]!, to: null, messageId,
+        transport: "imessage", receivedAt: clock.now(), text };
+      const body = JSON.stringify(input);
+      const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
+      return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }));
+    };
+    const unknown = await cancelAt("unknown-meeting-time", another.meetingAt + HOUR);
+    expect(await unknown.json()).toMatchObject({ replies: [expect.stringContaining("couldn't find")] });
+    expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
+    const confirmation = await cancelAt("named-meeting-time", another.meetingAt);
+    expect(await confirmation.json()).toMatchObject({ replies: [expect.stringContaining("thanks for the heads up")] });
+    expect((await rt.pg.load())?.opps.map(opp => [opp.id, opp.stage])).toEqual([[planId, "scheduled"], [another.id, "closed"]]);
+    expect(await pendingSlot()).toMatchObject({ kind: "booked", oppId: planId });
+    const sentCancellation = `booked-cancellation:${another.id}:${second}`;
+    expect(await adapter.queue.statusOf(sentCancellation)).toBe("sent");
+    expect(calls.filter(call => call.idempotencyKey === `tn:${sentCancellation}`)).toHaveLength(1);
+    expect(calls.some(call => call.idempotencyKey === `tn:booked-cancellation:${planId}:${second}`)).toBe(false);
 
     for (const [suffix, text] of [["drop", "I can't make it."], ["block", "Block Blair"]] as const) {
       const cancelledId = `${planId}-${suffix}`;
