@@ -944,6 +944,7 @@ export class NetworkRuntime {
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           ...(approvedPhotos ? { approvedPhotos } : {}), ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
+          ...(type === "proposal" && meta.booked && meta.participants?.length ? { bookingRoster: [...meta.participants] } : {}),
           type, oppId, proactive: !!meta.proactive, system: false, ts: t,
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
@@ -1161,6 +1162,7 @@ export class NetworkRuntime {
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,
+      booking_roster_member_ids: s.bookingRoster ? tx.array([...s.bookingRoster], "TEXT") : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     // Collected replies to members join the line's thread history (platform.outbound "collected"; sent_at when Cloud accepts), so the
@@ -1224,16 +1226,21 @@ export class NetworkRuntime {
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`delete from platform.member_invitations where app_id=${app} and (inviter_member_id=${id} or redeemed_member_id=${id})`;
       await tx`delete from platform.member_invitation_reviews where app_id=${app} and inviter_member_id=${id}`;
-      const joinNotices = await tx`select id,inbound_id from network.messages where app_id=${app} and ${id}=any(invite_join_members)`;
-      if (joinNotices.length) {
-        const ids = joinNotices.map(row => row.id as string);
+      const linkedNotices = await tx`select id,inbound_id,booking_roster_member_ids is not null as booking from network.messages where app_id=${app}
+        and (${id}=any(invite_join_members) or ${id}=any(booking_roster_member_ids))`;
+      if (linkedNotices.length) {
+        const ids = linkedNotices.map(row => row.id as string);
         await tx`update platform.outbound set body=null, ended_at=coalesce(ended_at,${new Date(this.clock.now())}),
-          status=case when status=any(${tx.array(WAITING_STATUSES, "TEXT")}) then 'dropped_forgotten' else status end
+          status=case when status=any(${tx.array([...WAITING_STATUSES, "collected", "send_unknown"], "TEXT")}) then 'dropped_forgotten' else status end
           where app_id=${app} and id in ${tx(ids)}`;
-        const turns = joinNotices.flatMap(row => row.inbound_id ? [row.inbound_id as string] : []);
+        const turns = linkedNotices.flatMap(row => row.inbound_id ? [row.inbound_id as string] : []);
         if (turns.length) await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,
           receipt=null,receipt_hash=null,action_receipts='{}'::jsonb where app_id=${app} and id in ${tx(turns)}`;
-        await tx`update network.messages set body='Invitation notice erased.',invite_join_members=null where app_id=${app} and id in ${tx(ids)}`;
+        await tx`update network.messages set body=case when booking_roster_member_ids is not null then 'Booking notice erased.' else 'Invitation notice erased.' end,
+          booking_roster_member_ids=null,invite_join_members=null where app_id=${app} and id in ${tx(ids)}`;
+        const bookingDeliveries = linkedNotices.filter(row => row.booking).map(row => `net:${row.id}`);
+        if (bookingDeliveries.length) await tx`update notify.inbox_items set summary='Booking notice erased.'
+          where app_id=${app} and delivery_id in ${tx(bookingDeliveries)}`;
       }
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,

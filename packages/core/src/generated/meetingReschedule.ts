@@ -81,6 +81,26 @@ export function lawBookingStartEndsOriginalNotice(scheduled: boolean, confirmedS
   return !originalBookingNoticeCurrent(scheduled, confirmedSeat, originalRevision, 0);
 }
 
+/** Story: Change the time only when everyone agrees / A named booking notice still needs every recorded seat (spec/meetingReschedule.md) */
+//@ pure
+export function bookingNoticeRosterCurrent(groupBooking: boolean, recordedRoster: boolean, includesRecipient: boolean, recordedSeatsConfirmed: boolean): boolean {
+  return recordedRoster ? includesRecipient && recordedSeatsConfirmed : !groupBooking;
+}
+
+/** Story: Change the time only when everyone agrees / A named booking notice still needs every recorded seat (spec/meetingReschedule.md) */
+//@ pure
+export function lawWithdrawnSeatPreventsNotice(groupBooking: boolean, includesRecipient: boolean): boolean {
+  //@ ensures \result === true
+  return !bookingNoticeRosterCurrent(groupBooking, true, includesRecipient, false);
+}
+
+/** Story: Change the time only when everyone agrees / A named booking notice still needs every recorded seat (spec/meetingReschedule.md) */
+//@ pure
+export function lawUnboundGroupNoticeCannotSend(includesRecipient: boolean, recordedSeatsConfirmed: boolean): boolean {
+  //@ ensures \result === true
+  return !bookingNoticeRosterCurrent(true, false, includesRecipient, recordedSeatsConfirmed);
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_meetingReschedule(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

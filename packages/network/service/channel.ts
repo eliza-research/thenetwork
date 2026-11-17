@@ -22,7 +22,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
-import { originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
+import { bookingNoticeRosterCurrent, originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
 import { bookingNoticeRetryMs, dayBeforeReminderEndMs, queuedReminderClaim } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
@@ -89,9 +89,19 @@ async function reengagementAdmission(tx: SQL, row: QueueRow, runtimeId: string, 
 
 export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[], clock: Clock): Promise<boolean> {
   if (!ids.length) return false;
-  const rows = await tx<{ scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null }[]>`select opp.meeting_at,
+  const rows = await tx<{
+    scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null;
+    group_booking: boolean | null; roster_recorded: boolean; roster_includes_recipient: boolean | null; roster_confirmed: boolean;
+  }[]>`select opp.meeting_at,
     (booking.id is not null and opp.state='SCHEDULED') as scheduled,
-    (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision
+    (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision,
+    opp.kind='group' as group_booking,msg.booking_roster_member_ids is not null as roster_recorded,
+    msg.member_id=any(msg.booking_roster_member_ids) as roster_includes_recipient,
+    not exists (select 1 from unnest(msg.booking_roster_member_ids) named(member_id) where not exists (
+      select 1 from network.participations current_seat where current_seat.app_id=msg.app_id
+        and current_seat.opportunity_id=msg.opportunity_id and current_seat.member_id=named.member_id
+        and current_seat.role='participant' and current_seat.status='confirmed'
+    )) as roster_confirmed
     from network.messages msg
     left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     left join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=msg.opportunity_id and seat.member_id=msg.member_id
@@ -100,7 +110,8 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
     where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.direction='outbound' and msg.type='proposal' and msg.opportunity_id is not null`;
   const now = clock.now();
   return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
-    (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now));
+    (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now)
+    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_confirmed));
 }
 
 function terminalNotice(row: QueueRow): TerminalNotice | undefined {
@@ -222,6 +233,7 @@ export interface Outbound {
   mediaUrls?: string[];
   approvedPhotos?: ApprovedRelayPhoto[];
   invitationJoins?: readonly MemberId[];
+  bookingRoster?: readonly MemberId[];
   /** reply: an answer to the member's own message; compliance: STOP/HELP confirmations; proactive; transactional: everything else. */
   kind: MessageKind;
   type?: string;

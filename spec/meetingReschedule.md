@@ -71,3 +71,18 @@ pure def originalBookingNoticeCurrent(scheduled: bool, confirmedSeat: bool, orig
 pure def lawBookingStartEndsOriginalNotice(scheduled: bool, confirmedSeat: bool, originalRevision: bool): bool =
   not(originalBookingNoticeCurrent(scheduled, confirmedSeat, originalRevision, 0))
 ```
+
+### A named booking notice still needs every recorded seat
+
+Record the roster from the notice when its text is created. On queued delivery and signed replay, require the recipient to be on that roster and every recorded seat to remain confirmed for this booking. A new confirmed seat does not invalidate an earlier notice. A withdrawal withholds the notice that named the departing member, even when the remaining group can continue. An older group notice without a recorded roster cannot establish current consent to disclose every name. Erasure clears the stored roster and the notice that names the removed member.
+
+```quint
+pure def bookingNoticeRosterCurrent(groupBooking: bool, recordedRoster: bool, includesRecipient: bool, recordedSeatsConfirmed: bool): bool =
+  if (recordedRoster) includesRecipient and recordedSeatsConfirmed else not(groupBooking)
+
+pure def lawWithdrawnSeatPreventsNotice(groupBooking: bool, includesRecipient: bool): bool =
+  not(bookingNoticeRosterCurrent(groupBooking, true, includesRecipient, false))
+
+pure def lawUnboundGroupNoticeCannotSend(includesRecipient: bool, recordedSeatsConfirmed: bool): bool =
+  not(bookingNoticeRosterCurrent(true, false, includesRecipient, recordedSeatsConfirmed))
+```
