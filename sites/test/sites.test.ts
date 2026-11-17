@@ -21,6 +21,7 @@ import { serveSite } from "../../scripts/sites-dev.ts";
 import { toE164 } from "../../packages/ui/src/api/join.ts";
 import { brandFor } from "../../packages/core/src/generated/brandIdentity.ts";
 import { type JoinPage, initial as joinStart, step as joinStep } from "../../packages/core/src/generated/browserJoin.ts";
+import { preparedPeonTextHeader } from "../../packages/core/src/generated/textEnrollment.ts";
 import {
   type AgentId,
   type DeviceKind,
@@ -219,7 +220,14 @@ describe.each(SITES)("$domain", (s) => {
         expect(skill).not.toContain(`https://${s.domain}/join`);
         expect(skill).toContain("Signup and sign-in happen only in the person's current agent conversation");
         expect(skill).toContain("they must never have to send a text to receive a code");
-      } else if (s.app !== "slop") expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
+      } else if (s.app === "peon") {
+        expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
+        expect(skill).toContain(`\`sms:${TEXT_LINE}?&body=\``);
+        expect(skill).toContain(`\`${encodeURIComponent(preparedPeonTextHeader + "\n")}\``);
+        expect(skill.replace(/\s+/g, " ")).toContain(APPS.peon.consent.text);
+        expect(skill).toContain("Only an `onboarding` or `active`");
+        expect(skill).toContain("returns `submitted: true`");
+      }
     }
   });
 

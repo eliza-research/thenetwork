@@ -35,6 +35,21 @@ pure def lawSurveyReplyTakesPrecedence(appKeyword: bool): bool =
   checkExplicitRoute(initialRoute, { dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword }).phase == SurveyRoute
 ```
 
+### A prepared Peon signup names its app on a separate first line
+
+The Peon skill's one prepared text starts with exactly `join peon` on its own line, followed by the approved profile. The shared line takes this as an explicit Peon choice when the text has a profile after the first line. The message still goes through normal text enrollment and consent checks. A Peon mention elsewhere in a message does not select the app. Existing standalone keywords and dedicated lines keep their routing rules.
+
+```quint
+pure val preparedPeonTextHeader = "join peon"
+pure val headerValues = Set(preparedPeonTextHeader, "peon", "I plan to join peon", "")
+
+pure def preparedPeonTextNamesApp(header: str, profilePresent: bool): bool =
+  header == preparedPeonTextHeader and profilePresent
+
+pure def lawPreparedPeonTextRequiresExplicitHeader(header: str, profilePresent: bool): bool =
+  preparedPeonTextNamesApp(header, profilePresent) iff (header == preparedPeonTextHeader and profilePresent)
+```
+
 ### A pending join routes only a possible join answer
 
 Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. Use only pending fields from the routed app.

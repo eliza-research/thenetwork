@@ -637,6 +637,39 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       "content-type": "application/json", ...await svcSign(signedInvitationSecret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) }),
     } }));
   };
+  test("the prepared Peon signup text joins Peon on the shared signed line", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const { s } = service(clock, {
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }, { id: "peon:nyc", matchingEnabled: false }],
+    });
+    await s.start();
+    const signed = invitationTurn(s, clock);
+    const turn = async (messageId: string, from: string, text: string) => {
+      const response = await signed({ messageId, from, text, to: LINE, channel: "blooio", transport: "sms", receivedAt: clock.now() });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    // spec/textEnrollment.md, "A prepared Peon signup names its app on a separate first line"
+    const phone = newPhone();
+    const profile = "My name is Ari. I am 29 years old. I am looking for remote engineering work.";
+    const accepted = await turn("prepared-peon-profile", phone, `join peon\n${profile}`);
+    expect(accepted).toMatchObject({ outcome: "handled", app: "peon", reason: "joined" });
+    expect(await s.memberApps(phone)).toEqual([expect.objectContaining({ app: "peon" })]);
+    expect(await consentOf(phone, "peon")).toBe("opted_in");
+
+    const ordinaryPhone = newPhone();
+    expect(await turn("ordinary-peon-mention", ordinaryPhone, `${profile} A friend also told me to join peon.`))
+      .toMatchObject({ outcome: "handled", app: "ntwrk", reason: "joined" });
+    expect(await s.memberApps(ordinaryPhone)).toEqual([expect.objectContaining({ app: "ntwrk" })]);
+
+    const childPhone = newPhone();
+    expect(await turn("prepared-peon-too-young", childPhone, `join peon\r\n${profile.replace("29 years", "12 years")}`))
+      .toMatchObject({ outcome: "handled", app: "peon", reason: "under_age" });
+    expect(await s.memberApps(childPhone)).toEqual([]);
+  }, T);
   test("a committed age correction follows its owner when the old number is reassigned", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);

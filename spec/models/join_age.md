@@ -8,7 +8,7 @@ A person needs to join by text or web and have their lowest stated age apply acr
 
 Check membership creation, the age floor, under-13 erasure, and single-player access for minors. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions.
+The [shared-line enrollment spec](../textEnrollment.md) generates app routing, text join and other-app enrollment decisions. This standalone model retains the database, restart and age-propagation behavior around those decisions for three representative apps. It takes the parsed app choice as an input. The executable spec and the signed turn journey cover the prepared Peon signup format.
 
 Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

@@ -27,6 +27,8 @@ export type Event =
   | { type: "recordTextMembership"; membershipActive: boolean }
   | { type: "recordWelcome"; hasOtherApp: boolean; sharedNetwork: boolean; invited: boolean };
 
+/** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
+export const preparedPeonTextHeader: string = "join peon";
 /** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 export const completedAnswer: JoinAnswerFacts = { hasAge: true, hasName: true, invalidHome: false };
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
@@ -65,6 +67,19 @@ export function lawProfileReadTakesPrecedence(surveyApp: boolean, appKeyword: bo
 export function lawSurveyReplyTakesPrecedence(appKeyword: boolean): boolean {
   //@ ensures \result === true
   return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
+}
+
+/** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
+//@ pure
+export function preparedPeonTextNamesApp(header: string, profilePresent: boolean): boolean {
+  return header === preparedPeonTextHeader && profilePresent;
+}
+
+/** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
+//@ pure
+export function lawPreparedPeonTextRequiresExplicitHeader(header: string, profilePresent: boolean): boolean {
+  //@ ensures \result === true
+  return preparedPeonTextNamesApp(header, profilePresent) === (header === preparedPeonTextHeader && profilePresent);
 }
 
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */

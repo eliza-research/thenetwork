@@ -71,7 +71,7 @@ import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
   checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
-  namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
+  namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
@@ -1658,7 +1658,7 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. a saved-profile read, an invitation feedback reply, or the whole message is an app's word;
+   *  2. a saved-profile read, an invitation feedback reply, or an explicit app choice;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
@@ -1725,8 +1725,15 @@ export class NetworkService implements RuntimeHost {
 
   private appWords() { return Object.values(this.apps).flatMap(a => [a.id, ...a.domain.split(".")]); }
 
-  /** "slop", "slop.date", "www.slop.date" or "join slop": the whole message names the app. Never a word inside a sentence. */
-  namedApp(text: string): AppId | undefined { return keywordApp(text, this.apps); }
+  /** A standalone app keyword or the first line of the Peon skill's prepared signup text. */
+  namedApp(text: string): AppId | undefined {
+    const lineBreak = text.indexOf("\n");
+    if (lineBreak >= 0) {
+      const header = text.slice(0, lineBreak).replace(/\r$/, "");
+      if (preparedPeonTextNamesApp(header, !!text.slice(lineBreak + 1).trim())) return "peon";
+    }
+    return keywordApp(text, this.apps);
+  }
 
   /** A pending text flow of this phone that is not older than a day. */
   private async pendingOf(e164: string, kind: PendingText["kind"], app?: AppId): Promise<PendingText | undefined> {
