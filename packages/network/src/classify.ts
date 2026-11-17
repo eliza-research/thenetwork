@@ -788,11 +788,22 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
   if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
-  const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
+  // An ordinal word right before "works" is the same pick ("second works" names the second option
+  // just as "second one works" does); without it the plain-yes fallback booked every option.
+  // A conjunction after the ordinal ("first and third works", "second, third work") picks both
+  // ordinals, so the fix never turns a safe ask-again into a half pick.
+  const ORD_WORDS = "first|1st|earlier|earliest|second|2nd|middle|third|3rd|last|latest";
+  const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w})(?: (?:one|option|time|slot|works?|and (?:${ORD_WORDS})|or (?:${ORD_WORDS}))|, (?:${ORD_WORDS}))\\b|^\\W*(?:${w})\\W*$`, "g");
+  // "last"/"latest" get their own matcher, not ord(): ord()'s "the X" and "time" forms would
+  // also read "last time" as a pick, but "last time" means the previous occasion too
+  // ("the last time we met was great" must stay unclear, not book the last option).
+  // So this only accepts a pick word (one/option/slot/works) or a conjunction after it,
+  // or the whole reply ("last", "the last"). "last time works" stays unpicked on purpose.
+  const ordLast = () => new RegExp(`\\b(?:last|latest)(?: (?:one|option|slot|works?|and (?:${ORD_WORDS})|or (?:${ORD_WORDS}))|, (?:${ORD_WORDS}))\\b|^\\W*(?:the )?(?:last|latest)\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
     [ord("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
     [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
-    [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
+    [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [ordLast(), options.length - 1], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
   for (const [re, dayName] of DAY_WORDS) {
@@ -804,9 +815,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
+  // Ordinal words count as time words here too ("second and third work" is only ordinals, a
+  // conjunction and the verb, so its picks are firm as well).
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
-  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
+  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc]|first|second|third|1st|2nd|3rd|middle|earlier|earliest|last|latest)\b|[\W_]+/g, "");
   if (!residue) for (const k of pos) strong.add(k);
   const picked = all.filter(k => pos.has(k));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
