@@ -654,6 +654,11 @@ interface SendOpts {
   memberInviteLink?: string;
   /** One server-issued review reference in a direct reply to its requester. */
   memberInviteReviewReference?: string;
+  /**
+   * A cancellation that is part of a minor signal's safety action: it goes to the channel at once, never to
+   * the deferred queue. The delivery queue still holds it through the member's quiet hours.
+   */
+  minorClose?: true;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
@@ -3700,9 +3705,10 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * A participant drops out of a booked meeting. `ack` = they told us (reply to them). The others
-   * hear it is off (pairs) or still on (groups of 3 or more), never why.
+   * hear it is off (pairs) or still on (groups of 3 or more), never why. `minorClose`: the drop is a
+   * minor signal, so the others hear it at once (SendOpts.minorClose).
    */
-  private handleDrop(m: MemberState, o: Opp, ack = true, explicitWithdrawal = false) {
+  private handleDrop(m: MemberState, o: Opp, ack = true, explicitWithdrawal = false, minorClose = false) {
     if (o.stage !== "scheduled" || o.status.get(m.id) !== "yes") return;
     const now = this.now();
     const acceptedAndTold = o.bookedAt?.[m.id] !== undefined && o.bookedTold?.includes(m.id) === true;
@@ -3731,7 +3737,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
       }
       this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
-      for (const id of still) this.sendBookedCancellation(o, id, copy.dropNotice(m.first, false));
+      for (const id of still) this.sendBookedCancellation(o, id, copy.dropNotice(m.first, false), minorClose);
       const booked = still.filter(id => o.bookedAt?.[id] !== undefined && o.bookedTold?.includes(id));
       // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
       if (canTryGroupReplacement({
@@ -3746,17 +3752,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, true), { type: "cancellation", proposalId: o.id }, "cancellation",
-      { hook: { t: "drop_notice", oppId: o.id } });
+      { hook: { t: "drop_notice", oppId: o.id }, ...(minorClose ? { minorClose } : {}) });
   }
 
-  private sendBookedCancellation(o: Opp, id: MemberId, text: string) {
+  private sendBookedCancellation(o: Opp, id: MemberId, text: string, minorClose = false) {
     const member = this.members.get(id);
     const now = this.now();
     // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
     if (!member || !bookedCancellationAllowed(o.stage === "closed" && o.closedFrom === "scheduled", o.status.get(id) === "yes",
       o.bookedTold?.includes(id) === true, (o.meetingAt ?? now) - now)) return;
     this.send(member, text, { type: "cancellation", proposalId: o.id }, "cancellation",
-      { key: `${bookedCancellationPrefix}${o.id}:${id}`, hook: { t: "drop_notice", oppId: o.id } });
+      { key: `${bookedCancellationPrefix}${o.id}:${id}`, hook: { t: "drop_notice", oppId: o.id }, ...(minorClose ? { minorClose } : {}) });
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
@@ -3775,6 +3781,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.stage === "probing") this.counters.oppsNotAvailable++;
     o.stage = STAGE_BY_PHASE[next.phase];
     const systemProposal = !o.requester && !o.plan && o.origin !== "request" && o.origin !== "plans";
+    const minorClose = reason === "minors policy" ? { minorClose: true as const } : {};
     const told = new Set<MemberId>();
     for (const id of o.participants) {
       const m = this.members.get(id);
@@ -3784,9 +3791,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       // spec/opportunityLifecycle.md, "Closing an underfilled proposal releases the members who accepted"
       const accepted = status === "available" && o.primed.has(id);
       if (releasesPartialAcceptance(current, releasePartial, systemProposal, o.contacted.has(id), accepted)) {
-        this.send(m, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation", { key: `opportunity-release:${o.id}:${id}` });
+        this.send(m, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation", { key: `opportunity-release:${o.id}:${id}`, ...minorClose });
       } else if (!wasProbing && status === "yes" && reason !== "blocked") {
-        this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation");
+        this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation", minorClose);
         told.add(id);
       }
     }
@@ -3821,6 +3828,19 @@ export class ConsentNetwork implements NetworkUnderTest {
       return !seat || seatOwnerOf(seat) !== id;
     });
     const minor = reason === "minors policy";
+    if (minor) {
+      // spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person":
+      // of the queued sends about an opportunity the minor was on, an alternate for or asked about, a
+      // cancellation goes now and nothing else ever goes.
+      const involved = new Set([...this.opps.values()].filter(o => o.participants.includes(id) || o.alternates.includes(id) || o.contacted.has(id)).map(o => o.id));
+      const queued = this.deferred.filter(d => involved.has(d.meta.proposalId ?? (d.o.hook && "oppId" in d.o.hook ? d.o.hook.oppId : "")));
+      this.deferred = this.deferred.filter(d => !queued.includes(d));
+      for (const d of queued) {
+        const m = this.members.get(d.memberId);
+        const valid = m && this.hookFns(m, d.o.hook).valid;
+        if (m && d.kind === "cancellation" && (!valid || valid())) this.send(m, d.body, d.meta, d.kind, { ...d.o, minorClose: true });
+      }
+    }
     for (const o of this.opps.values()) {
       if (!OPEN_STAGES.has(o.stage)) continue;
       const participant = o.participants.includes(id);
@@ -3835,7 +3855,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       else if (o.stage === "probing") { o.status.set(id, "unavailable"); this.replaceOrClose(o, id); }
       else if (o.stage === "scheduled") {
         const m = this.members.get(id);
-        if (m && o.status.get(id) === "yes") this.handleDrop(m, o, false);
+        if (m && o.status.get(id) === "yes") this.handleDrop(m, o, false, false, minor);
         else if (activeOpportunityParticipant(o, id)) {
           if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
           if (o.plan) this.planOut(o, id);
@@ -6253,7 +6273,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const survey = kind === "worthwhile" && !o.gatheringRsvpLogistics;
     const outreach = survey ? "unsolicited" : byTiming;
     const unsol = outreach === "unsolicited";
-    const timing = this.timingOf(kind, proactive || unsol, reply);
+    // spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person"
+    const timing = o.minorClose ? "now" : this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
       const c = { outboundSinceInbound: m.outbound ?? 0 };
       const interrupt = timing === "slot" && kind !== "reengage";

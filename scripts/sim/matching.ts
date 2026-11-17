@@ -79,6 +79,10 @@ interface LaneStats {
   readonly rho: number[]; readonly rhoRandom: number[]; readonly worse: number[]; readonly worseRandom: number[];
   readonly ari: number[]; readonly ariRandom: number[]; readonly purity: number[]; readonly purityRandom: number[];
   readonly precision: number[]; readonly precisionRandom: number[];
+  /** Per run: the AUC of the pair value against hidden good pairs, and their recall in the kept lists. */
+  readonly valueAuc: number[]; readonly keptRecall: number[];
+  /** Per run: the proposed pairs of the lane (the sample of the standing correlation). */
+  readonly runPairs: number[];
   readonly low: { members: number; proposed: number }; readonly all: { members: number; proposed: number };
   readonly cost: Map<number, CostRow>;
 }
@@ -91,6 +95,7 @@ const laneStats = (lane: MatchLane): LaneStats => ({
   searchCost: noFaults(), segmentSuperset: noFaults(), segmentRefused: 0,
   logged: { members: 0, exact: 0 },
   rho: [], rhoRandom: [], worse: [], worseRandom: [], ari: [], ariRandom: [], purity: [], purityRandom: [], precision: [], precisionRandom: [],
+  valueAuc: [], keptRecall: [], runPairs: [],
   low: { members: 0, proposed: 0 }, all: { members: 0, proposed: 0 }, cost: new Map(),
 });
 const fault = (f: Faults, what: string): void => { f.count++; f.first ??= what; };
@@ -253,10 +258,13 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   if (pairs.length) {
     const random = randomPairs(w, lane, pairs.length, seed);
     s.rho.push(matchedStandingCorrelation(truth, lane, pairs));
+    s.runPairs.push(pairs.length);
     s.rhoRandom.push(matchedStandingCorrelation(truth, lane, random));
     s.worse.push(mean(pairs.map(([a, b]) => plantedPairTruth(truth, lane, a, b))));
     s.worseRandom.push(mean(random.map(([a, b]) => plantedPairTruth(truth, lane, a, b))));
   }
+
+  valueQuality(w, truth, s);
 
   if (laneLimits(lane).circleMaximum >= 3) {
     const circles = w.match.circles(lane);
@@ -286,6 +294,44 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   const low = members.slice(0, Math.ceil(members.length / 5));
   s.low.members += low.length; s.low.proposed += low.filter(id => proposed.has(id)).length;
   s.all.members += members.length; s.all.proposed += members.filter(id => proposed.has(id)).length;
+}
+
+/** Rank AUC (ties count half): the chance that a random good pair scores above a random other pair. */
+function rankAuc(scored: readonly { readonly score: number; readonly good: boolean }[]): number {
+  const sorted = [...scored].sort((x, y) => x.score - y.score);
+  let goodRanks = 0, good = 0;
+  for (let i = 0; i < sorted.length;) {
+    let j = i;
+    while (j < sorted.length && sorted[j]!.score === sorted[i]!.score) j++;
+    for (let k = i; k < j; k++) if (sorted[k]!.good) { goodRanks += (i + j + 1) / 2; good++; }
+    i = j;
+  }
+  const other = sorted.length - good;
+  return good && other ? (goodRanks - (good * (good + 1)) / 2) / (good * other) : NaN;
+}
+
+/**
+ * How well the pair value ranks the hidden truth (tracked): over every pair the pair gate admits, a
+ * pair is good when its hidden worse-side utility reaches the lane's utility floor. AUC of the pair
+ * value (noPairValue lowest), and the share of good pairs that either member's search keeps.
+ */
+function valueQuality(w: World, truth: PlantedTruth, s: LaneStats): void {
+  const { utilityFloor } = laneLimits(s.lane).rules;
+  const kept = new Set<string>();
+  const scored: { score: number; good: boolean }[] = [];
+  let good = 0, goodKept = 0;
+  const own = w.match.profiles.filter(p => p.lane === s.lane);
+  for (const p of own) for (const c of w.match.candidates(p).kept) kept.add(`${p.id}\u0000${c.profile.id}`);
+  for (const a of own) for (const b of partnerBlock(w.match.index, a)?.profiles ?? []) {
+    // Each unordered pair once: a Peers lane by entity id, a TwoSided lane from the Offering side.
+    if (a.side === "Seeking" || (a.side === "Peer" && a.id >= b.id) || eligiblePair(w, a, b) !== null) continue;
+    const isGood = plantedPairTruth(truth, s.lane, a.memberId, b.memberId) >= utilityFloor;
+    scored.push({ score: w.match.value(a, b), good: isGood });
+    if (!isGood) continue;
+    good++;
+    if (kept.has(`${a.id}\u0000${b.id}`) || kept.has(`${b.id}\u0000${a.id}`)) goodKept++;
+  }
+  if (good > 0 && good < scored.length) { s.valueAuc.push(rankAuc(scored)); s.keptRecall.push(goodKept / good); }
 }
 
 function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
@@ -353,12 +399,17 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
     ["unprofiled proposals", s => String(s.unprofiled.count)],
     ["blocking pairs (greedy)", s => String(s.blockingPairs)],
     ["standing rho match / random", s => versus(s.rho, s.rhoRandom)],
+    ["standing rho per seed (pairs)", s => s.rho.map((x, k) => `${fixed(x, 3)} (${s.runPairs[k]})`).join("/")],
     ["worse-side truth match / random", s => versus(s.worse, s.worseRandom)],
     ["circles / group faults", s => `${s.circles} / ${s.groupFaults.count}`],
     ["ARI circles / random", s => versus(s.ari, s.ariRandom)],
     ["purity circles / random", s => versus(s.purity, s.purityRandom)],
     ["pair precision circles / random", s => versus(s.precision, s.precisionRandom)],
     ["low quintile / overall rate", s => fixed(lowRatio(s), 2)],
+    ["pair value AUC (hidden good pairs)", s => fixed(mean(s.valueAuc), 3)],
+    ["good pairs kept (recall)", s => fixed(mean(s.keptRecall), 3)],
+    ["pair value AUC per seed", s => s.valueAuc.map(x => fixed(x, 3)).join("/")],
+    ["good pairs kept per seed", s => s.keptRecall.map(x => fixed(x, 3)).join("/")],
     ...costRow("exact searches", c => pct(c.exact, c.profiles)),
     ...costRow("checks/profile", c => fixed(c.checks / Math.max(1, c.profiles), 1)),
     ...costRow("touches/profile", c => fixed(c.touches / Math.max(1, c.profiles), 1)),
@@ -434,6 +485,11 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
       recovered.length === circled.length && recovered.every(s => above(s.ari, s.ariRandom) && above(s.purity, s.purityRandom) && above(s.precision, s.precisionRandom)),
       circled.map(s => `${s.lane} ARI ${versus(s.ari, s.ariRandom)}, purity ${versus(s.purity, s.purityRandom)}, precision ${versus(s.precision, s.precisionRandom)}`).join("; "));
   }
+
+  const ranked = lanes.filter(s => s.valueAuc.length);
+  b.track(`${id}: the pair value ranks hidden good pairs (worse-side truth at the utility floor) above chance (${runs})`,
+    ranked.length > 0 && ranked.every(s => mean(s.valueAuc) > 0.5),
+    perLane(s => `AUC ${fixed(mean(s.valueAuc), 3)}, recall in kept lists ${fixed(mean(s.keptRecall), 3)}`));
 
   b.track(`${id}: lowest standing quintile proposal rate >= ${LOW_QUINTILE_RATIO}x overall (${runs})`,
     lanes.every(s => lowRatio(s) >= LOW_QUINTILE_RATIO),

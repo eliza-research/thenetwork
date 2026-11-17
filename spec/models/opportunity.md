@@ -229,8 +229,14 @@ module opportunity {
   pure def noteRefused(s: S, o: str, m: str): S = putO(s, o, { ...op(s, o), noticeRefused: op(s, o).noticeRefused.union(Set(m)) })
 
   // A notice about o to m through send() with logistics timing: sent (mark it heard), deferred or refused.
-  pure def sendNotice(s: S, m: str, kind: str, o: str, env: Env): S = {
-    val r = sendGate(s, m, kind, "logistics", false, false, env)
+  pure def sendNotice(s: S, m: str, kind: str, o: str, env: Env): S = sendNoticeAt(s, m, kind, o, "logistics", env)
+
+  // A cancellation that a minor signal causes goes at once (SendOpts.minorClose): never into `deferred`
+  // (spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person").
+  pure def noticeTiming(minorClose: bool): str = if (minorClose) "now" else "logistics"
+
+  pure def sendNoticeAt(s: S, m: str, kind: str, o: str, timing: str, env: Env): S = {
+    val r = sendGate(s, m, kind, timing, false, false, env)
     if (r == "sent") {
       val s1 = collect(s, m, kind, o, false)
       if (kind == "none_yet" or kind == "release") putO(s1, o, { ...op(s1, o), released: op(s1, o).released.union(Set(m)) })
@@ -280,7 +286,8 @@ module opportunity {
       val s2 = partsOrdered(s1, o).foldl(s1, (acc, p) => {
         val a1 = clearAwFor(acc, p, o)
         if (mm(a1, p).forgotten) a1
-        else if (not(wasProbing) and stat(a1, o, p) == "yes" and reason != "blocked") sendNotice(a1, p, "declined_quiet", o, env)
+        else if (not(wasProbing) and stat(a1, o, p) == "yes" and reason != "blocked")
+          sendNoticeAt(a1, p, "declined_quiet", o, noticeTiming(reason == "minors policy"), env)
         else if (wasProbing and p != x.requester and x.contacted.contains(p) and stat(a1, o, p) == "available"
                  and reason != "blocked" and reason != "minors policy") sendNotice(a1, p, "release", o, env)
         else a1
@@ -343,7 +350,7 @@ module opportunity {
   }
 
   // ---------------------------------------------------------------- handleDrop (N:2502), a job
-  pure def handleDrop(s: S, m: str, o: str, ack: bool, env: Env): S = {
+  pure def handleDrop(s: S, m: str, o: str, ack: bool, minorClose: bool, env: Env): S = {
     val x0 = op(s, o)
     val s1 = putO(s, o, { ...x0, status: x0.status.set(m, "dropped"), droppedBy: x0.droppedBy.union(Set(m)) })
     val s2 = if (ack) collect(s1, m, "reply", o, false) else s1
@@ -352,7 +359,7 @@ module opportunity {
     // Only members who were told about the plan hear that it changed (N:2557). The drop_notice hook has no
     // onRefused (SD-249, skipped); it carries the meeting time (SD-248).
     val s4 = still.foldl(s3, (acc, p) =>
-      if (not(op(acc, o).bookedTold.contains(p))) acc else sendNotice(acc, p, "drop_notice", o, env))
+      if (not(op(acc, o).bookedTold.contains(p))) acc else sendNoticeAt(acc, p, "drop_notice", o, noticeTiming(minorClose), env))
     // network.ts:2693: a group stays on only with 3 or more still going ("two who are left said yes to a
     // group, not to a meeting of two"). A pair: keep is false, so the opportunity closes on handleDrop's own
     // path (not close()).
@@ -430,7 +437,7 @@ module opportunity {
       else if (x.stage == "review") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "probing") push(setStat(a1, o, m, "unavailable"), [J("replace", o, m, "")])
       // SD-047 (N:2633): only a member who is going ("yes") leaves a booked meeting.
-      else if (stat(a1, o, m) == "yes") push(a1, [dropJob(o, m, false)])
+      else if (stat(a1, o, m) == "yes") push(a1, [{ ...dropJob(o, m, false), why: reason }])
       else a1
     }
   }
@@ -821,11 +828,25 @@ module opportunity {
     s' = { ...collect(putM(s1, m, { ...mm(s1, m), optedOut: false }), m, "reply", "", false), last: L("start", "", m, "") },
   }
 
-  // A minor signal or a record age under 18 (N:717-722, syncMember N:4430): minor, then dropMember.
+  // A minor signal or a record age under 18 (N:717-722, syncMember N:4430): minor, then dropMember. First the
+  // deferred sends about an opportunity the minor was on, an alternate for or asked about, whatever its stage,
+  // leave the queue: a cancellation (a release, a quiet decline, a drop notice) that is still valid goes now,
+  // and a reveal or a feedback request never goes. "None yet" names no opportunity in the code (no proposalId)
+  // and stays (spec/opportunityLifecycle.md, "A new minor signal closes an unbooked opportunity involving that person").
+  pure def minorInvolved(s: S, o: str, m: str): bool =
+    o != "" and (op(s, o).parts.contains(m) or op(s, o).alts.contains(m) or op(s, o).contacted.contains(m))
+  pure def withoutMinorQueue(s: S, m: str, env: Env): S = {
+    val queued = s.deferred.filter(d => d.kind != "none_yet" and minorInvolved(s, d.opp, m))
+    queued.fold({ ...s, deferred: s.deferred.exclude(queued) }, (acc, d) =>
+      if (Set("release", "declined_quiet", "drop_notice").contains(d.kind) and not(mm(acc, d.to).forgotten) and defValid(acc, d))
+        sendNoticeAt(acc, d.to, d.kind, d.opp, noticeTiming(true), env)
+      else acc)
+  }
+
   action becomeMinor(m: str, env: Env): bool = all {
     idle,
     not(mm(s, m).forgotten), not(mm(s, m).minor),
-    s' = { ...dropMember(putM(s, m, { ...mm(s, m), minor: true }), m, "minors policy"), last: L("minor", "", m, ""), jobEnv: env },
+    s' = { ...dropMember(withoutMinorQueue(putM(s, m, { ...mm(s, m), minor: true }), m, env), m, "minors policy"), last: L("minor", "", m, ""), jobEnv: env },
   }
 
   // Leave the app or delete (service forget -> Network.forget, N:913): declined, requests gone, dropMember,
@@ -912,7 +933,7 @@ module opportunity {
   action runReplace = all { jobIs("replace"), s' = replaceOrClose(popped, job.o, job.m) }
   action runProbes = all { jobIs("probes"), s' = advanceProbes(popped, job.o, s.jobEnv) }
   action runReveal = all { jobIs("reveal"), s' = sendReveal(popped, job.o, job.m, s.jobEnv) }
-  action runDrop = all { jobIs("drop"), s' = handleDrop(popped, job.m, job.o, job.ack, s.jobEnv) }
+  action runDrop = all { jobIs("drop"), s' = handleDrop(popped, job.m, job.o, job.ack, job.why == "minors policy", s.jobEnv) }
   action runDm = all { jobIs("dm"), s' = dropMemberIn(popped, job.o, job.m, job.why) }
   action runForgetRest = all { jobIs("forgetRest"), s' = forgetRest(popped, job.m) }
   action runDeliver = all {
