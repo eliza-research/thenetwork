@@ -182,3 +182,22 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"let's do that","label":"yes"}
+{"text":"lets do that","label":"yes"}
+{"text":"let's do that!","label":"yes"}
+{"text":"that would be great","label":"yes"}
+{"text":"that would be awesome","label":"yes"}
+{"text":"that would be fun","label":"yes"}
+{"text":"that would work","label":"yes"}
+{"text":"that would work for me","label":"yes"}
+{"text":"that'd work","label":"yes"}
+{"text":"would be great","label":"yes"}
+{"text":"would be awesome","label":"yes"}
+{"text":"i'd be down","label":"yes"}
+{"text":"i would be down","label":"yes"}
+{"text":"that would not work","label":"no"}
+{"text":"that wouldn't work","label":"no"}
+{"text":"that wouldn't work for me","label":"no"}
+{"text":"not sure that would work","label":"unsure"}
+{"text":"let's not do that","label":"no"}
+{"text":"it will work out","label":"unsure"}
