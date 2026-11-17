@@ -759,6 +759,25 @@ const NEXT_DAY = "(?:sun(?:day)?|mon(?:day)?|tues?(?:day)?|wed(?:nes)?(?:day)?|t
 const NEXT_QUALIFIED_BEFORE = new RegExp(`\\bnext(?:\\s+week)?\\s+(?:${NEXT_DAY}\\b(?:\\s+(?:mornings?|afternoons?|evenings?|nights?))?\\s*)?$`);
 /** A daypart and/or clock, then "next week", right after the mention: "Saturday next week", "Saturday 11am next week". */
 const NEXT_QUALIFIED_AFTER = /^\s*(?:(?:mornings?|afternoons?|evenings?|nights?)\s+)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s+)?next\s+week\b/;
+/** "next <day>" (with a daypart) followed by "and"/"at"/"around" or a colon before a clock in the same clause: "next Saturday and 11am works", "next Saturday: 11am works". */
+const NEXT_QUALIFIED_BEFORE_FILLER = new RegExp(`\\bnext(?:\\s+week)?\\s+${NEXT_DAY}\\b(?:\\s+(?:mornings?|afternoons?|evenings?|nights?))?(?:\\s+(?:and|at|around)|\\s*:)?\\s*$`);
+/** "next <day>" (with a daypart) at the end of a clause: the clause before "next Saturday, 11am works" ends with it. */
+const NEXT_DAY_CLAUSE_END = new RegExp(`\\bnext(?:\\s+week)?\\s+${NEXT_DAY}\\b(?:\\s+(?:mornings?|afternoons?|evenings?|nights?))?\\s*$`);
+/** A clock mention: "11am", "2:30pm". Only a clock reaches across a clause boundary. */
+const CLOCK_MENTION = /^\d{1,2}(?::\d\d)?\s*(?:am|pm)\b/;
+/** True when a clock mention is qualified by "next" from its own clause or the one before: "next Saturday at 11am works", "next Saturday, 11am works". A day mention in a later clause keeps its own meaning ("next Saturday, Sunday works" still books this Sunday), so only clocks use this. */
+function clockNextQualifiedAt(t: string, i: number, len: number): boolean {
+  if (nextQualifiedAt(t, i, len)) return true;
+  const breaks = [...t.slice(0, i).matchAll(/[.,;!?\n]|\bbut\b/g)];
+  const last = breaks[breaks.length - 1];
+  const from = last ? last.index! + last[0].length : 0;
+  if (NEXT_QUALIFIED_BEFORE_FILLER.test(t.slice(from, i))) return true;
+  // The qualifier crosses a comma or a semicolon only: a period or "but" starts a new thought.
+  if (!last || !/[,;]/.test(last[0])) return false;
+  const prev = breaks[breaks.length - 2];
+  const prevStart = prev ? prev.index! + prev[0].length : 0;
+  return NEXT_DAY_CLAUSE_END.test(t.slice(prevStart, last.index!));
+}
 /** True when the words at `i` (of length `len`) are qualified by "next" in their own clause: "next Saturday", "next week Saturday 11am", "Saturday next week". */
 function nextQualifiedAt(t: string, i: number, len: number): boolean {
   let from = 0;
@@ -793,6 +812,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     // "next Saturday" names next week's Saturday, not an offered slot: without this skip the
     // strong-pick branch would book it even though consentOf reads the "next" as a counter-offer.
     if (nextQualifiedAt(t, i, len)) return;
+    // A clock after a "next <day>" still names next week's slot when the qualifier reaches it
+    // across a comma, a semicolon, a colon, or "and"/"at"/"around": "next Saturday, 11am works".
+    if (CLOCK_MENTION.test(t.slice(i, i + len)) && clockNextQualifiedAt(t, i, len)) return;
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);

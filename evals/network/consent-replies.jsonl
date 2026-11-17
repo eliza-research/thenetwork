@@ -330,3 +330,17 @@
 {"text":"Saturday morning next week works","label":"yes","keys":[]}
 {"text":"Saturday 11am next week works","label":"yes","keys":[]}
 {"text":"next Sat works","label":"yes","keys":[]}
+{"text":"next Saturday, 11am works","label":"yes","keys":[]}
+{"text":"next Sunday, 2pm works","label":"yes","keys":[]}
+{"text":"next Thursday, 7pm works","label":"yes","keys":[]}
+{"text":"next Saturday and 11am works","label":"yes","keys":[]}
+{"text":"next Saturday at 11am works","label":"yes","keys":[]}
+{"text":"next Saturday around 11am works","label":"yes","keys":[]}
+{"text":"next Saturday morning, 11am works","label":"yes","keys":[]}
+{"text":"next week Saturday, 11am works","label":"yes","keys":[]}
+{"text":"next Saturday; 11am works","label":"yes","keys":[]}
+{"text":"next Saturday: 11am works","label":"yes","keys":[]}
+{"text":"next Saturday, Sunday works","label":"yes","keys":["c"]}
+{"text":"Saturday, 11am works","label":"yes","keys":["b"]}
+{"text":"next Saturday, 11am works!","label":"yes","keys":[]}
+{"text":"next Sat, 11am works","label":"yes","keys":[]}
