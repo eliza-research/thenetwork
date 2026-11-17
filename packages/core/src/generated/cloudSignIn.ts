@@ -1,5 +1,6 @@
 // GENERATED from spec/cloudSignIn.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { type SessionPhase as webSession_SessionPhase, type SessionFlow as webSession_SessionFlow, sessionRotateMs as webSession_sessionRotateMs, sessionMaxMs as webSession_sessionMaxMs, sessionGraceMs as webSession_sessionGraceMs, sessionStepUpMs as webSession_sessionStepUpMs, sessionTtlMs as webSession_sessionTtlMs, freshSignIn as webSession_freshSignIn, initial as webSession_initial, canReadToken as webSession_canReadToken, readToken as webSession_readToken, canReadRow as webSession_canReadRow, readRow as webSession_readRow, canRecordRevocation as webSession_canRecordRevocation, recordRevocation as webSession_recordRevocation, canRecordReplacement as webSession_canRecordReplacement, recordReplacement as webSession_recordReplacement, stepRotationRequiresAReplacement as webSession_stepRotationRequiresAReplacement, sometimesRotates as webSession_sometimesRotates, lawBannedSessionIsRefused as webSession_lawBannedSessionIsRefused, sessionDeadline as webSession_sessionDeadline, lawCloudDeadlineCapsSession as webSession_lawCloudDeadlineCapsSession } from "./webSession.ts";
 
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export type SignInPhase = "AwaitingHandoff" | "AwaitingExchange" | "AwaitingIdentity" | "AwaitingPhone" | "AwaitingSession" | "SignedIn" | "RejectCallback" | "DenySignIn" | "CloudUnavailable";
@@ -59,13 +60,19 @@ export function lawAnExpiredHandoffIsNeverLive(expiresAt: number): boolean {
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number): boolean {
-  return issuedAtMs <= exact_cloudSignIn(asOf + cloudClockSkewMs);
+  return issuedAtMs > 0 && issuedAtMs <= exact_cloudSignIn(asOf + cloudClockSkewMs);
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number {
   return issuedAtMs <= asOf ? issuedAtMs : asOf;
+}
+
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function cloudIdentityTimesValid(issuedAtMs: number, expiresAtMs: number, asOf: number): boolean {
+  return cloudIssuedAtWithinSkew(issuedAtMs, asOf) && liveBeforeDeadline(asOf, expiresAtMs);
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
@@ -100,6 +107,27 @@ export function checkIdentity(signIn: SignIn, identityAvailable: boolean, identi
   //@ ensures (inv(signIn) && canCheckIdentity(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
   const local_1 = identityAvailable && identityValid;
   return { ...signIn, identityAccepted: local_1, phase: !identityAvailable ? "CloudUnavailable" : (local_1 ? "AwaitingPhone" : "DenySignIn") };
+}
+
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawCloudIdentityNeedsFutureExpiry(issuedAtMs: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !cloudIdentityTimesValid(issuedAtMs, asOf, asOf);
+}
+
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !cloudIdentityTimesValid(0, expiresAtMs, asOf);
+}
+
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
+//@ pure
+export function lawStoredSessionEndsByIdentityExpiry(createdAt: number, startedAt: number, ttl: number, maxAge: number, identityExpiry: number): boolean {
+  //@ ensures \result === true
+  return webSession_sessionDeadline(createdAt, startedAt, ttl, maxAge, true, identityExpiry) <= identityExpiry;
 }
 
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */

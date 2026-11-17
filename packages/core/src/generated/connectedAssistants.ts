@@ -196,6 +196,12 @@ export function stepOnlyConfirmedRemovalChangesGrants(before: ConsentsPage, via:
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
 //@ pure
+export function removalConfirmationEndsAt(issuedAt: number, grantExpiresAt: number): number {
+  return exact_connectedAssistants(issuedAt + removeConfirmationMs) < grantExpiresAt ? exact_connectedAssistants(issuedAt + removeConfirmationMs) : grantExpiresAt;
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
 export function browserRemovalProofMatches(currentVerified: boolean, exactBinding: boolean, exactDirectPredecessor: boolean): boolean {
   return currentVerified && (exactBinding || exactDirectPredecessor);
 }
@@ -204,6 +210,13 @@ export function browserRemovalProofMatches(currentVerified: boolean, exactBindin
 //@ pure
 export function removalFormMayRevoke(ownedLiveGrant: boolean, exactBrowserConfirmation: boolean, asOf: number, confirmationEndsAt: number): boolean {
   return ownedLiveGrant && exactBrowserConfirmation && asOf < confirmationEndsAt;
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function lawConfirmationLastsAtMostFiveMinutes(ownedLiveGrant: boolean, issuedAt: number, grantExpiresAt: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !removalFormMayRevoke(ownedLiveGrant, true, asOf, removalConfirmationEndsAt(issuedAt, grantExpiresAt)) || (asOf < exact_connectedAssistants(issuedAt + removeConfirmationMs) && asOf < grantExpiresAt);
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
@@ -374,6 +387,12 @@ export function parseState(x: unknown): ConsentsPage | undefined {
 export function initialHolds(): ConsentsPage {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_connectedAssistants(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }
 
 /** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */

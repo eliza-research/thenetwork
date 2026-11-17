@@ -112,10 +112,17 @@ pure def stepOnlyConfirmedRemovalChangesGrants(before: ConsentsPage, via: str, a
 
 ### A confirmed removal shows its result
 
-The confirmation page binds the chosen grant to the current browser session and gives the form five minutes. A POST authenticates the current session and checks the grant owner and this exact confirmation again. If the session rotated while the form was open, its new token can submit a confirmation made for the immediate predecessor recorded on that session. The previous token cannot authenticate once its grace period ends. An independent sign-in, an expired confirmation or a confirmation for another grant leaves the grant as it is. When the access ends, the page lists the grants that stay and shows "Access removed.". When the grant was already gone or is not the person's, the page lists the grants with no notice. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". A form from another site gets "Not allowed". Only a confirmed removal shows the notice.
+The confirmation page binds the chosen grant to the current browser session. The confirmation ends five minutes after issuance or at the grant's expiry, whichever comes first. A POST authenticates the current session and checks the grant owner and this exact confirmation again. If the session rotated while the form was open, its new token can submit a confirmation made for the immediate predecessor recorded on that session. The previous token cannot authenticate once its grace period ends. An independent sign-in, an expired confirmation or a confirmation for another grant leaves the grant as it is. When the access ends, the page lists the grants that stay and shows "Access removed.". When the grant was already gone or is not the person's, the page lists the grants with no notice. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". A form from another site gets "Not allowed". Only a confirmed removal shows the notice.
 
 ```quint
 pure val removeConfirmationMs = 300000
+
+pure def removalConfirmationEndsAt(issuedAt: int, grantExpiresAt: int): int =
+  if (issuedAt + removeConfirmationMs < grantExpiresAt) issuedAt + removeConfirmationMs else grantExpiresAt
+
+pure def lawConfirmationLastsAtMostFiveMinutes(ownedLiveGrant: bool, issuedAt: int, grantExpiresAt: int, asOf: int): bool =
+  removalFormMayRevoke(ownedLiveGrant, true, asOf, removalConfirmationEndsAt(issuedAt, grantExpiresAt))
+    implies (asOf < issuedAt + removeConfirmationMs and asOf < grantExpiresAt)
 
 pure def browserRemovalProofMatches(currentVerified: bool, exactBinding: bool, exactDirectPredecessor: bool): bool =
   currentVerified and (exactBinding or exactDirectPredecessor)

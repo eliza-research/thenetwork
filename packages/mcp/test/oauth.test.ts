@@ -364,6 +364,28 @@ describe("the person's consent records", () => {
     expect((await page("", "")).status).toBe(401);
   });
 
+  test("a removal confirmation ends when its grant expires before five minutes", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const c = await connect(env, PEON, PHONE_A);
+    const cookie = /sid_peon=[^;]+/.exec(c.flow.siteCookie!)![0];
+    const [live] = await env.store.grantsFor(env.accounts.phoneHash(PHONE_A), "peon", env.clock.t);
+    const expiresAt = env.clock.t + 60_000;
+    const grant = { ...live!, id: "short-lived-consent", expiresAt };
+    await env.store.putGrant(grant);
+    const response = await env.fetch(new Request(`${origin(PEON)}/oauth/consents?remove=${grant.id}`, { headers: { cookie } }));
+    const confirmation = /name="confirmation" value="([^"]+)"/.exec(await response.text())?.[1];
+    expect(confirmation?.split(".")[0]).toBe(String(expiresAt));
+    env.clock.t = expiresAt;
+    const expired = await env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, {
+      method: "POST", headers: { cookie, origin: origin(PEON), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant: grant.id, confirmation: confirmation! }),
+    }));
+    expect((await expired.text()).includes("Access removed.")).toBe(false);
+    expect(await env.store.getGrant(grant.id)).toMatchObject({ revokedAt: null });
+    expect(await env.store.getGrant(live!.id)).toMatchObject({ revokedAt: null });
+  });
+
   test("a signed-in site session skips the code step; revokeAllFor ends every grant of a phone", async () => {
     const env = setup();
     const c = await connect(env, PEON, PHONE_A);

@@ -102,6 +102,16 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       expect(await api.sessions.authenticate("slop", previous.token)).toBeDefined();
     }
     identityResponse = "present";
+    const priorIssueTime = proofIssuedAt;
+    for (const [key, issuedAt] of [["f", 0], ["9", Math.floor(now / 1000) + 31]] as const) {
+      proofIssuedAt = issuedAt;
+      code = `enso_${key.repeat(64)}`;
+      const refused = await call("slop", "GET", `/api/auth/cloud/callback?code=${code}&state=${state}`, undefined, callbackCookies);
+      expect(refused.status).toBe(403);
+      expect(refused.headers.getSetCookie()).toEqual([expect.stringMatching(/^cloud_pending_slop=;.*Max-Age=0/)]);
+      expect(await api.sessions.authenticate("slop", previous.token)).toBeDefined();
+    }
+    proofIssuedAt = priorIssueTime;
     code = `enso_${"c".repeat(64)}`;
     const validCallback = `/api/auth/cloud/callback?code=${code}&state=${state}`;
     const signedIn = await call("slop", "GET", validCallback, undefined, callbackCookies);
@@ -137,7 +147,8 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     // A fresh Cloud proof signs in normally; within STEP_UP_MS it is the step-up for delete-all (not exercised
     // here, so the rest of the scenario keeps its data).
     authorityLive = true;
-    proofIssuedAt = Math.floor(now/1000);
+    const freshStartedAt = now;
+    proofIssuedAt = Math.floor(now/1000) + 30;
     sourceExpiresAt = now+3*24*3_600_000;
     code = `enso_${"b".repeat(64)}`;
     const freshStart = await call("slop", "POST", "/api/auth/cloud/start", {returnPath: "/join"});
@@ -159,7 +170,7 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     const rotatedToken = parseCookies(freshCookie).get("sid_slop")!;
     const rotatedSession = (await api.sessions.authenticate("slop", rotatedToken))!.session;
     expect(rotatedSession.expiresAt).toBe(sourceExpiresAt);
-    expect(rotatedSession.startedAt).toBe(proofIssuedAt*1000);
+    expect(rotatedSession.startedAt).toBe(freshStartedAt);
     expect((await call("slop", "GET", "/api/me", undefined, freshCookie)).status).toBe(200);
     expect((await call("friends", "GET", "/api/me", undefined, freshCookie)).status).toBe(401);
     expect((await call("slop", "POST", "/api/me/delete", {scope: "all"}, freshCookie)).status).toBe(403);

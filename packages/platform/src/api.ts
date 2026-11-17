@@ -17,7 +17,7 @@ import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } f
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
   type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck,
@@ -296,10 +296,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const { userId, organizationId, e164, expiresAt, stewardUserId, issuedAt } = claims;
     if (typeof userId !== "string" || !userId || typeof organizationId !== "string" || !organizationId
       || typeof e164 !== "string" || normalizePhone(e164) !== e164
-      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || !liveBeforeDeadline(now(), expiresAt)
+      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)
       || typeof stewardUserId !== "string" || !stewardUserId
-      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt) || issuedAt <= 0
-      || !cloudIssuedAtWithinSkew(issuedAt * 1000, now())) return;
+      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt)
+      || !cloudIdentityTimesValid(issuedAt * 1000, expiresAt, now())) return;
     return { ...claims, e164, issuedAt, expiresAt };
   }
   const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
