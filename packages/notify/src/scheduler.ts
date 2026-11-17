@@ -17,11 +17,13 @@ import {
   appAllowsInboxItem, canRecordInboxSeen, inboxTokenMayRecordRedemption, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
 } from "../../core/src/generated/notificationAcknowledgement.ts";
 import { assistantDigestCanLink, inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
-import { inboxItemAllowedForRecipient, inboxItemExpired } from "../../core/src/generated/notificationDispatch.ts";
+import { inboxItemAllowedForRecipient, inboxItemExpired, queuedDigestClaimAllowed } from "../../core/src/generated/notificationDispatch.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
-import { composeText } from "./compose.ts";
-import type { NotifyStore } from "./store.ts";
+import { composeText, composeThreadText } from "./compose.ts";
+import { assistantLink, buttonPageLink, updatePrompt } from "./links.ts";
+import { TOKEN_PATTERN } from "./reference.ts";
+import type { DigestAssistantLink, NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
 import { newToken, TOKEN_TTL_MS, type TaskToken } from "./tokens.ts";
 import { isAssistant, type Assistant, type Channel, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
@@ -82,6 +84,7 @@ export interface SendPlan {
   itemIds: string[];
   delivery: Delivery;
   token?: string;
+  assistantLink?: DigestAssistantLink;
   text: string;
   countsTowardCap: boolean;
 }
@@ -91,6 +94,7 @@ export interface Hold { personId: string; reason: HoldReason; until?: number }
 
 export const deliveryIdFor = (personId: string, itemIds: string[]) =>
   `ntf_${createHash("sha256").update(personId + "\n" + [...itemIds].sort().join(",")).digest("hex").slice(0, 20)}`;
+const digestBodyHash = (text: string) => createHash("sha256").update(text).digest("hex");
 
 export class Notifier {
   readonly cfg: SchedulerConfig;
@@ -191,6 +195,13 @@ export class Notifier {
     const delivery = resolveDelivery(r.prefs, signals, now);
     const itemIds = items.map(i => i.id);
     const token = delivery.mode === "thread" ? undefined : await this.issueToken(r.personId, itemIds, now);
+    const text = composeText(items, delivery, token, this.cfg.pageBase);
+    const assistantLink = delivery.mode === "thread" ? undefined : {
+      app: items[0]!.app,
+      assistants: delivery.mode === "deeplink" ? [delivery.assistant] : delivery.assistants,
+      expiresAt: now + this.cfg.tokenTtlMs,
+      bodyHash: digestBodyHash(text),
+    };
     return {
       personId: r.personId,
       deliveryId: deliveryIdFor(r.personId, itemIds),
@@ -200,7 +211,8 @@ export class Notifier {
       itemIds,
       delivery,
       token,
-      text: composeText(items, delivery, token, this.cfg.pageBase),
+      assistantLink,
+      text,
       countsTowardCap: items.some(i => i.urgency !== "requested"),
     };
   }
@@ -220,6 +232,7 @@ export class Notifier {
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
           target: final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel,
           countsTowardCap: final.countsTowardCap, sentAt: now,
+          assistantLink: final.assistantLink,
         }),
         enqueue: async final => sink.enqueue({
           idempotencyKey: final.deliveryId, channel: final.channel, to: final.to, text: final.text,
@@ -242,6 +255,52 @@ export class Notifier {
       readDelivery: id => this.store.getDelivery(id),
       idFor: deliveryIdFor,
       readItems: ids => this.store.getItems(ids),
+    });
+  }
+
+  /** Only the exact URL authored for this queued body is eligible for the contact leak exception. */
+  async queuedDigestHandoffUrl(id: string, text: string): Promise<string | undefined> {
+    const record = await this.store.getDelivery(id);
+    const link = record?.assistantLink;
+    if (!link || link.bodyHash !== digestBodyHash(text)) return;
+    const lines = text.split("\n");
+    if (lines.length !== 2) return;
+    const url = lines[1]!;
+    const parsed = URL.parse(url);
+    if (!parsed) return;
+    const prompt = parsed.searchParams.get("prompt") ?? parsed.searchParams.get("q");
+    const token = prompt?.split(" ").at(-1) ?? parsed.pathname.split("/").at(-1) ?? "";
+    if (!TOKEN_PATTERN.test(token)) return;
+    if (url === buttonPageLink(token, this.cfg.pageBase)
+      || link.assistants.some(assistant => url === assistantLink(assistant, updatePrompt(token)))) return url;
+  }
+
+  queuedDigestClaimCurrent(
+    row: { id: string; personId: string; text: string },
+    now: () => number,
+    reads: Pick<NotifyStore, "getDelivery" | "getItems">,
+    readAssistants?: AssistantUpdatesLookup,
+  ): Promise<boolean> {
+    return queuedInboxDigestCurrent(row.id, now(), {
+      readDelivery: id => reads.getDelivery(id),
+      idFor: deliveryIdFor,
+      readItems: ids => reads.getItems(ids),
+      canClaim: async (record, items) => {
+        const sameRecipient = record.personId === row.personId && items.every(item => item.personId === row.personId);
+        const link = record.assistantLink;
+        const itemExpired = (at: number) => items.some(item => inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, at));
+        if (!link) {
+          return !itemExpired(now()) && queuedDigestClaimAllowed(sameRecipient, row.text === composeThreadText(items), false, false, false, false);
+        }
+        const boundLink = link.bodyHash === digestBodyHash(row.text);
+        const appScoped = items.every(item => item.app === link.app);
+        const assistants = sameRecipient && boundLink && appScoped && link.expiresAt > now() && readAssistants
+          ? await readAssistants(row.personId, link.app) : [];
+        const checkedAt = now();
+        return !itemExpired(checkedAt)
+          && queuedDigestClaimAllowed(sameRecipient, false, boundLink, appScoped, link.expiresAt > checkedAt,
+            link.assistants.length > 0 && link.assistants.every(assistant => assistants.includes(assistant)));
+      },
     });
   }
 

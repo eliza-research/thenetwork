@@ -32,7 +32,7 @@ import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/g
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
-import { MemoryOAuthStore, samePendingAuthPage, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
+import { MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
@@ -113,6 +113,8 @@ export interface McpHandler {
   forgetPerson(personId: string, app?: McpAppId): Promise<number>;
   /** Current local connector authority for opening inbox items from one app in a hosted assistant. */
   assistantUpdateSurfaces(personId: string, app: McpAppId): Promise<AssistantKind[]>;
+  /** Map grants under the provider claim lock for the already verified current owner. */
+  assistantUpdateSurfacesForClaim(candidates: readonly AssistantGrantCandidate[]): AssistantKind[];
 }
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
@@ -365,6 +367,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const surface = pathSurface === "openai" || client.surface === "openai" ? "openai" : "full";
     return configuredHostServes(connectorSurface[surface], connectorApp[app.id], app.openai)
       && !openAiUnavailable({ app }, client) && !customSlopClient({ app }, client);
+  }
+
+  function localUpdateSurface(grant: Grant, client: OAuthClient, at: number): AssistantKind | undefined {
+    if (grant.revokedAt !== null || grant.expiresAt <= at || !grantAllowsUpdates(grant, client)) return;
+    const authority = grant.cloudAuthority;
+    if (grant.id.startsWith("grant_cloud_") || authority) {
+      if (!authority || authority.app !== grant.app || authority.resource !== grant.resource || authority.phoneKey !== grant.phoneKey
+        || grant.expiresAt > authority.expiresAt || authority.expiresAt <= at) return;
+    }
+    const assistant = assistantOf(client);
+    return assistant === "web" ? undefined : assistant;
   }
 
 
@@ -1304,10 +1317,19 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const surfaces = new Set<AssistantKind>();
       const owners = new Map<string, boolean | undefined>();
       for (const { grant, client } of await store.assistantGrants(personId, now(), app)) {
-        const assistant = assistantOf(client);
-        if (assistant === "web" || surfaces.has(assistant) || !grantAllowsUpdates(grant, client)) continue;
+        const assistant = localUpdateSurface(grant, client, now());
+        if (!assistant || surfaces.has(assistant)) continue;
         if (!owners.has(grant.phoneKey)) owners.set(grant.phoneKey, await assistantGrantOwnerCurrent(grant));
         if (grant.expiresAt > now() && owners.get(grant.phoneKey)) surfaces.add(assistant);
+      }
+      return [...surfaces];
+    },
+    assistantUpdateSurfacesForClaim(candidates) {
+      const surfaces = new Set<AssistantKind>();
+      const at = now();
+      for (const { grant, client } of candidates) {
+        const assistant = localUpdateSurface(grant, client, at);
+        if (assistant) surfaces.add(assistant);
       }
       return [...surfaces];
     },

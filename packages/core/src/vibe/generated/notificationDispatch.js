@@ -114,6 +114,23 @@ export function sometimesKeepsQueuedDigest(digest) {
 export function sometimesSuppressesQueuedDigest(digest) {
     return digest.phase === "QueuedDigestObsolete";
 }
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function queuedDigestClaimAllowed(sameRecipient, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable) {
+    return sameRecipient && (threadCopy || (boundLink && appScoped && referenceLive && allAssistantsReadable));
+}
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function lawUnreadableQueuedLinkCannotSend(sameRecipient, boundLink, appScoped, referenceLive) {
+    //@ ensures \result === true
+    return !queuedDigestClaimAllowed(sameRecipient, false, boundLink, appScoped, referenceLive, false);
+}
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function lawForeignQueuedDigestCannotSend(threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable) {
+    //@ ensures \result === true
+    return !queuedDigestClaimAllowed(false, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable);
+}
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {

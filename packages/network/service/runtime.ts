@@ -162,6 +162,8 @@ export interface RuntimeHost {
   delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
   /** The current inbox records still authorize an immutable queued notification. */
   notificationCurrent?(id: string): Promise<boolean>;
+  notificationHandoffUrl?(id: string, body: string): Promise<string | undefined>;
+  notificationClaimCurrent?(tx: SQL, row: QueueRow): Promise<boolean>;
   /** After a tick that ran on this instance (the review SLA alerts, the weekly bias monitor). Errors are logged; the tick still counts. */
   afterTick?(rt: NetworkRuntime): Promise<void>;
 }
@@ -280,6 +282,14 @@ export class NetworkRuntime {
   // ------------------------------------------------------------------ send-time checks of the persisted queue
   async notificationCurrent(id: string): Promise<boolean> {
     return this.host.notificationCurrent ? this.host.notificationCurrent(id) : false;
+  }
+
+  notificationHandoffUrl(id: string, body: string): Promise<string | undefined> {
+    return this.host.notificationHandoffUrl?.(id, body) ?? Promise.resolve(undefined);
+  }
+
+  async notificationClaimCurrent(tx: SQL, row: QueueRow): Promise<boolean> {
+    return this.host.notificationClaimCurrent ? this.host.notificationClaimCurrent(tx, row) : false;
   }
 
   /** Consent at send time for one queued message: the platform consent ledger (and bans), then the member's own opt-out. */

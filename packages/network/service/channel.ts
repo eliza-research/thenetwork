@@ -366,9 +366,11 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
       // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
       // Allow only this row's mutually approved number or its exact public booking link.
-      leaks: row => {
+      leaks: async row => {
         const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
         const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
+        const digestLink = row.id.startsWith("ntf_") ? await rt.notificationHandoffUrl(row.id, row.text) : undefined;
+        if (digestLink) return { ...base, contactAllow: [digestLink] };
         const inviteLink = row.id.startsWith(EXPECTED_INVITATION_PREFIX) && row.text.split("\n")[1];
         if (inviteLink && isMemberInvitationLink(rt.app, inviteLink)) return { ...base, contactAllow: [inviteLink] };
         const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
@@ -402,6 +404,9 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
+        if (row.id.startsWith("ntf_")) {
+          return await rt.notificationClaimCurrent(tx, row) ? { ok: true } : { ok: false, reason: "notification_obsolete" };
+        }
         if (row.app === "slop" && row.oppId) {
           const authority = await rt.slopPairAdmission(tx, row);
           if (!authority.ok) return authority;

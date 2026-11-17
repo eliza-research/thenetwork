@@ -141,6 +141,7 @@ import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
+import type { QueueRow } from "../../blooio/src/outbound-queue.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
@@ -371,6 +372,7 @@ export class NetworkService implements RuntimeHost {
   readonly notify?: Notifier;
   /** Address to (runtime, member) for the notify sink, filled by the notify directory. */
   private readonly notifyTargets = new Map<string, { rt: NetworkRuntime; memberId: MemberId }>();
+  private notificationClaimSurfaces?: (tx: SQL, personId: string, phoneKey: string, app: string) => Promise<readonly Surface[]>;
   /** One runtime per network, in platform.networks order (ntwrk first). */
   readonly runtimes = new Map<string, NetworkRuntime>();
   readonly log: (line: string) => void;
@@ -1111,6 +1113,37 @@ export class NetworkService implements RuntimeHost {
   /** Send-time authorization for a queued notification, including after a restart. */
   async notificationCurrent(id: string): Promise<boolean> {
     return this.notify ? this.notify.stillNeeded(id, this.clock.now()) : false;
+  }
+
+  notificationHandoffUrl(id: string, body: string): Promise<string | undefined> {
+    return this.notify?.queuedDigestHandoffUrl(id, body) ?? Promise.resolve(undefined);
+  }
+
+  setNotificationClaimSurfaces(lookup: NonNullable<NetworkService["notificationClaimSurfaces"]>): void {
+    this.notificationClaimSurfaces = lookup;
+  }
+
+  async notificationClaimCurrent(tx: SQL, row: QueueRow): Promise<boolean> {
+    if (!this.notify || !row.memberId) return false;
+    const phoneKey = this.phoneKey(row.to);
+    // The queue already holds the person and network member locks. Bind the destination to their verified phone.
+    const [owner] = await tx<{ id: string }[]>`select person.id::text as id from network.members member
+      join platform.people person on person.id=member.person_id and person.deleted_at is null and person.phone_hash=${phoneKey}
+      join platform.phone_identities phone on phone.person_id=person.id and phone.e164=${row.to} and phone.hold is null
+      where member.app_id=${row.app} and member.id=${row.memberId} for share of phone`;
+    if (!owner) return false;
+    const store = new PgNotifyStore(tx);
+    return this.notify.queuedDigestClaimCurrent({ id: row.id, personId: owner.id, text: row.text }, () => this.clock.now(), {
+      getDelivery: id => store.getDelivery(id, true),
+      getItems: ids => store.getItems(ids, true),
+    }, async (personId, app) => {
+      if (!this.notificationClaimSurfaces) return [];
+      const [membership] = await tx`select 1 from platform.memberships where person_id=${personId}::uuid and app_id=${app}
+        and state in ('active','onboarding') and review is null and left_at is null for share`;
+      if (!membership || await new PgPeopleStore(tx).isBanned(phoneKey, personId)) return [];
+      // A shared line may send from another app. The grant must cover the digest's app.
+      return this.notificationClaimSurfaces(tx, personId, phoneKey, app);
+    });
   }
 
   /** Once per tick: close stale delivery outcomes, then send what the inbox has due. */

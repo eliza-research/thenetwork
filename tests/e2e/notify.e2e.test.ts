@@ -4,9 +4,11 @@
 // inbox's own sends go through the Network's consent-checked delivery. Needs the dev Postgres.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
+import { HOUR } from "../../packages/core/src/clock.ts";
+import type { SendRequest } from "../../packages/blooio/src/types.ts";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../packages/core/src/svc/contract.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
-import type { Outbound } from "../../packages/network/service/channel.ts";
+import { BlooioAdapter, type Outbound } from "../../packages/network/service/channel.ts";
 import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
 import { buttonPageLink } from "../../packages/notify/src/links.ts";
 import { connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
@@ -342,3 +344,99 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect(await post(current)).toMatchObject({status: 409, body: {error: "turn_inbox_updates_changed"}});
   }, T);
 });
+
+test.skipIf(!pgAvailable)("a queued assistant handoff is suppressed when its exact app grant ends", async () => {
+  // spec/notificationDispatch.md, "Recheck assistant access before claiming an immutable queued text"
+  const calls: SendRequest[] = [];
+  const stack = await startStack({ simulatedOutbound: { line: "+12125550199", provider: {
+    kind: "sim",
+    async send(req) {
+      calls.push(req);
+      return { providerMessageId: req.idempotencyKey, chatId: req.to, status: "sent", transport: "sim" };
+    },
+  } } });
+  const db = new SQL({ url: stack.url, max: 2 });
+  try {
+    const from = newPhone();
+    const peon = await webJoin(stack, "peon", from, { age: 30 });
+    const friends = await webJoin(stack, "friends", from, { age: 30, browser: peon.b });
+    expect([peon.res.status, friends.res.status]).toEqual([200, 200]);
+    const [owner] = await db`select person_id from platform.phone_identities where e164=${from}`;
+    const personId = String(owner.person_id);
+    const peonGrant = await connectMcp(stack, "peon", from, { browser: peon.b, redirect: CLAUDE });
+    const friendsGrant = await connectMcp(stack, "friends", from, { browser: friends.b, redirect: CLAUDE });
+    expect(friendsGrant.token?.access_token).toBeTypeOf("string");
+    const tool = { name: "get_updates", arguments: {} };
+    expect((await rpc(stack, "peon", "/mcp", "tools/call", tool, peonGrant.token!.access_token)).res.status).toBe(200);
+    const peonRt = [...stack.svc.runtimes.values()].find(rt => rt.app.id === "peon")!;
+    const line = peonRt.adapter as BlooioAdapter;
+    await line.lineSafety("review", "fixture hold");
+
+    const notify = stack.svc.notify!;
+    const add = (subjectId: string, summary: string) => notify.add({ personId, app: "peon", subjectId, summary,
+      eventType: "reminder", urgency: "requested" }, stack.clock.now());
+    const summary = "Your interview moved to Wednesday.";
+    const { item } = await add("queued-connector-loss", summary);
+    const planned = (await notify.plan(stack.clock.now())).sends.find(send => send.personId === personId)!;
+    expect(planned.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+    await stack.svc.notifyTick();
+    const id = planned.deliveryId;
+    const state = async (deliveryId: string) => (await db`select id,app_id,body,status,attempts from platform.outbound where id=${deliveryId}`)[0];
+    const held = await state(id);
+    expect(held).toMatchObject({ status: "retry_scheduled", attempts: 0 });
+    expect(held.body).toContain("Tap to open it in Claude");
+    expect((await notify.store.getDelivery(id))?.assistantLink).toMatchObject({ app: "peon", assistants: ["claude"] });
+    expect(await notify.queuedDigestHandoffUrl(id, held.body)).toBe(held.body.split("\n")[1]);
+    expect(await notify.queuedDigestHandoffUrl(id, held.body.replace("https://claude.ai", "https://example.com"))).toBeUndefined();
+
+    const revoke = await stack.site("peon", "/oauth/revoke", { form: {
+      token: peonGrant.token!.refresh_token, client_id: peonGrant.client.client_id,
+    } });
+    expect(revoke.status).toBe(200);
+    expect(await stack.mcp.assistantUpdateSurfaces(personId, "friends")).toEqual(["claude"]);
+    expect(await stack.mcp.assistantUpdateSurfaces(personId, "peon")).toEqual([]);
+    expect(await notify.stillNeeded(id, stack.clock.now())).toBe(true);
+    await line.lineSafety(undefined);
+    stack.clock.advance(HOUR);
+    const sender = [...stack.svc.runtimes.values()].find(rt => rt.app.id === held.app_id)!;
+    await sender.deliver();
+    await sender.deliver();
+    expect(await state(id)).toMatchObject({ status: "suppressed_ineligible", attempts: 0, body: held.body });
+    expect(calls.filter(call => call.idempotencyKey === `tn:${id}`)).toEqual([]);
+    expect((await notify.store.getItems([item.id]))[0]?.seenAt).toBeUndefined();
+
+    await notify.add({ personId, app: "friends", subjectId: "live-connector-claim", summary: "Your hike starts tomorrow.",
+      eventType: "reminder", urgency: "requested" }, stack.clock.now());
+    const live = (await notify.plan(stack.clock.now())).sends.find(send => send.personId === personId)!;
+    expect(live.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+    await stack.svc.notifyTick();
+    const accepted = await state(live.deliveryId);
+    expect(accepted).toMatchObject({ status: "sent", attempts: 1 });
+    expect(calls.filter(call => call.idempotencyKey === `tn:${live.deliveryId}`).map(call => call.text)).toEqual([accepted.body]);
+    const refreshed = await stack.site("friends", "/oauth/token", { form: {
+      grant_type: "refresh_token", refresh_token: friendsGrant.token!.refresh_token, client_id: friendsGrant.client.client_id,
+    } });
+    expect(refreshed.status).toBe(200);
+    expect((await rpc(stack, "friends", "/mcp", "tools/call", tool, (await refreshed.json()).access_token)).res.status).toBe(200);
+
+    const input: TurnRequest = { channel: "twilio", transport: "sms", messageId: "queued-connector-loss-updates", from,
+      to: null, text: "updates", receivedAt: stack.clock.now() };
+    const body = JSON.stringify(input);
+    const headers = await svcSign(TURN_SECRET, { method: "POST", path: TURN_PATH, id: input.messageId, body,
+      nowS: Math.floor(stack.clock.now() / 1000) });
+    const reply = await fetch(new URL(TURN_PATH, stack.backendOrigin), { method: "POST", headers: { ...headers, "content-type": "application/json" }, body });
+    expect(reply.status).toBe(200);
+    expect(await reply.json()).toMatchObject({ outcome: "handled", reason: "inbox_updates", replies: [summary] });
+
+    const direct = "Your call is at noon.";
+    await add("plain-thread-claim", direct);
+    await stack.svc.notifyTick();
+    const [thread] = await db`select delivery_id from notify.deliveries where person_id=${personId}
+      and delivery_id<>${id} and delivery_id<>${live.deliveryId} and delivery_id like 'ntf_%'`;
+    expect(await state(thread.delivery_id)).toMatchObject({ status: "sent", attempts: 1, body: direct });
+    expect(calls.filter(call => call.idempotencyKey === `tn:${thread.delivery_id}`).map(call => call.text)).toEqual([direct]);
+  } finally {
+    await db.close();
+    await stack.close();
+  }
+}, T);

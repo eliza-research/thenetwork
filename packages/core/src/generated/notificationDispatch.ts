@@ -149,6 +149,26 @@ export function sometimesSuppressesQueuedDigest(digest: DigestFlow): boolean {
   return digest.phase === "QueuedDigestObsolete";
 }
 
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function queuedDigestClaimAllowed(sameRecipient: boolean, threadCopy: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean, allAssistantsReadable: boolean): boolean {
+  return sameRecipient && (threadCopy || (boundLink && appScoped && referenceLive && allAssistantsReadable));
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function lawUnreadableQueuedLinkCannotSend(sameRecipient: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean): boolean {
+  //@ ensures \result === true
+  return !queuedDigestClaimAllowed(sameRecipient, false, boundLink, appScoped, referenceLive, false);
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text (spec/notificationDispatch.md) */
+//@ pure
+export function lawForeignQueuedDigestCannotSend(threadCopy: boolean, boundLink: boolean, appScoped: boolean, referenceLive: boolean, allAssistantsReadable: boolean): boolean {
+  //@ ensures \result === true
+  return !queuedDigestClaimAllowed(false, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: DigestFlow, event: Event): boolean {

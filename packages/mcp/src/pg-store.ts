@@ -177,6 +177,15 @@ export class PgOAuthStore implements OAuthStore {
   assistantGrants(personId: string, at: number, app?: McpAppId) {
     return this.readAssistantGrants(this.sql, personId, at, app);
   }
+  /** Keep the matching approvals and their client surfaces stable through the provider claim. */
+  async assistantGrantsForClaim(tx: SQL, personId: string, phoneKey: string, app: McpAppId, at: number): Promise<AssistantGrantCandidate[]> {
+    const rows = await tx<{ approval: Row; client: Row }[]>`select to_jsonb(g) as approval, to_jsonb(c) as client
+      from oauth.grants g join oauth.clients c on c.id=g.client_id
+      where g.person_id=${personId} and g.phone_key=${phoneKey} and g.app_id=${app}
+        and g.revoked_at is null and g.expires_at>${ts(at)} and 'membership:read'=any(g.scopes)
+      order by g.id for share of g,c`;
+    return rows.map(row => ({ grant: grant(row.approval), client: client(row.client) }));
+  }
   private async readAssistantGrants(sql: SQL, personId: string, at: number, app?: McpAppId): Promise<AssistantGrantCandidate[]> {
     const rows = await sql<{ approval: Row; client: Row }[]>`select to_jsonb(g) as approval, to_jsonb(c) as client
       from oauth.grants g join oauth.clients c on c.id=g.client_id

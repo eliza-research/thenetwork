@@ -53,6 +53,9 @@ export function queuedInboxDigestCurrent(deliveryId, now, effects) {
             anyExpired: items.some(item => inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now)),
             anyUnseen: items.some(item => item.seenAt === undefined),
         });
-        return current.phase === "QueuedDigestNeeded";
+        if (current.phase !== "QueuedDigestNeeded")
+            return false;
+        const canClaim = effects.canClaim;
+        return canClaim === undefined || (yield* io("Could not check the queued digest claim", () => canClaim(record, items)));
     }));
 }

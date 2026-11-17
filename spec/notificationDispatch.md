@@ -73,3 +73,18 @@ pure def revalidateQueuedItems(digest: DigestFlow, allPresent: bool, anyExpired:
 pure def sometimesKeepsQueuedDigest(digest: DigestFlow): bool = digest.phase == QueuedDigestNeeded
 pure def sometimesSuppressesQueuedDigest(digest: DigestFlow): bool = digest.phase == QueuedDigestObsolete
 ```
+
+### Recheck assistant access before claiming an immutable queued text
+
+The provider can claim a queued digest only for its recorded recipient. A text showing the recorded items in the thread needs no assistant grant. A text containing a handoff must match the recorded body, have an unexpired reference, and cover exactly one app. Every assistant offered by that text must still have a readable grant for that recipient in the digest app. When any of these checks fails, withhold the stored text and leave unseen items available in the inbox. A stored text without render evidence can proceed only if its body matches the plain thread digest.
+
+```quint
+pure def queuedDigestClaimAllowed(sameRecipient: bool, threadCopy: bool, boundLink: bool, appScoped: bool, referenceLive: bool, allAssistantsReadable: bool): bool =
+  sameRecipient and (threadCopy or (boundLink and appScoped and referenceLive and allAssistantsReadable))
+
+pure def lawUnreadableQueuedLinkCannotSend(sameRecipient: bool, boundLink: bool, appScoped: bool, referenceLive: bool): bool =
+  not(queuedDigestClaimAllowed(sameRecipient, false, boundLink, appScoped, referenceLive, false))
+
+pure def lawForeignQueuedDigestCannotSend(threadCopy: bool, boundLink: bool, appScoped: bool, referenceLive: bool, allAssistantsReadable: bool): bool =
+  not(queuedDigestClaimAllowed(false, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable))
+```

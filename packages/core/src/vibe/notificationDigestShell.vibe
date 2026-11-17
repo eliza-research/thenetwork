@@ -37,10 +37,11 @@ interface DispatchEffects<P extends DigestPlan, I extends DigestItem, R extends 
   enqueue(plan: P): Promise<unknown>
 }
 
-interface RevalidationEffects {
-  readDelivery(deliveryId: string): Promise<DigestRecord | undefined>
+interface RevalidationEffects<R extends DigestRecord, I extends DigestItem> {
+  readDelivery(deliveryId: string): Promise<R | undefined>
   idFor(personId: string, itemIds: string[]): string
-  readItems(ids: string[]): Promise<DigestItem[]>
+  readItems(ids: string[]): Promise<I[]>
+  canClaim?(record: R, items: I[]): Promise<boolean>
 }
 
 type DispatchResult<P> = { kind: "queued"; plan: P } | { kind: "cancelled"; deliveryId: string }
@@ -83,7 +84,9 @@ export function dispatchInboxDigest<P extends DigestPlan, I extends DigestItem, 
 }
 
 /** A queued body is immutable. Revalidate its complete item set at send time. */
-export function queuedInboxDigestCurrent(deliveryId: string, now: number, effects: RevalidationEffects): Promise<boolean> {
+export function queuedInboxDigestCurrent<R extends DigestRecord, I extends DigestItem>(
+  deliveryId: string, now: number, effects: RevalidationEffects<R, I>,
+): Promise<boolean> {
   return runPromise(effect {
     const record = try io("Could not read the queued digest", () => effects.readDelivery(deliveryId))
     const queued = try apply(initial, { type: "readQueuedDigest", sameDigest: record !== undefined && effects.idFor(record.personId, record.itemIds) === deliveryId })
@@ -95,6 +98,8 @@ export function queuedInboxDigestCurrent(deliveryId: string, now: number, effect
       anyExpired: items.some(item => inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now)),
       anyUnseen: items.some(item => item.seenAt === undefined),
     })
-    return current.phase === "QueuedDigestNeeded"
+    if (current.phase !== "QueuedDigestNeeded") return false
+    const canClaim = effects.canClaim
+    return canClaim === undefined || (try io("Could not check the queued digest claim", () => canClaim(record, items)))
   })
 }
