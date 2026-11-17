@@ -332,6 +332,27 @@ uncached. Keep the address out of SMS, agent chat and tool logs.
 [Consent rules](../../../spec/homeHelpConsent.md) ·
 [Private address rules](../../../spec/privateHomeHelpVenue.md)
 
+## Monthly NYC gathering
+
+Network admins use `GET /apps/ntwrk/gatherings` to list gatherings, or `POST`
+to create a draft with `month`, `venue`, `startsAt`, `endsAt` and `capacity`.
+Use `YYYY-MM` for the NYC calendar month, Unix milliseconds for the times,
+and a `venue` with `kind` (`curated` or `listing`) and its `id`. Submit the
+draft's `revision` and `decision` (`approve` or `reject`) to
+`POST /apps/ntwrk/gatherings/<id>/review`. Approval records the authenticated
+staff actor and rechecks the selected public venue and time.
+
+Eligible adults use the signed text conversation to send
+`RSVP GATHERING <id> <revision> YES`. They can add `WITH GROUPING` to let
+staff consider them for a small group. A later plain `YES` removes that
+permission and keeps the reservation. `WITHDRAW GATHERING <id> <revision>`
+withdraws the RSVP. An admin can read the current roster at
+`GET /apps/ntwrk/gatherings/<id>/roster?revision=<revision>`. The roster uses
+member IDs and the current grouping choice.
+
+[Staff review rules](../../../spec/monthlyGathering.md) ·
+[RSVP and privacy rules](../../../spec/monthlyGatheringRsvp.md)
+
 ## Limits
 
 - **No live send has been made.** The Blooio path is tested only with a fake provider.

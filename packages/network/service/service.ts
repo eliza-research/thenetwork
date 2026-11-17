@@ -82,6 +82,8 @@ import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { expectedInviteTransportAllows } from "../../core/src/generated/expectedMemberInvitation.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryPromptCode, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
+import { handleMonthlyGatherings } from "./monthly-gatherings.ts";
+import { gatheringRsvpCommand, gatheringRsvpReplyCurrent, gatheringRsvpRoster, saveGatheringRsvp } from "./monthly-gathering-rsvp.ts";
 import { calendarPreferenceCommand } from "../../core/src/calendar-free-busy.ts";
 import { calendarOwnerPath } from "../../core/src/generated/calendarFreeBusy.ts";
 import type { CalendarOwnerRequest, CalendarSchedulingOwner } from "../../core/src/svc/calendar-scheduling.ts";
@@ -176,7 +178,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 }
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
-  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue"].map(t => `network.${t}`),
+  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps"].map(t => `network.${t}`),
   ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
@@ -1570,6 +1572,7 @@ export class NetworkService implements RuntimeHost {
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const controls = !kw && participationCommand(ev.text);
     const calendar = !kw && calendarInviteRequest(ev.text);
+    const gatheringRsvp = !kw && gatheringRsvpCommand(ev.text);
     const surveyAnswer = !kw && interruptionFeedbackAnswer(ev.text);
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
@@ -1577,7 +1580,7 @@ export class NetworkService implements RuntimeHost {
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar && !gatheringRsvp) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1635,6 +1638,10 @@ export class NetworkService implements RuntimeHost {
 
     if (factCommand) {
       if (!memberId || !turn || ev.mediaUrls?.length) return "profile_fact_edit";
+      return this.memberUnit(rt, memberId, ev, rowId, undefined);
+    }
+    if (gatheringRsvp) {
+      if (banned || !memberId || !turn || ev.mediaUrls?.length) return "gathering_rsvp";
       return this.memberUnit(rt, memberId, ev, rowId, undefined);
     }
 
@@ -1818,6 +1825,19 @@ export class NetworkService implements RuntimeHost {
         body: surveyAnswer ? "Private invitation feedback." : ev.text, status: "received",
         type: surveyAnswer ? "interruption_feedback" : null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const gatheringRsvp = !keyword && gatheringRsvpCommand(ev.text);
+      if (gatheringRsvp) {
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "gathering_rsvp";
+        rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164: signedDirect.from };
+          const body = await saveGatheringRsvp(tx, this.accountsFor(tx), owner, gatheringRsvp, { id: rowId, at: ev.receivedAt }, this.clock.now());
+          if (body === undefined) return;
+          rt.unit.inbound = inbound;
+          rt.unit.atomicGatheringRsvp = true;
+          rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "gathering_rsvp");
+        };
+        return "gathering_rsvp";
+      }
       const calendar = !keyword && calendarInviteRequest(ev.text);
       if (calendar) {
         if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "calendar_invite";
@@ -3061,7 +3081,7 @@ export class NetworkService implements RuntimeHost {
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && outcome !== "gathering_rsvp" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -3105,6 +3125,15 @@ export class NetworkService implements RuntimeHost {
         const allowed = rt && memberId && handled.replies.length === 1 && calendarInviteRequest(input.text)
           && await rt.scoped(tx => calendarReplyCurrent(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, handled.replies[0]!, () => this.clock.now()));
         if (!allowed) return json({ error: "turn_calendar_invite_changed", retryable: false }, 409);
+      }
+      if (handled.reason === "gathering_rsvp" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const command = gatheringRsvpCommand(input.text);
+        const current = rt && memberId && command && handled.replies.length === 1 && await rt.scoped(tx =>
+          gatheringRsvpReplyCurrent(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, command,
+            { id: `in:${input.channel}:${input.messageId}`, at: input.receivedAt }, this.clock.now()));
+        if (!current) return json({ error: "turn_gathering_rsvp_changed", retryable: false }, 409);
       }
       if (handled.reason === "standing_intents" && handled.replies.length) {
         const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
@@ -3351,6 +3380,24 @@ export class NetworkService implements RuntimeHost {
       const user = this.reviewerOfRecord(req, auth.user);
       // A role for this app (role@app or role@*); admin for the app passes every check.
       const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
+      const roster = path.match(/^\/gatherings\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})\/roster$/);
+      if (scoped && roster) {
+        if (rt.app.id !== "ntwrk" || rt.city !== "nyc") return json({ ok: false, error: "not_found" }, 404);
+        const no = need(["admin"]); if (no) return no;
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const rev = url.searchParams.get("revision") ?? "";
+        const revision = Number(rev);
+        if (!/^[1-9][0-9]*$/.test(rev) || revision > 2_147_483_647) return json({ ok: false, error: "invalid_revision" }, 400);
+        const id = roster[1]!;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_gathering_roster", targetId: id, mode: "real", ok: true, app: rt.app.id });
+        const items = await rt.scoped(tx => gatheringRsvpRoster(tx, this.accountsFor(tx), rt.app, { id, revision }, this.clock.now()));
+        return items ? json({ ok: true, items }) : json({ ok: false, error: "not_found" }, 404);
+      }
+      if (scoped) {
+        const gatherings = await handleMonthlyGatherings(req, path, { app: rt.app.id, city: rt.city, staff: user,
+          now: () => this.clock.now(), scoped: run => rt.scoped(run) });
+        if (gatherings) return gatherings;
+      }
       if (req.method === "GET" && path === "/health") {
         const no = need(["admin", "reviewer", "safety", "analyst"]); if (no) return no;
         return json(await this.health(rt, user));

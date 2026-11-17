@@ -1,0 +1,69 @@
+# Monthly gathering RSVPs
+
+## Story: Choose how to attend the monthly gathering
+
+> As an eligible Network member, I want to reserve my own place at the reviewed gathering and choose whether staff can include me in a grouping suggestion.
+
+### Only the exact approved gathering accepts a fresh RSVP
+
+Use the signed direct member turn in the gathering's app. Resolve the current member through the verified phone, account, app consent, ban and hold rules. A new RSVP is for an active local adult. Use the server's lowest matching age. The exact gathering revision must be approved. Both the signed receive time and the handling time must precede the start. A member can take an existing RSVP back until the gathering ends. Recognizing a command outside the signed member path cannot change attendance.
+
+```quint
+pure def gatheringRsvpWindow(approved: bool, sameRevision: bool, isWithdrawal: bool, approvedAt: int, startAt: int, endAt: int, receivedAt: int, handledAt: int): bool =
+  approved and sameRevision and 0 < approvedAt and approvedAt <= receivedAt and receivedAt <= handledAt and
+    handledAt < (if (isWithdrawal) endAt else startAt)
+
+pure def gatheringRsvpAttendanceAllowed(currentOwner: bool, adult: bool, localMember: bool, activeParticipant: bool): bool =
+  currentOwner and adult and localMember and activeParticipant
+
+pure def lawGatheringRequiresApproval(sameRevision: bool, isWithdrawal: bool, approvedAt: int, startAt: int, endAt: int, receivedAt: int, handledAt: int): bool =
+  not(gatheringRsvpWindow(false, sameRevision, isWithdrawal, approvedAt, startAt, endAt, receivedAt, handledAt))
+
+pure def lawGatheringMinorCannotAttend(currentOwner: bool, localMember: bool, activeParticipant: bool): bool =
+  not(gatheringRsvpAttendanceAllowed(currentOwner, false, localMember, activeParticipant))
+```
+
+### Each member owns one RSVP and withdrawal wins a tie
+
+Serialize changes and capacity checks on the gathering row. Keep a single decision per app, gathering and member. A fresh yes reserves one seat only if one remains or that member already reserves a seat. A fresh plain yes can take back grouping consent while keeping the seat. An older request or the same signed turn cannot change the newest decision. If a withdrawal and a yes have the same signed receive time, withdrawal wins. A newer yes can reserve a place again while RSVPs are open. Removing membership erases its RSVP.
+
+```quint
+pure def gatheringRsvpReplaces(saved: bool, sameTurn: bool, storedAt: int, newAt: int, withdrawing: bool, reserved: bool): bool =
+  not(saved) or (not(sameTurn) and (newAt > storedAt or (newAt == storedAt and withdrawing and reserved)))
+
+pure def gatheringRsvpHasSeat(alreadyReserved: bool, reservedCount: int, capacity: int): bool =
+  alreadyReserved or (0 <= reservedCount and reservedCount < capacity)
+
+pure def lawGatheringCannotReplayRsvp(storedAt: int, newAt: int, withdrawing: bool, reserved: bool): bool =
+  not(gatheringRsvpReplaces(true, true, storedAt, newAt, withdrawing, reserved))
+
+pure def lawGatheringCapacityDoesNotOverbook(reservedCount: int, capacity: int): bool =
+  gatheringRsvpHasSeat(false, reservedCount, capacity) implies reservedCount < capacity
+```
+
+### The private roster uses current eligibility and separate grouping consent
+
+The roster belongs to authorized gathering operations. Return only operational member identifiers for the exact approved current gathering. Recheck current eligibility on read. A plain RSVP never grants grouping permission. A member who explicitly includes grouping can enter staff's candidate roster. Any actual connection needs the normal review, pair safety, and consent. No member sees the roster, contact data or someone else's choice through RSVP.
+
+```quint
+pure def gatheringRsvpRosterAllowed(approved: bool, sameRevision: bool, approvedAt: int, endsAt: int, now: int): bool =
+  approved and sameRevision and 0 < approvedAt and approvedAt <= now and now < endsAt
+
+pure def gatheringRsvpGroupingAllowed(attending: bool, groupingConsent: bool, currentlyEligible: bool): bool =
+  attending and groupingConsent and currentlyEligible
+
+pure def lawGatheringAttendanceIsNotGroupingConsent(attending: bool, currentlyEligible: bool): bool =
+  not(gatheringRsvpGroupingAllowed(attending, false, currentlyEligible))
+```
+
+### Priority suggests whom staff should consider first
+
+Among current eligible members, give one priority point for each documented condition that applies: newcomer, isolated member, or a pending second encounter. Use a stable ID to break ties. Treat equal evidence equally. Keep priority private to staff. A score neither authorizes delivery nor reserves a seat. Use existing current, app-local engine evidence for each condition; do not infer a reason from private conversation text.
+
+```quint
+pure def gatheringInvitationPriority(eligible: bool, newcomer: bool, isolated: bool, pendingSecondEncounter: bool): int =
+  if (eligible) (if (newcomer) 1 else 0) + (if (isolated) 1 else 0) + (if (pendingSecondEncounter) 1 else 0) else -1
+
+pure def lawGatheringPriorityRequiresEligibility(newcomer: bool, isolated: bool, pendingSecondEncounter: bool): bool =
+  gatheringInvitationPriority(false, newcomer, isolated, pendingSecondEncounter) < 0
+```
