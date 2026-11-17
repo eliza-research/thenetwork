@@ -362,3 +362,27 @@
 {"text":"during the week is too early","label":"unclear"}
 {"text":"I work during the week","label":"unclear"}
 {"text":"during the week doesn't work","label":"unclear"}
+{"text":"weekday evening works","label":"yes","keys":["a"]}
+{"text":"a weekday evening works","label":"yes","keys":["a"]}
+{"text":"weekday night works","label":"yes","keys":["a"]}
+{"text":"a weekday night works","label":"yes","keys":["a"]}
+{"text":"weekday evening is best","label":"yes","keys":["a"]}
+{"text":"I'm free weekday evenings","label":"yes","keys":["a"]}
+{"text":"weekday evenings work for me","label":"yes","keys":["a"]}
+{"text":"I'm free on weekday evenings","label":"yes","keys":["a"]}
+{"text":"weekday evening works, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"weekday evening works, Sunday too","label":"yes","keys":["a","c"]}
+{"text":"Saturday works, weekday evening too","label":"yes","keys":["a","b"]}
+{"text":"weekday morning or evening works","label":"yes","keys":["a"]}
+{"text":"weekday evening or morning works","label":"yes","keys":["a"]}
+{"text":"weekday morning works","label":"yes","keys":[]}
+{"text":"a weekday morning works","label":"yes","keys":[]}
+{"text":"weekday afternoon works","label":"yes","keys":[]}
+{"text":"a weekday afternoon works","label":"yes","keys":[]}
+{"text":"weekday lunch works","label":"yes","keys":[]}
+{"text":"weekday morning works for me","label":"yes","keys":[]}
+{"text":"weekday morning doesn't work","label":"unclear"}
+{"text":"not weekday evenings","label":"unclear"}
+{"text":"weekday morning is too early","label":"unclear"}
+{"text":"I can't do weekday mornings","label":"unclear"}
+{"text":"weekday mornings, not evenings","label":"unclear"}
