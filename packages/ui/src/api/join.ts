@@ -14,6 +14,8 @@ export interface SessionAnswer {
   signupView?: string;
   /** The same-origin session is for Peon, which has the browser invitation page. */
   peon?: true;
+  /** Fields restored by the exact first Cloud sign-in. No consent or invitation. */
+  joinPrefill?: CloudJoinPrefill;
 }
 
 /** The answer to a code request. `error` tells a general failure apart. */
@@ -36,7 +38,9 @@ export interface JoinAnswer {
 }
 
 /** The answer to a cloud sign-in request: the address to go to, or the error. */
-export type CloudAnswer = { ok: true; url: string } | { ok: false; error: ApiError };
+export type CloudAnswer = { ok: true; url: string; receipt?: string } | { ok: false; error: ApiError };
+
+export interface CloudJoinPrefill { firstName: string; age: string; viaAgent: boolean }
 
 /** The profile that the page sends to join. */
 export interface JoinBody {
@@ -59,8 +63,8 @@ export async function readApp(): Promise<AppAnswer> {
 }
 
 /** Reads the session: signed out, unreadable, or what the signed-in account may do. */
-export async function readSession(): Promise<SessionAnswer> {
-  const answer = await call("GET", "/api/me");
+export async function readSession(receipt?: string): Promise<SessionAnswer> {
+  const answer = await call("GET", "/api/me", undefined, receipt ? { "x-ntwrk-join-receipt": receipt } : undefined);
   if (!answer.ok) return { result: answer.error === "unauthorized" ? "SignedOut" : "ReadFailed", account: "", reason: "NoBlock" };
   const { app, canJoin, phoneMasked, signupView, reason } = answer.data;
   const membership = answer.data.membership === null ? null : recordField(answer.data, "membership");
@@ -69,7 +73,10 @@ export async function readSession(): Promise<SessionAnswer> {
   const account = view ?? `phone:${phoneMasked}`;
   const result: SessionResult = canJoin ? "MayJoin" : membership ? "AlreadyIn" : "MayNotJoin";
   const blocked: BlockReason = result !== "MayNotJoin" || typeof reason !== "string" ? "NoBlock" : (serverReasons[reason] ?? "OtherReason");
-  return { result, account, reason: blocked, ...(view ? { signupView: view } : {}), ...(app === "peon" ? { peon: true } : {}) };
+  const prefill = receipt && app === "peon" && view && result === "MayJoin" ? recordField(answer.data, "joinPrefill") : undefined;
+  const joinPrefill = prefill && typeof prefill.firstName === "string" && typeof prefill.age === "string" && typeof prefill.viaAgent === "boolean"
+    ? { firstName: prefill.firstName, age: prefill.age, viaAgent: prefill.viaAgent } : undefined;
+  return { result, account, reason: blocked, ...(view ? { signupView: view } : {}), ...(app === "peon" ? { peon: true } : {}), ...(joinPrefill ? { joinPrefill } : {}) };
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -123,13 +130,14 @@ export async function joinApp(body: JoinBody): Promise<JoinAnswer> {
 }
 
 /** Asks for the cloud sign-in address. Only an http or https address is accepted. */
-export async function startCloud(returnPath: string): Promise<CloudAnswer> {
-  const answer = await call("POST", "/api/auth/cloud/start", { returnPath });
+export async function startCloud(returnPath: string, prefill?: CloudJoinPrefill): Promise<CloudAnswer> {
+  const answer = await call("POST", "/api/auth/cloud/start", { returnPath, prefill });
   if (!answer.ok) return { ok: false, error: answer.error };
-  const { url } = answer.data;
+  const { url, receipt } = answer.data;
   if (typeof url !== "string" || !URL.canParse(url, window.location.href)) return { ok: false, error: "unknown" };
   const target = new URL(url, window.location.href);
-  return target.protocol === "https:" || target.protocol === "http:" ? { ok: true, url: target.href } : { ok: false, error: "unknown" };
+  if (target.protocol !== "https:" && target.protocol !== "http:") return { ok: false, error: "unknown" };
+  return { ok: true, url: target.href, ...(typeof receipt === "string" && /^[0-9a-f]{32}$/.test(receipt) ? { receipt } : {}) };
 }
 
 /** Changes a US number to E.164 (+1XXXXXXXXXX), or null when it is not a 10-digit US number. */

@@ -67,6 +67,20 @@ type JoinData = Omit<JoinController, `on${string}` | "siteKey">;
 
 const emptyValues: ProfileValues = { firstName: "", age: "", consent: false };
 
+const cloudReceiptKey = "peon-cloud-join-receipt";
+
+function takeCloudReceipt(): string | undefined {
+  try {
+    const receipt = window.sessionStorage.getItem(cloudReceiptKey);
+    window.sessionStorage.removeItem(cloudReceiptKey);
+    if (receipt && /^[0-9a-f]{32}$/.test(receipt)) return receipt;
+  } catch { /* Private browser storage can be unavailable. */ }
+}
+
+function saveCloudReceipt(receipt: string): void {
+  try { window.sessionStorage.setItem(cloudReceiptKey, receipt); } catch { /* The sign-in can still complete. */ }
+}
+
 interface LinkFields {
   viaAgent: boolean;
   name: string;
@@ -173,9 +187,15 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       if (!opened) return;
       invitation.current = link.invitation;
       clearFragment();
-      const [app, session] = await Promise.all([readApp(), readSession()]);
+      const receipt = takeCloudReceipt();
+      const freshLink = link.viaAgent || link.name !== "" || link.age !== "" || !!link.invitation;
+      const [app, session] = await Promise.all([readApp(), readSession(freshLink ? undefined : receipt)]);
+      const view = readAccount(session);
+      const prefill = session.joinPrefill;
+      if (prefill) send({ type: "restoreCloudPrefill", view, fromAgent: prefill.viaAgent, hasFields: !!(prefill.firstName || prefill.age) },
+        { values: { firstName: prefill.firstName, age: prefill.age, consent: false } });
       const loaded = send(
-        { type: "loaded", view: readAccount(session), appUnreachable: !app.read && app.unreachable, inviteOnly: app.read ? app.inviteOnly : pageInviteOnly },
+        { type: "loaded", view, appUnreachable: !app.read && app.unreachable, inviteOnly: app.read ? app.inviteOnly : pageInviteOnly },
         { minJoinAge: minJoinAgeShown(app.read, app.read ? app.minJoinAge : pageMinAge, pageMinAge) },
       );
       if (loaded && canReadAuthMode(loaded)) await lookUpAuth();
@@ -216,10 +236,12 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       onContinueWithPhone: async () => {
         const next = send({ type: "continueWithPhone" });
         if (!next || !canAnswerCloudStart(next)) return;
-        const answer = await startCloud(returnPath);
+        const { firstName, age } = current.current.values;
+        const answer = await startCloud(returnPath, { firstName, age, viaAgent: next.viaAgent });
         const after = send({ type: "answerCloudStart", opened: answer.ok }, answer.ok ? {} : { failure: answer.error });
         if (answer.ok && after?.screen === "LeftForCloud") {
           invitation.current = undefined;
+          if (answer.receipt) saveCloudReceipt(answer.receipt);
           window.location.assign(answer.url);
         }
       },

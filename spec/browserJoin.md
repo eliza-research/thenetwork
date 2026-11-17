@@ -434,7 +434,9 @@ pure def lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: int, afterA
 
 ### Profile values never pass from one account to another
 
-The approved name and age from the agent's link stay in the form through the first sign-in: a changed number, a new code, a verified code and the session read after it do not clear the form. When the page loses or replaces the account that it shows, it clears the form.
+The approved name and age from the agent's link stay in the form through the first sign-in. A changed number, a new code, a verified code and the session read after it do not clear the form. When the page loses or replaces the account that it shows, it clears the form.
+
+For a first Cloud sign-in, the site can seal the allowed name, age and agent-return flag with the pending Peon handoff. The Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The returning tab presents its one-use receipt to the same-origin session read. Only the exact callback session on Peon, while it can join, receives the draft. A fresh link overrides a draft from a prior handoff. The page restores the fields without text consent. The site clears the draft cookie when the returning tab presents its receipt. The page stores only the receipt across navigation and clears it on return. An invitation stays in the original page's memory.
 
 ```quint
 pure def stepFormClearedWhenAccountLeaves(before: JoinPage, after: JoinPage): bool =
@@ -444,6 +446,19 @@ pure def stepSignInKeepsFormValues(before: JoinPage, via: str, after: JoinPage):
   (before.account == 0 and
     (via == "changeNumber" or via == "resendCode" or via == "answerVerify" or via == "recheck"))
     implies after.formHasValues == before.formHasValues
+
+pure def cloudJoinPrefillCanRead(eligible: bool, receiptMatches: bool, sessionMatches: bool, asOf: int, expiresAt: int): bool =
+  eligible and receiptMatches and sessionMatches and asOf < expiresAt
+
+pure def lawCloudPrefillNeedsOwnLiveHandoff(eligible: bool, receiptMatches: bool, sessionMatches: bool, asOf: int, expiresAt: int): bool =
+  (not(receiptMatches) or not(sessionMatches) or asOf >= expiresAt) implies
+    not(cloudJoinPrefillCanRead(eligible, receiptMatches, sessionMatches, asOf, expiresAt))
+
+pure def canRestoreCloudPrefill(page: JoinPage, view: SessionView): bool =
+  page.screen == Loading and view.result == MayJoin and sessionConsistent(view)
+
+pure def restoreCloudPrefill(page: JoinPage, view: SessionView, fromAgent: bool, hasFields: bool): JoinPage =
+  { ...page, viaAgent: fromAgent, formHasValues: hasFields, consented: false }
 ```
 
 ### The done step comes only from a saved profile with consent

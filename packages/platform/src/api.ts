@@ -16,6 +16,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
+import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
 import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
@@ -42,6 +43,15 @@ const cloudResponse: Record<CloudStatus, CloudResponse> = { valid: "CloudAccepte
 function authorityStatus(check: AuthorityCheck): CloudStatus {
   if (check.phase === "AuthorityValid") return "valid";
   return check.phase === "AuthorityUnavailable" ? "unavailable" : "invalid";
+}
+
+function readJoinPrefill(input: unknown) {
+  if (typeof input !== "object" || input === null) return;
+  const firstName = "firstName" in input && typeof input.firstName === "string" ? input.firstName.slice(0, fragmentNameMax) : "";
+  const ageText = "age" in input && typeof input.age === "string" ? input.age : "";
+  const age = fragmentAgeAccepted(/^\d+$/.test(ageText), ageText.length, Number(ageText)) ? ageText : "";
+  const viaAgent = "viaAgent" in input && input.viaAgent === true;
+  if (firstName || age || viaAgent) return { firstName, age, viaAgent };
 }
 
 export type HomeHelpVenueRequest = { id: string; revision: number } & (
@@ -243,7 +253,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // HMAC, and each carries its kind as associated data: a pending cookie is never accepted as an identity,
   // and the browser never sees the phone number or the Cloud ids inside.
   const sealKey = createHash("sha256").update(`cloud-seal:${sessionSecret}`).digest();
-  type SealKind = "cloud-pending" | "cloud-identity" | "cloud-grant";
+  type SealKind = "cloud-pending" | "cloud-identity" | "cloud-grant" | "cloud-join-prefill";
   const seal = (kind: SealKind, value: unknown) => {
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", sealKey, iv);
@@ -268,16 +278,17 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // this keeps the cookies safe if the gate is ever widened.
   const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
   const cloudReturnPath = (path: unknown): path is string => path === "/join" || oauthReturnPath(path);
-  const startCloudHandoff = async (app: AppId, returnPath: string) => {
+  const startCloudHandoff = async (app: AppId, returnPath: string, prefill?: ReturnType<typeof readJoinPrefill>) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
     const challenge=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier));
-    const value=seal("cloud-pending",{app,state,verifier,returnPath,until:now()+300_000});
+    const receipt = prefill ? randomBytes(16).toString("hex") : undefined;
+    const value=seal("cloud-pending",{app,state,verifier,returnPath,until:now()+300_000,prefill,receipt});
     const authorize=new URL("/network/sign-in",cloud.loginOrigin);
     if(productionCloud){authorize.searchParams.set("app",app);authorize.searchParams.set("realm",cloudRealm);}else authorize.searchParams.set("networkSite",cloud.siteOrigin);
     authorize.searchParams.set("state",state);authorize.searchParams.set("challenge",Buffer.from(challenge).toString("hex"));
     const name=dev?`cloud_pending_${app}`:"__Secure-cloud_pending";
-    return {url:authorize.href,setCookie:`${name}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=300${dev?"":"; Secure"}`};
+    return {url:authorize.href,receipt,setCookie:`${name}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=300${dev?"":"; Secure"}`};
   };
   function parseCloudIdentity(input: unknown) {
     if (typeof input !== "object" || input === null) return;
@@ -293,6 +304,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   }
   const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
   const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${dev ? "" : "; Secure"}`;
+  const joinPrefillName = dev ? "cloud_join_prefill_peon" : "__Secure-cloud_join_prefill";
+  const joinPrefillCookie = (value: string, age: number) => `${joinPrefillName}=${value}; Path=/api/me; HttpOnly; SameSite=Strict; Max-Age=${age}${dev ? "" : "; Secure"}`;
   // A positive Cloud validation is reused for 60 seconds per session, so a Cloud blip or a page load does not
   // cost a round trip on every request. A denial is never cached.
   const VALIDATION_TTL_MS = o.cloudValidationTtlMs ?? 60_000;
@@ -450,9 +463,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
           : null;
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
-        const handoff=await startCloudHandoff(appId,returnPath);
+        const handoff=await startCloudHandoff(appId,returnPath,appId === "peon" ? readJoinPrefill(b.prefill) : undefined);
         if(!handoff)return json(404,{ok:false,error:"not_found"});
-        return json(200,{url:handoff.url},{"set-cookie":handoff.setCookie});
+        return json(200,{url:handoff.url,receipt:handoff.receipt},{"set-cookie":handoff.setCookie});
       }
       case "GET /api/auth/cloud/callback": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
@@ -503,6 +516,15 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           responseHeaders.append("set-cookie", pendingCookie("", 0));
           responseHeaders.append("set-cookie", cookie(appId, token, age));
           responseHeaders.append("set-cookie", identityCookie(appId, delegatedIdentity, age));
+          if (appId === "peon" && result.returnPath === "/join" && typeof pending?.receipt === "string" && typeof pending.until === "number") {
+            const prefill = readJoinPrefill(pending.prefill);
+            const until = Math.min(pending.until, session.expiresAt);
+            const at = now();
+            if (prefill && liveBeforeDeadline(at, until)) {
+              const value = seal("cloud-join-prefill", { app: appId, sessionHash, receipt: pending.receipt, until, prefill });
+              responseHeaders.append("set-cookie", joinPrefillCookie(value, Math.ceil((until - at) / 1000)));
+            }
+          }
           return new Response(null, {status: 303, headers: responseHeaders});
         } catch { return reject(503); }
       }
@@ -589,7 +611,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
 
       case "GET /api/me":
-        return withSession(async who => {
+        return withSession(async (who, authenticated) => {
           const c = await accounts.canJoin(app, who);
           const currentPerson = c.person?.id ?? null;
           if (c.reason !== "review" && who.personId !== null && who.personId !== currentPerson)
@@ -598,14 +620,26 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           const home = live && o.home && (who.personId === null || who.personId === live.personId)
             ? await o.home({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
-          return json(200, {
+          const receipt = req.headers.get("x-ntwrk-join-receipt");
+          const carry = appId === "peon" && receipt ? unseal("cloud-join-prefill", cookies.get(joinPrefillName)) : null;
+          const receiptMatches = !!carry && receipt === carry.receipt;
+          const joinPrefill = carry && typeof carry.until === "number" && cloudJoinPrefillCanRead(
+            c.canJoin && carry.app === appId, receiptMatches, carry.sessionHash === authenticated.session.tokenHash, now(), carry.until,
+          ) ? readJoinPrefill(carry.prefill) : undefined;
+          const response = json(200, {
             app: appId, ...(c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164), currentPerson) } : {}),
             phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
             ...(participation ? { participation } : {}),
             ...(home ? { home } : {}),
+            ...(joinPrefill ? { joinPrefill } : {}),
           });
+          if (receiptMatches) {
+            response.headers.append("set-cookie", joinPrefillCookie("", 0));
+            rotatedCookies(response, authenticated);
+          }
+          return response;
         });
 
       case "POST /api/me/home":

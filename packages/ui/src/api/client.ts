@@ -75,13 +75,13 @@ export type ApiAnswer = { ok: true; data: Readonly<Record<string, unknown>> } | 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Sends one request to `/api/*` on the page's own origin. Every POST is JSON, also with no fields, because the API refuses other POSTs. */
-export async function call(method: "GET" | "POST", path: string, body?: Readonly<Record<string, unknown>>): Promise<ApiAnswer> {
+export async function call(method: "GET" | "POST", path: string, body?: Readonly<Record<string, unknown>>, headers?: Readonly<Record<string, string>>): Promise<ApiAnswer> {
   let response: Response;
   try {
     response = await fetch(path, {
       method,
       credentials: "same-origin",
-      headers: method === "POST" ? { accept: "application/json", "content-type": "application/json" } : { accept: "application/json" },
+      headers: { ...headers, accept: "application/json", ...(method === "POST" ? { "content-type": "application/json" } : {}) },
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {

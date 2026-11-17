@@ -51,7 +51,8 @@ export type Event =
   | { type: "recheck"; view: SessionView }
   | { type: "editProfile" }
   | { type: "submitProfile"; form: ProfileForm }
-  | { type: "answerJoin"; joinAnswer: JoinOutcome };
+  | { type: "answerJoin"; joinAnswer: JoinOutcome }
+  | { type: "restoreCloudPrefill"; view: SessionView; fromAgent: boolean; hasFields: boolean };
 
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 export const codeDigitsMin: number = 4;
@@ -807,6 +808,12 @@ export function lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: numb
 
 /** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
 //@ pure
+export function cloudJoinPrefillCanRead(eligible: boolean, receiptMatches: boolean, sessionMatches: boolean, asOf: number, expiresAt: number): boolean {
+  return eligible && receiptMatches && sessionMatches && asOf < expiresAt;
+}
+
+/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
+//@ pure
 export function stepFormClearedWhenAccountLeaves(before: JoinPage, after: JoinPage): boolean {
   return !(before.account > 0 && after.account !== before.account) || !after.formHasValues;
 }
@@ -815,6 +822,40 @@ export function stepFormClearedWhenAccountLeaves(before: JoinPage, after: JoinPa
 //@ pure
 export function stepSignInKeepsFormValues(before: JoinPage, via: string, after: JoinPage): boolean {
   return !(before.account === 0 && (via === "changeNumber" || via === "resendCode" || via === "answerVerify" || via === "recheck")) || after.formHasValues === before.formHasValues;
+}
+
+/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
+//@ pure
+export function lawCloudPrefillNeedsOwnLiveHandoff(eligible: boolean, receiptMatches: boolean, sessionMatches: boolean, asOf: number, expiresAt: number): boolean {
+  //@ ensures \result === true
+  return !(!receiptMatches || !sessionMatches || asOf >= expiresAt) || !cloudJoinPrefillCanRead(eligible, receiptMatches, sessionMatches, asOf, expiresAt);
+}
+
+/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
+//@ pure
+export function restoreCloudPrefill(page: JoinPage, view: SessionView, fromAgent: boolean, hasFields: boolean): JoinPage {
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysAddressCleanAfterOpening(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysBlockedHasReason(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysPhoneStepsHaveNoAccount(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysAccountStepsHaveAccount(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysCheckOnlyWithTextCodes(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysCodeStepUsesTextCodes(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysResendWithoutCheckOnly(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysDoneNeedsConsent(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> alwaysRequestBelongsToItsStep(\result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepCodeRequestNeedsPassedCheck(page, "restoreCloudPrefill", \result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepCheckSpentAfterCodeStart(page, "restoreCloudPrefill", \result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepFormClearedWhenAccountLeaves(page, \result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepSignInKeepsFormValues(page, "restoreCloudPrefill", \result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepDoneFollowsSavedProfile(page, "restoreCloudPrefill", \result)
+  //@ ensures (inv(page) && canRestoreCloudPrefill(page, view)) ==> stepOneRequestAtATime(page, \result)
+  return { ...page, viaAgent: fromAgent, formHasValues: hasFields, consented: false };
+}
+
+/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
+//@ pure
+export function canRestoreCloudPrefill(page: JoinPage, view: SessionView): boolean {
+  return page.screen === "Loading" && view.result === "MayJoin" && sessionConsistent(view);
 }
 
 /** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md) */
@@ -1037,6 +1078,7 @@ export function enabled(current: JoinPage, event: Event): boolean {
   if (event.type === "editProfile") return canEditProfile(current);
   if (event.type === "submitProfile") return canSubmitProfile(current);
   if (event.type === "answerJoin") return canAnswerJoin(current);
+  if (event.type === "restoreCloudPrefill") return canRestoreCloudPrefill(current, event.view);
   return false;
 }
 
@@ -1063,6 +1105,7 @@ export function step(current: JoinPage, event: Event): JoinPage {
   if (event.type === "editProfile" && canEditProfile(current)) return editProfile(current);
   if (event.type === "submitProfile" && canSubmitProfile(current)) return submitProfile(current, event.form);
   if (event.type === "answerJoin" && canAnswerJoin(current)) return answerJoin(current, event.joinAnswer);
+  if (event.type === "restoreCloudPrefill" && canRestoreCloudPrefill(current, event.view)) return restoreCloudPrefill(current, event.view, event.fromAgent, event.hasFields);
   return current;
 }
 
@@ -1100,6 +1143,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "editProfile") return { type: "editProfile" };
   if (raw.type === "submitProfile" && is_ProfileForm(raw.form)) return { type: "submitProfile", form: ({ nameGiven: raw.form.nameGiven, age: raw.form.age, consentTicked: raw.form.consentTicked }) };
   if (raw.type === "answerJoin" && (raw.joinAnswer === "JoinedOk" || raw.joinAnswer === "JoinUnderAge" || raw.joinAnswer === "JoinInviteOnly" || raw.joinAnswer === "JoinReview" || raw.joinAnswer === "JoinAccountChanged" || raw.joinAnswer === "JoinUnauthorized" || raw.joinAnswer === "JoinInvalidInvitation" || raw.joinAnswer === "JoinFailed")) return { type: "answerJoin", joinAnswer: raw.joinAnswer };
+  if (raw.type === "restoreCloudPrefill" && is_SessionView(raw.view) && typeof raw.fromAgent === "boolean" && typeof raw.hasFields === "boolean") return { type: "restoreCloudPrefill", view: ({ result: raw.view.result, account: raw.view.account, reason: raw.view.reason }), fromAgent: raw.fromAgent, hasFields: raw.hasFields };
   return undefined;
 }
 
