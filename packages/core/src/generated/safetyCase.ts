@@ -135,6 +135,39 @@ export function holdAuthority(actorPresent: boolean, reportMatches: boolean): St
   return !actorPresent ? "ActorRequired" : (!reportMatches ? "UnknownReport" : "AllowedAction");
 }
 
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function immediateDangerReply(directText: boolean, currentDanger: boolean): boolean {
+  return directText && currentDanger;
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function emergencyCheckInReport(exactReceipt: boolean, attributedReport: boolean): boolean {
+  return exactReceipt && attributedReport;
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function lawEmergencyReplyRequiresOwnText(currentDanger: boolean): boolean {
+  //@ ensures \result === true
+  return !immediateDangerReply(false, currentDanger);
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function lawEmergencyReplyRequiresCurrentDanger(directText: boolean): boolean {
+  //@ ensures \result === true
+  return !immediateDangerReply(directText, false);
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function lawEmergencyCheckInNeedsReceipt(attributedReport: boolean): boolean {
+  //@ ensures \result === true
+  return !emergencyCheckInReport(false, attributedReport);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {

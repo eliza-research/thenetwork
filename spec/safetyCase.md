@@ -75,6 +75,33 @@ pure def holdAuthority(actorPresent: bool, reportMatches: bool): StaffActionResu
 pure def holdSubjectKnown(knownMember: bool, reportOnFile: bool): bool = knownMember or reportOnFile
 ```
 
+## Story: Get immediate safety guidance in a member conversation
+
+> As a member who says that I am in danger now, I want emergency guidance before any report confirmation or follow-up.
+
+### Direct current-danger text gets immediate guidance first
+
+Recognize a direct affirmative statement of current danger or an explicit request for emergency help now. Do not infer immediacy from a past event or an urgent report category alone. Inspect only the person’s own plain text, after carrier commands and existing identity admission. A copied profile or reaction cannot take this branch. Reply to the member without asking for contact details or opening a normal conversation. The reply starts with guidance to contact local emergency services. Use a fixed reply so a saved acknowledgement or other updates do not move ahead of it.
+
+A report that named a subject still follows the same report and block decisions. A danger disclosure during a post-meeting check-in can record a report only with an exact current check-in receipt and explicit report language about the counterpart. It does not confirm attendance or consent to meet again. Otherwise, leave unrelated prompts unchanged and issue guidance alone. The Network does not dispatch emergency services.
+
+```quint
+pure def immediateDangerReply(directText: bool, currentDanger: bool): bool =
+  directText and currentDanger
+
+pure def lawEmergencyReplyRequiresOwnText(currentDanger: bool): bool =
+  not(immediateDangerReply(false, currentDanger))
+
+pure def lawEmergencyReplyRequiresCurrentDanger(directText: bool): bool =
+  not(immediateDangerReply(directText, false))
+
+pure def emergencyCheckInReport(exactReceipt: bool, attributedReport: bool): bool =
+  exactReceipt and attributedReport
+
+pure def lawEmergencyCheckInNeedsReceipt(attributedReport: bool): bool =
+  not(emergencyCheckInReport(false, attributedReport))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.

@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
@@ -18,6 +18,7 @@ import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.t
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
+import { copy } from "../src/copy.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -46,6 +47,17 @@ async function text(s: NetworkService, clock: SimClock, from: string, body: stri
   const result = (await res.json()).result as string;
   debug(`${from} -> "${body}" (${result})`);
   return result;
+}
+async function signedText(s: NetworkService, clock: SimClock, secret: string, from: string, messageId: string, text: string) {
+  const turn: TurnRequest = { app: "slop", channel: "blooio", from, messageId, text, transport: "imessage", receivedAt: clock.now(), to: null };
+  const body = JSON.stringify(turn);
+  const headers = await svcSign(secret, { id: messageId, path: TURN_PATH, method: "POST", body, nowS: Math.floor(clock.now() / 1000) });
+  const res = await s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body }));
+  expect(res.status).toBe(200);
+  const response = await res.json() as TurnResponse;
+  expect(response.outcome).toBe("handled");
+  if (response.outcome !== "handled") throw new Error(`Expected direct advice, got ${response.outcome}`);
+  return response.replies;
 }
 const staff = (s: NetworkService, token: string, method: string, path: string, b?: unknown) =>
   s.fetch(new Request(`http://127.0.0.1:4848${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(b ? { "content-type": "application/json" } : {}) }, ...(b ? { body: JSON.stringify(b) } : {}) }));
@@ -78,6 +90,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
 
   test("join, onboard, review approval, mutual yes, date booked, check-in, report to the safety queue, pair kept apart", async () => {
     const clock = new SimClock(START);
+    const turnSecret = "synthetic-slop-safety-turn-signing-secret";
     // Only the explicitly requested arm may use the runner's real provider.
     // The service receives its normal opt-in settings, never a test LLM.
     const engineJudge = process.env.NETWORK_ENGINE_JUDGE === "1";
@@ -91,7 +104,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       expect(Number(judgeEnv.NETWORK_ENGINE_JUDGE_BUDGET_USD)).toBe(0.25);
     }
     const s = svc = new NetworkService({
-      url: URL_, clock, instance: "slop-date", log: () => {}, env: { PLATFORM_ENV: "dev", ...judgeEnv }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
+      url: URL_, clock, instance: "slop-date", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret, ...judgeEnv }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER},safety:${SAFETY}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
       adapter: () => new DryRunAdapter(() => {}),
     });
@@ -205,6 +218,8 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await fromAssistant("Report Sam, he was rude to me and I want to block him.");
     // Words that would be abuse from the sender ("he owes me money") describe Sam: Rae is not scored or dropped.
     await fromAssistant("Block Sam, he owes me money and keeps texting.");
+    await fromAssistant("I am in immediate danger.");
+    expect((await inbox(rae)).some(m => m.body.startsWith(copy.immediateDanger))).toBe(false);
     expect(s.runtimeFor("slop")!.net.trust.level(rae as never)).toBe("ok");
     expect((await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`)[0]?.state).toBe("SCHEDULED");
     expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports ?? []).toHaveLength(0);
@@ -224,17 +239,31 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       where app_id='slop' and member_id=${rae} and opportunity_id=${item.oppId} and type='feedback_request' and direction='outbound'`;
     const syntheticHistory = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
       provider: { kind: "sim", send: async () => { throw new Error("Fixture only records an accepted prompt"); } } });
+    // The member gets guidance even before the exact feedback prompt is accepted. Until then, the
+    // service cannot treat her statement as a report against the counterpart of that prompt.
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-help-before-feedback-receipt", "He is following me right now.")).toEqual([copy.immediateDanger]);
+    expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports).toHaveLength(0);
     await sql.begin(async tx => {
       await syntheticHistory.recordCollected(tx, [{ id: prompt!.id, memberId: rae, to: RAE, kind: "transactional", text: prompt!.body }]);
       await syntheticHistory.collectedReceipt(tx, [prompt!.id], "accepted", clock.now());
     });
-    await text(s, clock, RAE, "He was really rude and kept harassing me after I said I wanted to leave.");
+    // Move past the usual identical-reply window before the second distinct emergency statement.
+    clock.advance(11 * MINUTE);
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-unattributed-present-danger", "I am in immediate danger.")).toEqual([copy.immediateDanger]);
+    expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports).toHaveLength(0);
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-help-after-feedback-receipt", "He is following me right now.")).toEqual([
+      `${copy.immediateDanger} ${copy.reported(true)}`,
+    ]);
+    expect(await signedText(s, clock, turnSecret, RAE, "slop-help-after-feedback-receipt", "He is following me right now.")).toEqual([
+      `${copy.immediateDanger} ${copy.reported(true)}`,
+    ]);
 
     const reports = await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json() as any;
     debug(JSON.stringify(reports));
     expect(reports.ok).toBe(true);
     expect(reports.reports).toHaveLength(1);
-    expect(reports.reports[0]).toMatchObject({ kind: "harassment", source: "check_in", status: "open", reporterId: rae, subjectId: sam, opportunityId: item.oppId });
+    expect(reports.reports[0]).toMatchObject({ kind: "unsafe", source: "check_in", status: "open", reporterId: rae, subjectId: sam, opportunityId: item.oppId });
+    expect((await s.runtimeFor("slop")!.pg.load())?.opps.find(o => o.id === item.oppId)?.post?.[rae]).toBeUndefined();
 
     // ---- The pair is kept apart: a blocked edge in the snapshot, and no new proposal between them.
     const snap = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
@@ -251,7 +280,9 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const net = s.runtimeFor("slop")!.net;
     await text(s, clock, RAE, "ok"); // nothing unanswered: she could be asked again
     expect(net.eligible(rae as never)).toBe(true);
-    await text(s, clock, SAM, "report Rae, she threatened me after the date");
+    expect(await signedText(s, clock, turnSecret, SAM, "slop-report-present-danger", "Report Rae, she is threatening me right now.")).toEqual([
+      `${copy.immediateDanger} ${copy.reported(true)}`,
+    ]);
     const byText = ((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports.find((r: any) => r.subjectId === rae);
     expect(byText).toMatchObject({ kind: "unsafe", source: "message", status: "open", reporterId: sam });
     expect(net.eligible(rae as never)).toBe(false);

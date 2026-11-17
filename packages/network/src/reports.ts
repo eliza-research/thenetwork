@@ -25,6 +25,27 @@ const KINDS: [ReportKind, RegExp][] = [
 
 const ACTIVE_DENIAL = /\b(?:not(?! only\b)|never|nothing|without|no(?! way\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\s+(?:(?:at all|really|very|even|remotely|a bit|make me feel|an?|be) +)*(?:[a-z]+ (?:or|nor) +)?$/i;
 const CORRECTED_MARRIAGE = /\b(?:not married|isn't married|wasn't married)\s*[,;]?\s*but\s+(?:he|she|they)\s+(?:is|was|are|were)\s*(?:$|[.!?,;])/i;
+const CURRENT_DANGER = /^(?:(?:i am|i'm|we are|we're) (?:in (?:immediate )?danger(?: (?:right now|now))?|(?:not safe|being threatened) (?:right now|now))|(?:i |we )?need emergency help(?: (?:right now|now))?|(?:(?:he|she|they|someone) (?:is|are)|he's|she's|they're) (?:following|threatening|attacking) (?:me|us)(?: (?:right now|now))?)$/i;
+const COUNTERPART_SUBJECT = /^(?:he|she|they|my date|the person i met)\b/i;
+
+function directClauses(text: string): string[] {
+  return (text.normalize("NFKC").replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/"[^"]*(?:"|$)/g, "")
+    .match(/[^.!?,;:\n—]+[!?]?/g) ?? []).map(clause => clause.trim());
+}
+
+/** A direct present-tense disclosure, without treating a report category as proof of danger now. */
+export function statesImmediateDanger(text: string): boolean {
+  return directClauses(text).some(clause => CURRENT_DANGER.test(clause.replace(/!$/, "")));
+}
+
+/** Keep a first-person disclosure separate from an attributable reply about the meeting. */
+export function emergencyCheckInReportKind(text: string): ReportKind | undefined {
+  for (const clause of directClauses(text)) {
+    if (!COUNTERPART_SUBJECT.test(clause) || clause.endsWith("?")) continue;
+    const kind = checkInReport(clause);
+    if (kind) return kind;
+  }
+}
 
 function reportsHarm(text: string, marker: RegExp): boolean {
   for (const m of text.matchAll(new RegExp(marker.source, "gi"))) {
