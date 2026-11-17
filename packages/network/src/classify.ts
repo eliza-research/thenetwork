@@ -651,7 +651,7 @@ const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|o
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
 const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b/;
-const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
+const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|next (?:sun(?:day)?|mon(?:day)?|tues?(?:day)?|wed(?:nes)?(?:day)?|thu(?:r|rs)?(?:day)?|fri(?:day)?|sat(?:ur)?(?:day)?)s?|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
 
@@ -753,6 +753,21 @@ function clauseAt(t: string, i: number, len: number): string {
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
+/** A day name, full or short, as spelled in COUNTER_RX above. */
+const NEXT_DAY = "(?:sun(?:day)?|mon(?:day)?|tues?(?:day)?|wed(?:nes)?(?:day)?|thu(?:r|rs)?(?:day)?|fri(?:day)?|sat(?:ur)?(?:day)?)s?";
+/** "next" (or "next week") right before the mention, or "next <day>" (with a daypart) before a clock: the mention names next week's instance of the day. */
+const NEXT_QUALIFIED_BEFORE = new RegExp(`\\bnext(?:\\s+week)?\\s+(?:${NEXT_DAY}\\b(?:\\s+(?:mornings?|afternoons?|evenings?|nights?))?\\s*)?$`);
+/** A daypart and/or clock, then "next week", right after the mention: "Saturday next week", "Saturday 11am next week". */
+const NEXT_QUALIFIED_AFTER = /^\s*(?:(?:mornings?|afternoons?|evenings?|nights?)\s+)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s+)?next\s+week\b/;
+/** True when the words at `i` (of length `len`) are qualified by "next" in their own clause: "next Saturday", "next week Saturday 11am", "Saturday next week". */
+function nextQualifiedAt(t: string, i: number, len: number): boolean {
+  let from = 0;
+  for (const m of t.slice(0, i).matchAll(/[.,;!?\n]|\bbut\b/g)) from = m.index! + m[0].length;
+  if (NEXT_QUALIFIED_BEFORE.test(t.slice(from, i))) return true;
+  const rest = t.slice(i + len);
+  const end = rest.search(/[.,;!?\n]|\bbut\b/);
+  return NEXT_QUALIFIED_AFTER.test(end < 0 ? rest : rest.slice(0, end));
+}
 
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
@@ -775,6 +790,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number) => {
+    // "next Saturday" names next week's Saturday, not an offered slot: without this skip the
+    // strong-pick branch would book it even though consentOf reads the "next" as a counter-offer.
+    if (nextQualifiedAt(t, i, len)) return;
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
