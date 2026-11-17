@@ -123,6 +123,63 @@ describe.skipIf(!pgAvailable)("the single inbox end to end", () => {
     expect(await active()).toBe(false);
   }, T);
 
+  test("assistant links require the digest's one app and a grant that can read it", async () => {
+    // spec/notificationDelivery.md, "The text thread carries a digest one connector cannot read"
+    // spec/notificationAcknowledgement.md, "Only a live update token of this member can resolve items"
+    const phone = newPhone();
+    const peon = await webJoin(st, "peon", phone, { age: 30 });
+    const friends = await webJoin(st, "friends", phone, { age: 30, browser: peon.b });
+    expect(peon.res.status).toBe(200);
+    expect(friends.res.status).toBe(200);
+    const { person_id: personId } = await member("friends", phone);
+    const claude = await connectMcp(st, "peon", phone, { browser: peon.b, redirect: CLAUDE });
+    expect(claude.token?.access_token).toBeTypeOf("string");
+    const read = (app: "peon" | "friends", bearer: string, token?: string) => rpc(st, app, "/mcp", "tools/call", {
+      name: "get_updates", arguments: token ? { update_token: token } : {},
+    }, bearer);
+    expect((await read("peon", claude.token!.access_token)).res.status).toBe(200);
+    const now = () => st.clock.now();
+    const add = (app: "peon" | "friends", subjectId: string, summary: string) =>
+      st.svc.notify!.add({ personId, app, subjectId, eventType: "reminder", urgency: "requested", summary }, now());
+    const selected = async () => (await st.svc.notify!.plan(now())).sends.find(send => send.personId === personId);
+
+    const friendSummary = "Your hike leaves at ten.";
+    await add("friends", "friend-only", friendSummary);
+    expect(await selected()).toMatchObject({ delivery: { mode: "thread" }, text: friendSummary });
+
+    const workSummary = "Your work call is tomorrow.";
+    await add("peon", "mixed-work", workSummary);
+    const mixed = await selected();
+    if (!mixed) throw new Error("missing mixed digest");
+    expect(mixed).toMatchObject({ delivery: { mode: "thread" } });
+    expect(mixed?.token).toBeUndefined();
+    expect(mixed?.text).toContain(friendSummary);
+    expect(mixed?.text).toContain(workSummary);
+    expect(mixed?.itemIds).toHaveLength(2);
+    await st.svc.notifyTick();
+    const delivered = await sql`select delivery_id, item_ids from notify.deliveries where person_id=${personId} and delivery_id=${mixed.deliveryId}`;
+    expect(delivered).toHaveLength(1);
+
+    const friendsClaude = await connectMcp(st, "friends", phone, { browser: friends.b, redirect: CLAUDE });
+    expect(friendsClaude.token?.access_token).toBeTypeOf("string");
+    const referenced = "Your interview moved to noon.";
+    await add("peon", "peon-link", referenced);
+    const own = await selected();
+    if (!own) throw new Error("missing app digest");
+    expect(own).toMatchObject({ delivery: { mode: "deeplink", assistant: "claude" }, token: expect.any(String) });
+    await st.svc.notifyTick();
+    const [text] = await sql`select body from network.messages where id=${own.deliveryId}`;
+    const token = /T-[2-9A-HJKMNP-TV-Z]{6}/.exec(text?.body ?? "")?.[0];
+    if (!token) throw new Error("missing update reference");
+    expect(toolData(await read("friends", friendsClaude.token!.access_token, token)).updates).toEqual([]);
+    expect((await sql`select redeemed_at from notify.task_tokens where token=${token}`)[0]?.redeemed_at).toBeNull();
+    expect((await sql`select outcome from notify.deliveries where delivery_id=${own.deliveryId}`)[0]?.outcome).toBeNull();
+    expect(toolData(await read("peon", claude.token!.access_token, token)).updates).toEqual([
+      { summary: referenced, kind: "reminder", at: expect.any(String) },
+    ]);
+    expect((await sql`select redeemed_at from notify.task_tokens where token=${token}`)[0]?.redeemed_at).not.toBeNull();
+  }, T);
+
   test("a text from the member counts as using the thread; the inbox's own send goes through consent-checked delivery", async () => {
     const phone = newPhone();
     await webJoin(st, "peon", phone, { age: 30 });

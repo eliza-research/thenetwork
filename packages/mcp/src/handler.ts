@@ -111,6 +111,8 @@ export interface McpHandler {
   revokeAllFor(e164: string, app?: McpAppId, o?: { forget?: boolean }): Promise<number>;
   /** Erase the verified person's grants and approvals across phone bindings, in one app or every app. */
   forgetPerson(personId: string, app?: McpAppId): Promise<number>;
+  /** Current local connector authority for opening inbox items from one app in a hosted assistant. */
+  assistantUpdateSurfaces(personId: string, app: McpAppId): Promise<AssistantKind[]>;
 }
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
@@ -1258,6 +1260,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   return {
     store,
+    async assistantUpdateSurfaces(personId, app) {
+      const surfaces = new Set<AssistantKind>();
+      const owners = new Map<string, boolean | undefined>();
+      for (const { grant, client } of await store.assistantGrants(personId, now(), app)) {
+        const assistant = assistantOf(client);
+        if (assistant === "web" || surfaces.has(assistant) || !grantAllowsUpdates(grant, client)) continue;
+        if (!owners.has(grant.phoneKey)) owners.set(grant.phoneKey, await assistantGrantOwnerCurrent(grant));
+        if (grant.expiresAt > now() && owners.get(grant.phoneKey)) surfaces.add(assistant);
+      }
+      return [...surfaces];
+    },
     async revokeAllFor(e164, app, ro = {}) {
       const at = now();
       const key = o.platform.phoneKey(e164);

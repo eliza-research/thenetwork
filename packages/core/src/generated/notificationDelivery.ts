@@ -61,6 +61,19 @@ export function lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: bo
   return projectAssistantActivity(hasEligibleGrant, false) !== "AssistantInactive";
 }
 
+/** Story: Receive updates on a surface I use / The text thread carries a digest one connector cannot read (spec/notificationDelivery.md) */
+//@ pure
+export function assistantDigestCanLink(singleApp: boolean, hasReadableAssistant: boolean): boolean {
+  return singleApp && hasReadableAssistant;
+}
+
+/** Story: Receive updates on a surface I use / The text thread carries a digest one connector cannot read (spec/notificationDelivery.md) */
+//@ pure
+export function lawMixedDigestOrMissingGrantNeverLinks(singleApp: boolean, hasReadableAssistant: boolean): boolean {
+  //@ ensures \result === true
+  return !(!singleApp || !hasReadableAssistant) || !assistantDigestCanLink(singleApp, hasReadableAssistant);
+}
+
 /** Story: Receive updates on a surface I use / Ignore inactive assistants and assistants whose links went unused twice (spec/notificationDelivery.md) */
 //@ pure
 export function surfaceIsUsable(active: boolean, ignoredStreak: number): boolean {

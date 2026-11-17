@@ -115,6 +115,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
+  svc.notify?.setAssistantUpdatesLookup((personId, app) => isMcpAppId(app) ? mcp.assistantUpdateSurfaces(personId, app) : Promise.resolve([]));
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);

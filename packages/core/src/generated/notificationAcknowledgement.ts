@@ -70,9 +70,22 @@ export function mayRedeemInboxToken(sameOwner: boolean, expiresAt: number, at: n
 
 /** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
 //@ pure
+export function inboxTokenMayRecordRedemption(matchingLiveItems: number): boolean {
+  return matchingLiveItems > 0;
+}
+
+/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
+//@ pure
 export function lawInboxTokenExpiresAtDeadline(expiresAt: number): boolean {
   //@ ensures \result === true
   return !mayRedeemInboxToken(true, expiresAt, expiresAt);
+}
+
+/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawNoMatchingAppItemsMeansNoRedemption(matchingLiveItems: number): boolean {
+  //@ ensures \result === true
+  return !(matchingLiveItems <= 0) || !inboxTokenMayRecordRedemption(matchingLiveItems);
 }
 
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */

@@ -8,7 +8,7 @@ A scheduler plan is tentative until the inbox and recipient are read again. A Vi
 
 ### Re-read the planned items before recording a digest
 
-Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed or the recipient's address, channel or time zone changed. If every item and the destination remain the same, reuse the original plan.
+Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed, the recipient's address, channel or time zone changed, or a prepared assistant link no longer covers the item app. Reuse the original plan while its items, destination and link authority still fit.
 
 ```quint
 type DigestPhase =

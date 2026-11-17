@@ -45,7 +45,7 @@ pure def lawMissingBoundOpportunityCannotDisplay(opportunityStatus: str): bool =
 
 ### Only a live update token of this member can resolve items
 
-An update token is a reference to the inbox. The caller still needs their own authenticated identity, and a token expires at its expiry time. After an eligible lookup, record first redemption and load the token's stored items. For a surface that lists its own updates, return subject IDs for these items and let that surface acknowledge what it displayed separately.
+An update token is a reference to the inbox. The caller still needs their own authenticated identity, and a token expires at its expiry time. Load only the caller's live items from the token, restricted to the caller's app when the surface is app-scoped. Record first redemption and delivery action only after finding one of those items. A token exclusively for another app does not change the token or delivery. For a surface that lists its own updates, return subject IDs for these items and let that surface acknowledge what it displayed separately.
 
 ```quint
 pure def mayRedeemInboxToken(sameOwner: bool, expiresAt: int, at: int): bool =
@@ -53,6 +53,11 @@ pure def mayRedeemInboxToken(sameOwner: bool, expiresAt: int, at: int): bool =
 
 pure def lawInboxTokenExpiresAtDeadline(expiresAt: int): bool =
   not(mayRedeemInboxToken(true, expiresAt, expiresAt))
+
+pure def inboxTokenMayRecordRedemption(matchingLiveItems: int): bool = matchingLiveItems > 0
+
+pure def lawNoMatchingAppItemsMeansNoRedemption(matchingLiveItems: int): bool =
+  matchingLiveItems <= 0 implies not(inboxTokenMayRecordRedemption(matchingLiveItems))
 ```
 
 ### A read marks the selected items seen before responding

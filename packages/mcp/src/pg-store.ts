@@ -166,14 +166,21 @@ export class PgOAuthStore implements OAuthStore {
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return (await this.sql`select * from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} and revoked_at is null and expires_at > ${ts(at)} order by created_at`).map(grant);
   }
+  assistantGrants(personId: string, at: number, app?: McpAppId) {
+    return this.readAssistantGrants(this.sql, personId, at, app);
+  }
+  private async readAssistantGrants(sql: SQL, personId: string, at: number, app?: McpAppId): Promise<AssistantGrantCandidate[]> {
+    const rows = await sql<{ approval: Row; client: Row }[]>`select to_jsonb(g) as approval, to_jsonb(c) as client
+      from oauth.grants g join oauth.clients c on c.id=g.client_id
+      where g.person_id=${personId} and g.revoked_at is null and g.expires_at>${ts(at)}
+        and (${app ?? null}::text is null or g.app_id=${app ?? null})`;
+    return rows.map(row => ({ grant: grant(row.approval), client: client(row.client) }));
+  }
   async projectAssistantGrants(personId: string, now: () => number, publish: (candidates: AssistantGrantCandidate[]) => Promise<void>) {
     await this.sql.begin(async tx => {
       await tx`select pg_advisory_xact_lock(hashtextextended(${`oauth:assistant-projection:${personId}`}, 0))`;
-      const rows = await tx<{ approval: Row; client: Row }[]>`select to_jsonb(g) as approval, to_jsonb(c) as client
-        from oauth.grants g join oauth.clients c on c.id=g.client_id
-        where g.person_id=${personId} and g.revoked_at is null and g.expires_at>${ts(now())}`;
       // The signal write may use the notify connection. Keep later projections behind this lock until it finishes.
-      await publish(rows.map(row => ({ grant: grant(row.approval), client: client(row.client) })));
+      await publish(await this.readAssistantGrants(tx, personId, now()));
     });
   }
   async revokeGrant(id: string, at: number, owner?: BrowserGrantRemoval) {

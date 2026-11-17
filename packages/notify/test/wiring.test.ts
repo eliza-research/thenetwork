@@ -103,6 +103,23 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(calls).toHaveLength(0);
   });
 
+  // spec/notificationDispatch.md, "Re-read the planned items before recording a digest"
+  test("a prepared link is rebuilt into one thread update when the app grant ends before enqueue", async () => {
+    const { now, store, notifier, queue, sink, sent: calls, r } = await setup({ channel: "imessage", explicit: "claude" });
+    let checked = 0;
+    notifier.setAssistantUpdatesLookup(async (personId, app) => personId === r.personId && app === "friends" && ++checked === 1 ? ["claude"] : []);
+    await notifier.setActive(r.personId, "claude", true);
+    const summary = "Dinner at seven is confirmed.";
+    const { item } = await notifier.add(req(r.personId, "grant-ended", summary), now());
+    const result = await notifier.dispatch(now(), sink);
+    expect(result.sent).toHaveLength(1);
+    expect(result.sent[0]).toMatchObject({ delivery: { mode: "thread" }, text: summary, itemIds: [item.id] });
+    expect(result.sent[0]?.token).toBeUndefined();
+    expect(await store.getDelivery(deliveryIdFor(r.personId, [item.id]))).toMatchObject({ target: "imessage", itemIds: [item.id] });
+    await queue.drain();
+    expect(calls.map(call => call.text)).toEqual([summary]);
+  });
+
   // spec/notificationDispatch.md, "The sink receives only a recorded digest"
   test("overlapping digests cannot both claim the same item", async () => {
     const { now, notifier, r, store } = await setup();
@@ -141,6 +158,7 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
 
   test("an assistant whose links went unused twice is pointed at again once the member uses it", async () => {
     const { clock, now, notifier, sink, r } = await setup({ channel: "imessage", explicit: "claude" });
+    notifier.setAssistantUpdatesLookup(async (personId, app) => personId === r.personId && app === "friends" ? ["claude"] : []);
     await notifier.setActive(r.personId, "claude", true);
     const send = async (subject: string) => {
       await notifier.add(req(r.personId, subject), now());

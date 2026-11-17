@@ -14,17 +14,17 @@
 
 import { createHash, randomInt } from "node:crypto";
 import {
-  appAllowsInboxItem, canRecordInboxSeen, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
+  appAllowsInboxItem, canRecordInboxSeen, inboxTokenMayRecordRedemption, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
 } from "../../core/src/generated/notificationAcknowledgement.ts";
-import { inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
-import { inboxItemAllowedForRecipient } from "../../core/src/generated/notificationDispatch.ts";
+import { assistantDigestCanLink, inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
+import { inboxItemAllowedForRecipient, inboxItemExpired } from "../../core/src/generated/notificationDispatch.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText } from "./compose.ts";
 import type { NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
 import { newToken, TOKEN_TTL_MS, type TaskToken } from "./tokens.ts";
-import type { Channel, InboxItem, InboxItemInput, Surface } from "./types.ts";
+import { isAssistant, type Assistant, type Channel, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
 
 export interface Recipient {
   personId: string;
@@ -39,6 +39,8 @@ export interface Recipient {
 export interface RecipientDirectory {
   get(personId: string): Recipient | undefined | Promise<Recipient | undefined>;
 }
+
+type AssistantUpdatesLookup = (personId: string, app: string) => Promise<readonly Surface[]>;
 
 /** The Notifier's sink: packages/blooio OutboundQueue through queueSink, or the service's unit of work. */
 export interface OutboundSink {
@@ -92,9 +94,15 @@ export const deliveryIdFor = (personId: string, itemIds: string[]) =>
 
 export class Notifier {
   readonly cfg: SchedulerConfig;
+  private assistantUpdatesLookup?: AssistantUpdatesLookup;
 
   constructor(readonly store: NotifyStore, private readonly directory: RecipientDirectory, cfg: Partial<SchedulerConfig> = {}) {
     this.cfg = { ...DEFAULT_CONFIG, ...cfg };
+  }
+
+  /** The connector is the authority for membership-read access in the digest's app. */
+  setAssistantUpdatesLookup(lookup: AssistantUpdatesLookup): void {
+    this.assistantUpdatesLookup = lookup;
   }
 
   /** Producers (engine, plans, reminders) add items here. Deduped on (person, app, event, subject). */
@@ -158,8 +166,29 @@ export class Notifier {
     throw new Error("could not draw an unused task token");
   }
 
+  private async digestAssistants(personId: string, items: InboxItem[]): Promise<Assistant[]> {
+    const app = items[0]?.app;
+    const singleApp = !!app && items.every(item => item.app === app);
+    let assistants: Assistant[] = [];
+    if (singleApp && this.assistantUpdatesLookup) {
+      try { assistants = (await this.assistantUpdatesLookup(personId, app)).filter(isAssistant); }
+      catch { /* The verified member can still get the digest in their text thread. */ }
+    }
+    return assistantDigestCanLink(singleApp, assistants.length > 0) ? assistants : [];
+  }
+
+  private async linkCurrent(plan: SendPlan, items: InboxItem[]): Promise<boolean> {
+    const { delivery } = plan;
+    if (delivery.mode === "thread") return true;
+    const assistants = await this.digestAssistants(plan.personId, items);
+    return delivery.mode === "deeplink" ? assistants.includes(delivery.assistant)
+      : delivery.assistants.every(assistant => assistants.includes(assistant));
+  }
+
   private async build(r: Recipient, items: InboxItem[], now: number): Promise<SendPlan> {
-    const delivery = resolveDelivery(r.prefs, await this.store.signals(r.personId), now);
+    const assistants = await this.digestAssistants(r.personId, items);
+    const signals = (await this.store.signals(r.personId)).filter(signal => !isAssistant(signal.surface) || assistants.includes(signal.surface));
+    const delivery = resolveDelivery(r.prefs, signals, now);
     const itemIds = items.map(i => i.id);
     const token = delivery.mode === "thread" ? undefined : await this.issueToken(r.personId, itemIds, now);
     return {
@@ -185,6 +214,7 @@ export class Notifier {
       const result = await dispatchInboxDigest(planned, now, {
         readItems: ids => this.store.getItems(ids),
         readRecipient: async personId => this.directory.get(personId),
+        linkCurrent: (plan, items) => this.linkCurrent(plan, items),
         rebuild: (recipient, items) => this.build(recipient, items, now),
         record: final => this.store.recordDelivery({
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
@@ -224,11 +254,13 @@ export class Notifier {
   }
 
   /** Resolve a token for its owner. null for unknown, expired or foreign tokens (shown as "no update"). */
-  private async redeem(token: string, callerPersonId: string, surface: Surface, now: number): Promise<InboxItem[] | null> {
+  private async redeem(token: string, callerPersonId: string, surface: Surface, now: number, app?: string): Promise<InboxItem[] | null> {
     const t = await this.store.getToken(token.trim().toUpperCase());
     if (!t || !mayRedeemInboxToken(t.personId === callerPersonId, t.expiresAt, now)) return null;
+    const items = (await this.store.getItems(t.itemIds)).filter(item => item.personId === callerPersonId
+      && appAllowsInboxItem(app !== undefined, item.app === app) && !inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now));
+    if (!inboxTokenMayRecordRedemption(items.length)) return null;
     await this.store.markTokenRedeemed(t.token, surface, now);
-    const items = await this.store.getItems(t.itemIds);
     await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, callerPersonId, now);
     return items;
   }
@@ -245,7 +277,7 @@ export class Notifier {
     let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
     let read = stepAcknowledgement(acknowledgementInitial, { type: "selectInboxRead", withToken: !!token });
     if (read.phase === "AwaitingReadToken" && token) {
-      const own = await this.redeem(token, callerPersonId, surface, now);
+      const own = await this.redeem(token, callerPersonId, surface, now, opts.app);
       read = stepAcknowledgement(read, { type: "resolveInboxReadToken", valid: own !== null });
       if (own) {
         const wanted = new Set(own.map(i => i.id));

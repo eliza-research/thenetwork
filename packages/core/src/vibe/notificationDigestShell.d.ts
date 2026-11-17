@@ -29,6 +29,8 @@ interface DispatchEffects<P extends DigestPlan, I extends DigestItem, R extends 
     /** @throws {never} */
     readRecipient(personId: string): Promise<R | undefined>;
     /** @throws {never} */
+    linkCurrent(plan: P, items: I[]): Promise<boolean>;
+    /** @throws {never} */
     rebuild(recipient: R, items: I[]): Promise<P>;
     /** @throws {never} */
     record(plan: P): Promise<boolean>;

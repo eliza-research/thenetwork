@@ -56,6 +56,18 @@ pure def lawDifferentPersonOrAssistantCannotCount(samePerson: bool, sameAssistan
   (not(samePerson) or not(sameAssistant)) implies not(assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live))
 ```
 
+### The text thread carries a digest one connector cannot read
+
+One assistant link names one update reference. Its items must all belong to the same app, and each offered assistant must have a current grant for this person that permits reading updates in that app. Rank only those assistants. Use the shared text thread when the digest spans apps, the current grant lookup is unavailable, or none of the assistants can read the whole digest. Keep one digest per person per send. Check coverage again before recording and enqueueing a prepared link. Rebuild through the same rule if a grant ends before that check.
+
+```quint
+pure def assistantDigestCanLink(singleApp: bool, hasReadableAssistant: bool): bool =
+  singleApp and hasReadableAssistant
+
+pure def lawMixedDigestOrMissingGrantNeverLinks(singleApp: bool, hasReadableAssistant: bool): bool =
+  (not(singleApp) or not(hasReadableAssistant)) implies not(assistantDigestCanLink(singleApp, hasReadableAssistant))
+```
+
 ### Ignore inactive assistants and assistants whose links went unused twice
 
 The automatic picker excludes an inactive assistant or one whose links went unused twice in a row. The explicit picker also falls back to the thread for those cases.
