@@ -1,6 +1,8 @@
 // GENERATED from spec/notificationAcknowledgement.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+export type NetworkTextProjection = "SkipRecordedText" | "ProjectOpportunityText" | "ProjectUnboundText";
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export type AcknowledgementPhase = "AcknowledgementStarting" | "AwaitingReadToken" | "MarkingInboxSeen" | "InboxSeen" | "NoInboxRead" | "DeliveryUnchanged" | "DeliveryActed";
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
@@ -18,6 +20,8 @@ export type Event =
 export const threadUpdateCommand: string = "updates";
 /** Story: See my own updates on the surface I am using / A signed Updates reply reads a bounded page in the member's current text thread (spec/notificationAcknowledgement.md) */
 export const threadUpdatePageSize: number = 3;
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+export const networkTextSummaryLimit: number = 500;
 /** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export const initial: AcknowledgementFlow = { phase: "AcknowledgementStarting" };
 
@@ -62,14 +66,40 @@ export function lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: boolean, 
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
+export function networkTextCanProduceInboxItem(system: boolean, messageType: string): boolean {
+  return !system && (messageType === "probe" || messageType === "plan_probe" || messageType === "proposal" || messageType === "reminder" || messageType === "feedback_request" || messageType === "cancellation" || messageType === "scheduling");
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
 export function inboxOpportunityTerminal(opportunityStatus: string): boolean {
   return opportunityStatus === "COMPLETED" || opportunityStatus === "FEEDBACK_COLLECTED" || opportunityStatus === "DECLINED" || opportunityStatus === "EXPIRED" || opportunityStatus === "CANCELLED" || opportunityStatus === "SKIPPED" || opportunityStatus === "ABANDONED" || opportunityStatus === "QUORUM_FAILED";
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
+export function networkTextProjection(deliveryRecorded: boolean, opportunityBound: boolean): NetworkTextProjection {
+  return deliveryRecorded ? "SkipRecordedText" : (opportunityBound ? "ProjectOpportunityText" : "ProjectUnboundText");
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawSystemTextProducesNoInboxItem(messageType: string): boolean {
+  //@ ensures \result === true
+  return !networkTextCanProduceInboxItem(true, messageType);
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
 export function inboxOpportunityAllowsUpdate(bound: boolean, found: boolean, opportunityStatus: string): boolean {
   return !bound || (found && !inboxOpportunityTerminal(opportunityStatus));
+}
+
+/** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
+//@ pure
+export function lawRecordedTextHasNoNewProjection(opportunityBound: boolean): boolean {
+  //@ ensures \result === true
+  return networkTextProjection(true, opportunityBound) === "SkipRecordedText";
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */

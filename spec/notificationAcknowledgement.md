@@ -37,16 +37,38 @@ pure def lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: bool, activeAppO
 
 ### A delivered text can appear only once and its opportunity must still be current
 
-Key a delivered Network text by its message ID, with the opportunity as
-context when there is one. A repeated projection uses the same durable
-delivery ID, including for a retained older subject. Each new accepted text
-about that opportunity remains a separate item. Resolve an item's opportunity
+An accepted member-facing probe, plan probe, proposal, reminder, feedback
+request, cancellation or scheduling text can produce an inbox item. System
+replies do not produce one. Key a delivered text by its message ID, with the
+opportunity as context when there is one. A repeated projection uses the
+same durable delivery ID, including for a retained older subject, and skips
+an already recorded delivery. Each new accepted text about that opportunity
+remains a separate item. Resolve an item's opportunity
 in the caller's app. Retained subjects that used only the opportunity or
 message ID still resolve there. Omit a closed opportunity or a missing
 opportunity from an explicitly bound text. Retire stale items as seen with
 the selected read. Ordinary updates with no opportunity remain visible.
 
 ```quint
+pure val networkTextSummaryLimit: int = 500
+
+pure def networkTextCanProduceInboxItem(system: bool, messageType: str): bool =
+  not(system) and (messageType == "probe" or messageType == "plan_probe" or messageType == "proposal"
+    or messageType == "reminder" or messageType == "feedback_request" or messageType == "cancellation"
+    or messageType == "scheduling")
+
+type NetworkTextProjection = SkipRecordedText | ProjectOpportunityText | ProjectUnboundText
+
+pure def networkTextProjection(deliveryRecorded: bool, opportunityBound: bool): NetworkTextProjection =
+  if (deliveryRecorded) SkipRecordedText
+  else if (opportunityBound) ProjectOpportunityText else ProjectUnboundText
+
+pure def lawRecordedTextHasNoNewProjection(opportunityBound: bool): bool =
+  networkTextProjection(true, opportunityBound) == SkipRecordedText
+
+pure def lawSystemTextProducesNoInboxItem(messageType: str): bool =
+  not(networkTextCanProduceInboxItem(true, messageType))
+
 pure def inboxOpportunityTerminal(opportunityStatus: str): bool =
   opportunityStatus == "COMPLETED" or opportunityStatus == "FEEDBACK_COLLECTED" or opportunityStatus == "DECLINED" or opportunityStatus == "EXPIRED" or
     opportunityStatus == "CANCELLED" or opportunityStatus == "SKIPPED" or opportunityStatus == "ABANDONED" or opportunityStatus == "QUORUM_FAILED"

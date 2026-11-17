@@ -70,8 +70,8 @@ import { ProfileFactEdits } from "./profile-fact-edits.ts";
 import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
-  checkExplicitRoute, checkFallbackRoute, initial as textJoinInitial, initialRoute, namedOtherApp,
-  networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
+  checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
+  namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
@@ -146,7 +146,10 @@ import type { QueueRow } from "../../blooio/src/outbound-queue.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
-import { appAllowsInboxItem, inboxOpportunityAllowsUpdate, mayShowThreadUpdate, threadUpdatePageSize } from "../../core/src/generated/notificationAcknowledgement.ts";
+import {
+  appAllowsInboxItem, inboxOpportunityAllowsUpdate, mayShowThreadUpdate, networkTextCanProduceInboxItem,
+  networkTextProjection, networkTextSummaryLimit, threadUpdatePageSize,
+} from "../../core/src/generated/notificationAcknowledgement.ts";
 import { threadUpdateBody, threadUpdateReceipt, threadUpdateReplyId, threadUpdateRequested, unpreviewedThreadUpdates } from "./thread-updates.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-consent-context.ts";
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
@@ -297,8 +300,6 @@ export interface ServiceOptions {
 }
 
 /** Member-facing Network sends that become inbox items (meta.type of ConsentNetwork.send). */
-const NOTIFY_TYPES = new Set(["probe", "plan_probe", "proposal", "reminder", "feedback_request", "cancellation", "scheduling"]);
-const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
@@ -952,7 +953,7 @@ export class NetworkService implements RuntimeHost {
    */
   async delivered(rt: NetworkRuntime, sent: Outbound[]): Promise<void> {
     if (!this.notify) return;
-    const items = sent.filter(b => !b.system && b.type && NOTIFY_TYPES.has(b.type));
+    const items = sent.filter(b => networkTextCanProduceInboxItem(b.system === true, b.type ?? ""));
     if (!items.length) return;
     const ids = [...new Set(items.map(b => b.memberId))];
     const rows = await rt.scoped(tx => tx`select id, person_id from network.members where app_id = ${rt.app.id} and person_id is not null and id in ${tx(ids)}`);
@@ -962,10 +963,11 @@ export class NetworkService implements RuntimeHost {
       if (!personId) continue;
       const deliveryId = `net:${b.id}`;
       // A previous projection may have used just the opportunity as its subject.
-      if (await this.notify.store.getDelivery(deliveryId)) continue;
-      const subjectId = b.oppId ? `${b.oppId}#${b.id}` : b.id;
+      const projection = networkTextProjection(!!await this.notify.store.getDelivery(deliveryId), !!b.oppId);
+      if (projection === "SkipRecordedText") continue;
+      const subjectId = projection === "ProjectOpportunityText" ? `${b.oppId}#${b.id}` : b.id;
       await this.notify.recordSent(
-        { personId, app: rt.app.id, eventType: b.type!, subjectId, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
+        { personId, app: rt.app.id, eventType: b.type!, subjectId, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, networkTextSummaryLimit) || "An update from the Network." },
         { deliveryId, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.acceptedAt ?? b.ts },
       );
     }
@@ -1654,7 +1656,7 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
+   *  2. a saved-profile read, an invitation feedback reply, or the whole message is an app's word;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
@@ -1675,8 +1677,9 @@ export class NetworkService implements RuntimeHost {
     const keywordApp = dedicated || profileApp || surveyApp ? undefined : this.namedApp(ev.text);
     const explicit = checkExplicitRoute(initialRoute, { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp });
     if (explicit.phase === "DedicatedRoute" && dedicated) return { app: dedicated, shared: false };
-    const named = profileApp ?? surveyApp ?? keywordApp;
-    if (explicit.phase === "ExplicitRoute" && named) return { app: named, shared: true };
+    if (explicit.phase === "ProfileRoute" && profileApp) return { app: profileApp, shared: true };
+    if (explicit.phase === "SurveyRoute" && surveyApp) return { app: surveyApp, shared: true };
+    if (explicit.phase === "KeywordRoute" && keywordApp) return { app: keywordApp, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
     if (threadRead && e164) {
@@ -1960,8 +1963,8 @@ export class NetworkService implements RuntimeHost {
   private noticeKey(e164: string) { return keyedHash(this.hashKey, `eliza_notice:${e164}`); }
 
   /**
-   * The one-time notice on the eliza.app line (README "The Eliza seam"; copy ELIZA_NOTICE, a DRAFT until
-   * the founder approves it). Only in a signed turn, only for a number that is not a member of any app,
+   * The approved one-time notice on the eliza.app line (README "The Eliza seam").
+   * Only in a signed turn, only for a number that is not a member of any app,
    * once per number: a keyed hash of the number and the time go in platform.eliza_notices in the same
    * transaction as the collected reply, so a failed turn sends nothing and stores nothing. A banned number
    * and an age under the join age (stated now, pending, or on the phone's age floor) get no notice: the
@@ -1969,16 +1972,22 @@ export class NetworkService implements RuntimeHost {
    * first contact gets it. It enrolls nobody: joining still needs the age check and the opt-in.
    */
   private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<boolean> {
-    if (!this.inboundTurn()) return false;
-    if ((await this.memberApps(e164)).length) return false;
-    for (const other of this.runtimes.values()) { await other.identities(); if (other.memberOf(e164)) return false; }
-    const person = await this.accounts.personFor(e164);
-    if (await this.accounts.banned(e164, person)) return false;
+    const turn = this.inboundTurn();
+    let nonMember = !!turn && (await this.memberApps(e164)).length === 0;
+    for (const other of this.runtimes.values()) {
+      if (!nonMember) break;
+      await other.identities();
+      nonMember = !other.memberOf(e164);
+    }
+    const person = nonMember ? await this.accounts.personFor(e164) : undefined;
+    const banned = nonMember && await this.accounts.banned(e164, person);
+    if (!firstContactMayCheckAge(!!turn, nonMember, banned)) return false;
     let pending = await this.pendingOf(e164, "join");
     if (pending && !pendingMatchesApp(pending.app, app.id)) pending = undefined;
     const age = parseJoinText(ev.text, this.appWords(), !!pending).age ?? pending?.age ?? undefined;
     const floor = await this.accounts.lowestAge(e164, person);
-    if (!noticeAllowed(age === undefined || joinAgeCheck(age, floor, app).ok, floor === undefined || canJoin(floor))) return false;
+    if (!firstContactNoticeAllowed(!!turn, nonMember, banned,
+      age === undefined || joinAgeCheck(age, floor, app).ok, floor === undefined || canJoin(floor))) return false;
     const key = this.noticeKey(e164);
     const wrote = await this.sql.begin(async tx => {
       const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
@@ -1987,7 +1996,6 @@ export class NetworkService implements RuntimeHost {
     });
     // The notice row commits before the join runs: a turn that then fails (its collected notice never
     // reaches Cloud) takes the row back, so the retry or the next first contact still gets the notice.
-    const turn = this.inboundTurn();
     if (wrote && turn) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
     return wrote;
   }

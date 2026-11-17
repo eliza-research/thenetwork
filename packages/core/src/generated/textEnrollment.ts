@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
+export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "KeywordRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ExplicitRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
+export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export interface TextRoute { phase: RoutePhase }
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
@@ -43,7 +43,28 @@ export function inv(current: TextJoin): boolean {
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
 export function checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute {
-  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp || explicitFacts.surveyApp || explicitFacts.appKeyword ? ({ phase: "ExplicitRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)));
+  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp ? ({ phase: "ProfileRoute" } as TextRoute) : (explicitFacts.surveyApp ? ({ phase: "SurveyRoute" } as TextRoute) : (explicitFacts.appKeyword ? ({ phase: "KeywordRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)))));
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawDedicatedLineTakesPrecedence(profileApp: boolean, surveyApp: boolean, appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: true, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "DedicatedRoute";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawProfileReadTakesPrecedence(surveyApp: boolean, appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "ProfileRoute";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawSurveyReplyTakesPrecedence(appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
 }
 
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
@@ -205,8 +226,21 @@ export function lawSlopEnrollmentRequiresAdult(adult: boolean): boolean {
 
 /** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
 //@ pure
-export function noticeAllowed(joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
-  return joinAgeAllowed && ageFloorAllowed;
+export function firstContactMayCheckAge(signedTurn: boolean, nonMember: boolean, banned: boolean): boolean {
+  return signedTurn && nonMember && !banned;
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function firstContactNoticeAllowed(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  return firstContactMayCheckAge(signedTurn, nonMember, banned) && joinAgeAllowed && ageFloorAllowed;
+}
+
+/** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawFirstContactNoticeRequiresEligibleNumber(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed) || (signedTurn && nonMember && !banned && joinAgeAllowed && ageFloorAllowed);
 }
 
 /** Do the rules allow this event in this state? */
