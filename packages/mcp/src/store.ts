@@ -8,7 +8,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
-import { codeExchangeMayCommit, type CodeExchangeResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
+import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -125,21 +125,42 @@ export interface ConsentGrantWrites {
   audit: readonly [AuditRow, AuditRow];
 }
 
-export interface CodeExchange {
-  code: AuthCode;
+interface TokenPairWrite {
   grant: Grant;
   tokens: readonly [Token, Token];
   audit: Omit<AuditRow, "at">;
   now: () => number;
 }
 
+export interface CodeExchange extends TokenPairWrite { code: AuthCode }
+export interface RefreshRotation extends TokenPairWrite { refresh: Token }
+
+function grantStillMatches(saved: Grant | undefined, expected: Grant): boolean {
+  return !!saved && saved.revokedAt === null && (!saved.id.startsWith("grant_cloud_") || !!saved.cloudAuthority)
+    && isDeepStrictEqual(saved, expected);
+}
+
+function preparedTokensLive(write: TokenPairWrite, at: number): boolean {
+  return write.tokens.every(token => token.expiresAt > at && token.expiresAt <= write.grant.expiresAt);
+}
+
 /** Recheck the exact authorized rows under the store's write boundary. */
 export function checkCodeExchange(exchange: CodeExchange, code: AuthCode | undefined, grant: Grant | undefined, at: number): CodeExchangeResult {
   const exactCode = !!code && isDeepStrictEqual({ ...code, usedAt: null }, { ...exchange.code, usedAt: null });
   if (exactCode && code.usedAt !== null) return "CodeAlreadyUsed";
-  const exactUnrevokedGrant = !!grant && grant.revokedAt === null && isDeepStrictEqual(grant, exchange.grant);
-  if (!codeExchangeMayCommit(exactUnrevokedGrant, exactCode, code?.usedAt === null, at, grant?.expiresAt ?? 0, code?.expiresAt ?? 0)) return "CodeNotCommitted";
-  return exchange.tokens.every(token => token.expiresAt > at && token.expiresAt <= exchange.grant.expiresAt) ? "CodePairCommitted" : "CodeNotCommitted";
+  if (!codeExchangeMayCommit(grantStillMatches(grant, exchange.grant), exactCode, code?.usedAt === null, at, grant?.expiresAt ?? 0, code?.expiresAt ?? 0)) return "CodeNotCommitted";
+  return preparedTokensLive(exchange, at) ? "CodePairCommitted" : "CodeNotCommitted";
+}
+
+export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token | undefined, grant: Grant | undefined, at: number): RefreshRotationResult {
+  if (!refresh) return "RefreshNotCommitted";
+  const authorizedGrant = rotation.grant;
+  const exactRefresh = refresh.kind === "refresh" && refresh.revokedAt === null && refresh.grantId === authorizedGrant.id
+    && refresh.clientId === authorizedGrant.clientId && refresh.app === authorizedGrant.app && refresh.resource === authorizedGrant.resource
+    && isDeepStrictEqual({ ...refresh, rotatedAt: null }, { ...rotation.refresh, rotatedAt: null });
+  if (!refreshStoredAuthorityCurrent(grantStillMatches(grant, authorizedGrant), exactRefresh, at, grant?.expiresAt ?? 0, refresh.expiresAt)) return "RefreshNotCommitted";
+  if (refresh.rotatedAt !== null) return "RefreshAlreadyUsed";
+  return preparedTokensLive(rotation, at) ? "RefreshPairCommitted" : "RefreshNotCommitted";
 }
 
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
@@ -194,9 +215,8 @@ export interface OAuthStore {
   putToken(t: Token): Promise<void>;
   getToken(hash: string): Promise<Token | undefined>;
   revokeToken(hash: string, at: number): Promise<void>;
-  /** Atomically rotate a live refresh token, persist its pair and success audit.
-   * False on replay/revocation (one winner under a race); errors leave everything unchanged. */
-  rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow): Promise<boolean>;
+  /** Atomically rotate a live refresh token, persist its pair and audit, or report an exact live reuse. */
+  rotateRefresh(rotation: RefreshRotation): Promise<RefreshRotationResult>;
 
   audit(row: AuditRow): Promise<void>;
   auditRows(limit?: number): Promise<AuditRow[]>;
@@ -366,25 +386,30 @@ export class MemoryOAuthStore implements OAuthStore {
     const at = exchange.now();
     const result = checkCodeExchange(exchange, code, grant, at);
     if (result !== "CodePairCommitted" || !code) return result;
-    const prepared = structuredClone({ tokens: exchange.tokens, audit: { ...exchange.audit, at } });
-    if (prepared.tokens[0].hash === prepared.tokens[1].hash || prepared.tokens.some(token => this.tokens.has(token.hash))) throw new Error("OAuth token already exists");
+    this.recordTokenPair(exchange, at);
     code.usedAt = at;
+    return result;
+  }
+
+  private recordTokenPair(write: TokenPairWrite, at: number) {
+    const prepared = structuredClone({ tokens: write.tokens, audit: { ...write.audit, at } });
+    if (prepared.tokens[0].hash === prepared.tokens[1].hash || prepared.tokens.some(token => this.tokens.has(token.hash))) throw new Error("OAuth token already exists");
     for (const token of prepared.tokens) this.tokens.set(token.hash, token);
     this.rows.push(prepared.audit);
-    return result;
   }
 
   async putToken(t: Token) { this.tokens.set(t.hash, structuredClone(t)); }
   async getToken(hash: string) { return copy(this.tokens.get(hash)); }
   async revokeToken(hash: string, at: number) { const t = this.tokens.get(hash); if (t && t.revokedAt === null) t.revokedAt = at; }
-  async rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow) {
-    const t = this.tokens.get(hash);
-    if (!t || t.kind !== "refresh" || t.rotatedAt !== null || t.revokedAt !== null) return false;
-    const prepared = structuredClone({ pair, audit });
-    t.rotatedAt = at;
-    for (const token of prepared.pair) this.tokens.set(token.hash, token);
-    this.rows.push(prepared.audit);
-    return true;
+  async rotateRefresh(rotation: RefreshRotation) {
+    const refresh = this.tokens.get(rotation.refresh.hash);
+    const grant = this.grants.get(rotation.grant.id);
+    const at = rotation.now();
+    const result = checkRefreshRotation(rotation, refresh, grant, at);
+    if (result !== "RefreshPairCommitted" || !refresh) return result;
+    this.recordTokenPair(rotation, at);
+    refresh.rotatedAt = at;
+    return result;
   }
 
   async audit(row: AuditRow) { this.rows.push({ ...row }); }

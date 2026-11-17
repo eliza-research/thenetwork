@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { devPgUp,DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
 import { setup,addMember,connect,call,tokenRequest,PHONE_A } from "./harness.ts";
-import type { Grant,Token } from "../src/store.ts";
+import type { Grant,RefreshRotation,Token } from "../src/store.ts";
 
 const base=`postgres://${process.env.USER}@localhost:${DEV_PG_PORT}`,db=`cloud_oauth_${process.pid}`;
 let store:PgOAuthStore;
@@ -71,7 +71,8 @@ test("refresh serialization respects concurrent grant revoke and preserves seale
  cloudAuthority:{version:1,app:"friends",resource:"https://friends.help/mcp",phoneKey:"fixture-key",issuedAt:Math.floor(at/1000),expiresAt:at+60_000,sealed:"fixture"}};await store.putGrant(g);
  const refresh:Token={hash:randomUUID(),kind:"refresh",grantId:id,clientId:client.id,app:g.app,resource:g.resource,scopes:g.scopes,createdAt:at,expiresAt:g.expiresAt,revokedAt:null,rotatedAt:null};await store.putToken(refresh);
  const pair:[Token,Token]=[{...refresh,hash:randomUUID(),kind:"access"},{...refresh,hash:randomUUID()}];
- await Promise.all([store.revokeGrant(id,at+1),store.rotateRefresh(refresh.hash,at+1,pair,{at:at+1,kind:"token_refreshed",clientId:client.id,grantId:id,app:g.app,detail:null})]);
+ await Promise.all([store.revokeGrant(id,at+1),store.rotateRefresh({refresh,grant:g,tokens:pair,now:()=>at+1,
+  audit:{kind:"token_refreshed",clientId:client.id,grantId:id,app:g.app,detail:null}})]);
  expect((await store.getGrant(id))?.revokedAt).toBe(at+1);
  for(const token of pair){const r=await store.getToken(token.hash);expect(!r||r.revokedAt!==null).toBe(true);}
  expect((await store.getGrant(id))?.cloudAuthority).toEqual(g.cloudAuthority);
@@ -84,8 +85,10 @@ test("refresh waiting on the grant lock cannot publish tokens after the original
  cloudAuthority:{version:1,app:"friends",resource:"https://friends.help/mcp",phoneKey:"fixture-key",issuedAt:Math.floor(at/1000),expiresAt,sealed:"fixture"}};await store.putGrant(grant);
  const old:Token={hash:randomUUID(),kind:"refresh",grantId:id,clientId,app:"friends",resource:grant.resource,scopes:grant.scopes,createdAt:at,expiresAt,revokedAt:null,rotatedAt:null};await store.putToken(old);
  const pair:[Token,Token]=[{...old,hash:randomUUID(),kind:"access"},{...old,hash:randomUUID()}];
- let pending:Promise<boolean>|undefined;
+ let pending:ReturnType<typeof store.rotateRefresh>|undefined;
+ const rotation:RefreshRotation={refresh:old,grant,tokens:pair,now:Date.now,
+  audit:{kind:"token_refreshed",clientId,grantId:id,app:"friends",detail:null}};
  await store.sql.begin(async tx=>{await tx`select id from oauth.grants where id=${id} for update`;
- pending=store.rotateRefresh(old.hash,at,pair,{at,kind:"token_refreshed",clientId,grantId:id,app:"friends",detail:null});await sleep(150);});
- expect(await pending).toBe(false);expect(await store.getToken(pair[0].hash)).toBeUndefined();expect((await store.getToken(old.hash))?.rotatedAt).toBeNull();
+ pending=store.rotateRefresh(rotation);await sleep(150);});
+ expect(await pending).toBe("RefreshNotCommitted");expect(await store.getToken(pair[0].hash)).toBeUndefined();expect((await store.getToken(old.hash))?.rotatedAt).toBeNull();
 });

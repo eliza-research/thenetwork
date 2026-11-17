@@ -363,6 +363,33 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     expect(await store.sql`select 1 from oauth.tokens where grant_id=${pending.grantId}`).toHaveLength(2);
   });
 
+  test("an expired refresh credential leaves its still-live grant unchanged", async () => {
+    const env = setup({ store });
+    const domain = "peon.biz";
+    const c = await connect(env, domain, PHONE_A);
+    const refresh = await store.getToken(sha256hex(c.token.refresh_token));
+    if (!refresh) throw new Error("missing authorized refresh token");
+    const grant = await store.getGrant(refresh.grantId);
+    if (!grant) throw new Error("missing refresh grant");
+    const deadline = env.clock.t + 1000;
+    expect(grant.expiresAt).toBeGreaterThan(deadline);
+    const expired = { ...refresh, hash: sha256hex("expired refresh fixture"), expiresAt: deadline };
+    await store.putToken(expired);
+    const result = await store.rotateRefresh({
+      refresh: expired, grant, now: () => deadline,
+      tokens: [
+        { ...refresh, hash: sha256hex("replacement access fixture"), kind: "access" },
+        { ...refresh, hash: sha256hex("replacement refresh fixture") },
+      ],
+      audit: { kind: "token_refreshed", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail: null },
+    });
+    expect(result).toBe("RefreshNotCommitted");
+    expect(await store.getToken(expired.hash)).toMatchObject({ rotatedAt: null, revokedAt: null });
+    expect(await store.getGrant(grant.id)).toEqual(grant);
+    expect(await store.sql`select 1 from oauth.tokens where grant_id=${grant.id}`).toHaveLength(3);
+    expect(await store.sql`select 1 from oauth.audit where grant_id=${grant.id} and kind in ('token_refreshed','refresh_replay')`).toHaveLength(0);
+  });
+
   test("a person ban ends issued access and refresh tokens and unused authorization codes; another person keeps access", async () => {
     await migrate(testUrl.toString(), { lockTimeout: "5s" });
     const people = new PgPeopleStore(testUrl.toString()), harness = setup({ store });

@@ -914,14 +914,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       });
       if (!asked || !canRecordRotation(binding)) return refused(binding);
       const pair = tokenPair(client, grant, asked, t.resource);
-      const succeeded = t.rotatedAt === null && await store.rotateRefresh(t.hash, refreshedAt, pair.tokens, {
-        at: refreshedAt, kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" "),
-      });
-      const rotation = stepToken(binding, { type: "recordRotation", succeeded });
+      const result = await store.rotateRefresh({ refresh: t, grant, tokens: pair.tokens, now, audit: {
+        kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" "),
+      } });
+      const rotation = stepToken(binding, { type: "recordRotation", result });
       if (rotation.phase === "RevokeGrant") {
         // A refresh token used twice: someone else has a copy. End the whole grant.
-        await revokeGrant(t.grantId, at);
-        await store.audit({ at, kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: "grant revoked" });
+        await revokeGrant(t.grantId, now());
+        await store.audit({ at: now(), kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: "grant revoked" });
         return refused(rotation);
       }
       return rotation.phase === "TokensReady" ? json(200, pair.response) : refused(rotation);

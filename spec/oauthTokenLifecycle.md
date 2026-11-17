@@ -69,7 +69,7 @@ pure def codeCanBeConsumed(flow: TokenFlow, bothLive: bool): bool = flow.phase =
 
 ### Token issuance requires consumption or rotation in storage
 
-An authorization-code exchange locks the exact grant and the code it authorized. The grant must still be unrevoked and both deadlines must be in the future. The code consumption, the access and refresh token hashes, and the issuance audit commit together. A previous use of the same code revokes the grant. An unavailable or expired code or grant leaves no token pair or issuance audit. A refresh must rotate the stored token and persist a replacement pair atomically. The existing failed-rotation handling revokes the grant. The endpoint returns tokens only after the exchange or rotation commits.
+An authorization-code exchange locks the exact grant and the code it authorized. The grant must still be unrevoked and both deadlines must be in the future. The code consumption, the access and refresh token hashes, and the issuance audit commit together. A previous use of the same code revokes the grant. An unavailable or expired code or grant leaves no token pair or issuance audit. Refresh locks the exact grant and its refresh credential, checks both deadlines after the wait, and commits the rotation, replacement pair and audit together. A verified reuse of a still-live refresh credential revokes its grant. A stale, expired or revoked credential cannot rotate and does not end another live grant. The endpoint returns tokens only after the exchange or rotation commits.
 
 ```quint
 type CodeExchangeResult = CodeNotCommitted | CodeAlreadyUsed | CodePairCommitted
@@ -87,9 +87,24 @@ pure def readCodeExchange(flow: TokenFlow, result: CodeExchangeResult): TokenFlo
   else if (result == CodePairCommitted) { ...flow, phase: TokensReady }
   else refuse(InvalidGrant, flow)
 
+type RefreshRotationResult = RefreshNotCommitted | RefreshAlreadyUsed | RefreshPairCommitted
+
+pure def refreshStoredAuthorityCurrent(grantExactAndUnrevoked: bool, refreshExactAndUnrevoked: bool,
+    at: int, grantEndsAt: int, refreshEndsAt: int): bool =
+  grantExactAndUnrevoked and refreshExactAndUnrevoked and at < grantEndsAt and at < refreshEndsAt
+
+pure def lawExpiredRefreshCannotBeCommitted(grantExactAndUnrevoked: bool, refreshExactAndUnrevoked: bool,
+    at: int, grantEndsAt: int, refreshEndsAt: int): bool =
+  refreshEndsAt <= at implies not(refreshStoredAuthorityCurrent(grantExactAndUnrevoked, refreshExactAndUnrevoked, at, grantEndsAt, refreshEndsAt))
+
 pure def canRecordRotation(flow: TokenFlow): bool = flow.phase == AwaitingRotation
-pure def recordRotation(flow: TokenFlow, succeeded: bool): TokenFlow =
-  { ...flow, phase: if (succeeded) TokensReady else RevokeGrant }
+pure def recordRotation(flow: TokenFlow, result: RefreshRotationResult): TokenFlow =
+  if (result == RefreshAlreadyUsed) { ...flow, phase: RevokeGrant }
+  else if (result == RefreshPairCommitted) { ...flow, phase: TokensReady }
+  else refuse(InvalidGrant, flow)
+
+pure def lawOnlyLiveRefreshReuseEndsGrant(flow: TokenFlow, result: RefreshRotationResult): bool =
+  (recordRotation(flow, result).phase == RevokeGrant) iff result == RefreshAlreadyUsed
 
 pure def stepTokensRequireStorage(before: TokenFlow, via: str, after: TokenFlow): bool =
   after.phase == TokensReady implies

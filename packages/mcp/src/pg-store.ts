@@ -7,7 +7,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -49,6 +49,7 @@ const insertToken = (sql: SQL, t: Token) => sql`insert into oauth.tokens (hash, 
   values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${sql.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
 
 const expiredCodeExchange = new Error("OAuth code exchange expired during transaction");
+const expiredRefreshRotation = new Error("OAuth refresh expired during transaction");
 
 type CheckBrowserOwner = (tx: SQL, owner: BrowserGrantRemoval) => Promise<boolean>;
 
@@ -266,21 +267,24 @@ export class PgOAuthStore implements OAuthStore {
   async revokeToken(hash: string, at: number) {
     await this.sql`update oauth.tokens set revoked_at = ${ts(at)} where hash = ${hash} and revoked_at is null`;
   }
-  async rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow) {
-    const started=performance.now();
-    try { return await this.sql.begin(async tx => {
-      const [owner]=await tx`select revoked_at,expires_at,cloud_authority from oauth.grants where id=${pair[0].grantId} for update`;
-      const liveAt=()=>at+Math.ceil(performance.now()-started);
-      if(!owner || owner.revoked_at!==null || ms(owner.expires_at)!<=liveAt() || (pair[0].grantId.startsWith("grant_cloud_") && !owner.cloud_authority)
-        || pair.some(t=>t.expiresAt>ms(owner.expires_at)!))return false;
-      const r = await tx`update oauth.tokens set rotated_at = ${ts(at)} where hash = ${hash} and kind = 'refresh' and rotated_at is null and revoked_at is null returning hash`;
-      if (!r.length) return false;
-      for (const t of pair) await insertToken(tx, t);
-      await insertAudit(tx, audit);
-      if(ms(owner.expires_at)!<=liveAt())throw new Error("Cloud OAuth refresh authority expired during transaction");
-      return true;
-    }); } catch(error) {
-      if(error instanceof Error && error.message==="Cloud OAuth refresh authority expired during transaction")return false;
+  async rotateRefresh(rotation: RefreshRotation) {
+    try {
+      return await this.sql.begin(async tx => {
+        const [grantRow] = await tx`select * from oauth.grants where id=${rotation.grant.id} for update`;
+        const [refreshRow] = await tx`select * from oauth.tokens where hash=${rotation.refresh.hash} for update`;
+        const approval = grantRow ? grant(grantRow) : undefined;
+        const credential = refreshRow ? token(refreshRow) : undefined;
+        const at = rotation.now();
+        const result = checkRefreshRotation(rotation, credential, approval, at);
+        if (result !== "RefreshPairCommitted") return result;
+        await tx`update oauth.tokens set rotated_at=${ts(at)} where hash=${rotation.refresh.hash}`;
+        for (const next of rotation.tokens) await insertToken(tx, next);
+        await insertAudit(tx, { ...rotation.audit, at });
+        if (checkRefreshRotation(rotation, credential, approval, rotation.now()) !== "RefreshPairCommitted") throw expiredRefreshRotation;
+        return result;
+      });
+    } catch (error) {
+      if (error === expiredRefreshRotation) return "RefreshNotCommitted" as const;
       throw error;
     }
   }
