@@ -8,7 +8,7 @@ An Eliza Cloud member needs to authorize their own access to The Network.
 
 Check grant ownership and expiry, ban checks, auth mode, and validation cache behavior. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. This standalone model also covers app configuration, concurrent requests, and storage-level interactions.
+The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback permits up to 30 seconds of future issue time. The production delegation parser checks the issue time before the callback rule runs. It requires an issue time no later than the local clock, as do grant and profile proof checks. This standalone model also covers app configuration, concurrent requests, and storage-level interactions.
 
 Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -26,8 +26,8 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //                                               its `validated` cache, auth(), authenticatedSiteSession,
 //                                               cloudGrantAuthority, validateCloudGrant
 //   packages/platform/src/cloud-delegation.ts   productionCloudDelegation.exchange / validate
-//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (skew, one-hour proof life)
-//   packages/core/src/svc/proof-window.ts       proofWindowOk, used by the four Cloud-issued profile proofs
+//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (no future issue time, one-hour proof life)
+//   packages/core/src/svc/profile-review-*.ts  owner, source, withdrawal and disconnect proof windows
 //   packages/platform/src/sessions.ts           create, authenticate (no rotation for a Cloud session), revoke
 //   packages/platform/src/accounts.ts           createPerson + bindSessions (a person-less session ends)
 //
@@ -82,14 +82,11 @@ module cloud_auth {
   pure val APPS = Set("slop", "ntwrk")
   pure val PHONES = Set("X", "Y")
   pure val HUMANS = Set("alice", "bob")
-  // The proofs that Cloud issues with its own clock. "login" and "grant" are parsed with
-  // CLOUD_CLOCK_SKEW_MS (network-delegation.ts:41, api.ts:438 and 684). The four profile proofs are parsed
-  // with proofWindowOk (proof-window.ts:10), which allows no skew: profile-review-owner.ts:55,
-  // profile-review-source.ts:68, profile-review-withdrawal.ts:49, profile-review-disconnect.ts:54.
-  pure val PROOF_KINDS = Set("login", "grant", "owner", "source", "withdrawal", "disconnect")
-  pure def skewAllowed(kind: str): int = if (kind == "login" or kind == "grant") CLOUD_SKEW else 0
-  // The Cloud clock is ahead of ours by one of these offsets (seconds).
-  pure val OFFSETS = Set(0, 20, 45)
+  // Only the staging login identity omits the production delegation check before the callback.
+  pure val PROOF_KINDS = Set("staging-login", "production-delegation", "grant", "owner", "source", "withdrawal", "disconnect")
+  pure def skewAllowed(kind: str): int = if (kind == "staging-login") CLOUD_SKEW else 0
+  // Cloud issue time relative to the local time, in seconds.
+  pure val OFFSETS = Set(-1, 0, 20, 30, 31)
 
   pure def imin(a: int, b: int): int = if (a < b) a else b
 
@@ -135,6 +132,7 @@ module cloud_auth {
     deniedAns: int -> int,     // ghost, per session: the event number of the newest Cloud denial a request delivered
     deniedAt: int -> int,      // per session: the event number at which that denial was delivered (the fix reads it)
   }
+  type ProofClockCheck = { kind: str, offset: int, accepted: bool }
   type Ghost = {
     cloudLogins: int,
     staleLogin: bool,          // a Cloud sign-in for a human who does not hold the number now
@@ -150,8 +148,7 @@ module cloud_auth {
     bannedGrantValid: bool,    // a grant validation that began after the ban answered valid
     lateBanGrantValid: bool,   // a grant validation in flight when the ban committed answered valid
     otpRefusedOnCloud: bool,   // an OTP session was refused on an app that is now Cloud
-    skewRefused: Set[str],     // proof kinds refused although the Cloud clock was within CLOUD_SKEW
-    skewSeen: Set[str],        // proof kinds that arrived with a non-zero Cloud clock offset
+    proofClockChecks: Set[ProofClockCheck],
   }
 
   // ------------------------------------------------------------------ state
@@ -220,7 +217,7 @@ module cloud_auth {
       cloudLogins: 0, staleLogin: false, freshAccepts: 0, cacheAccepts: 0, prodCacheAccept: false,
       revokedCacheAccept: false, wrongModeAccept: false, wrongModeLogin: false, foreignAct: false,
       expiredAccept: false, grantsValid: 0, bannedGrantValid: false, lateBanGrantValid: false,
-      otpRefusedOnCloud: false, skewRefused: Set(), skewSeen: Set(),
+      otpRefusedOnCloud: false, proofClockChecks: Set(),
     },
   }
 
@@ -412,7 +409,7 @@ module cloud_auth {
   // ------------------------------------------------------------------ Cloud MCP grants (validateCloudGrant)
 
   // api.ts:681-694 validateCloudGrant before the Cloud call: the authority is bound to app, resource and
-  // phone, issuedAt within the skew, not expired; grant.personId is null or the number's owner (693); the
+  // phone, issuedAt no later than the local clock, not expired; grant.personId is null or the number's owner; the
   // number is not held, banned or suppressed. A refusal answers "invalid" at once (no request in flight).
   // mcp handler.ts:775-786 cloudGrantCurrent checks the ban first as well.
   action grantBegin(gid: int): bool = {
@@ -507,15 +504,12 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ Cloud-issued proof clock skew (SD-308)
 
-  // A proof of `kind` arrives from Cloud, issued on a Cloud clock `off` seconds ahead of ours, with a
-  // lifetime inside the parser's maximum. The parser accepts it when issuedAt <= now + skewAllowed(kind)
-  // (network-delegation.ts:41 for login and grant; proof-window.ts:10 for the profile proofs).
+  // A proof arrives with an issue time `off` seconds from the local clock. Assume the correct envelope
+  // and a live expiry so the action represents only the parser's issue-time decision.
   action proofArrives(kind: str, off: int): bool = {
     val accepted = off <= skewAllowed(kind)
     all {
-      ghost' = { ...ghost,
-                 skewSeen: if (off > 0) ghost.skewSeen.union(Set(kind)) else ghost.skewSeen,
-                 skewRefused: if (not(accepted) and off <= CLOUD_SKEW) ghost.skewRefused.union(Set(kind)) else ghost.skewRefused },
+      ghost' = { ...ghost, proofClockChecks: ghost.proofClockChecks.union(Set({ kind: kind, offset: off, accepted: accepted })) },
       now' = now, cfg' = cfg, world' = world, sess' = sess, cache' = cache, flight' = flight,
     }
   }
@@ -589,11 +583,12 @@ module cloud_auth {
   // api.ts:274, 278, 685, 696 and network-delegation.ts:41: an expired proof never authorizes a request.
   val expiredNeverAccepted = not(ghost.expiredAccept)
 
-  // W3-134 / SD-308. cloud-delegation.ts:7-8 ("Cloud issues issuedAt on its own clock") and api.ts:101-102:
-  // a Cloud-issued proof whose Cloud clock is at most CLOUD_SKEW ahead of ours is accepted. svc-auth.ts
-  // accepts 60 s of skew on the same responses. VIOLATED by the four profile proof parsers (proofWindowOk
-  // allows 0 s): run test w3_134SkewTest.
-  val cloudProofSkewTolerated = ghost.skewRefused == Set()
+  // The staging callback uses the 30-second window in cloudSignIn.md. Production exchange and
+  // validation parseNetworkDelegation first. The MCP grant envelope and profile proof windows
+  // also require a current issue time. The service signature window is a separate check.
+  val cloudProofClockRules = ghost.proofClockChecks.forall(check =>
+    if (check.kind == "staging-login") check.accepted == (check.offset <= CLOUD_SKEW)
+    else check.accepted == (check.offset <= 0))
 
   // W3-373 (the rotation write of api.ts:330): a Cloud session ends before sessions.ts:53 would rotate it.
   val cloudSessionNeverRotates = sess.rows.keys().forall(k =>
@@ -607,7 +602,7 @@ module cloud_auth {
     cloudActsForHolder,
     bannedGrantRefused,
     expiredNeverAccepted,
-    cloudProofSkewTolerated,
+    cloudProofClockRules,
     cloudSessionNeverRotates,
   }
 
@@ -624,8 +619,8 @@ module cloud_auth {
   val witness_lateBanGrantValid = not(ghost.lateBanGrantValid)
   // W3-125: after a switch to a Cloud mode an OTP session is refused on that app.
   val witness_otpRefusedOnCloud = not(ghost.otpRefusedOnCloud)
-  // A Cloud clock ahead of ours by less than the skew is seen (login, grant or profile proofs).
-  val witness_skewSeen = ghost.skewSeen == Set()
+  // A future-dated proof reaches the issue-time gate.
+  val witness_skewSeen = ghost.proofClockChecks.forall(check => check.offset <= 0)
 
   // ------------------------------------------------------------------ run tests (concrete traces)
 
@@ -823,16 +818,19 @@ module cloud_auth {
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and expiredNeverAccepted)
 
-  // W3-134 / SD-308: a Cloud clock 20 s ahead. The login and grant parsers accept the proof (30 s skew);
-  // the profile-review owner proof is refused (proofWindowOk allows 0 s).
+  // W3-134 / SD-308: only the staging callback allows a proof issued ahead of the local clock.
   run w3_134SkewTest =
     initWith("off")
-      .then(proofArrives("login", 20))
-      .then(proofArrives("grant", 20))
-      .expect(cloudProofSkewTolerated)
-      .then(proofArrives("owner", 20))
-      .expect(not(cloudProofSkewTolerated) and ghost.skewRefused == Set("owner"))
-      .then(proofArrives("login", 45))
-      .expect(ghost.skewRefused == Set("owner"))
+      .then(proofArrives("staging-login", 30))
+      .then(proofArrives("staging-login", 31))
+      .then(proofArrives("production-delegation", 1))
+      .then(proofArrives("grant", 1))
+      .then(proofArrives("owner", 1))
+      .then(proofArrives("source", 1))
+      .then(proofArrives("withdrawal", 1))
+      .then(proofArrives("disconnect", 1))
+      .then(proofArrives("production-delegation", 0))
+      .then(proofArrives("grant", 0))
+      .expect(cloudProofClockRules and ghost.proofClockChecks.size() == 10)
 }
 ```
