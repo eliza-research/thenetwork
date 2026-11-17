@@ -8,7 +8,7 @@ export interface SignedInbox { phase: ClaimPhase }
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "recordClaim"; inserted: boolean }
+  | { type: "recordClaim"; inserted: boolean; senderLock: boolean; admissionOpen: boolean }
   | { type: "readPrior"; rowPresent: boolean; sameRequest: boolean; responseAvailable: boolean; processing: boolean }
   | { type: "recordCompletion"; saved: boolean }
   | { type: "handleFailure"; compliance: boolean }
@@ -58,9 +58,16 @@ export function canRecordClaim(turn: SignedInbox): boolean {
 
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 //@ pure
-export function recordClaim(turn: SignedInbox, inserted: boolean): SignedInbox {
+export function recordClaim(turn: SignedInbox, inserted: boolean, senderLock: boolean, admissionOpen: boolean): SignedInbox {
   //@ ensures (inv(turn) && canRecordClaim(turn)) ==> stepRetryNeedsReleasedClaim(turn, "recordClaim", \result)
-  return { phase: inserted ? "RunningTurn" : "CheckingPrior" };
+  return { phase: inserted && mayStartClaimWrite(senderLock, admissionOpen) ? "RunningTurn" : "CheckingPrior" };
+}
+
+/** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
+//@ pure
+export function lawOnlyOpenClaimCanRun(inserted: boolean, senderLock: boolean, admissionOpen: boolean): boolean {
+  //@ ensures \result === true
+  return !(recordClaim(initial, inserted, senderLock, admissionOpen).phase === "RunningTurn") || (inserted && senderLock && admissionOpen);
 }
 
 /** Story: Handle each signed message once without delaying consent / A replay must match a stored request (spec/signedInbox.md) */
@@ -85,6 +92,12 @@ export function lawChangedRequestConflicts(responseAvailable: boolean, processin
 
 /** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
 //@ pure
+export function firstContactNoticeInResponse(exactReplyIncluded: boolean, underageDecline: boolean): boolean {
+  return exactReplyIncluded && !underageDecline;
+}
+
+/** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
+//@ pure
 export function canRecordCompletion(turn: SignedInbox): boolean {
   return turn.phase === "RunningTurn";
 }
@@ -94,6 +107,13 @@ export function canRecordCompletion(turn: SignedInbox): boolean {
 export function recordCompletion(turn: SignedInbox, saved: boolean): SignedInbox {
   //@ ensures (inv(turn) && canRecordCompletion(turn)) ==> stepRetryNeedsReleasedClaim(turn, "recordCompletion", \result)
   return saved ? ({ phase: "Finished" } as SignedInbox) : turn;
+}
+
+/** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
+//@ pure
+export function lawDeclineCannotSpendFirstContactNotice(exactReplyIncluded: boolean): boolean {
+  //@ ensures \result === true
+  return !firstContactNoticeInResponse(exactReplyIncluded, true);
 }
 
 /** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
@@ -170,7 +190,7 @@ export function enabled(current: SignedInbox, event: Event): boolean {
 export function step(current: SignedInbox, event: Event): SignedInbox {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordClaim") return canRecordClaim(current) ? recordClaim(current, event.inserted) : current;
+  if (event.type === "recordClaim") return canRecordClaim(current) ? recordClaim(current, event.inserted, event.senderLock, event.admissionOpen) : current;
   if (event.type === "readPrior") return canReadPrior(current) ? readPrior(current, event.rowPresent, event.sameRequest, event.responseAvailable, event.processing) : current;
   if (event.type === "recordCompletion") return canRecordCompletion(current) ? recordCompletion(current, event.saved) : current;
   if (event.type === "handleFailure") return canHandleFailure(current) ? handleFailure(current, event.compliance) : current;
@@ -193,7 +213,7 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "recordClaim" && typeof raw.inserted === "boolean") return { type: "recordClaim", inserted: raw.inserted };
+  if (raw.type === "recordClaim" && typeof raw.inserted === "boolean" && typeof raw.senderLock === "boolean" && typeof raw.admissionOpen === "boolean") return { type: "recordClaim", inserted: raw.inserted, senderLock: raw.senderLock, admissionOpen: raw.admissionOpen };
   if (raw.type === "readPrior" && typeof raw.rowPresent === "boolean" && typeof raw.sameRequest === "boolean" && typeof raw.responseAvailable === "boolean" && typeof raw.processing === "boolean") return { type: "readPrior", rowPresent: raw.rowPresent, sameRequest: raw.sameRequest, responseAvailable: raw.responseAvailable, processing: raw.processing };
   if (raw.type === "recordCompletion" && typeof raw.saved === "boolean") return { type: "recordCompletion", saved: raw.saved };
   if (raw.type === "handleFailure" && typeof raw.compliance === "boolean") return { type: "handleFailure", compliance: raw.compliance };

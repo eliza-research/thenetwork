@@ -1942,7 +1942,11 @@ export class NetworkService implements RuntimeHost {
       // The join question to someone who sent STOP is refused at send time: they get the one hint instead.
       if (out === "join_asked" && !kw) await this.stopHint(rt, app, e164, ev, rowId);
       // Under the join age: nothing is kept, the notice row included (the phone's age floor keeps a later notice away).
-      if (out === "under_age" && this.inboundTurn()) await this.sql`delete from platform.eliza_notices where phone_hash = ${this.noticeKey(e164)}`;
+      const turn = this.inboundTurn();
+      if (out === "under_age" && turn) await this.sql.begin(async tx => {
+        await this.inbox.discardFirstContactNotice(tx, turn);
+        await tx`delete from platform.eliza_notices where phone_hash = ${this.noticeKey(e164)}`;
+      });
       return out;
     });
   }
@@ -1965,13 +1969,13 @@ export class NetworkService implements RuntimeHost {
   /**
    * The approved one-time notice on the eliza.app line (README "The Eliza seam").
    * Only in a signed turn, only for a number that is not a member of any app,
-   * once per number: a keyed hash of the number and the time go in platform.eliza_notices in the same
-   * transaction as the collected reply, so a failed turn sends nothing and stores nothing. A banned number
+   * once per number: the Inbox stores a keyed hash and time when it commits the reply containing the notice.
+   * A failed turn leaves the key available. A banned number
    * and an age under the join age (stated now, pending, or on the phone's age floor) get no notice: the
    * join flow answers them as before. The TurnRequest has no "known eliza.app user" flag, so every such
    * first contact gets it. It enrolls nobody: joining still needs the age check and the opt-in.
    */
-  private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<boolean> {
+  private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<void> {
     const turn = this.inboundTurn();
     let nonMember = !!turn && (await this.memberApps(e164)).length === 0;
     for (const other of this.runtimes.values()) {
@@ -1981,23 +1985,19 @@ export class NetworkService implements RuntimeHost {
     }
     const person = nonMember ? await this.accounts.personFor(e164) : undefined;
     const banned = nonMember && await this.accounts.banned(e164, person);
-    if (!firstContactMayCheckAge(!!turn, nonMember, banned)) return false;
+    if (!turn || !firstContactMayCheckAge(true, nonMember, banned)) return;
     let pending = await this.pendingOf(e164, "join");
     if (pending && !pendingMatchesApp(pending.app, app.id)) pending = undefined;
     const age = parseJoinText(ev.text, this.appWords(), !!pending).age ?? pending?.age ?? undefined;
     const floor = await this.accounts.lowestAge(e164, person);
-    if (!firstContactNoticeAllowed(!!turn, nonMember, banned,
-      age === undefined || joinAgeCheck(age, floor, app).ok, floor === undefined || canJoin(floor))) return false;
-    const key = this.noticeKey(e164);
-    const wrote = await this.sql.begin(async tx => {
-      const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
-      if (rows.length) await this.inbox.collect(tx, [{ id: `notice:${rowId}`, body: ELIZA_NOTICE, kind: "compliance" }]);
-      return rows.length > 0;
+    if (!firstContactNoticeAllowed(true, nonMember, banned,
+      age === undefined || joinAgeCheck(age, floor, app).ok, floor === undefined || canJoin(floor))) return;
+    const phoneHash = this.noticeKey(e164), replyId = `notice:${rowId}`;
+    await this.sql.begin(async tx => {
+      if ((await tx`select 1 from platform.eliza_notices where phone_hash = ${phoneHash}`).length) return;
+      turn.firstContactNotice = { phoneHash, replyId };
+      await this.inbox.collect(tx, [{ id: replyId, body: ELIZA_NOTICE, kind: "compliance" }]);
     });
-    // The notice row commits before the join runs: a turn that then fails (its collected notice never
-    // reaches Cloud) takes the row back, so the retry or the next first contact still gets the notice.
-    if (wrote && turn) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
-    return wrote;
   }
 
   /**

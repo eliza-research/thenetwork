@@ -147,7 +147,7 @@ pure def lawSlopEnrollmentRequiresAdult(adult: bool): bool =
 
 ### A first-contact notice cannot substitute for enrollment
 
-The notice is available only in the signed turn for a number without a current or older runtime membership and with no applicable ban. A known underage floor or refused age prevents the notice. The service stores the notice key and reply together, allows one notice per phone, and clears the notice key if the turn fails before handing it off. Normal enrollment separately checks age and consent.
+The notice is available only in the signed turn for a number without a current or older runtime membership and with no applicable ban. A known underage floor or refused age prevents the notice. The service can collect the reply while the turn is running. It records the one-time notice key only when it commits a completed response containing the notice. A failed or abandoned turn leaves the notice available to the next eligible turn. A join refused for age discards any collected notice. Normal enrollment separately checks age and consent.
 
 ```quint
 pure def firstContactMayCheckAge(signedTurn: bool, nonMember: bool, banned: bool): bool =
