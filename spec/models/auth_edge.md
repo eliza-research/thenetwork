@@ -813,9 +813,8 @@ module auth_edge {
       },
       otpVerify(h, p),
       any {
-        nondet req = Set(1, 2).oneOf()
         sessionAuth(h),
-        rotateRead(h, req),
+        all { nondet req = Set(1, 2).oneOf() rotateRead(h, req) },
         all { sess.pendingRot.size() > 0, nondet r = sess.pendingRot.oneOf() rotateCommit(r) },
       },
       cloudLogin(h, p, cloudSkew),
@@ -1054,7 +1053,7 @@ module auth_edge {
 
   // A member's repeated web join under 13 is "under_age" (joinPlan checks the age before "existing"):
   // the floor drops and declineUnderAge forgets the membership; the session keeps its person.
-  // A banned number's export reads nothing.
+  // Once the number is banned, the session refuses an export at authentication.
   run repeatJoinUnderAgeTest =
     initWith("otp")
       .then(otpStartBegin("alice", "X")).then(otpStartAll(1))
@@ -1064,8 +1063,8 @@ module auth_edge {
       .expect(world.floor.get("X") == 10 and world.member == Set() and world.alive == Set(1)
               and liveSession(sess, 1, now) and safety)
       .then(banNumber("X"))
-      .then(account("alice", "export", 25, "valid"))
       .expect(ghost.foreignActs == Set() and safety)
+      .then(account("alice", "export", 25, "valid").fail())
 
   // An adult web join creates the person, attaches it to the session and passes every invariant.
   run webJoinTest =
