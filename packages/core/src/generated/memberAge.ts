@@ -73,6 +73,19 @@ export function lawUnderageCleanupNeedsAConfirmedAge(age: number, membershipLive
   return !underageCleanupRequired(age, membershipLive) || confirmedUnderage(age);
 }
 
+/** Story: Take part in adult matching / A confirmed refusal applies before every app finishes cleanup (spec/memberAge.md) */
+//@ pure
+export function textUseAllowedAtAge(age: number, complianceOrLeave: boolean): boolean {
+  return !confirmedUnderage(age) || complianceOrLeave;
+}
+
+/** Story: Take part in adult matching / A confirmed refusal applies before every app finishes cleanup (spec/memberAge.md) */
+//@ pure
+export function lawConfirmedUnderageCannotRestart(age: number): boolean {
+  //@ ensures \result === true
+  return !confirmedUnderage(age) || !textUseAllowedAtAge(age, false);
+}
+
 /** Story: Take part in adult matching / An older age cannot raise the effective age (spec/memberAge.md) */
 //@ pure
 export function lowerAge(firstAge: number, secondAge: number): number {

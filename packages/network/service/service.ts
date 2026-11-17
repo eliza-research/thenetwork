@@ -125,7 +125,7 @@ import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveCon
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
-import { confirmedUnderage } from "../../core/src/generated/memberAge.ts";
+import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
 import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
@@ -1770,8 +1770,7 @@ export class NetworkService implements RuntimeHost {
     const threadRead = !kw && threadUpdateRequested(ev.text);
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
-    // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar && !gatheringRsvp && !gatheringFollowup) await this.lineAdapter()?.engaged?.(ev.from);
+    const legacyEngagement = !banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar && !gatheringRsvp && !gatheringFollowup;
     const route = await this.route(ev, o.app, threadRead && !!this.inboundTurn() && !banned);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1794,9 +1793,14 @@ export class NetworkService implements RuntimeHost {
     const rowId = `in:${ev.channel}:${ev.messageId}`;
     const profileRead = !kw ? profileReadRequest(ev.text, this.apps) : undefined;
     const line = ev.to ? normalizeAddress(ev.to) : undefined;
+    const declineAtAge = async () => {
+      await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
+      return "under_age" as const;
+    };
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
     if (kw === "stop" || kw === "stop_all") {
+      if (legacyEngagement) await this.lineAdapter()?.engaged?.(ev.from);
       const scope: StopScope = stopCoversEveryApp(kw === "stop_all", route.shared, stopScope(this.env) === "global") ? "global" : "app";
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
@@ -1810,6 +1814,15 @@ export class NetworkService implements RuntimeHost {
       await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
       return "held";
     }
+
+    const memberAge = e164 && memberId ? await this.accounts.lowestAge(e164, await this.accounts.personFor(e164)) : undefined;
+    if (!textUseAllowedAtAge(memberAge ?? -1, kw === "help" || !!leavingId)) return declineAtAge();
+    if (confirmedUnderage(memberAge ?? -1) && kw === "help") {
+      await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+      return "handled";
+    }
+    // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
+    if (legacyEngagement && kw !== "start") await this.lineAdapter()?.engaged?.(ev.from);
 
     if (memberInviteDeliveryCommand(ev.text)?.kind === "decline") {
       if (turn && e164) await rt.scoped(async tx => {
@@ -1884,18 +1897,22 @@ export class NetworkService implements RuntimeHost {
       return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
-    if (memberId) {
-      if (kw === "start" && e164) {
-        // The recycled-number hold and the ban are checked above: a banned number or person is never opted back in.
-        const person = await this.accounts.personFor(e164);
-        const at = this.consentAt(ev);
-        await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
-        // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
-        if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
-        if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
-        const m = person && (await this.people.getMembership(person.id, app.id));
-        if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
+    if (kw === "start" && e164) {
+      const at = this.consentAt(ev);
+      const start = await new PgPeopleStore(this.sql).recordCarrierStart({
+        e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at,
+      }, this.phoneKey(e164));
+      if (start === "under_age") return declineAtAge();
+      if (start === "held") return "held";
+      if (start === "superseded") {
+        this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`);
+        return "handled";
       }
+      if (legacyEngagement) await this.lineAdapter()?.engaged?.(ev.from);
+      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
+    }
+
+    if (memberId) {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
@@ -1914,12 +1931,6 @@ export class NetworkService implements RuntimeHost {
     // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
     if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance"); return "handled"; }
-    // START from someone who is not a member (they sent STOP before joining): opt them back in, then the join
-    // flow asks for name and age as usual. A banned number or person is never opted back in (checked above).
-    if (kw === "start") {
-      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: this.consentAt(ev) });
-      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: this.consentAt(ev) };
-    }
     // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
     // member of any app first gets the one-time Eliza notice, then the normal join flow.
     return this.people.withLock(`join:${e164}`, async () => {

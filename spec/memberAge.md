@@ -75,6 +75,18 @@ pure def lawUnderageCleanupNeedsAConfirmedAge(age: int, membershipLive: bool): b
   underageCleanupRequired(age, membershipLive) implies confirmedUnderage(age)
 ```
 
+### A confirmed refusal applies before every app finishes cleanup
+
+An existing membership cannot authorize ordinary conversation once the person or phone has a confirmed age below the join minimum. START cannot opt that phone back in, even if an app has already removed the membership. Read the durable age again inside the identity lock before writing a START event. STOP, HELP, and an app leave remain available.
+
+```quint
+pure def textUseAllowedAtAge(age: int, complianceOrLeave: bool): bool =
+  not(confirmedUnderage(age)) or complianceOrLeave
+
+pure def lawConfirmedUnderageCannotRestart(age: int): bool =
+  confirmedUnderage(age) implies not(textUseAllowedAtAge(age, false))
+```
+
 ### An older age cannot raise the effective age
 
 After validating both ages, the caller keeps the lower one. Missing and invalid observations do not replace a usable observation. The platform applies this rule across apps.

@@ -669,6 +669,19 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await s.people.getMembership(person.id, "slop")).toMatchObject({ state: "active" });
     expect(await sql`select account_status from network.members where id=${friends.id}`).toEqual([{ account_status: "removed" }]);
 
+    const optsIn = () => count(sql`select count(*)::int as n from platform.consent_events where e164=${e164} and source='keyword:start'`);
+    const slopTurn = (messageId: string, text: string): TurnRequest => ({ messageId, text, from: e164, app: "slop", to: null,
+      channel: "blooio", transport: "imessage", receivedAt: clock.now() });
+    const beforeCleanup = await invitationTurn(s, clock)(slopTurn("underage-stale-membership-start", "START"));
+    expect(await optsIn()).toBe(0);
+    expect(await beforeCleanup.json()).toMatchObject({ outcome: "handled", reason: "under_age", accountEligible: false, memberId: null });
+    clock.advance(11 * MINUTE); // The interrupted turn no longer holds ordinary messages.
+    const message = await invitationTurn(s, clock)(slopTurn("underage-stale-membership-message", "Tell me what you remember about me."));
+    expect(await message.json()).toMatchObject({ outcome: "handled", reason: "under_age", accountEligible: false, memberId: null });
+    expect(await sql`select 1 from network.messages where app_id='slop' and id='in:blooio:underage-stale-membership-message'`).toEqual([]);
+    const help = await invitationTurn(s, clock)(slopTurn("underage-stale-membership-help", "HELP"));
+    expect(await help.json()).toMatchObject({ outcome: "handled", replies: [APPS.slop.brand.help], memberId: null });
+
     await s.close();
     const { s: resumed } = service(clock, opts);
     await resumed.start();
@@ -680,6 +693,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       .toEqual([{ app_id: "friends", account_status: "removed", name: null }, { app_id: "slop", account_status: "removed", name: null }]);
     expect(await sql`select app_id,state from platform.consent_events where e164=${e164} and source='join_declined' order by app_id`)
       .toEqual([{ app_id: "friends", state: "opted_out" }, { app_id: "slop", state: "opted_out" }]);
+    const afterCleanup = await invitationTurn(resumed, clock)(slopTurn("underage-removed-membership-start", "START"));
+    expect(await optsIn()).toBe(0);
+    expect(await afterCleanup.json()).toMatchObject({ outcome: "handled", reason: "under_age", accountEligible: false, memberId: null });
   }, T);
 
   const confirmInvitationVouch = async (send: ReturnType<typeof invitationTurn>, request: TurnRequest, evidence: string) => {

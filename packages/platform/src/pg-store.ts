@@ -1,12 +1,12 @@
 // PeopleStore on Postgres (the platform schema, migration 0003). The login needs the
 // platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { confirmedUnderage, minMemberAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
+import { confirmedUnderage, minMemberAge, textUseAllowedAtAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
-import type { ConsentEvent, ConsentLast } from "./consent.ts";
+import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
 import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant, StaffBanProjection } from "./store.ts";
 
@@ -228,6 +228,28 @@ export class PgPeopleStore implements PeopleStore {
       values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
       on conflict (e164, ref) where ref is not null do nothing returning id`;
     return r.length > 0;
+  }
+
+  /** The age and the owner that authorize START must still hold when its consent event commits. */
+  async recordCarrierStart(e: ConsentEvent & { app: AppId }, phoneHash: string): Promise<"recorded" | "under_age" | "held" | "superseded"> {
+    return this.sql.begin(async tx => {
+      const store = new PgPeopleStore(tx);
+      const before = await store.findPhone(e.e164);
+      if (before?.personId) await lockPersonPhone(tx, before.personId);
+      else await lockPhoneBinding(tx, e.e164);
+      const phone = await store.findPhone(e.e164);
+      if (before?.personId !== phone?.personId || phone?.hold != null) return "held";
+      const person = phone && await store.getPerson(phone.personId);
+      if (phone && (!person || person.deletedAt !== null)) return "held";
+      if (await store.isBanned(phoneHash, person?.id)) return "held";
+      const age = Math.min(person?.lowestAge ?? Infinity, (await store.ageFloor(phoneHash)) ?? Infinity);
+      if (!textUseAllowedAtAge(age, false)) return "under_age";
+      await store.addConsent(e);
+      if (resolveConsent(await store.lastConsent(e.e164, e.app)) !== "opted_in") return "superseded";
+      if (person) await tx`update platform.memberships set state='active'
+        where person_id=${person.id}::uuid and app_id=${e.app} and state='paused'`;
+      return "recorded";
+    });
   }
   async beginAppLeave(input: AppLeaveInput): Promise<AppLeaveAdmission> {
     const { app, e164, personId, expectedMemberId, at, line, ref } = input;

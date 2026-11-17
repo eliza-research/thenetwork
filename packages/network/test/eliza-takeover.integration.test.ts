@@ -109,6 +109,7 @@ test("a non-member gets the one-time notice, then the join flow; the number is s
 
 test("an under-13 first contact gets only the kind decline, and nothing is stored", async () => {
   const phone = "+12125550202";
+  const noticesBefore = (await noticeRows()).length;
   const r = await say(phone, "Sam, 12");
   expect(r.reason).toBe("under_age");
   expect(r.replies).toEqual([APPS.ntwrk.brand.underAge]);
@@ -116,7 +117,10 @@ test("an under-13 first contact gets only the kind decline, and nothing is store
   const again = await say(phone, "hi");
   expect(again.reason).not.toBe("onboarding_asked");
   expect(again.accountEligible).toBe(false);
-  expect((await noticeRows()).length).toBe(1);
+  const restart = await say(phone, "START");
+  expect(restart).toMatchObject({ reason: "under_age", replies: [APPS.ntwrk.brand.underAge], accountEligible: false });
+  expect(await sql`select 1 from platform.consent_events where e164=${phone} and source='keyword:start'`).toEqual([]);
+  expect((await noticeRows()).length).toBe(noticesBefore);
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
 
