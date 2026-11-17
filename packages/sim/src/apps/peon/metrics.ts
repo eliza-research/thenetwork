@@ -170,7 +170,9 @@ export function impactTable(r: PeonRunResult, ids: MemberId[]): ImpactTable {
       ratio[stage]![attr] = ratioOf(groups);
     }
   }
-  const minOver = (stages: readonly Stage[]) => Math.min(...stages.flatMap(s => Object.values(ratio[s]!)));
+  // No pooled ratios at all means the impact does not exist: report NaN, not
+  // Infinity (Math.min of an empty set passes the >= 0.8 gate unmeasured).
+  const minOver = (stages: readonly Stage[]) => { const vals = stages.flatMap(s => Object.values(ratio[s]!)); return vals.length ? Math.min(...vals) : NaN; };
   return { rates, ratio, minAutomated: minOver(AUTOMATED_STAGES), minHuman: minOver(STAGES.filter(s => !AUTOMATED_STAGES.includes(s))) };
 }
 
@@ -197,6 +199,7 @@ export function poolImpact(ts: ImpactTable[]): ImpactTable {
       ratio[stage]![attr] = ratioOf(Object.fromEntries(Object.entries(big).map(([kk, g]) => [kk, { n: MIN_GROUP, selected: (g.selected / g.n) * MIN_GROUP }])));
     }
   }
-  const minOver = (stages: readonly Stage[]) => Math.min(...stages.flatMap(s => Object.values(ratio[s]!)));
+  // Same rule as the per-run table above: no ratios means NaN, not Infinity.
+  const minOver = (stages: readonly Stage[]) => { const vals = stages.flatMap(s => Object.values(ratio[s]!)); return vals.length ? Math.min(...vals) : NaN; };
   return { rates, ratio, minAutomated: minOver(AUTOMATED_STAGES), minHuman: minOver(STAGES.filter(s => !AUTOMATED_STAGES.includes(s))) };
 }

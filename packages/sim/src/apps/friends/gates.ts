@@ -24,8 +24,11 @@ export function boroughRatio(p: FriendsMetrics[], minN: number): { min: number; 
     const r = M(p, m => m.v14ByBorough[b]?.v14 ?? NaN) / v;
     if (r < min) { min = r; worst = b; }
   }
-  const per = p.map(m => Math.min(...BIG.filter(b => (m.v14ByBorough[b]?.n ?? 0) >= minN && Number.isFinite(m.v14ByBorough[b]!.v14)).map(b => m.v14ByBorough[b]!.v14 / m.v14)));
-  return { min, worst, worstSeed: Math.min(...per) };
+  const per = p.map(m => { const rs = BIG.filter(b => (m.v14ByBorough[b]?.n ?? 0) >= minN && Number.isFinite(m.v14ByBorough[b]!.v14)).map(b => m.v14ByBorough[b]!.v14 / m.v14); return rs.length ? Math.min(...rs) : NaN; });
+  const finitePer = per.filter(Number.isFinite);
+  // No qualifying borough means the ratio does not exist: report NaN, not
+  // Infinity (an Infinity min passes the >= 0.7 gate with no borough measured).
+  return { min: Number.isFinite(min) ? min : NaN, worst, worstSeed: finitePer.length ? Math.min(...finitePer) : NaN };
 }
 
 /** Official gates: the founder's adopted replacements (2026-10-08) and the gates that held as proposed. */
