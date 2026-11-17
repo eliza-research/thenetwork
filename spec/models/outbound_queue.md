@@ -919,7 +919,9 @@ module outbound_queue {
       nondet rd = oneOf(ROWS.filter(x => DUE.contains(rows.get(x).status) and rows.get(x).nextAt <= env.now and not(work.get(wk).seen.contains(x))
         and rows.get(x).net == work.get(wk).net))
       decide(wk, rd, b1 and b3, b2) },
-    { nondet wd = oneOf(WORKERS.filter(x => work.get(x).phase == "decided")) applyCurrentDecision(wd, b3 and b2, b1) },
+    { nondet wd = oneOf(WORKERS.filter(x => work.get(x).phase == "decided"))
+      // Most rows have no blocked peer roster. The directed trace covers a block at the claim boundary.
+      applyCurrentDecision(wd, b3 and b2, b1 and b2 and not(b3)) },
     { nondet wc = oneOf(WORKERS.filter(x => work.get(x).phase == "calling")) providerCall(wc, out) },
     { nondet wp = oneOf(WORKERS.filter(x => work.get(x).phase == "responded")) respond(wp, b2 and b3) },
     { nondet wu = oneOf(WORKERS.filter(x => work.get(x).phase == "locked")) unlockLine(wu) },
