@@ -55,10 +55,10 @@ A reservation requires an open round, an unused pair, and room for both members.
 
 ```quint
 pure def isMarked(flags: str -> bool, key: str): bool =
-  if (flags.keys().contains(key)) flags.get(key) else false
+  flags.getOr(key, false)
 
 pure def memberCount(counts: str -> int, member: str): int =
-  if (counts.keys().contains(member)) counts.get(member) else 0
+  counts.getOr(member, 0)
 
 pure def canReservePair(s: AssignmentRun, pairKey: str, memberA: str, memberB: str, withinBackupDegree: bool): bool = and {
   s.phase == InRound,

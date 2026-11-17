@@ -68,7 +68,7 @@ export function questionSubjectAllowed(s: AskRun, adult: boolean, supportedMarke
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function countReservedQuestions(s: AskRun, memberId: string): number {
-  return ("$" + memberId) in s.counts ? get_engineAsks(s.counts, "$" + memberId) : 0;
+  return lookup0_engineAsks(s.counts, memberId, 0);
 }
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
@@ -203,6 +203,13 @@ export function initialHolds(): AskRun {
   return initial;
 }
 
+/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
+//@ pure
+export function lookup0_engineAsks(m: Record<string, number>, k: string, otherwise: number): number {
+  const key = "$" + k;
+  return key in m ? m[key] : otherwise;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_engineAsks(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
@@ -215,10 +222,4 @@ export function equal_engineAsks(a: unknown, b: unknown): boolean {
   const keys = Object.keys(a);
   return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
     && keys.every((k) => Object.hasOwn(b, k) && equal_engineAsks((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
-}
-
-/** What a map holds for a key, which it must hold. */
-export function get_engineAsks<K extends string | number, T>(m: Record<K, T>, key: K): T {
-  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
-  return m[key];
 }

@@ -30,6 +30,18 @@ pure def eligibleListings(catalog: PublishedCatalog, who: Audience): List[Public
   else if (catalog == FullCatalog) List(NatureWalk, ArtTour, HistoryTour)
   else List(NatureWalk, HistoryTour)
 
+pure def hasAnswer(a: CollectedAnswer): bool =
+  match a {
+    | NoAnswer => false
+    | _ => true
+  }
+
+pure def answerListsAre(a: CollectedAnswer, listings: List[PublicListing]): bool =
+  match a {
+    | Answered(x) => x.listings == listings
+    | _ => false
+  }
+
 pure def answerFor(s: SoloConciergeJourney, who: Audience): CollectedAnswer =
   if (who == AdultMember) s.adultAnswer else s.youngerAnswer
 
@@ -46,14 +58,14 @@ pure def askForIdeas(s: SoloConciergeJourney, who: Audience): ConciergeStep =
 
 pure def alwaysSoloDoesNotRecruit(s: SoloConciergeJourney): bool = s.requests == 0 and s.opportunities == 0
 pure def alwaysTheYoungerMemberOnlyReceivesAllAges(s: SoloConciergeJourney): bool =
-  s.youngerAnswer == NoAnswer or s.youngerAnswer == Answered({ listings: List() }) or s.youngerAnswer == Answered({ listings: List(NatureWalk) })
+  not(hasAnswer(s.youngerAnswer)) or answerListsAre(s.youngerAnswer, List()) or answerListsAre(s.youngerAnswer, List(NatureWalk))
 
 pure def sometimesRecommendsThreeEventsToTheAdult(s: SoloConciergeJourney): bool =
-  s.adultAnswer == Answered({ listings: List(NatureWalk, ArtTour, HistoryTour) })
+  answerListsAre(s.adultAnswer, List(NatureWalk, ArtTour, HistoryTour))
 pure def sometimesRecommendsAnAllAgesEvent(s: SoloConciergeJourney): bool =
-  s.youngerAnswer == Answered({ listings: List(NatureWalk) })
+  answerListsAre(s.youngerAnswer, List(NatureWalk))
 pure def sometimesReportsNoFittingEvents(s: SoloConciergeJourney): bool =
-  s.adultAnswer == Answered({ listings: List() })
+  answerListsAre(s.adultAnswer, List())
 ```
 
 ### An exact retry must still have the same answer
@@ -63,11 +75,11 @@ Retry the original signed request without creating a new collected reply. If the
 ```quint
 import soloConcierge as Solo from "./soloConcierge"
 
-pure def canRetryIdeas(s: SoloConciergeJourney, who: Audience): bool = answerFor(s, who) != NoAnswer
+pure def canRetryIdeas(s: SoloConciergeJourney, who: Audience): bool = hasAnswer(answerFor(s, who))
 pure def retryIdeas(s: SoloConciergeJourney, who: Audience): ConciergeStep =
   val previous = answerFor(s, who)
-  val same = previous == Answered({ listings: eligibleListings(s.catalog, who) })
-  val result = if (Solo::soloReplyReplayAllowed(previous != NoAnswer, same)) ReplayedAnswer else RefusedStaleAnswer
+  val same = answerListsAre(previous, eligibleListings(s.catalog, who))
+  val result = if (Solo::soloReplyReplayAllowed(hasAnswer(previous), same)) ReplayedAnswer else RefusedStaleAnswer
   { state: { ...s, lastReplay: result }, out: List(ReplayObserved({ result: result })) }
 
 pure def sometimesReplaysACurrentAnswer(s: SoloConciergeJourney): bool = s.lastReplay == ReplayedAnswer

@@ -16,7 +16,17 @@ type BackendHealth = CheckingAdmission | CheckingDatabase | CheckingTicks | Repo
 
 pure val initial: BackendHealth = CheckingAdmission
 
-pure def canCheckAdmission(s: BackendHealth): bool = s == CheckingAdmission
+pure def reportsStatus(s: BackendHealth, status: HealthStatus): bool =
+  match s {
+    | Reported(r) => r.status == status
+    | _ => false
+  }
+
+pure def canCheckAdmission(s: BackendHealth): bool =
+  match s {
+    | CheckingAdmission => true
+    | _ => false
+  }
 pure def checkAdmission(s: BackendHealth, serving: bool): BackendHealth =
   if (serving) CheckingDatabase else Reported({ status: Draining })
 ```
@@ -26,11 +36,19 @@ pure def checkAdmission(s: BackendHealth, serving: bool): BackendHealth =
 A false result or a rejected database ping reports `database`. A successful ping permits the shell to read tick lateness. When at least one network tick is late, report `tick_late`. Otherwise report `ok`. The HTTP shell sends 200 for `ok` and 503 for the other reports.
 
 ```quint
-pure def canCheckDatabase(s: BackendHealth): bool = s == CheckingDatabase
+pure def canCheckDatabase(s: BackendHealth): bool =
+  match s {
+    | CheckingDatabase => true
+    | _ => false
+  }
 pure def checkDatabase(s: BackendHealth, reachable: bool): BackendHealth =
   if (reachable) CheckingTicks else Reported({ status: DatabaseDown })
 
-pure def canCheckTicks(s: BackendHealth): bool = s == CheckingTicks
+pure def canCheckTicks(s: BackendHealth): bool =
+  match s {
+    | CheckingTicks => true
+    | _ => false
+  }
 pure def checkTicks(s: BackendHealth, late: bool): BackendHealth =
   Reported({ status: if (late) TickLate else Ready })
 
@@ -40,8 +58,8 @@ pure def stepReportIsFinal(before: BackendHealth, after: BackendHealth): bool =
     | _ => true
   }
 
-pure def sometimesReportsReady(s: BackendHealth): bool = s == Reported({ status: Ready })
-pure def sometimesReportsDraining(s: BackendHealth): bool = s == Reported({ status: Draining })
-pure def sometimesReportsDatabaseDown(s: BackendHealth): bool = s == Reported({ status: DatabaseDown })
-pure def sometimesReportsLateTick(s: BackendHealth): bool = s == Reported({ status: TickLate })
+pure def sometimesReportsReady(s: BackendHealth): bool = reportsStatus(s, Ready)
+pure def sometimesReportsDraining(s: BackendHealth): bool = reportsStatus(s, Draining)
+pure def sometimesReportsDatabaseDown(s: BackendHealth): bool = reportsStatus(s, DatabaseDown)
+pure def sometimesReportsLateTick(s: BackendHealth): bool = reportsStatus(s, TickLate)
 ```

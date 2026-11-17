@@ -88,15 +88,13 @@ pure val choiceValues = Set(
 )
 
 pure def numberUsed(counts: str -> int, key: str): int =
-  if (counts.keys().contains(key)) counts.get(key) else 0
+  counts.getOr(key, 0)
 
 pure def selectedBefore(s: SelectionRun, candidateKey: str): bool =
-  val keyMap = s.selectedKeys
-  if (keyMap.keys().contains(candidateKey)) keyMap.get(candidateKey) else false
+  s.selectedKeys.getOr(candidateKey, false)
 
 pure def pairAlreadyUsed(s: SelectionRun, pair: str): bool =
-  val keyMap = s.usedPairs
-  if (keyMap.keys().contains(pair)) keyMap.get(pair) else false
+  s.usedPairs.getOr(pair, false)
 
 pure def proactiveUsed(s: SelectionRun, id: str): int = numberUsed(s.proactive, id)
 

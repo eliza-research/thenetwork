@@ -10,8 +10,13 @@ export function inv(current) {
 }
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 //@ pure
+export function reportsStatus(s, status) {
+    return s.tag === "Reported" ? s.status === status : false;
+}
+/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
+//@ pure
 export function canCheckAdmission(s) {
-    return equal_backendHealth(s, { tag: "CheckingAdmission" });
+    return s.tag === "CheckingAdmission" ? true : false;
 }
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 //@ pure
@@ -21,13 +26,24 @@ export function checkAdmission(s, serving) {
 }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
+export function canCheckDatabase(s) {
+    return s.tag === "CheckingDatabase" ? true : false;
+}
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
+//@ pure
+export function canCheckTicks(s) {
+    return s.tag === "CheckingTicks" ? true : false;
+}
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
+//@ pure
 export function stepReportIsFinal(before, after) {
     return before.tag === "Reported" ? equal_backendHealth(after, before) : true;
 }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
-export function canCheckTicks(s) {
-    return equal_backendHealth(s, { tag: "CheckingTicks" });
+export function checkDatabase(s, reachable) {
+    //@ ensures (inv(s) && canCheckDatabase(s)) ==> stepReportIsFinal(s, \result)
+    return reachable ? { tag: "CheckingTicks" } : { tag: "Reported", status: "DatabaseDown" };
 }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
@@ -38,43 +54,32 @@ export function checkTicks(s, late) {
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsReady(s) {
-    return equal_backendHealth(s, { tag: "Reported", status: "Ready" });
+    return reportsStatus(s, "Ready");
 }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsDraining(s) {
-    return equal_backendHealth(s, { tag: "Reported", status: "Draining" });
+    return reportsStatus(s, "Draining");
 }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsDatabaseDown(s) {
-    return equal_backendHealth(s, { tag: "Reported", status: "DatabaseDown" });
+    return reportsStatus(s, "DatabaseDown");
 }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsLateTick(s) {
-    return equal_backendHealth(s, { tag: "Reported", status: "TickLate" });
-}
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-//@ pure
-export function canCheckDatabase(s) {
-    return equal_backendHealth(s, { tag: "CheckingDatabase" });
-}
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-//@ pure
-export function checkDatabase(s, reachable) {
-    //@ ensures (inv(s) && canCheckDatabase(s)) ==> stepReportIsFinal(s, \result)
-    return reachable ? { tag: "CheckingTicks" } : { tag: "Reported", status: "DatabaseDown" };
+    return reportsStatus(s, "TickLate");
 }
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {
     if (event.type === "checkAdmission")
         return canCheckAdmission(current);
-    if (event.type === "checkTicks")
-        return canCheckTicks(current);
     if (event.type === "checkDatabase")
         return canCheckDatabase(current);
+    if (event.type === "checkTicks")
+        return canCheckTicks(current);
     return false;
 }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */
@@ -84,10 +89,10 @@ export function step(current, event) {
     //@ ensures inv(\result)
     if (event.type === "checkAdmission" && canCheckAdmission(current))
         return checkAdmission(current, event.serving);
-    if (event.type === "checkTicks" && canCheckTicks(current))
-        return checkTicks(current, event.late);
     if (event.type === "checkDatabase" && canCheckDatabase(current))
         return checkDatabase(current, event.reachable);
+    if (event.type === "checkTicks" && canCheckTicks(current))
+        return checkTicks(current, event.late);
     return current;
 }
 /**
@@ -108,10 +113,10 @@ export function parseEvent(x) {
         return undefined;
     if (raw.type === "checkAdmission" && typeof raw.serving === "boolean")
         return { type: "checkAdmission", serving: raw.serving };
-    if (raw.type === "checkTicks" && typeof raw.late === "boolean")
-        return { type: "checkTicks", late: raw.late };
     if (raw.type === "checkDatabase" && typeof raw.reachable === "boolean")
         return { type: "checkDatabase", reachable: raw.reachable };
+    if (raw.type === "checkTicks" && typeof raw.late === "boolean")
+        return { type: "checkTicks", late: raw.late };
     return undefined;
 }
 /**

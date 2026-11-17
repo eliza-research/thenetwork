@@ -8,8 +8,8 @@ import { orDie } from "effect/Effect";
 import { $schemaErrorMatcher, TaggedError } from "vibelang-runtime/internal";
 import * as Effect_1 from "effect/Effect";
 import * as runtime from "vibelang-runtime/internal";
-import { initial, inv, canCheckAdmission, checkAdmission, stepReportIsFinal, canCheckTicks, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, canCheckDatabase, checkDatabase, enabled, step, parseEvent, parseState, snapshot_backendHealth } from "./backendHealth.effect.vibe.pure.js";
-export { initial, inv, canCheckAdmission, checkAdmission, stepReportIsFinal, canCheckTicks, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, canCheckDatabase, checkDatabase, enabled, step, parseEvent, parseState };
+import { initial, inv, reportsStatus, canCheckAdmission, checkAdmission, canCheckDatabase, canCheckTicks, stepReportIsFinal, checkDatabase, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, enabled, step, parseEvent, parseState, snapshot_backendHealth } from "./backendHealth.effect.vibe.pure.js";
+export { initial, inv, reportsStatus, canCheckAdmission, checkAdmission, canCheckDatabase, canCheckTicks, stepReportIsFinal, checkDatabase, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 /** The rules do not allow this event in this state. */
 export class Rejected extends TaggedError("Rejected") {
