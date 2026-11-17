@@ -320,3 +320,35 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text": "anything but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any day but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but Sunday works", "label": "yes", "keys": ["a", "b"]}
+{"text": "anything but Saturday, Sunday works", "label": "yes", "keys": ["c"]}
+{"text": "everything but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "all but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any time but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any other day but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "all days but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "every day but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any day of the week but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything else but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "everything else but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any morning but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but this Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but that Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but next Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any day but this Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but Saturday 11am works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but 11am Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "anything but Saturday morning works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any day but Saturday morning works", "label": "yes", "keys": ["a", "c"]}
+{"text": "each day but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "whatever but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "whichever but Saturday works", "label": "yes", "keys": ["a", "c"]}
+{"text": "any other time but Saturday works", "label": "yes", "keys": []}
+{"text": "Sorry, but Saturday works", "label": "yes", "keys": ["b"]}
+{"text": "Saturday works, but Sunday doesn't", "label": "yes", "keys": ["b"]}
+{"text": "not Saturday, Sunday works", "label": "yes", "keys": ["c"]}
+{"text": "everything except Saturday, Sunday works", "label": "yes", "keys": ["c"]}
+{"text": "no day but Saturday works", "label": "yes", "keys": ["b"]}
+{"text": "only Saturday works", "label": "yes", "keys": ["b"]}
