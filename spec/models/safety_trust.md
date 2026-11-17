@@ -12,6 +12,8 @@ Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md
 
 Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
 
+The current matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is still being projected. Durable hold carryover remains a product requirement under [PRD §40.3](../product/source/prd.md#403-shared-platform). The carryover transitions and witness preserve the intended behavior. Production staff holds currently apply to live runtime memberships, and app leave removes that runtime's member state. Preserving an unresolved hold through leave and rejoin needs durable person and app scope.
+
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
 // Safety and trust (docs/research/2026-11-07-state-machines.md section 6.9). Machines: person-safety-carryover
@@ -41,12 +43,12 @@ Production uses [Safety cases and report review](../safetyCase.md) for the case 
 //                                            syncMember/personHold/safetyHeld 4782-4799 (SD-021, SD-022),
 //                                            RelayHost.severeBlock 5154 (SD-254)
 //   packages/network/service/service.ts      route 1085 (a block/report text goes to the app of the newest
-//                                            meeting, SD-250), forget 921 (leave writes a person hold, SD-021),
-//                                            liftHold 1793, hold 1943 (person_holds row first, SD-022), ban 2010
+//                                            meeting, SD-250), historic carryover in forget 921 (SD-021),
+//                                            liftHold 1793, hold 1943 (historic person_holds, SD-022), ban 2010
 //   packages/network/service/packs.ts        peonHooks postDateReports (SD-221)
 //   packages/network/service/runtime.ts      send kind 466 (meta.safety is the "safety" kind, SD-475),
 //                                            person_blocks write 578
-//   packages/network/service/snapshot.ts     person_holds -> member.safetyHold (122)
+//   packages/network/service/snapshot.ts     canonical ban from platform.matching_ages -> restricted matching status
 //   packages/network/src/relay.ts            RelayDesk.apply 244-252 (a severe block calls severeBlock)
 //   packages/engine/src/packs/slop/rules.ts  reviewReason (trust_review; SD-027 is skipped)
 //   packages/engine/src/packs/slop/profile.ts histories 232-260 (a record with `by` counts for that member only)
@@ -215,9 +217,9 @@ module safety_trust {
   // network.ts:1300 reportHeld: open, met, urgent, and the reporter is not on hold (SD-072)
   pure def reportHeld(st: State, m: Mid): bool =
     st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind) and repLvl(st, r.reporter) != "hold")
-  // network.ts:4512 safetyHeld: what a leave carries over to platform.person_holds
+  // SD-021 desired hold coverage: the historical runtime carried these reasons across an app leave.
   pure def safetyHeld(st: State, m: Mid): bool = lvl(st, m) == "hold" or reportHeld(st, m) or st.minorF.get(m)
-  // snapshot.ts: a person_holds row for this app or "*" covers the member (member.safetyHold)
+  // Intended durable hold coverage for this app or every app. Production needs this store.
   pure def covered(st: State, m: Mid): bool = st.personHolds.exists(h => h._1 == m.p and (h._2 == m.app or h._2 == "*"))
   // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
   pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()
@@ -227,10 +229,11 @@ module safety_trust {
   // slop rules.ts with SLOP_DEFAULT_OPTIONS trust { blockedBy: 2, noShows: 2 }
   pure def trustReview(st: State, m: Mid): bool =
     m.app == "slop" and (blockedBy(st, m) >= 2 or (noShows(st, m) >= 2 and noShows(st, m) > dates(st, m)))
-  // engineInput holds, not_ready (restricted account). Matching runs in the tick after personHold, so a
-  // member that a person hold covers is held at matching time.
+  // Current snapshot.ts applies the canonical ban before matching, including during an interrupted
+  // runtime restriction projection. The retained person hold relation expresses desired coverage.
   pure def matchable(st: State, m: Mid): bool =
-    st.live.get(m) and lvl(st, m) == "ok" and not(st.minorF.get(m)) and not(reportHeld(st, m)) and not(st.restricted.contains(m)) and not(covered(st, m))
+    st.live.get(m) and not(st.banned.contains(m.p)) and lvl(st, m) == "ok" and not(st.minorF.get(m))
+      and not(reportHeld(st, m)) and not(st.restricted.contains(m)) and not(covered(st, m))
   // blocked(): this Network's block or a person block from the snapshot
   pure def blockedPair(st: State, a: Mid, b: Mid): bool =
     st.blocks.contains(Set(a, b)) or st.personBlocks.contains((a.p, b.p)) or st.personBlocks.contains((b.p, a.p))
@@ -1116,8 +1119,8 @@ module safety_trust {
   val reportSubjectMeant = s.reports.forall(r => r.meantP == r.subject.p)
 
   // AGENTS.md 2026-10-09 item 3 "Bans are by phone number"; network.ts markBanned "never matched or contacted
-  // again". Every live member of a banned person is out of matching from the moment the ban rows exist, on every
-  // app (W3-223: the ban writes no person_holds row, so an app the loop did not reach is matchable).
+  // again". Every live member of a banned person is out of matching from the moment the ban row exists. The
+  // canonical matching snapshot covers an app whose runtime has not applied its own restriction (W3-223).
   val bannedNeverMatchable = s.banned.forall(p => liveMidsOf(s, p).forall(x => not(matchable(s, x))))
 
   // spec/safetyCase.md, "A ban allows only carrier commands and app leave" (upstream PR #496): a banned person has
@@ -1289,8 +1292,8 @@ module safety_trust {
       .then(liftHold(CY_S))
       .expect(lvl(s, CY_S) == "ok" and s.caseSt.get(CY_S) == "lifted")
 
-  // SD-021 (fixed): staff hold ben, ben leaves slop and joins again: the rejoin is covered by the person hold,
-  // not matchable, and held at its next unit; a staff lift ends it.
+  // SD-021 retained requirement: staff hold ben, ben leaves slop and joins again. The modeled person hold
+  // excludes the rejoin from matching and the next unit marks it held. An authorized staff lift ends it.
   run sd021LeaveRejoinKeepsHoldTest =
     init
       .then(staffHold(BEN_S))
@@ -1299,11 +1302,11 @@ module safety_trust {
       .then(join("slop", "ben"))
       .expect(staffHoldFollowsPerson and not(matchable(s, BEN_S1)) and covered(s, BEN_S1))
       .then(tick(1))
-      .expect(lvl(s, BEN_S1) == "hold" and safety)
+      .expect(lvl(s, BEN_S1) == "hold" and safety and not(witness_carryoverHold))
       .then(liftHold(BEN_S1))
       .expect(not(covered(s, BEN_S1)) and covered(s, BEN_P) and lvl(s, BEN_P) == "hold" and safety)
 
-  // SD-021 (fixed): a minor report on slop, a leave and a rejoin: the new member is held.
+  // SD-021 retained requirement: a minor report on slop, a leave and a rejoin. The new member is held.
   run sd021MinorReportCarriedOverTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
@@ -1515,11 +1518,14 @@ module safety_trust {
       .then(shareAsk("ben"))
       .expect(s.shareGrants.contains("ben") and s.pendingTexts.contains("ben"))
       .then(ban("ben"))
-      .expect(s.shareGrants == Set() and s.pendingTexts == Set() and banRevokesShares)
-      .then(report("ben", "slop", "ana", "report", "harassment", false).fail())
-      .then(shareAsk("ben").fail())
+      .expect(s.shareGrants == Set() and s.pendingTexts == Set() and banRevokesShares and not(inboundOk(s, "ben")))
       .then(leave("slop", "ben"))
       .expect(not(s.live.get(BEN_S)) and banRevokesShares)
+
+  run bannedShareAskTest =
+    init
+      .then(ban("ben"))
+      .then(shareAsk("ben").fail())
 
   // SD-253 (skipped): ben met ana, then ben is banned: ana is never told.
   run sd253BanNoticeTest =
@@ -1631,16 +1637,16 @@ module safety_trust {
       .then(join("slop", "ben"))
       .expect(not(urgentMetReportBlocksMatchingInApp) and matchable(s, BEN_S1) and not(covered(s, BEN_S1)))
 
-  // W3-223 (confirmed): the ban stops after the slop unit; ben@peon stays matchable until a staff retry.
+  // W3-223: the ban stops after the slop unit. The canonical ban excludes ben@peon until staff resume projection.
   run w3_223BanStoppedTest =
     init
       .then(banStart("ben"))
       .then(banApply(BEN_S))
       .then(crash)
-      .expect(not(bannedNeverMatchable) and matchable(s, BEN_P))
+      .expect(bannedNeverMatchable and not(s.restricted.contains(BEN_P)) and not(matchable(s, BEN_P)))
       .then(banStart("ben"))
       .then(banApply(BEN_P))
-      .expect(bannedNeverMatchable)
+      .expect(bannedNeverMatchable and s.restricted.contains(BEN_P))
 
   // W3-644 (confirmed): staff of slop lift ana's slop hold. Their read finds no "*" row. Staff with safety@* then
   // hold ana on every app. The lift's transaction deletes the new "*" row with no per-app rows, and its unit
