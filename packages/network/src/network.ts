@@ -36,7 +36,7 @@ import {
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
 import { crewHandoffDue, crewMemberWindowAvailable, crewOfferReplyCurrent, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
-import { friendsRepeatAttendanceAllowed, friendsRepeatHostIndex, friendsRepeatRosterCurrent, friendsRepeatSourceAllowed } from "../../core/src/generated/friendsWeek.ts";
+import { friendsRepeatAttendanceAllowed, friendsRepeatBookingProofCurrent, friendsRepeatHostIndex, friendsRepeatRosterCurrent, friendsRepeatSourceAllowed } from "../../core/src/generated/friendsWeek.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestSearchAllowed, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -582,7 +582,7 @@ interface Opp {
   bookedAt?: Record<MemberId, number>; explicit?: MemberId[]; confirmed?: MemberId[];
   /** Private post-meeting facts and whether the member valued the experience. */
   post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[];
-    worthwhile?: true; confirmedRoster?: true }>;
+    worthwhile?: true; confirmedRoster?: true; repeatProof?: { revision: number; settledBooking?: true } }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
   /**
@@ -3745,6 +3745,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (own?.came && !otherMissing) {
         if (f.sentiment === "positive" || own.again) own.worthwhile = true;
         if (this.explicitlyConfirmsAttendance(body, others.length === 1)) own.confirmedRoster = true;
+        if (this.app.id === "friends" && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
       }
       this.helpFeedback(m, o, f);
       if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
@@ -4009,6 +4010,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.emit({ type: "value_received", member: p, with: confirmers, confirmedBy: confirmers }, key);
       }
       if (finding.mark === "Attended") {
+        const repeatProof = said(p)?.repeatProof;
+        if (repeatProof?.revision === (o.scheduleRevision ?? 0)) repeatProof.settledBooking = true;
         const verifiedBy: ("counterpart" | "organizer")[] = [...(vouchers.length ? ["counterpart" as const] : []), ...(organizerVerified ? ["organizer" as const] : [])];
         this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...vouchers, ...(organizerVerified && host ? [host] : [])] }, key);
         if (finding.logFeedback) this.emit({ type: "feedback_given", member: p, planId: o.id }, key);
@@ -4240,7 +4243,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!venue?.public) return;
     const attendees = [...new Set(o.participants)].filter(id => {
       const answer = o.post?.[id];
-      return friendsRepeatAttendanceAllowed(o.status.get(id) === "yes" && o.bookedAt?.[id] !== undefined,
+      const proof = answer?.repeatProof;
+      const booked = o.status.get(id) === "yes" && friendsRepeatBookingProofCurrent(proof?.revision ?? -1,
+        o.scheduleRevision ?? 0, proof?.settledBooking === true);
+      return friendsRepeatAttendanceAllowed(booked,
         answer?.came === true, answer?.again === true, answer?.otherNoShow === true, offer?.no.includes(id) === true);
     });
     if (!friendsRepeatRosterCurrent(attendees, attendees)) return;

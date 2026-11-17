@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR, fromLocal, type Facet, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, fromLocal, type Facet, type InitialInviteReceipt, type MemberId } from "@thenetwork/core";
 import { FRIENDS_PLANS, friendsPack, localEmbed, plans, resolveConfig, World, type EngineInput } from "@thenetwork/engine";
 import { CapitalLedger, ledgerReader } from "../src/capital.ts";
+import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
 
@@ -69,14 +70,15 @@ test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew
 });
 
 // spec/friendsWeek.md, "A Friends repeat uses its own completed table and a fresh review"
-test("the weekly pass repeats the exact positive Friends table and rechecks it before contact", async () => {
+test.each(["current", "staged_booking", "old_revision", "unverified_history"] as const)("the weekly Friends repeat needs exact settled attendance: %s", async evidence => {
   const activity = "coffee_crawl";
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity));
   if (!venue) throw new Error("Missing curated coffee crawl venue");
   const ids = ["a", "b", "c"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
     interests: ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+  })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+    plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
   for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   await w.onboard(...ids);
@@ -93,18 +95,45 @@ test("the weekly pass repeats the exact positive Friends table and rechecks it b
   const completed = state.opps.find(o => o.id === source.id)!;
   completed.stage = "done";
   completed.meetingAt = at;
-  completed.finalized = true;
   completed.status = ids.map(id => [id, "yes"]);
   completed.bookedAt = Object.fromEntries(ids.map(id => [id, at - HOUR]));
-  completed.post = Object.fromEntries(ids.map(id => [id, { came: true, again: true, otherNoShow: false, named: [] }]));
-  for (const id of ids) state.interactions.push({ id: `${source.id}:fb:${id}`, kind: "group", category: "social",
-    participants: ids, at: at + 2 * HOUR, outcome: "completed", contributors: [] });
+  if (evidence === "unverified_history") {
+    completed.finalized = true;
+    completed.post = Object.fromEntries(ids.map(id => [id, { came: true, again: true, otherNoShow: false, named: [] }]));
+    for (const id of ids) state.interactions.push({ id: `${source.id}:fb:${id}`, kind: "group", category: "social",
+      participants: ids, at: at + 4 * HOUR, outcome: "completed", contributors: [] });
+  }
   for (const member of state.members) member.stated = { at: now - 1, until: future + DAY, windows: [{ start: future, end: future + 3 * HOUR }] };
   w.net.importState(state);
+  if (evidence !== "unverified_history") {
+    const receipts = new Map<string, InitialInviteReceipt>();
+    for (const id of ids) {
+      receipts.set(meetingFeedbackKey(source.id, id, 0), { kind: "accepted", at: at + 3 * HOUR });
+      if (evidence !== "staged_booking" || id !== "c") {
+        receipts.set(bookingNoticeReceiptKey(source.id, id, 0), { kind: "accepted", at: at - HOUR });
+      }
+    }
+    w.net.init({ ...w.ctx(), initialInviteReceipt: id => receipts.get(id) });
+    w.clock.set(at + 4 * HOUR);
+    for (const id of ids) await w.say(id, "We all came. It was great. I'd do it again.");
+    await w.net.tick(w.clock.now());
+    const afterFeedback = w.net.exportState();
+    const settled = afterFeedback.opps.find(o => o.id === source.id)!;
+    expect(settled).toMatchObject({ finalized: true, feedbackFrom: ids });
+    if (evidence === "old_revision") {
+      settled.scheduleRevision = 1;
+      w.net.importState(afterFeedback);
+    }
+    w.restart();
+  }
   w.clock.set(now);
 
   await w.net.tick(now);
   const proposed = w.net.exportState().opps.find(o => o.plan?.repeatOf === completed.id);
+  if (evidence !== "current") {
+    expect(proposed).toBeUndefined();
+    return;
+  }
   expect(proposed).toMatchObject({ generator: "friends_repeat", stage: "review", participants: ids,
     plan: { activityId: activity, venueId: venue.id, hostId: "b", alternates: [], quorum: 3, window: { start: future } } });
   expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);

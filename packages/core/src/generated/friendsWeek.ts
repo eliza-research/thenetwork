@@ -153,6 +153,12 @@ export function friendsRepeatSourceAllowed(completed: boolean, settlementComplet
 
 /** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
 //@ pure
+export function friendsRepeatBookingProofCurrent(replyRevision: number, currentRevision: number, settledBooking: boolean): boolean {
+  return replyRevision >= 0 && replyRevision === currentRevision && settledBooking;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
 export function friendsRepeatAttendanceAllowed(booked: boolean, came: boolean, again: boolean, noShowReported: boolean, crewDeclined: boolean): boolean {
   return booked && came && again && !(noShowReported || crewDeclined);
 }
@@ -167,6 +173,13 @@ export function friendsRepeatRosterCurrent(expected: string[], offered: string[]
 //@ pure
 export function friendsRepeatHostIndex(previousIndex: number, seats: number): number {
   return previousIndex < 0 || exact_friendsWeek(previousIndex + 1) >= seats ? 0 : exact_friendsWeek(previousIndex + 1);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendsRepeatNeedsSettledBooking(replyRevision: number, currentRevision: number): boolean {
+  //@ ensures \result === true
+  return !friendsRepeatBookingProofCurrent(replyRevision, currentRevision, false);
 }
 
 /** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */

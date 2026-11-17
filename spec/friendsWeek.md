@@ -80,11 +80,17 @@ pure val membersValues = Set(List("one", "two"), List("two", "three"), List("thr
 
 ### A Friends repeat uses its own completed table and a fresh review
 
-Use the exact settled Friends plan and its private replies. A seat needs a recorded booking, confirmed attendance in its own reply, and an explicit yes to the same activity again. A reply reporting an absence cannot supply repeat consent. A later decline of that crew offer removes the seat. Defer to a pending crew offer or an existing crew for the table. Use each original plan for at most one new repeat and keep the same group of three to six consenting attendees. Recheck the shared activity, public venue, full window, current availability, and the current fit of every seat before review and again at approval. Rotate the host in stable member order. Every member needs to accept the new plan separately.
+Use the exact settled Friends plan and its private replies. A seat needs a timely reply to its own delivered feedback prompt, confirmed attendance in that reply, and an explicit yes to the same activity again. Record the reply's schedule revision. Settlement marks the seat only if it verifies receipt of the booking for that same revision and confirms attendance. A staged booking, an older revision, and older state with no such mark do not authorize a repeat. A reply reporting an absence cannot supply repeat consent. A later decline of that crew offer removes the seat. Defer to a pending crew offer or an existing crew for the table. Use each original plan for at most one new repeat and keep the same group of three to six consenting attendees. Recheck the shared activity, public venue, full window, current availability, and the current fit of every seat before review and again at approval. Rotate the host in stable member order. Every member needs to accept the new plan separately.
 
 ```quint
 pure def friendsRepeatSourceAllowed(completed: bool, settlementComplete: bool, crewActive: bool, alreadyOffered: bool): bool =
   completed and settlementComplete and not(crewActive or alreadyOffered)
+
+pure def friendsRepeatBookingProofCurrent(replyRevision: int, currentRevision: int, settledBooking: bool): bool =
+  replyRevision >= 0 and replyRevision == currentRevision and settledBooking
+
+pure def lawFriendsRepeatNeedsSettledBooking(replyRevision: int, currentRevision: int): bool =
+  not(friendsRepeatBookingProofCurrent(replyRevision, currentRevision, false))
 
 pure def friendsRepeatAttendanceAllowed(booked: bool, came: bool, again: bool, noShowReported: bool, crewDeclined: bool): bool =
   booked and came and again and not(noShowReported or crewDeclined)
