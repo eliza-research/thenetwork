@@ -2,7 +2,7 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
-import { confirmedUnderage } from "../../core/src/generated/memberAge.ts";
+import { confirmedUnderage, recordedAgeFloorApplies } from "../../core/src/generated/memberAge.ts";
 import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -88,6 +88,20 @@ const rateKind = (bucket: string) => bucket.split(":", 1)[0]!;
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
+export interface RecordedMemberAge { personId: string | null; phoneHash: string }
+
+export async function reconcileRecordedAgeFloor(
+  store: Pick<PeopleStore, "ageFloor" | "findPhoneByHash" | "withPhoneAgeGuard">,
+  { personId, phoneHash }: RecordedMemberAge,
+  cleanup?: (phoneHash: string, age: number) => Promise<void>,
+): Promise<void> {
+  if (!cleanup) return;
+  await store.withPhoneAgeGuard(phoneHash, async () => {
+    const age = await store.ageFloor(phoneHash);
+    const owner = await store.findPhoneByHash(phoneHash);
+    if (age !== undefined && recordedAgeFloorApplies(personId ?? "", owner?.personId ?? "")) await cleanup(phoneHash, age);
+  });
+}
 
 export interface PeopleStore {
   findPhone(e164: string): Promise<PhoneIdentity | undefined>;
@@ -111,6 +125,8 @@ export interface PeopleStore {
   withPhoneAgeGuard<T>(phoneHash: string, fn: () => Promise<T>): Promise<T>;
   /** One canonical temporary-data cleanup consumer; awaited before an age recording returns. */
   setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>): void;
+  /** Reconcile temporary phone facts from a committed age while the binding still matches. */
+  cleanupRecordedAgeFloor(recorded: RecordedMemberAge): Promise<void>;
   /** Record a stated or recorded age: the person keeps the lowest one. Returns the new lowest age. */
   noteAge(personId: string, age: number): Promise<number>;
 
@@ -262,6 +278,9 @@ export class MemoryPeopleStore implements PeopleStore {
       await this.ageCleanup?.(phoneHash, lowest);
       return lowest;
     });
+  }
+  cleanupRecordedAgeFloor(recorded: RecordedMemberAge) {
+    return reconcileRecordedAgeFloor(this, recorded, this.ageCleanup);
   }
   async clearAgeFloor(phoneHash: string) { this.ageFloors.delete(phoneHash); }
   async noteAge(personId: string, age: number) {

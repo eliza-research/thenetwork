@@ -63,6 +63,18 @@ pure def lawDeclineKeepsStatedAge(age: int, appMinimum: int): bool =
   recordedChatAge(age, appMinimum, true) == age
 ```
 
+### Project a committed age using its original owner
+
+Use the person identified by the write transaction for cross-app cleanup. For phone-scoped signup cleanup, read the current stored floor and check ownership again under the phone age guard. Skip this cleanup when the phone now belongs to another person. A legacy member's observation applies to an unbound number. Moving a number carries its floor to the new binding. Projection never writes either age.
+
+```quint
+pure def recordedAgeFloorApplies(recordedOwner: str, currentOwner: str): bool =
+  recordedOwner == currentOwner
+
+pure def lawPhoneReassignmentEndsAgeProjection(recordedOwner: str, currentOwner: str): bool =
+  (recordedOwner != currentOwner) implies not(recordedAgeFloorApplies(recordedOwner, currentOwner))
+```
+
 ### Resume a confirmed refusal from the durable age
 
 A known person below the global join age cannot start another membership. When any membership still holds data, reapply the cross-app cleanup from the stored age. Opt out each affected app on the current verified phone, remove pending text, then remove member data and close the membership. A retry uses the same consent reference. The age floor remains after cleanup.

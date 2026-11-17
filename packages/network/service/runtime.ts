@@ -68,6 +68,7 @@ import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import { recordedChatAge } from "../../core/src/generated/memberAge.ts";
 import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import type { RecordedMemberAge } from "../../platform/src/store.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -134,6 +135,7 @@ export interface Unit {
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
   ages: StatedAge[];
+  recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
 }
 type StatedAge = { memberId: MemberId; age: number };
 const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [] });
@@ -216,12 +218,11 @@ export class NetworkRuntime {
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
   private committed: Outbound[] = [];
-  /** Ages members stated in the units since the service last took them (takeAges). */
-  private statedAges: StatedAge[] = [];
-  /** The ages saved for this member, taken once for the follow-up projection. */
-  takeAges(memberId: MemberId) {
-    const mine = this.statedAges.filter(a => a.memberId === memberId);
-    this.statedAges = this.statedAges.filter(a => a.memberId !== memberId);
+  /** Committed observations waiting for their follow-up projection. */
+  private recordedAges: (RecordedMemberAge & { memberId: MemberId })[] = [];
+  takeRecordedAge(memberId: MemberId): RecordedMemberAge | undefined {
+    const mine = this.recordedAges.find(a => a.memberId === memberId);
+    this.recordedAges = this.recordedAges.filter(a => a.memberId !== memberId);
     return mine;
   }
   /** Who the inbound message being handled came from: sends to them are direct replies. */
@@ -749,7 +750,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
-        this.statedAges.push(...u.ages);
+        if (u.recordedAges) this.recordedAges.push(...u.recordedAges);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
@@ -1030,13 +1031,14 @@ export class NetworkRuntime {
     if (u.ages.length) {
       const store = new PgPeopleStore(tx);
       const accounts = this.host.accounts;
-      const recorded: StatedAge[] = [];
+      u.recordedAges = [];
       for (const observation of u.ages) {
         const e164 = this.addressOf(observation.memberId);
-        if (accounts && e164 && await store.recordMemberAge(app, observation.memberId, e164,
-          accounts.phoneHash(e164), observation.age, this.clock.now())) recorded.push(observation);
+        if (!accounts || !e164) continue;
+        const recorded = await store.recordMemberAge(app, observation.memberId, e164,
+          accounts.phoneHash(e164), observation.age, this.clock.now());
+        if (recorded) u.recordedAges.push({ ...recorded, memberId: observation.memberId });
       }
-      u.ages = recorded;
     }
     const personIds = new Map<string, string>();
     if (u.forget.size) {

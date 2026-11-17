@@ -7,8 +7,8 @@ import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneE
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
 import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
-import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant, StaffBanProjection } from "./store.ts";
+import { LONG_RATE_WINDOWS, reconcileRecordedAgeFloor } from "./store.ts";
+import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RecordedMemberAge, Session, ShareGrant, StaffBanProjection } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -120,6 +120,9 @@ export class PgPeopleStore implements PeopleStore {
       return lowest;
     });
   }
+  cleanupRecordedAgeFloor(recorded: RecordedMemberAge) {
+    return reconcileRecordedAgeFloor(this, recorded, this.ageCleanup);
+  }
   async clearAgeFloor(phoneHash: string) {
     await this.sql`delete from platform.age_floor where phone_hash = ${phoneHash}`;
   }
@@ -130,11 +133,11 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   /** Persist the observation inside the app unit that read it, before its member row can be erased. */
-  async recordMemberAge(app: AppId, memberId: string, e164: string, phoneHash: string, age: number, at: number): Promise<boolean> {
+  async recordMemberAge(app: AppId, memberId: string, e164: string, phoneHash: string, age: number, at: number): Promise<RecordedMemberAge | undefined> {
     const tx = this.sql;
     const [member] = await tx<{ person_id: string | null }[]>`select person_id from network.members
       where app_id=${app} and id=${memberId} and account_status<>'removed'`;
-    if (!member) return false;
+    if (!member) return;
     if (member.person_id) {
       await lockPersonPhone(tx, member.person_id);
       const [saved] = await tx<{ lowest_age: number }[]>`update platform.people p set lowest_age=least(p.lowest_age, ${age})
@@ -142,7 +145,7 @@ export class PgPeopleStore implements PeopleStore {
         where p.id=${member.person_id}::uuid and p.deleted_at is null and ph.person_id=p.id and ph.e164=${e164} and ph.hold is null
           and m.app_id=${app} and m.id=${memberId} and m.person_id=p.id and m.account_status<>'removed'
         returning p.lowest_age`;
-      if (!saved) return false;
+      if (!saved) return;
       await upsertAgeFloor(tx, phoneHash, saved.lowest_age, at);
     } else {
       await lockPhoneBinding(tx, e164);
@@ -150,10 +153,10 @@ export class PgPeopleStore implements PeopleStore {
         where m.app_id=${app} and m.id=${memberId} and m.person_id is null and m.account_status<>'removed'
           and c.address=${e164} and c.channel in ('imessage','sms')
           and not exists (select 1 from platform.phone_identities where e164=${e164})`;
-      if (!legacy) return false;
+      if (!legacy) return;
       await upsertAgeFloor(tx, phoneHash, age, at);
     }
-    return true;
+    return { personId: member.person_id, phoneHash };
   }
 
   async pendingUnderageCleanup(limit: number): Promise<string[]> {

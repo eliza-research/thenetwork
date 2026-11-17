@@ -35,7 +35,7 @@ import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
 import { signupAccountView } from "./sessions.ts";
-import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
+import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod, RecordedMemberAge } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
 /** A started number change must be confirmed with the code from the new number within this time. */
@@ -363,6 +363,18 @@ export class Accounts {
         // A prior hook may have failed after noteAge committed. Reconcile on retry, even if the
         // statement is unchanged or older than the stored minimum. The hook only lowers app ages.
         await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+      }
+    }
+  }
+
+  /** Project a durable chat observation. The write's owner survives a change of phone number. */
+  async projectRecordedAge(recorded: RecordedMemberAge): Promise<void> {
+    try {
+      await this.store.cleanupRecordedAgeFloor(recorded);
+    } finally {
+      const person = recorded.personId ? await this.store.getPerson(recorded.personId) : undefined;
+      if (person?.deletedAt === null && validAge(person.lowestAge)) {
+        await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
       }
     }
   }

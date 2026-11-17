@@ -1924,7 +1924,7 @@ export class NetworkService implements RuntimeHost {
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
       if (!kw && e164 && !controls && !calendar && !surveyAnswer && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
-      if (e164) await this.statedAge(rt, memberId, e164);
+      if (e164) await this.projectStatedAge(rt, memberId);
       return out;
     }
 
@@ -2010,7 +2010,7 @@ export class NetworkService implements RuntimeHost {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
     await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
-    await this.statedAge(rt, m.memberId as MemberId, e164);
+    await this.projectStatedAge(rt, m.memberId as MemberId);
     return "accepted";
   }
 
@@ -2439,18 +2439,10 @@ export class NetworkService implements RuntimeHost {
     rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result), "bounded_home_help");
   }
 
-  /**
-   * An age the member stated in chat (the Network's classifier: first person, present tense; it calls
-   * onAgeStated, runtime.ts). The person keeps the lowest age on every app (Accounts.recordAge ->
-   * ageLowered): an explicit age, a minor's age, or the age the Network declined them for. The phone's
-   * age floor too, so a member from before the platform (no person) cannot join again older. When the
-   * Network declined them (under 13), every membership goes: under 13 cannot use any app.
-   */
-  private async statedAge(rt: NetworkRuntime, memberId: MemberId, e164: string) {
-    const ages = rt.takeAges(memberId);
-    if (!ages.length) return;
-    const person = await this.accounts.personFor(e164);
-    await this.accounts.recordAge(e164, person, Math.min(...ages.map(observation => observation.age)));
+  /** Apply the saved age to matching, photos, and memberships owned by the same person. */
+  private async projectStatedAge(rt: NetworkRuntime, memberId: MemberId) {
+    const recorded = rt.takeRecordedAge(memberId);
+    if (recorded) await this.accounts.projectRecordedAge(recorded);
   }
 
   /**

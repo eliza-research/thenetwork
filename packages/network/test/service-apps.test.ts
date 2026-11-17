@@ -637,6 +637,52 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       "content-type": "application/json", ...await svcSign(signedInvitationSecret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) }),
     } }));
   };
+  test("a committed age correction follows its owner when the old number is reassigned", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const opts = { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } };
+    const { s } = service(clock, opts);
+    const { s: second } = service(clock, { ...opts, instance: "age-reassignment" });
+    await s.start();
+    await second.start();
+    const oldNumber = newPhone(), newNumber = newPhone();
+    const app = APPS[FR];
+    const consent = { sms: true, wording: app.consent.text } as const;
+    const first = await s.accounts.join(app, { e164: oldNumber, personId: null }, {
+      firstName: "Ari", age: 25, consent,
+    });
+    if (!first.ok) throw new Error(`Fixture signup failed: ${first.error}`);
+    const owner = { e164: oldNumber, personId: first.membership.personId };
+    expect(await second.accounts.startNumberChange(app, owner, newNumber, async () => true)).toEqual({ ok: true });
+    const rt = s.runtimeFor(FR)!;
+    const run = rt.unitOfWork.bind(rt);
+    let successor: string | undefined;
+    rt.unitOfWork = async (fn, scheduling) => {
+      const result = await run(fn, scheduling);
+      if (!successor && (await s.people.getPerson(owner.personId))?.lowestAge === 15) {
+        const moved = await second.accounts.confirmNumberChange(owner, async () => true);
+        if (!moved.ok) throw new Error(`Fixture number change failed: ${moved.error}`);
+        const joined = await second.accounts.join(app, { e164: oldNumber, personId: null }, {
+          firstName: "Eli", age: 30, consent,
+        });
+        if (!joined.ok) throw new Error(`Fixture reassignment failed: ${joined.error}`);
+        successor = joined.membership.personId;
+      }
+      return result;
+    };
+    const response = await invitationTurn(s, clock)({
+      messageId: "committed-age-before-reassignment", text: "I am 15 years old.", from: oldNumber,
+      app: FR, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(),
+    });
+    expect(response.status).toBe(200);
+    expect(successor).toBeDefined();
+    expect(successor).not.toBe(owner.personId);
+    expect(await s.accounts.personFor(newNumber)).toMatchObject({ id: owner.personId, lowestAge: 15 });
+    expect(await s.accounts.personFor(oldNumber)).toMatchObject({ id: successor, lowestAge: 30 });
+    expect(await s.people.ageFloor(s.accounts.phoneHash(oldNumber))).toBe(30);
+    expect(await s.people.ageFloor(s.accounts.phoneHash(newNumber))).toBe(15);
+  }, T);
+
   test.each([{ before: 25, after: 15 }, { before: 15, after: 12 }])("a signed age correction from $before to $after survives interrupted projection", async ({ before, after }) => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
@@ -655,7 +701,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const friends = (await memberOf(FR, e164))!;
     const slop = (await memberOf("slop", e164))!;
     let interrupted = false;
-    s.accounts.recordAge = async () => { interrupted = true; throw new Error("fixture: interruption before age projection"); };
+    s.accounts.projectRecordedAge = async () => { interrupted = true; throw new Error("fixture: interruption before age projection"); };
     const response = await invitationTurn(s, clock)({
       messageId: `age-crash-${after}`, text: `I am ${after} years old.`, from: e164, app: FR,
       to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(),
