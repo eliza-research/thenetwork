@@ -61,16 +61,17 @@ test("one exact signed report reaches only booked group recipients and survives 
 
   const binding = { app: "ntwrk", oppId, meetingAt, revision: 0, from: "a", to: "b" };
   expect(parseLateArrivalDeliveryId(lateArrivalDeliveryId(binding))).toEqual(binding);
-  expect(storedGroupLateArrivalCurrent(world.net.exportState(), binding, world.clock.now())).toBe(true);
-  expect(storedGroupLateArrivalCurrent(world.net.exportState(), binding, meetingAt + 30 * MINUTE)).toBe(false);
+  const deliveredBooking = (id: string) => ["a", "b", "c"].includes(id);
+  expect(storedGroupLateArrivalCurrent(world.net.exportState(), binding, world.clock.now(), deliveredBooking)).toBe(true);
+  expect(storedGroupLateArrivalCurrent(world.net.exportState(), binding, meetingAt + 30 * MINUTE, deliveredBooking)).toBe(false);
 
   const changed = world.net.exportState();
   const opp = changed.opps.find(o => o.id === oppId)!;
   opp.scheduleRevision = 2;
-  expect(storedGroupLateArrivalCurrent(changed, binding, world.clock.now())).toBe(false);
+  expect(storedGroupLateArrivalCurrent(changed, binding, world.clock.now(), deliveredBooking)).toBe(false);
   opp.scheduleRevision = 0;
   changed.members.find(m => m.id === "a")!.optedOut = true;
-  expect(storedGroupLateArrivalCurrent(changed, binding, world.clock.now())).toBe(false);
+  expect(storedGroupLateArrivalCurrent(changed, binding, world.clock.now(), deliveredBooking)).toBe(false);
 });
 
 test("a direct report with overlapping bookings leaves both groups untouched", async () => {
@@ -95,7 +96,7 @@ test("a two-person booking keeps its existing relay path", async () => {
   expect(world.net.exportState().opps.every(o => !o.lateArrivalReported)).toBe(true);
 });
 
-test.skipIf(!pgAvailable)("the signed turn queues an exact group notice and declines it after the meeting window", async () => {
+test.skipIf(!pgAvailable).each([false, true])("the signed turn needs three current booking receipts at submission and dispatch (provider failure: %s)", async receiptFailed => {
   const url = await migratedDb("group_late");
   const sql = new SQL(url);
   const app = APPS.friends;
@@ -136,13 +137,35 @@ test.skipIf(!pgAvailable)("the signed turn queues an exact group notice and decl
     clock.set(meetingAt - MINUTE);
     for (const phone of phones) await adapter.engaged(phone);
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id=${app.id}`;
-    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: state.members, opps: state.opps }));
+    const bookingNotice = (index: number) => {
+      const memberId = ids[index]!;
+      const id = `fixture-group-booking:${oppId}:${memberId}`;
+      rt.unit.sends.push({ id, memberId, to: phones[index], kind: "transactional", type: "proposal", oppId,
+        body: "Your climbing session is booked at the park.", bookingRoster: ids, proactive: false, system: false, ts: clock.now() });
+      return id;
+    };
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: state.members, opps: state.opps });
+      bookingNotice(0);
+      bookingNotice(1);
+    });
+    const reportAt = async (messageId: string, receivedAt = clock.now()) => {
+      const body = JSON.stringify({ messageId, channel: "blooio", from: phones[0], to: null, text: "I'm running late.",
+        transport: "imessage", receivedAt, app: app.id } satisfies TurnRequest);
+      const headers = await svcSign(key, { method: "POST", path: TURN_PATH, body, id: messageId, nowS: Math.floor(clock.now() / 1000) });
+      return service.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers, body }));
+    };
+    // spec/groupLateArrival.md, "Relay one direct report for one current booked group"
+    expect(calls.filter(call => call.idempotencyKey.startsWith("tn:fixture-group-booking:"))).toHaveLength(2);
+    expect((await reportAt("synthetic-group-late-missing-third")).status).toBe(200);
+    expect((await rt.pg.load())!.opps[0]?.lateArrivalReported).toBeUndefined();
+    expect(calls.filter(call => call.text === lateArrivalNotice)).toHaveLength(0);
+    const thirdBooking = await rt.unitOfWork(() => bookingNotice(2));
+    expect(await adapter.queue.statusOf(thirdBooking)).toBe("sent");
     await adapter.queue.setLineSafety("review");
-    const messageId = "synthetic-group-late-arrival", body = JSON.stringify({
-      messageId, channel: "blooio", from: phones[0], to: null, text: "I'm running late.", transport: "imessage", receivedAt: clock.now(), app: app.id,
-    } satisfies TurnRequest);
-    const headers = await svcSign(key, { method: "POST", path: TURN_PATH, body, id: messageId, nowS: Math.floor(clock.now() / 1000) });
-    const response = await service.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", headers, body }));
+    expect((await reportAt("synthetic-group-late-old-receive-time", clock.now() - 1)).status).toBe(200);
+    expect((await rt.pg.load())!.opps[0]?.lateArrivalReported).toBeUndefined();
+    const response = await reportAt("synthetic-group-late-arrival");
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ outcome: "handled", replies: ["I’ll pass along a short update where I can."] });
 
@@ -158,7 +181,13 @@ test.skipIf(!pgAvailable)("the signed turn queues an exact group notice and decl
     expect(await adapter.queue.statusOf(current(second))).toBe("sent");
     expect(calls.filter(call => call.text === lateArrivalNotice).map(call => call.to)).toEqual([phones[1]]);
 
-    clock.set(cutoff);
+    if (receiptFailed) {
+      expect(await adapter.status({ kind: "status", channel: "blooio", providerMessageId: `sim:tn:${thirdBooking}`,
+        status: "failed", at: clock.now() })).toMatchObject({ id: thirdBooking, status: "failed" });
+      await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${current(third)}`;
+    } else {
+      clock.set(cutoff);
+    }
     await rt.deliver();
     expect(await adapter.queue.statusOf(current(third))).toBe("suppressed_ineligible");
     expect(calls.filter(call => call.text === lateArrivalNotice).map(call => call.to)).toEqual([phones[1]]);

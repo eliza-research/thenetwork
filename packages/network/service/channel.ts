@@ -128,7 +128,7 @@ function receivedBookingNotice(receipt: BookingReceipt, now: number): boolean {
   return bookingNoticeReceived(receipt.status, receipt.sent_at?.getTime() ?? -1, now);
 }
 
-async function currentBookingReceipt(tx: SQL, app: string, oppId: string, memberId: MemberId,
+export async function currentBookingReceipt(tx: SQL, app: string, oppId: string, memberId: MemberId,
   revision: number, lane: string | null): Promise<BookingReceipt | undefined> {
   const key = rescheduleUpdateKey(oppId, revision, memberId);
   const changed = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;

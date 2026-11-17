@@ -20,6 +20,11 @@ export function lateArrivalDeliveryId(delivery: LateArrivalDelivery): string {
   return lateArrivalDeliveryPrefix + [app, oppId, meetingAt, revision, from, to].map(part => encodeURIComponent(part)).join(":");
 }
 
+/** In-memory lookup for an exact booking receipt. This key is never sent. */
+export function lateArrivalBookingReceiptKey(oppId: string, memberId: MemberId, revision = 0): string {
+  return `${lateArrivalDeliveryPrefix}booking-receipt:${[oppId, revision, memberId].map(encodeURIComponent).join(":")}`;
+}
+
 export function parseLateArrivalDeliveryId(id: string): LateArrivalDelivery | undefined {
   if (!id.startsWith(lateArrivalDeliveryPrefix)) return;
   const parts = id.slice(lateArrivalDeliveryPrefix.length).split(":");

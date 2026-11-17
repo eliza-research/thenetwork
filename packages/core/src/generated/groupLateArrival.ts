@@ -15,14 +15,26 @@ export const lateArrivalGraceMs: number = exact_groupLateArrival(30 * 60000);
 
 /** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
 //@ pure
+export function lateArrivalMayReport(signedDirect: boolean, exactReport: boolean, eligibleFrom: boolean, matchingGroups: number, alreadyReported: boolean): boolean {
+  return signedDirect && exactReport && eligibleFrom && matchingGroups === 1 && !alreadyReported;
+}
+
+/** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
+//@ pure
 export function lateArrivalWindow(untilStart: number): boolean {
   return untilStart <= lateArrivalLeadMs && untilStart > exact_groupLateArrival(0 - lateArrivalGraceMs);
 }
 
 /** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
 //@ pure
-export function lateArrivalMayReport(signedDirect: boolean, exactReport: boolean, eligibleFrom: boolean, matchingGroups: number, alreadyReported: boolean): boolean {
-  return signedDirect && exactReport && eligibleFrom && matchingGroups === 1 && !alreadyReported;
+export function lateArrivalBookingReceiptCurrent(positiveReceipt: boolean, bookingAt: number, checkedAt: number): boolean {
+  return positiveReceipt && 0 <= bookingAt && bookingAt <= checkedAt;
+}
+
+/** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
+//@ pure
+export function lateArrivalGroupCurrent(scheduled: boolean, reviewed: boolean, logistics: boolean, bookedFrom: boolean, bookedCount: number, untilStart: number): boolean {
+  return scheduled && reviewed && logistics && bookedFrom && bookedCount >= lateArrivalMinimumRoster && lateArrivalWindow(untilStart);
 }
 
 /** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
@@ -34,8 +46,15 @@ export function lawLateArrivalNeedsOneGroup(signedDirect: boolean, exactReport: 
 
 /** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
 //@ pure
-export function lateArrivalGroupCurrent(scheduled: boolean, reviewed: boolean, logistics: boolean, bookedFrom: boolean, bookedCount: number, untilStart: number): boolean {
-  return scheduled && reviewed && logistics && bookedFrom && bookedCount >= lateArrivalMinimumRoster && lateArrivalWindow(untilStart);
+export function lateArrivalReportTimeCurrent(untilStartAtReport: number, reportedAt: number, handledAt: number): boolean {
+  return 0 <= reportedAt && reportedAt <= handledAt && lateArrivalWindow(untilStartAtReport);
+}
+
+/** Story: Tell my group I am running late / Relay one direct report for one current booked group (spec/groupLateArrival.md) */
+//@ pure
+export function lawLateArrivalCannotPrecedeBookingReceipt(positiveReceipt: boolean, bookingAt: number, checkedAt: number): boolean {
+  //@ ensures \result === true
+  return !(checkedAt < bookingAt) || !lateArrivalBookingReceiptCurrent(positiveReceipt, bookingAt, checkedAt);
 }
 
 /** Story: Tell my group I am running late / Send only the fixed notice to each eligible booked recipient (spec/groupLateArrival.md) */

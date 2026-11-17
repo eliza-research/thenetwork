@@ -53,8 +53,8 @@ import {
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
   settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
-import { lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
-import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
+import { lateArrivalBookingReceiptCurrent, lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice, lateArrivalReportTimeCurrent } from "../../core/src/generated/groupLateArrival.ts";
+import { isLateArrivalReport, lateArrivalBookingReceiptKey, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
@@ -925,10 +925,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   private outboundBefore = 0;
   private invitesBeforeReply = new Set<string>();
 
-  private handleGroupLateArrival(member: MemberState, now: number): boolean {
+  private handleGroupLateArrival(member: MemberState, now: number, receivedAt: number): boolean {
     if (!this.groupLateArrivalPartyCurrent(member.id)) return false;
     const groups = [...this.opps.values()].flatMap(opp => {
-      const roster = lateArrivalRoster(opp, id => opp.status.get(id) === "yes");
+      if (opp.meetingAt === undefined || !lateArrivalReportTimeCurrent(opp.meetingAt - receivedAt, receivedAt, now)) return [];
+      const roster = lateArrivalRoster(opp, id => opp.status.get(id) === "yes", id => this.groupLateArrivalBookingReceived(opp, id, receivedAt));
       return groupLateArrivalBookingCurrent(opp, roster, member.id, now) ? [{ opp, roster }] : [];
     });
     if (groups.length !== 1) return false;
@@ -955,6 +956,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.syncRecord(member);
     const view = relayMemberOf(member, !this.trust.ok(id) || this.reportHeld(id));
     return canBeMatched(view.age) && !view.optedOut && !view.held && member.state !== "paused";
+  }
+
+  private groupLateArrivalBookingReceived(opp: LateArrivalBooking, id: MemberId, at: number): boolean {
+    if (!this.ctx.initialInviteReceipt) {
+      const simulatedAt = opp.bookedAt?.[id];
+      return lateArrivalBookingReceiptCurrent(simulatedAt !== undefined, simulatedAt ?? -1, at);
+    }
+    const receipt = this.ctx.initialInviteReceipt?.(lateArrivalBookingReceiptKey(opp.id, id, opp.scheduleRevision));
+    return lateArrivalBookingReceiptCurrent(receipt?.kind === "accepted", receipt?.kind === "accepted" ? receipt.at : -1, at);
   }
 
 
@@ -1112,7 +1122,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (surveyAnswer) return this.recordInterruptionFeedback(m, surveyAnswer, now, msg.ts);
 
     if (!mcp && !msg.reaction && !c.abuse.length && isLateArrivalReport(body)
-      && this.opts.lateArrivalTurnAllowed?.(m.id, msg.id) && this.handleGroupLateArrival(m, now)) return;
+      && this.opts.lateArrivalTurnAllowed?.(m.id, msg.id) && this.handleGroupLateArrival(m, now, msg.signedReceivedAt ?? msg.ts)) return;
 
     if (parsed.cofounderAffirmed) {
       if (mcp) return this.learnFromProfile(m, undefined, c, body);
@@ -6237,7 +6247,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       };
       case "group_late": return {
         valid: () => !!o && this.groupLateArrivalPartyCurrent(h.from) && this.groupLateArrivalPartyCurrent(m.id)
-          && groupLateArrivalDeliveryCurrent(o, h, now(), id => o.status.get(id) === "yes") && h.app === this.app.id && m.id === h.to,
+          && groupLateArrivalDeliveryCurrent(o, h, now(), id => o.status.get(id) === "yes", id => this.groupLateArrivalBookingReceived(o, id, now()))
+          && h.app === this.app.id && m.id === h.to,
       };
       case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) };
       case "feedback": return { onSent: () => { if (o) this.expect(m, { kind: "feedback", oppId: o.id, at: now() }); } };
@@ -7069,19 +7080,21 @@ function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge"
   return { id: m.id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || trustHold };
 }
 
-type LateArrivalBooking = Pick<Opp, "stage" | "review" | "participants" | "meetingAt" | "scheduleRevision" | "bookedAt" | "seat" | "lateArrivalReported">;
+type LateArrivalBooking = Pick<Opp, "id" | "stage" | "review" | "participants" | "meetingAt" | "scheduleRevision" | "bookedAt" | "seat" | "lateArrivalReported">;
 
-function lateArrivalRoster(opp: LateArrivalBooking, accepted: (id: MemberId) => boolean): MemberId[] {
-  return [...new Set(opp.participants)].filter(id => accepted(id) && opp.bookedAt?.[id] !== undefined);
+function lateArrivalRoster(opp: LateArrivalBooking, accepted: (id: MemberId) => boolean, received: (id: MemberId) => boolean): MemberId[] {
+  return [...new Set(opp.participants)].filter(id => accepted(id) && opp.bookedAt?.[id] !== undefined && received(id));
 }
 
 function groupLateArrivalBookingCurrent(opp: LateArrivalBooking, roster: readonly MemberId[], from: MemberId, now: number): boolean {
   return opp.meetingAt !== undefined
-    && lateArrivalGroupCurrent(opp.stage === "scheduled", opp.review?.decision === "approve", !opp.seat, roster.includes(from), roster.length, opp.meetingAt - now);
+    && lateArrivalGroupCurrent(opp.stage === "scheduled", opp.review?.decision === "approve" && !opp.review.invalidated,
+      !opp.seat, roster.includes(from), roster.length, opp.meetingAt - now);
 }
 
-function groupLateArrivalDeliveryCurrent(opp: LateArrivalBooking, delivery: LateArrivalDelivery, now: number, accepted: (id: MemberId) => boolean): boolean {
-  const roster = lateArrivalRoster(opp, accepted);
+function groupLateArrivalDeliveryCurrent(opp: LateArrivalBooking, delivery: LateArrivalDelivery, now: number,
+  accepted: (id: MemberId) => boolean, received: (id: MemberId) => boolean): boolean {
+  const roster = lateArrivalRoster(opp, accepted, received);
   const { from, to, revision, meetingAt } = delivery;
   return lateArrivalMayDispatch(groupLateArrivalBookingCurrent(opp, roster, from, now),
     opp.lateArrivalReported?.[from] === revision, opp.meetingAt === meetingAt && (opp.scheduleRevision ?? 0) === revision,
@@ -7089,9 +7102,11 @@ function groupLateArrivalDeliveryCurrent(opp: LateArrivalBooking, delivery: Late
 }
 
 /** Check a queued notice against the latest committed Network state for its exact app. */
-export function storedGroupLateArrivalCurrent(state: NetworkState, delivery: LateArrivalDelivery, now: number): boolean {
+export function storedGroupLateArrivalCurrent(state: NetworkState, delivery: LateArrivalDelivery, now: number,
+  received: (id: MemberId) => boolean): boolean {
   const opp = state.opps.find(o => o.id === delivery.oppId);
-  if (!opp || !groupLateArrivalDeliveryCurrent(opp, delivery, now, id => opp.status.some(([key, status]) => key === id && status === "yes"))) return false;
+  if (!opp || !groupLateArrivalDeliveryCurrent(opp, delivery, now,
+    id => opp.status.some(([key, status]) => key === id && status === "yes"), received)) return false;
   if (state.blocks.includes(pairKey(delivery.from, delivery.to))) return false;
   return [delivery.from, delivery.to].every(id => {
     const member = state.members.find(m => m.id === id);

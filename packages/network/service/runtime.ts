@@ -32,9 +32,9 @@ import { legacyIntentReconciliationDue } from "../../core/src/generated/standing
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
-import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
-import { meetingFeedbackCandidate } from "../../core/src/generated/meetingSettlement.ts";
-import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
+import { lateArrivalMinimumRoster, lateArrivalNotice, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
+import { bookingNoticeReceived, meetingFeedbackCandidate } from "../../core/src/generated/meetingSettlement.ts";
+import { lateArrivalBookingReceiptKey, parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
@@ -55,7 +55,7 @@ import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { BlooioAdapter, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
@@ -353,7 +353,11 @@ export class NetworkRuntime {
     if (!delivery || row.app !== app || delivery.app !== app || row.kind !== "transactional" || row.text !== lateArrivalNotice
       || row.memberId !== delivery.to || row.oppId !== delivery.oppId) return refused;
     const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${app} for share`;
-    if (!saved || !storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now())) return refused;
+    const opp = saved?.state.opps.find(o => o.id === delivery.oppId);
+    if (!saved || !opp || opp.stage !== "scheduled" || opp.meetingAt !== delivery.meetingAt || (opp.scheduleRevision ?? 0) !== delivery.revision) return refused;
+    const receipts = await this.groupLateArrivalBookingReceipts(tx, opp, this.clock.now());
+    const received = (id: MemberId) => receipts.has(id);
+    if (!storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now(), received)) return refused;
     const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
       and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${lateArrivalNotice}`;
     if (!message || await this.canonicalPairBlocked(tx, delivery.from, delivery.to)) return refused;
@@ -362,7 +366,20 @@ export class NetworkRuntime {
       const party = parties.get(id);
       return party?.adult && !party.optedOut && !party.held;
     })) return refused;
-    return storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now()) ? { ok: true } : refused;
+    return storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now(), received) ? { ok: true } : refused;
+  }
+
+  private async groupLateArrivalBookingReceipts(tx: SQL, opp: NetworkState["opps"][number], now: number): Promise<Map<MemberId, number>> {
+    const receipts = new Map<MemberId, number>();
+    const roster = [...new Set(opp.participants)].filter(id => opp.bookedAt?.[id] !== undefined
+      && opp.status.some(([member, status]) => member === id && status === "yes"));
+    if (roster.length < lateArrivalMinimumRoster) return receipts;
+    for (const id of roster) {
+      const receipt = await currentBookingReceipt(tx, this.app.id, opp.id, id, opp.scheduleRevision ?? 0, opp.lane ?? null);
+      const sentAt = receipt?.sent_at?.getTime();
+      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) receipts.set(id, sentAt);
+    }
+    return receipts;
   }
 
   /** Admit the exact reviewed introduction against current database state on the actual send. */
@@ -804,6 +821,14 @@ export class NetworkRuntime {
     const gathering = new Map((state?.opps ?? []).filter(opp => opp.gatheringRepeat && opp.stage === "probing").map(opp => [opp.id, opp]));
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string; type: "scheduling" | "reminder" | "feedback_request" }>();
     const now = this.clock.now();
+    const lateArrivalGroups = (state?.opps ?? []).filter(opp => opp.stage === "scheduled" && opp.review?.decision === "approve"
+      && !opp.review.invalidated && !opp.seat && opp.participants.length >= lateArrivalMinimumRoster
+      && opp.meetingAt !== undefined && lateArrivalWindow(opp.meetingAt - now));
+    if (lateArrivalGroups.length) await this.scoped(async tx => {
+      for (const opp of lateArrivalGroups) for (const [id, at] of await this.groupLateArrivalBookingReceipts(tx, opp, now)) {
+        this.initialInviteReceipts.set(lateArrivalBookingReceiptKey(opp.id, id, opp.scheduleRevision), { kind: "accepted", at });
+      }
+    });
     for (const opp of state?.opps ?? []) {
       if (opp.stage === "done" && opp.meetingAt !== undefined) {
         for (const [memberId, status] of opp.status) {
