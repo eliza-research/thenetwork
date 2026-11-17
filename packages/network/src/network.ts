@@ -5510,7 +5510,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private send(m: MemberState, body: string, meta: SimMeta, kind: SendKind, o: SendOpts = {}): SendResult {
     const now = this.now();
-    const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? "");
+    const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? meta.plan?.planId ?? "");
     if (opportunity?.lane === "Cofounder" && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal")) {
       const revealing = meta.type === "proposal" || o.key?.startsWith(RESCHEDULE_QUEUE_PREFIX) === true;
       const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes" && opportunity.contacted.has(id));
@@ -5585,12 +5585,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const baseBody = body;
     const deliveredInviteJoins: InviteJoinNotice[] = [];
-    if (!standaloneNotice && !o.memberInviteLink && !meta.privateInviteVouch && m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(this.memberReply && this.replyTo === m.id, reply, kind === "safety" || kind === "relay")) {
+    // spec/outreachPolicy.md, "An eligible join receipt can ride on a current reply"
+    const directMemberTurn = this.memberReply && this.replyTo === m.id;
+    const carriesMemberText = kind === "safety" || kind === "relay";
+    if (!standaloneNotice && !o.memberInviteLink && !meta.privateInviteVouch && m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, false)) {
       const current: InviteJoinNotice[] = [];
+      const roles = new Set([...(opportunity?.participants ?? []), ...(opportunity?.alternates ?? [])]);
       for (const notice of m.pendingInviteJoins) {
         const status = this.inviteJoinText(m, notice);
         if (status === undefined) continue;
         current.push(notice);
+        if (!inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, roles.has(notice.inviteeId))) continue;
         if (body.length + status.length + 1 <= INVITE_REPLY_MAX_CHARS && !this.guardCheck(status, m.id).length) {
           body += ` ${status}`;
           deliveredInviteJoins.push(notice);

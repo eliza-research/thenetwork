@@ -152,6 +152,30 @@ const APP_OF_LANE: Record<PlantedLane, AppId> = { Friend: "friends", Date: "slop
 const LANE_CATEGORY: Record<PlantedLane, Category> = { Friend: "social", Date: "romance", Cofounder: "professional", Intro: "professional", Hire: "professional", Mentor: "professional", Invest: "professional" };
 const FRIENDS_TOPICS = [...FRIENDS_ACTIVITY_TAGS].sort();
 const FRIENDS_ENERGY = ["low", "mid", "high"];
+/** Stated one-way travel limits (minutes): short enough that a home reaches about a seventh of the city. */
+const FRIENDS_TOLERANCE = [10, 15, 20];
+/** Stated dating radii (miles): each reaches 5% to 36% of the NYC zip cells. */
+const DATE_MAX_MILES = [3, 5, 8];
+const DATE_GENDERS = ["woman", "man", "nonbinary"] as const;
+type DateGender = (typeof DATE_GENDERS)[number];
+const otherBinary = (g: DateGender): DateGender => (g === "woman" ? "man" : "woman");
+
+/**
+ * The stated Date pool of one member. A circle draws its kind from its own hash: three in five are
+ * mixed (women and men alternate by circle position and seek each other), one in five seek their own
+ * binary pool, one in five are nonbinary members who seek nonbinary members.
+ */
+function datePools(seed: number | string, circle: number, position: number | undefined, r: Rng): { is: DateGender; seeks: DateGender } {
+  if (circle < 0 || position === undefined) {
+    const is = r.pick(DATE_GENDERS);
+    return { is, seeks: is === "nonbinary" || r.bool(0.2) ? is : otherBinary(is) };
+  }
+  const kind = hash32("planted-pool", seed, circle) % 5;
+  if (kind === 4) return { is: "nonbinary", seeks: "nonbinary" };
+  if (kind === 3) { const is: DateGender = hash32("planted-own-pool", seed, circle) % 2 ? "man" : "woman"; return { is, seeks: is }; }
+  const is: DateGender = position % 2 ? "man" : "woman";
+  return { is, seeks: otherBinary(is) };
+}
 const DATE_ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
 const DATE_PLANS = [...DATE_ACTIVITIES.map(a => `activity:${a}`), ...DATE_SLOTS.map(s => `free:${s}`)];
 const DATE_ZIPS = { nyc: ZIPS.filter(z => z.market === "nyc"), sf: ZIPS.filter(z => z.market === "sf") };
@@ -289,6 +313,7 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     ids.forEach((id, position) => planned.set(id, { pool, position }));
   });
   const marketOf = new Map(seats.map(s => [s.id, s.market]));
+  const ageOf = new Map(seats.map(s => [s.id, s.age]));
   const circleArea = latent.circles.map((ids, c) => root.fork("area", c).pick(NEIGHBORHOODS[marketOf.get(ids[0]!)!]));
 
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
@@ -377,13 +402,23 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
       const slots = new Set([FRIENDS_SLOTS[trait("free first", FRIENDS_SLOTS.length)]!, FRIENDS_SLOTS[trait("free second", FRIENDS_SLOTS.length)]!]);
       add("availability_pattern", "Usually free", [...slots].map(slot => `${FT.free}${slot}`), "agent_private");
       add("preference", "Social energy", [`${FT.energy}${FRIENDS_ENERGY[trait("energy", FRIENDS_ENERGY.length)]!}`], "agent_private");
+      add("preference", "Travel limit", [`${FT.maxTravel}${FRIENDS_TOLERANCE[trait("max travel", FRIENDS_TOLERANCE.length)]!}`], "agent_private");
       add("fact", "Verified by the service", [`${FT.liveness}${VERIFY_PASS}`, `${FT.age}${VERIFY_PASS}`], "agent_private", "connected_source");
     }
     if (adult && app === "slop" && memberships.Date) {
-      const genders = ["woman", "man", "nonbinary"] as const;
       const zips = DATE_ZIPS[seat.market];
-      add("preference", "Dating preferences", [`romance:is:${genders[i % genders.length]}`, ...genders.map(gender => `romance:seeks:${gender}`), `romance:age:${Math.max(18, seat.age - 8)}-${seat.age + 8}`, "slop:scope:city", "slop:max_miles:25"], "agent_private");
-      add("fact", "Home ZIP", [`slop:zip:${zips[trait("zip", zips.length)]!.zip}`], "agent_private");
+      // One pool each, chosen per circle so that a planted circle stays mutually compatible: a mixed
+      // circle alternates women and men who seek each other, a same-pool circle seeks its own pool.
+      // Outside a circle, women and men mostly seek the other and a fifth seek their own.
+      const { is, seeks } = datePools(o.seed, mark.circle, planned.get(id)?.position, r.fork("orientation"));
+      const maxMiles = DATE_MAX_MILES[trait("max miles", DATE_MAX_MILES.length)]!;
+      // The age range also covers every circle mate, so the age windows keep planted pairs feasible.
+      const mates = mark.circle >= 0 ? latent.circles[mark.circle]!.map(m => ageOf.get(m)!) : [seat.age];
+      const ageLo = Math.max(18, Math.min(seat.age - 8, ...mates)), ageHi = Math.max(seat.age + 8, ...mates);
+      add("preference", "Dating preferences", [`romance:is:${is}`, `romance:seeks:${seeks}`, `romance:age:${ageLo}-${ageHi}`, "slop:scope:city", `slop:max_miles:${maxMiles}`], "agent_private");
+      // A circle shares one ZIP (one coarse cell), inside every member's radius.
+      const zip = mark.circle >= 0 ? zips[hash32("planted-zip", o.seed, mark.circle) % zips.length]! : r.fork("zip").pick(zips);
+      add("fact", "Home ZIP", [`slop:zip:${zip.zip}`], "agent_private");
       add("goal", "Long-term dating", ["slop:goal:long_term"], "matchable");
       const wantsKids = trait("wants kids", 2) === 0 ? "yes" : "no";
       add("fact", "Lifestyle", ["slop:smoking:never", "slop:drinking:sometimes", `slop:wants_kids:${wantsKids}`, "slop:religion_importance:1", "slop:politics:moderate"], "matchable");

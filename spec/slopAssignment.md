@@ -1,6 +1,6 @@
 # Slop assignment rounds
 
-The [matching engine model](models/matching_engine.md) follows the Slop assignment path through the service. This machine controls the rounds and reservations in `packages/engine/src/packs/slop/assign.ts`. The shell supplies eligible, ranked pairs. It checks exclusions, open opportunities and minimum value, calculates each member’s degree, and uses the configured greedy or stable matcher.
+The [matching engine model](models/matching_engine.md) follows the Slop assignment path through the service. This machine controls the rounds and reservations in `packages/engine/src/packs/slop/assign.ts`. The shell supplies eligible, ranked pairs. It checks exclusions, open opportunities and minimum value, calculates each member’s degree, and orders the edges: pairs whose scarcer member has few searched partners first, then the highest value. Round 1 opens with the exposure floor (`packages/engine/src/policy.ts` `exposureFloor`, the same floor as the [global selection spec](selectionRun.md)): each floor member, highest carried exposure debt first, reserves their best edge that fits, until the floor cap is reached. Then one greedy walk over the ordered edges runs in each round. Every reservation, the floor ones included, goes through `canReservePair` and `reservePair` of this machine. The floor order and the floor cap are shell decisions outside this machine. The machine only checks that each reservation is allowed.
 
 ## Story: Assign a date proposal without filling a member’s inbox
 

@@ -38,8 +38,11 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README
 //     pair rules (packs/slop/rules.ts slopPairRules, the radius in geo.ts), both compatibility estimates at
 //     the lane floor and the private rating standings within the band plus the uncertainties. Screening
 //     refuses a candidate without a lane or a pair value (filters.ts laneReason). slopAssign
-//     (packs/slop/assign.ts) is one greedy pass per round over the edges in value order, each member once
-//     per round and never past the capacity left (hasRoom).
+//     (packs/slop/assign.ts) opens round 1 with the exposure floor (policy.ts exposureFloor: floor
+//     members, highest carried debt first, each reserve their best edge that fits, up to the floor cap),
+//     then runs one greedy pass per round over the edges (scarce members first, then value order), each
+//     member once per round and never past the capacity left (hasRoom). Every reservation goes through
+//     canReservePair and reservePair; the floor order and cap are shell decisions outside the model.
 //   - peon.biz: a job seat is a Hire entity on the Offering side owned by its manager; the level fit is the
 //     Hire lane's parity band. The pack refusal is packs/peon/selection.ts peonAllows (a slate cap per
 //     job and the Hire weekly capacity per candidate), which
@@ -397,7 +400,7 @@ module matching_engine {
   // ================================================================== slop daily run (engine-pipeline, global-selection, slop-assignment)
   // network.ts runMatching: runEngine on packInput, then gateReason per proposal, then submit to review.
   // The engine's pick among the eligible pairs with a pair value is the score oracle (the Date lane's
-  // search edges, then slopAssign in value order).
+  // search edges, then slopAssign: the round-1 exposure floor, then the greedy walk in value order).
   action slopRunWithPrompt(p: (str, str), unchangedPrompt: Set[(str, str)]): bool = all {
     enginePairs.contains(p),
     val gateOk = netMemberOk(p._1) and netMemberOk(p._2) and not(pairHistory(p))

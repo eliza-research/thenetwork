@@ -3,21 +3,22 @@
 // estimate as the pack value. The one generator turns the lane's searched edges into candidates:
 // no pair outside the bounded candidate search is ever checked.
 import type { City, MemberId } from "@thenetwork/core";
-import { DAY } from "@thenetwork/core";
+import { DAY, withinMutualRadius } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { standingFromRating, standingRatingScale, standingReadable, standingUncertainty } from "../../../../core/src/generated/memberStanding.ts";
 import { memberReason, type MemberCheck } from "../../filters.ts";
 import { countExclusion, pairCandidate, type GenCtx } from "../../genkit.ts";
-import type { EntityTags, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
+import type { EntitySegment, EntityTags, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
 import type { GeneratorSpec } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import { ratingPermille } from "./appearance.ts";
-import { mutualMarkets } from "./geo.ts";
+import { limitMiles, mutualMarkets } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
-import { datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
+import { cellIn, datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
 import { SLOP_LANE, SLOP_MATCH_LANE } from "./rules.ts";
 import { dateActivity, datePackValue, responsiveness } from "./score.ts";
+import { cellMiles, cellOfZip, ZIPS, type Cell } from "./zips.ts";
 
 export const SLOP_GENERATOR = "slop_reciprocal";
 
@@ -75,6 +76,53 @@ export function dateTags(p: SlopProfile): EntityTags {
   };
 }
 
+/** Every cell a member can be placed on: profiles place members only on cells of table zips (cellIn). */
+const ZIP_CELLS: readonly Cell[] = [...new Map(ZIPS.flatMap(z => { const c = cellOfZip(z.zip); return c ? [[c.id, c] as const] : []; })).values()];
+/** Per run: the cells within each (cell, limit) and the partner list of each (seeks, cell, limit). */
+interface SegmentMemo { readonly cells: Map<string, readonly string[]>; readonly partners: Map<string, readonly string[]> }
+const segmentMemo = new WeakMap<World, SegmentMemo>();
+function segmentMemoOf(w: World): SegmentMemo {
+  let memo = segmentMemo.get(w);
+  if (!memo) { memo = { cells: new Map(), partners: new Map() }; segmentMemo.set(w, memo); }
+  return memo;
+}
+
+/** The cells within one member's own limit: their half of withinMutualRadius (geo.ts mutualMarkets). */
+function reachableCells(memo: SegmentMemo, cell: Cell, limit: number, margin: number): readonly string[] {
+  const key = `${cell.id}|${limit}|${margin}`;
+  let cells = memo.cells.get(key);
+  if (!cells) {
+    cells = ZIP_CELLS.filter(c => withinMutualRadius(cellMiles(cell, c), margin, limit, limit)).map(c => c.id);
+    memo.cells.set(key, cells);
+  }
+  return cells;
+}
+const dateSegment = (pool: string, cell: string): string => `${pool}|${cell}`;
+
+/**
+ * The Date segment: the member's own pool and coarse cell; partners are every pool the member seeks
+ * on every cell within the member's own limit. Superset of the pair rules: orientation_mismatch admits
+ * b only when b.is is in a.seeks; a member in one dating market meets in that market only, so the
+ * mutual radius holds there and b's cell is within a's limit. A member who dates in several markets
+ * may meet in another one, so their memberships carry no segment and reach every partner.
+ */
+function dateSegmentOf(w: World, p: SlopProfile, market: City, o: SlopPackOptions): EntitySegment | undefined {
+  const markets = w.pack.geo.markets(w.cfg);
+  if (datingMarkets(p).filter(m => markets.includes(m)).length > 1) return undefined;
+  const cell = cellIn(p, market), limit = limitMiles(p, o);
+  const own = dateSegment(p.is ?? "unstated", cell?.id ?? "unplaced");
+  if (!cell || limit === undefined) return { own, partners: [] };
+  const memo = segmentMemoOf(w);
+  const key = `${p.seeks.join(",")}|${cell.id}|${limit}|${o.radiusMargin}`;
+  let partners = memo.partners.get(key);
+  if (!partners) {
+    const cells = reachableCells(memo, cell, limit, o.radiusMargin);
+    partners = p.seeks.flatMap(pool => cells.map(c => dateSegment(pool, c)));
+    memo.partners.set(key, partners);
+  }
+  return { own, partners };
+}
+
 /** slop.date's match vectors (AppPack.vectors). */
 export function slopVectors(o: SlopPackOptions): PackVectors {
   return {
@@ -91,6 +139,10 @@ export function slopVectors(o: SlopPackOptions): PackVectors {
     tags(w, entity) {
       const p = profilesOf(w).get(entity.memberId);
       return p ? dateTags(p) : { offers: [], seeks: [], interests: [] };
+    },
+    segment(w, entity) {
+      const p = profilesOf(w).get(entity.memberId);
+      return p ? dateSegmentOf(w, p, entity.market, o) : undefined;
     },
     // spec/memberStanding.md, "A private photo rating maps onto the standing scale for dating": a
     // member without a usable rating sits in the middle with the widest uncertainty; a rating counts

@@ -2,6 +2,7 @@
 import {
   closenessValue, coverageValue, directedUtility, noPairValue, pairValueScale, type PairSide, type UtilityTerm,
 } from "../../../core/src/generated/pairValue.ts";
+import { segmentPairAllowed } from "../../../core/src/generated/candidateSearch.ts";
 import { lanePairValue, laneSidesCompatible, laneWeights, type LaneWeights } from "../../../core/src/generated/matchLane.ts";
 import { pairReason } from "../filters.ts";
 import type { World } from "../world.ts";
@@ -59,14 +60,21 @@ export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonl
   };
 }
 
+/** `a` reaches `b`: either has no segment, or b's segment is one a can pair with. */
+export const segmentReaches = (a: MatchProfile, b: MatchProfile): boolean =>
+  a.segment === undefined || b.segment === undefined || a.segment.partners.has(b.segment.own);
+
 /**
  * THE pair gate: never the same member twice, the same lane with compatible sides, the same market,
- * then the core pair checks, the pack pair rules and the pack geo rule (filters.ts pairReason).
+ * segments that reach each other, then the core pair checks, the pack pair rules and the pack geo
+ * rule (filters.ts pairReason).
  */
 export function eligiblePair(w: World, a: MatchProfile, b: MatchProfile): string | null {
   if (a.memberId === b.memberId) return "duplicate_participant";
   if (a.lane !== b.lane || !laneSidesCompatible(a.lane, a.side, b.side)) return "lane_mismatch";
   if (a.market !== b.market) return "market_mismatch";
+  // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits"
+  if (!segmentPairAllowed(segmentReaches(a, b), segmentReaches(b, a))) return "segment_unreachable";
   return pairReason(w, a.memberId, b.memberId, laneCategory(a.lane), a.lane);
 }
 

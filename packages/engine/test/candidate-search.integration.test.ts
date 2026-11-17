@@ -1,9 +1,10 @@
 import { expect, test } from "vitest";
 import { searchTouchesPerCheck } from "../../core/src/generated/candidateSearch.ts";
 import { laneLimits } from "../../core/src/generated/matchLane.ts";
+import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { resolveConfig } from "../src/config.ts";
 import { localEmbed } from "../src/embed.ts";
-import { bruteForceCandidates, type PackVectors } from "../src/match/mod.ts";
+import { bruteForceCandidates, eligiblePair, type PackVectors } from "../src/match/mod.ts";
 import { networkPack } from "../src/packs/network/index.ts";
 import { baseMember, emptyInput } from "../src/testkit.ts";
 import { World } from "../src/world.ts";
@@ -59,4 +60,53 @@ test("an unfinished dense posting keeps a sound bound before spending the pair-c
   expect(oracle.map(candidate => candidate.profile.memberId)).toEqual(["winner"]);
   expect(result.unseenBound).toBeGreaterThanOrEqual(oracle[0]!.value);
   expect(world.match.tally()).toEqual({ members: 1, checks: 0, touches: touchLimit, exact: 0, budgeted: 1, empty: 1, largestUnseenBound: result.unseenBound });
+});
+
+/** Owner, a best partner with the same interests, and a nearer partner who shares fewer. */
+function segmentWorld(bestReachesNorth: boolean): World {
+  const input = emptyInput();
+  input.members.push(baseMember("owner"), baseMember("best"), baseMember("near"));
+  const interests: Record<string, string[]> = { owner: ["chess", "climbing", "jazz"], best: ["chess", "climbing", "jazz"], near: ["chess", "climbing"] };
+  const segments: Record<string, { own: string; partners: string[] }> = {
+    owner: { own: "north", partners: bestReachesNorth ? ["north", "south"] : ["north"] },
+    best: { own: "south", partners: bestReachesNorth ? ["north", "south"] : ["south"] },
+    near: { own: "north", partners: ["north"] },
+  };
+  const vectors: PackVectors = {
+    memberships: (_w, id) => [{ id, lane: "Friend", side: "Peer", market: "sf", capacity: 3 }],
+    tags: (_w, entity) => ({ interests: interests[entity.memberId]!, seeks: [], offers: [] }),
+    standing: () => ({ standing: 50, uncertainty: 0 }),
+    segment: (_w, entity) => segments[entity.memberId],
+  };
+  return new World(input, resolveConfig({}), localEmbed, { ...networkPack, vectors });
+}
+
+test("segment blocking skips a best candidate whose segment does not reach back, and the search still equals brute force", () => {
+  // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits"
+  const world = segmentWorld(false);
+  const owner = world.match.profileIn("owner", "Friend"), best = world.match.profileIn("best", "Friend");
+  if (!owner || !best) throw new Error("missing Friend profiles");
+  expect(eligiblePair(world, owner, best)).toBe("segment_unreachable");
+  expect(world.match.value(owner, best)).toBe(noPairValue);
+
+  const result = world.match.candidates(owner);
+  expect(result.exact).toBe(true);
+  expect(result.kept).toEqual(bruteForceCandidates(world, world.match.index, owner));
+  expect(result.kept.map(candidate => candidate.profile.memberId)).toEqual(["near"]);
+  // Only the owner's own segment is read: the best candidate is never touched or checked.
+  expect(world.match.tally()).toMatchObject({ members: 1, exact: 1, checks: 1, touches: 3 });
+});
+
+test("segments that reach each other keep the best candidate first", () => {
+  // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits"
+  const world = segmentWorld(true);
+  const owner = world.match.profileIn("owner", "Friend"), best = world.match.profileIn("best", "Friend");
+  if (!owner || !best) throw new Error("missing Friend profiles");
+  expect(eligiblePair(world, owner, best)).toBeNull();
+
+  const result = world.match.candidates(owner);
+  expect(result.exact).toBe(true);
+  expect(result.kept).toEqual(bruteForceCandidates(world, world.match.index, owner));
+  expect(result.kept.map(candidate => candidate.profile.memberId)).toEqual(["best", "near"]);
+  expect(world.match.tally()).toMatchObject({ members: 1, exact: 1, checks: 2 });
 });

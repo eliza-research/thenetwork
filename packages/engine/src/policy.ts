@@ -165,13 +165,31 @@ function selectionShell(w: World, opts: SelectOptions) {
 }
 
 /**
+ * spec/selectionRun.md, "Exposure selection precedes exploration and greedy selection": the members
+ * the exposure floor serves before any other pick, and how many it serves this run. A member
+ * qualifies with low recent exposure and either no proposal in 30 days, little profile data, or a
+ * recent join. The highest carried exposure debt goes first, in a seeded order among equal debt.
+ * Every selector runs it, a pack's own assignment (slopPack) included. It never reads a rating or a
+ * standing.
+ */
+export function exposureFloor(w: World, rng: Rng, debt: Readonly<Record<MemberId, number>>): { members: MemberId[]; cap: number } {
+  const cfg = w.cfg;
+  const carried = (id: MemberId) => Math.min(cfg.selection.exposureDebtCap, Math.max(0, debt[id] ?? 0));
+  const members = rng.fork("floor").shuffle(w.ids.filter(id => {
+    const mi = w.get(id)!;
+    return mi.lowExposure && (mi.newcomer || mi.lowData || mi.recentExposure30 === 0);
+  })).sort((a, b) => carried(b) - carried(a));
+  return { members, cap: Math.ceil(cfg.selection.exposureFloorShare * cfg.selection.maxProposalsPerCity * w.pack.geo.markets(cfg).length) };
+}
+
+/**
  * One selection run. The shell decides each choice once with O(1) checks and steps the generated
  * machine only to reserve or refuse, so the shell work is O(S log S + S k) for S scored
  * configurations of up to k members. Each machine step still copies its maps and scans its
  * refusals (spec/selectionRun.md), O(selected + refused) per reservation or refusal.
  */
 export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
-  // A pack's own global assignment (slopPack: stable matching). Absent for networkPack.
+  // A pack's own global assignment (slopPack: the exposure floor, then a greedy walk per round). Absent for networkPack.
   const assign = w.pack.selection.assign;
   if (assign) return assign(w, scored, { rng, debt, exclude: opts.exclude, extraProactive: opts.extraProactive });
   const cfg = w.cfg;
@@ -219,14 +237,8 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
     byMember.get(id)!.push(x);
   }
 
-  // 1. Exposure floor: low-exposure / newcomer / low-data members, highest carried exposure debt
-  // first (seeded order among equal debt), each get their best option that fits.
-  const carried = (id: MemberId) => Math.min(cfg.selection.exposureDebtCap, Math.max(0, debt[id] ?? 0));
-  const floorMembers = rng.fork("floor").shuffle(w.ids.filter(id => {
-    const mi = w.get(id)!;
-    return mi.lowExposure && (mi.newcomer || mi.lowData || mi.recentExposure30 === 0);
-  })).sort((a, b) => carried(b) - carried(a));
-  const floorCap = Math.ceil(cfg.selection.exposureFloorShare * cfg.selection.maxProposalsPerCity * w.pack.geo.markets(cfg).length);
+  // 1. Exposure floor: each floor member gets their best option that fits.
+  const { members: floorMembers, cap: floorCap } = exposureFloor(w, rng, debt);
   let floorTaken = 0;
   for (const id of floorMembers) {
     if (floorTaken >= floorCap) break;

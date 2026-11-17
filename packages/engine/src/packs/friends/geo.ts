@@ -123,6 +123,13 @@ export function transitMinutes(a: Neighborhood, b: Neighborhood): number {
   return Math.round(Math.min(m, d * 13 + 5)); // never worse than walking it
 }
 
+/**
+ * The friends pair rule (friendsGeo.pairReason): the estimated trip between two homes fits the sum of
+ * both stated tolerances, so some venue can fit both. It never gets worse as either tolerance grows.
+ */
+export const withinTransitTolerance = (minutes: number, tolerance: number, otherTolerance: number): boolean =>
+  minutes <= tolerance + otherTolerance;
+
 // ------------------------------------------------------------------------------------------------
 // Venues (public places only; MVP: never a home, no money through the Network)
 

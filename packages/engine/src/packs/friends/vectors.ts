@@ -2,14 +2,16 @@
 // the pack's member rules and has a home neighborhood. Interests are activity tags, seeks are the
 // member's specific wants, offers are what the member brings. Closeness compares home position,
 // schedule lean and social energy. Friend has no vertical dimension: everyone stands in the middle.
+// The segment is the home neighborhood and the tolerance class, so a search reads only the
+// neighborhoods within transit tolerance.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { standingFromRating, standingRatingScale } from "../../../../core/src/generated/memberStanding.ts";
 import { memberReason } from "../../filters.ts";
-import type { MatchEntity, PackVectors } from "../../match/profile.ts";
+import type { EntitySegment, MatchEntity, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { ACTIVITIES } from "../network/activities.ts";
-import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES } from "./geo.ts";
+import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, NEIGHBORHOODS, transitMinutes, withinTransitTolerance, type Neighborhood } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 
 /** The activity tags friends.help plans around. */
@@ -31,6 +33,41 @@ function weekendLean(w: World, id: MemberId): number {
 
 const homeOf = (w: World, id: MemberId) => friendsInfo(w).get(id)?.home;
 
+/** Upper bounds (minutes) of the tolerance classes; a tolerance above the last is in an unbounded class. */
+const TOLERANCE_CLASSES = [10, 15, 20, 30, 40, 60, 90, 120] as const;
+const toleranceClass = (tolerance: number): number => {
+  const k = TOLERANCE_CLASSES.findIndex(bound => tolerance <= bound);
+  return k < 0 ? TOLERANCE_CLASSES.length : k;
+};
+const classBound = (k: number): number => TOLERANCE_CLASSES[k] ?? Infinity;
+const homeSegment = (home: Neighborhood, k: number): string => `${home.id}|${k}`;
+/** Per run: the segment of each (home, tolerance) pair, so members with equal values share one partner list. */
+const reachableByRun = new WeakMap<World, Map<string, EntitySegment>>();
+
+/**
+ * Superset of the pair rule `withinTransitTolerance(transitMinutes(home, other), tolerance, otherTolerance)`:
+ * an admitted partner's tolerance t is at most the bound of its class and the rule never gets worse
+ * as a tolerance grows, so the rule with that bound in place of t holds for the partner's home, and
+ * the partner's segment (home, class) is listed here.
+ */
+function friendsSegment(w: World, home: Neighborhood, tolerance: number): EntitySegment {
+  let reachable = reachableByRun.get(w);
+  if (!reachable) { reachable = new Map(); reachableByRun.set(w, reachable); }
+  const key = `${home.id}|${tolerance}`;
+  const known = reachable.get(key);
+  if (known) return known;
+  const partners = new Set<string>();
+  for (const other of NEIGHBORHOODS) {
+    const minutes = transitMinutes(home, other);
+    for (let k = 0; k <= TOLERANCE_CLASSES.length; k++) {
+      if (withinTransitTolerance(minutes, tolerance, classBound(k))) partners.add(homeSegment(other, k));
+    }
+  }
+  const segment = { own: homeSegment(home, toleranceClass(tolerance)), partners: [...partners].sort() };
+  reachable.set(key, segment);
+  return segment;
+}
+
 export const friendsVectors: PackVectors = {
   memberships(w, memberId) {
     const mi = w.get(memberId);
@@ -48,6 +85,10 @@ export const friendsVectors: PackVectors = {
       // from the shared-interest term.
       offers: [...interests, ...match.filter(f => OFFER_KINDS.has(f.kind)).flatMap(f => f.tags)],
     };
+  },
+  segment(w, entity) {
+    const info = friendsInfo(w).get(entity.memberId);
+    return info?.home ? friendsSegment(w, info.home, info.tolerance) : undefined;
   },
   // spec/memberStanding.md: Friend has no vertical dimension, so every member sits in the middle.
   standing: () => ({ standing: standingFromRating(standingRatingScale / 2), uncertainty: 0 }),

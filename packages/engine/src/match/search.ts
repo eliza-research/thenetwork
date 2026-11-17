@@ -1,6 +1,7 @@
-// Bounded candidate search: a standing window, an exact threshold walk over the member's tag
-// postings, and the generated candidateSearch machine, which keeps the top `searchLimit` and
-// certifies when nothing unchecked can beat them.
+// Bounded candidate search: a window (the standing range inside each segment the member reaches),
+// an exact threshold walk over the member's tag postings in that window, and the generated
+// candidateSearch machine, which keeps the top `searchLimit` and certifies when nothing unchecked
+// can beat them.
 import {
   enabled, initial, searchTouchesPerCheck, searchWindowHigh, searchWindowLow, step, unseenValueBound,
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
@@ -9,7 +10,7 @@ import { lanePairValue, laneLimits, laneOffset, laneWeights, standingUncertainty
 import { coverageValue, directedUtility, noPairValue, pairValueScale } from "../../../core/src/generated/pairValue.ts";
 import type { SearchTally } from "../types.ts";
 import { pairKey, type World } from "../world.ts";
-import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings } from "./index.ts";
+import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings, type Span } from "./index.ts";
 import { pairSideOf, pairValueOf, vectorsOf, weightedTerms } from "./pair.ts";
 import { compareText, type EntityId, type MatchProfile, type TagSet } from "./profile.ts";
 
@@ -35,9 +36,8 @@ function resultOf(block: CandidateBlock | undefined, search: CandidateSearch, to
   return { kept, checks: search.checks, touches, exact: search.phase === "Exact", unseenBound: search.unseenBound };
 }
 
-/** First index whose value is >= `x` in an ascending list read through `at`. */
-function lowerBound(length: number, at: (i: number) => number, x: number): number {
-  let lo = 0, hi = length;
+/** First index in [lo, hi) whose value is >= `x` (hi when none) in an ascending run read through `at`. */
+function lowerBound(lo: number, hi: number, at: (i: number) => number, x: number): number {
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
     if (at(mid) < x) lo = mid + 1; else hi = mid;
@@ -45,17 +45,47 @@ function lowerBound(length: number, at: (i: number) => number, x: number): numbe
   return lo;
 }
 
+/**
+ * The window of `profile` in its partner block: inside each segment the profile reaches, the
+ * positions whose standing is in [low, high]. Ascending and disjoint; adjacent spans are merged.
+ */
+function windowSpans(block: CandidateBlock, profile: MatchProfile, low: number, high: number): Span[] {
+  const standingAt = (i: number) => block.profiles[i].standing;
+  const spans: Span[] = [];
+  for (const segment of block.segments) {
+    // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits": the same
+    // test as segmentReaches(profile, other) for every other in the segment.
+    if (profile.segment && segment.segment !== undefined && !profile.segment.partners.has(segment.segment)) continue;
+    const start = lowerBound(segment.start, segment.end, standingAt, low);
+    const end = lowerBound(start, segment.end, standingAt, high + 1);
+    if (end === start) continue;
+    const last = spans[spans.length - 1];
+    if (last?.end === start) spans[spans.length - 1] = { start: last.start, end };
+    else spans.push({ start, end });
+  }
+  return spans;
+}
+
 /** The three tag groups a search can walk, named from the searching member `a`. */
 type TagGroup = "affinity" | "complement" | "returned";
-interface Range { readonly group: TagGroup; readonly posting: readonly number[]; readonly start: number; readonly end: number }
+/** One tag's posting inside the window: `spans` index the posting, `size` counts their entries. */
+interface Range { readonly group: TagGroup; readonly posting: readonly number[]; readonly spans: readonly Span[]; readonly size: number }
 
-/** The window range of each of `tags` in `postings` (positions in [from, to)); empty ranges dropped. */
-function windowRanges(group: TagGroup, postings: Postings, tags: TagSet, from: number, to: number): Range[] {
+/** The window range of each of `tags` in `postings`; empty ranges dropped. */
+function windowRanges(group: TagGroup, postings: Postings, tags: TagSet, window: readonly Span[]): Range[] {
   return tags.flatMap(tag => {
     const posting = postings.get(tag);
     if (!posting) return [];
-    const start = lowerBound(posting.length, i => posting[i], from), end = lowerBound(posting.length, i => posting[i], to);
-    return end > start ? [{ group, posting, start, end }] : [];
+    const at = (i: number) => posting[i];
+    const spans: Span[] = [];
+    let size = 0, from = 0;
+    for (const span of window) {
+      const start = lowerBound(from, posting.length, at, span.start);
+      const end = lowerBound(start, posting.length, at, span.end);
+      if (end > start) { spans.push({ start, end }); size += end - start; }
+      from = end;
+    }
+    return size > 0 ? [{ group, posting, spans, size }] : [];
   });
 }
 
@@ -72,10 +102,10 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
 
   // spec/candidateSearch.md, "The standing window contains every partner that the parity rule allows"
   const offset = laneOffset(profile.lane, profile.side), band = rules.parityBand;
-  const standingAt = (i: number) => block.profiles[i].standing;
-  const from = lowerBound(block.profiles.length, standingAt, searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling));
-  const to = lowerBound(block.profiles.length, standingAt, searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling) + 1);
-  if (from === to) return resultOf(block, step(search, empty), 0);
+  const window = windowSpans(block, profile,
+    searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling),
+    searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling));
+  if (window.length === 0) return resultOf(block, step(search, empty), 0);
 
   const vectors = vectorsOf(w);
   const traitCosts = vectors.traits?.costs ?? [];
@@ -88,10 +118,11 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   // walked rarest first. `open` counts the tags of each group whose window range is not fully walked:
   // a candidate that was not touched can have a hit only in those.
   const walk = [
-    ...windowRanges("affinity", block.interests, profile.interests, from, to),
-    ...windowRanges("complement", block.offers, profile.seeks, from, to),
-    ...windowRanges("returned", block.seeks, profile.offers, from, to),
-  ].sort((x, y) => x.end - x.start - (y.end - y.start)); // the sort is stable
+    ...windowRanges("affinity", block.interests, profile.interests, window),
+    ...windowRanges("complement", block.offers, profile.seeks, window),
+    ...windowRanges("returned", block.seeks, profile.offers, window),
+  ].sort((x, y) => x.size - y.size); // the sort is stable
+  const windowSize = window.reduce((n, span) => n + span.end - span.start, 0);
   const open: Record<TagGroup, number> = { affinity: 0, complement: 0, returned: 0 };
   for (const range of walk) open[range.group]++;
   let windowWalked = false;
@@ -120,9 +151,9 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const touched = new Set<number>();
   const touchLimit = searchTouchesPerCheck * limits.searchBudget;
   let touches = 0, walked = 0, walkSpent = false;
-  /** Touches positions [start, end) of a range; false when the touch limit stops it first. */
-  const visit = (start: number, end: number, positionAt: (i: number) => number): boolean => {
-    for (let i = start; i < end; i++) {
+  /** Touches the positions of `spans`; false when the touch limit stops it first. */
+  const visit = (spans: readonly Span[], positionAt: (i: number) => number): boolean => {
+    for (const { start, end } of spans) for (let i = start; i < end; i++) {
       if (touches >= touchLimit) return false;
       touches++;
       const position = positionAt(i);
@@ -138,7 +169,8 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   };
 
   // Check the best touched candidate while no untouched one can beat its bound. If the pack's
-  // enabled terms still allow an untagged pair after all postings, walk the standing window too.
+  // enabled terms still allow an untagged pair after the postings shorter than the window, walk the
+  // whole window.
   for (;;) {
     const untouched = untouchedBound();
     const top = pending.peek();
@@ -147,10 +179,11 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
     const stop: SearchEvent = { type: "closeExact", unseenBound: unseen };
     if (enabled(search, stop)) return resultOf(block, step(search, stop), touches);
     if (untouched > topBound && !walkSpent) {
+      // A range at least as long as the window costs no less than the window, which leaves no one untouched.
       const range = walk[walked];
-      if (range) {
-        if (visit(range.start, range.end, i => range.posting[i])) { open[range.group]--; walked++; } else walkSpent = true;
-      } else if (visit(from, to, i => i)) windowWalked = true;
+      if (range && range.size < windowSize) {
+        if (visit(range.spans, i => range.posting[i])) { open[range.group]--; walked++; } else walkSpent = true;
+      } else if (visit(window, i => i)) windowWalked = true;
       else walkSpent = true;
       continue;
     }
@@ -196,7 +229,10 @@ class CandidateHeap {
   }
 }
 
-/** Oracle for the simulator gate only: the same pair function over the whole partner block, no pruning. */
+/**
+ * Oracle for the simulator gate only: the same pair function over the whole partner block, no
+ * pruning, no segment window (the pair gate refuses pairs whose segments do not reach each other).
+ */
 export function bruteForceCandidates(w: World, index: CandidateIndex, profile: MatchProfile): RankedProfile[] {
   const block = partnerBlock(index, profile);
   if (!block) return [];
