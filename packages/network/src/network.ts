@@ -37,7 +37,7 @@ import {
 } from "@thenetwork/engine";
 import { crewHandoffDue, crewMemberWindowAvailable, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
-  closeOpportunityForRequestWithdrawal, immediateRequestRetryReady, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
+  closeOpportunityForRequestWithdrawal, immediateRequestSearchAllowed, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
   step as stepMemberRequest, waitingMemberRequest, type MemberRequestFlow,
 } from "../../core/src/generated/memberRequest.ts";
@@ -79,7 +79,7 @@ import { initial as initialPlanDispatch, planLaneOpen, planProbeReplyCurrent, pl
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
 import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
 import {
-  alternateAllowed, canRecordReply, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
+  alternateAllowed, canRecordReply, groupMayRemainWithoutAlternate, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
   needsProbeSend, probeAvailability, probeExpired, probeExpiryDeadline, probeIsInvite, probeQuestionHoldUntil, probeResponseMs,
   probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
@@ -2440,10 +2440,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (route.phase === "RequestQuietRepeat") return;
       if (route.phase === "RequestAlreadyProbing") { this.send(m, "Still on it; I'll get back to you soon.", { type: "info" }, "reply"); return; }
       if (route.phase === "RequestMatchingPaused") return this.requestWaits(m, prior, o);
+      const waiting = waitingMemberRequest(prior.outcome ?? "", !!prior.closed);
       const search = stepMemberRequest(route, {
         type: "routeImmediateRequestRetry",
-        ready: waitingMemberRequest(prior.outcome ?? "", !!prior.closed) && canSearch && !this.busy(m.id)
-          && immediateRequestRetryReady(!!prior.lastTry, now - (prior.lastTry ?? now), prior.lastConfirmAt !== undefined, now - (prior.lastConfirmAt ?? now)),
+        ready: immediateRequestSearchAllowed(waiting, canSearch, waiting && canSearch && this.busy(m.id),
+          !!prior.lastTry, now - (prior.lastTry ?? now), prior.lastConfirmAt !== undefined, now - (prior.lastConfirmAt ?? now)),
       });
       const opp = this.tryRequest(m, prior, search);
       if (opp) { this.send(m, copy.requestAck, { type: "info" }, "reply"); this.submit(opp); return; }
@@ -2907,15 +2908,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
     const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
+    const next = stepOpportunity(opportunityLifecycle(o), { type: "reroll", replacementFound: !!alt });
     this.counters.reviewRerolled++;
     o.review!.rerolls = [...(o.review!.rerolls ?? []), { at: now, out, in: alt, reviewer, note: opts.note }];
-    this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: alt ? "review" : "engine" });
-    if (!alt) {
+    this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: next.phase === "InReview" ? "review" : "engine" });
+    if (next.phase === "Closed" || !alt) {
       // The engine composes again at its next run; this configuration does not come back for a while.
       this.markDeclined(o.participants, now, out);
       this.close(o, "rerolled in review");
       return { ok: true };
     }
+    o.stage = STAGE_BY_PHASE[next.phase];
     o.alternates = o.alternates.filter(a => a !== alt);
     o.participants = o.participants.map(p => (p === out ? alt : p));
     o.status.delete(out!); o.status.set(alt, "queued");
@@ -3368,7 +3371,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.advanceProbes(o);
       return;
     }
-    if (group && groupCanContinue(o.participants.filter(p => o.status.get(p) !== "unavailable").length)) {
+    if (groupMayRemainWithoutAlternate(group, o.participants.filter(p => o.status.get(p) !== "unavailable").length)) {
       o.participants = o.participants.filter(p => p !== out); o.status.delete(out);
       if (o.first === out) o.first = o.participants[0];
       return;

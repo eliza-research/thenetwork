@@ -135,6 +135,14 @@ pure def mayTryAlternate(alternatesRemain: bool, replaced: int): bool = alternat
 pure def alternateAllowed(eligible: bool, sameFirstName: bool, conflict: bool): bool =
   eligible and not(sameFirstName) and not(conflict)
 
+import opportunityLifecycle as Opportunity from "./opportunityLifecycle"
+
+pure def groupMayRemainWithoutAlternate(group: bool, remaining: int): bool =
+  group and Opportunity::groupCanContinue(remaining)
+
+pure def lawOneToOneClosesWithoutAlternate(remaining: int): bool =
+  not(groupMayRemainWithoutAlternate(false, remaining))
+
 pure def lawRequiredParticipantCannotBeReplaced(probing: bool, requesterOut: bool, managerOut: bool): bool =
   (requesterOut or managerOut) implies replacementRoute(probing, requesterOut, managerOut) != FindAlternate
 ```

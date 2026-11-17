@@ -8,7 +8,7 @@ The [whole-flow model](models/opportunity.md) follows participant replies, retri
 
 ### An opportunity starts in review
 
-Every proposal starts in review. An approval can start probing only after the review is recorded and the eligibility recheck has passed. A reroll that finds a replacement remains in review with a fresh deadline.
+Every proposal starts in review. An approval can start probing only after the review is recorded and the eligibility recheck has passed. A reviewer can reroll a proposal in review. A replacement starts a fresh review revision and deadline. A reroll with no replacement closes the proposal.
 
 ```quint
 type OpportunityPhase = InReview | Probing | Scheduled | Done | Closed
@@ -21,6 +21,14 @@ pure def canStartProbing(proposal: OpportunityLifecycle, approvalRecorded: bool,
 
 pure def startProbing(proposal: OpportunityLifecycle, approvalRecorded: bool, eligible: bool): OpportunityLifecycle =
   { phase: Probing, approved: true }
+
+pure def canReroll(proposal: OpportunityLifecycle): bool = proposal.phase == InReview
+
+pure def reroll(proposal: OpportunityLifecycle, replacementFound: bool): OpportunityLifecycle =
+  { phase: if (replacementFound) InReview else Closed, approved: false }
+
+pure def stepRerollRequiresNewApproval(before: OpportunityLifecycle, via: str, after: OpportunityLifecycle): bool =
+  (via == "reroll") implies (before.phase == InReview and not(after.approved))
 
 pure def alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): bool =
   (proposal.phase == Probing or proposal.phase == Scheduled or proposal.phase == Done) implies proposal.approved
