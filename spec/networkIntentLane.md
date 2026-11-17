@@ -8,7 +8,9 @@ The Network uses a member's current [standing intent](standingIntent.md) to choo
 
 ### One request can open one lane
 
-An investment, mentorship or cofounder request routes only to its specific lane and side. Intro serves professional requests without a specific relationship. Other eligible asks may open Friend. This path excludes romance and Network growth. The shell can use a saved matching goal's explicit lane tag for the ordinary lanes.
+An investment, mentorship or cofounder request routes only to its specific lane and side. Intro serves professional requests without a specific relationship. An explicit social or hobby request can open Friend, including when the activity is technical. The shell uses technical words to infer a professional purpose when it has no category for the request. This path excludes romance and Network growth. The shell can use a saved matching goal's explicit lane tag for the ordinary lanes.
+
+The Friend profile reads matching interests and goals that belong to Friend. An unrelated work goal supplies no Friend affinity or exchange tags. Stated interests can contribute even when the member has no separate social goal.
 
 ```quint
 type NetworkIntentRoute =

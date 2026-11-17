@@ -76,4 +76,23 @@ test("plans find a compatible group among the members available at the slot", ()
   expect(blocked.every(plan => ![...plan.invited, ...plan.alternates].includes(from) ||
     ![...plan.invited, ...plan.alternates].includes(to))).toBe(true);
   expect(blocked.some(plan => !plan.partner)).toBe(false);
+
+  // spec/networkIntentLane.md, "One request can open one lane"
+  const withWorkGoal = { ...input, intents: [{
+    id: "independent-work-goal", memberId: from, app: "ntwrk", category: "professional", status: "active",
+    objective: "Meet founders working on climate and hardware and get advice on AI", createdAt: now - DAY, horizonDays: 7,
+  }] } satisfies EngineInput;
+  expect(run(withWorkGoal)).toMatchObject([{ activityId: "group_run", invited: expect.arrayContaining(available), partner: false }]);
+
+  const technologyMeetup = { ...venue, activities: ["tech_meetup"] };
+  const hobbyGoals = available.map(memberId => ({
+    id: `hardware-hobby-${memberId}`, memberId, app: "ntwrk", category: "hobby", status: "active",
+    objective: "Meet people who build hardware projects as a hobby", createdAt: now - DAY, horizonDays: 7,
+  } satisfies EngineInput["intents"][number]));
+  const runTechMeetup = (intents: EngineInput["intents"]) =>
+    planProposals(new World({ ...input, facets: [], intents }, resolveConfig({}), localEmbed),
+      { now, city: "nyc", tz, evidence, venues: [technologyMeetup] });
+  expect(runTechMeetup(hobbyGoals))
+    .toMatchObject([{ activityId: "tech_meetup", invited: expect.arrayContaining(available), partner: false }]);
+  expect(runTechMeetup(hobbyGoals.map(goal => ({ ...goal, category: "professional" })))).toEqual([]);
 });
