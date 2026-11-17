@@ -140,6 +140,8 @@ export interface FriendsWeekInput {
   outcomes: readonly PlanOutcomeRecord[];
   /** Crews already offered (formed or not): never re-offered. */
   offered: readonly Crew[];
+  /** Serving can reject a repeat before its seats are reserved for the week. */
+  repeatAllowed?: (plan: FriendsPlan) => boolean;
   lastPlannedAt?: ReadonlyMap<MemberId, number>;
 }
 export interface FriendsWeek { sessions: FriendsPlan[]; offers: { crew: Crew; first: FriendsPlan }[]; repeats: FriendsPlan[]; plans: FriendsPlan[]; partners: FriendsPlan[] }
@@ -382,12 +384,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: activityWindow(start, a.durationMin),
-        invited: ids, alternates, partner,
+        invited: ids, alternates, partner, repeatOf: o.planId,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: circleScore(circle), u: {}, familiar: {}, createdAt: now, category: "social",
       };
       const fp = finish(base, "repeat");
-      if (!fp || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
+      if (!fp || inp.repeatAllowed?.(fp) === false
+        || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
       out.repeats.push(fp);
     }
   }

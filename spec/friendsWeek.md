@@ -78,6 +78,30 @@ pure def reserveRecurring(s: FriendsRun, kind: RecurringKind, members: List[str]
 pure val membersValues = Set(List("one", "two"), List("two", "three"), List("three", "four"))
 ```
 
+### A Friends repeat uses its own completed table and a fresh review
+
+Use the exact settled Friends plan and its private replies. A seat needs a recorded booking, confirmed attendance in its own reply, and an explicit yes to the same activity again. A reply reporting an absence cannot supply repeat consent. A later decline of that crew offer removes the seat. Defer to a pending crew offer or an existing crew for the table. Use each original plan for at most one new repeat and keep the same group of three to six consenting attendees. Recheck the shared activity, public venue, full window, current availability, and the current fit of every seat before review and again at approval. Rotate the host in stable member order. Every member needs to accept the new plan separately.
+
+```quint
+pure def friendsRepeatSourceAllowed(completed: bool, settlementComplete: bool, crewActive: bool, alreadyOffered: bool): bool =
+  completed and settlementComplete and not(crewActive or alreadyOffered)
+
+pure def friendsRepeatAttendanceAllowed(booked: bool, came: bool, again: bool, noShowReported: bool, crewDeclined: bool): bool =
+  booked and came and again and not(noShowReported or crewDeclined)
+
+pure val expectedValues = Set(List("a", "b"), List("a", "b", "c"), List("b", "c", "d"))
+pure val offeredValues = expectedValues
+
+pure def friendsRepeatRosterCurrent(expected: List[str], offered: List[str]): bool =
+  expected.length() >= 3 and expected.length() <= 6 and expected == offered
+
+pure def lawFriendsRepeatNeedsOriginalRoster(expected: List[str], offered: List[str]): bool =
+  friendsRepeatRosterCurrent(expected, offered) implies expected == offered
+
+pure def friendsRepeatHostIndex(previousIndex: int, seats: int): int =
+  if (previousIndex < 0 or previousIndex + 1 >= seats) 0 else previousIndex + 1
+```
+
 ### New plans reserve each invitee once
 
 When the spread policy is on, a new plan leaves places for members without a recurring reservation. Open table construction holds its remaining alternates as well as its invitees for the rest of the new-plan pass. A single-slot plan reserves its invitees and removes alternates already held by the time it is added. At publication, an alternate can remain only if no new plan invited them.

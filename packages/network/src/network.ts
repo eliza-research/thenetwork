@@ -36,6 +36,7 @@ import {
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
 import { crewHandoffDue, crewMemberWindowAvailable, crewOfferReplyCurrent, crewSessionVenueAllowed, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
+import { friendsRepeatAttendanceAllowed, friendsRepeatHostIndex, friendsRepeatRosterCurrent, friendsRepeatSourceAllowed } from "../../core/src/generated/friendsWeek.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestSearchAllowed, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -2907,6 +2908,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   private approvalCheck(o: Opp): string | undefined {
     if (this.holdHelpOpportunity(o)) return "bounded_help_requires_safety_review";
     if (o.replacementFor && !this.replacementPlanCurrent(o, this.now())) return "replacement_no_longer_available";
+    if (o.plan?.repeatOf && !this.friendsRepeatPlanCurrent(o.plan, this.now(), this.planWorld(this.now(), true, [o.id]), o.id)) {
+      return "repeat_no_longer_available";
+    }
     const publicEventIssue = this.publicEventRefusal(o);
     if (publicEventIssue) return publicEventIssue;
     for (const id of o.participants) {
@@ -4176,16 +4180,66 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const plan of made) this.submitPlan(plan, now);
   }
 
-  /**
-   * friends.help: the pack's weekly planner (planFriendsWeek, the function the simulator's gates
-   * measure) over a World of the pack's adult input. Production takes only its new plans (a table per
-   * Friend circle among the members it can seat) and its activity partners: crew sessions and repeats
-   * stay with the Network, so the planner gets no crews or outcomes here. Production probes the
-   * alternates only as replacements (no open table), and does not use the plans' time options.
-   */
+  /** Crew offers and sessions have their own lifecycle. The weekly pass can repeat a settled public table. */
   private friendsWeekPlans(now: number, evidence: ReadonlyMap<MemberId, plans.PlanEvidence>): plans.Plan[] {
-    const week = planFriendsWeek(this.planWorld(now, true), { now, tz: NY, evidence, venues: PLAN_VENUES, crews: [], outcomes: [], offered: [], lastPlannedAt: this.lastPlannedAt }, { ...DEFAULT_FRIENDS_POLICY, openTable: false }, this.pcfg);
-    return [...week.plans, ...week.partners];
+    const world = this.planWorld(now, true);
+    const used = new Set([...this.opps.values()].flatMap(o => o.plan?.repeatOf ? [o.plan.repeatOf] : []));
+    const outcomes = [...this.opps.values()].flatMap(o => {
+      const source = this.friendsRepeatSource(o, now, used.has(o.id));
+      return source ? [source] : [];
+    });
+    const week = planFriendsWeek(world, { now, tz: NY, evidence, venues: PLAN_VENUES, crews: [], outcomes, offered: [], lastPlannedAt: this.lastPlannedAt,
+      repeatAllowed: plan => this.friendsRepeatPlanCurrent(plan, now, world),
+    }, { ...DEFAULT_FRIENDS_POLICY, crews: false, mutualPositive: false, openTable: false, spreadNew: true }, this.pcfg);
+    for (const plan of week.repeats) {
+      const ordered = [...plan.invited].sort();
+      const previousHost = plan.repeatOf ? this.opps.get(plan.repeatOf)?.plan?.hostId : undefined;
+      plan.hostId = ordered[friendsRepeatHostIndex(previousHost ? ordered.indexOf(previousHost) : -1, ordered.length)];
+    }
+    return [...week.repeats, ...week.plans, ...week.partners];
+  }
+
+  private friendsRepeatSource(o: Opp, now: number, alreadyOffered = false): plans.PlanOutcomeRecord | undefined {
+    const plan = o.plan;
+    if (!plan || plan.partner || plan.crewId || plan.eventId || plan.category !== "social" || o.meetingAt === undefined
+      || o.meetingAt > now || now - o.meetingAt >= DEFAULT_FRIENDS_POLICY.repeatWindowDays * DAY) return;
+    const offer = this.crewOffers.find(c => c.planId === o.id);
+    const crewActive = !!offer && (!offer.resolved || this.crews.some(c => c.id === offer.crew.id));
+    if (!friendsRepeatSourceAllowed(o.stage === "done", !!o.finalized, crewActive, alreadyOffered)) return;
+    const venue = this.replacementVenue(plan);
+    if (!venue?.public) return;
+    const attendees = [...new Set(o.participants)].filter(id => {
+      const answer = o.post?.[id];
+      return friendsRepeatAttendanceAllowed(o.status.get(id) === "yes" && o.bookedAt?.[id] !== undefined,
+        answer?.came === true, answer?.again === true, answer?.otherNoShow === true, offer?.no.includes(id) === true);
+    });
+    if (!friendsRepeatRosterCurrent(attendees, attendees)) return;
+    const coversTable = (crew: plans.Crew) => crew.city === plan.city && crew.activityId === plan.activityId
+      && attendees.every(id => crew.members.includes(id));
+    if (this.crews.some(coversTable) || this.crewOffers.some(c => !c.resolved && coversTable(c.crew))) return;
+    return { planId: o.id, activityId: plan.activityId, venueId: venue.id, city: plan.city, at: o.meetingAt,
+      attended: attendees, positive: attendees, recurringWant: [] };
+  }
+
+  private friendsRepeatPlanCurrent(plan: plans.Plan, now: number, world: EngineWorld, exceptOpp?: string): boolean {
+    const sourceOpp = plan.repeatOf && this.opps.get(plan.repeatOf);
+    const source = sourceOpp && this.friendsRepeatSource(sourceOpp, now);
+    const venue = this.replacementVenue(plan);
+    const activity = plans.activityById.get(plan.activityId);
+    if (!source || !venue?.public || !activity || (venue.capacity ?? Infinity) < plan.invited.length
+      || source.venueId !== venue.id || source.activityId !== plan.activityId || source.city !== plan.city
+      || now >= plan.probeDeadline || plan.alternates.length || !friendsRepeatRosterCurrent([...source.positive].sort(), [...plan.invited].sort())
+      || !this.replacementWindowCurrent(venue, plan.window, plan.invited, now)) return false;
+    const dest = friendsKit.hood(venue.area);
+    const info = friendsKit.friendsInfo(world);
+    return !!dest && plan.invited.every(id => {
+      const member = this.members.get(id), friend = info.get(id), record = world.get(id)?.m;
+      return !!member && !!friend?.home && !!record && this.planSeatOk(member, exceptOpp) && record.homeCity === plan.city
+        && record.age >= Math.max(activity.ageMin, venue.ageMin) && record.prefs.categoriesOptIn.includes(plan.category)
+        && record.prefs.formats.includes("small_group") && plans.planMemberReason(world, id) === null
+        && friendsKit.transitMinutes(friend.home, dest) <= friend.tolerance * DEFAULT_FRIENDS_POLICY.toleranceSlack
+        && this.planFriendSeatFits(world, id, plan.invited.filter(peer => peer !== id), "existingPlan");
+    });
   }
 
   private replacementVenue(plan: plans.Plan): plans.Venue | undefined {
@@ -4270,7 +4324,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const prop = plans.planToProposal(plan, this.pcfg);
     const o = this.newOpp({
       origin: "planner", kind: prop.kind, category: plan.category, objective: prop.objective, detail: a.label, participants: plan.invited, alternates: plan.alternates,
-      primed: [], explanations: prop.explanations, score: plan.score, generator: plan.crewId ? "crew" : "plan", tags: a.tags.slice(0, 4),
+      primed: [], explanations: prop.explanations, score: plan.score, generator: plan.crewId ? "crew" : plan.repeatOf ? "friends_repeat" : "plan", tags: a.tags.slice(0, 4),
     });
     o.plan = plan;
     if (replacementFor) o.replacementFor = replacementFor;

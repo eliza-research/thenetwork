@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY, fromLocal, type Facet, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, fromLocal, type Facet, type MemberId } from "@thenetwork/core";
 import { FRIENDS_PLANS, friendsPack, localEmbed, plans, resolveConfig, World, type EngineInput } from "@thenetwork/engine";
 import { CapitalLedger, ledgerReader } from "../src/capital.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
@@ -65,6 +65,54 @@ test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew
   else expect(session).toBeUndefined();
   expect(retained?.members).toEqual(ids);
   expect(retained?.sessions).toHaveLength(availability === "open" ? 1 : 0);
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+});
+
+// spec/friendsWeek.md, "A Friends repeat uses its own completed table and a fresh review"
+test("the weekly pass repeats the exact positive Friends table and rechecks it before contact", async () => {
+  const activity = "coffee_crawl";
+  const venue = PLAN_VENUES.find(v => v.activities.includes(activity));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const ids = ["a", "b", "c"];
+  const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
+    interests: ["coffee", "climbing"],
+  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard(...ids);
+
+  const at = Date.UTC(2026, 9, 10, 16);
+  const now = Date.UTC(2026, 9, 15, 15);
+  const future = at + 7 * DAY;
+  const source = w.net["submitPlan"]({ id: "original-table", city: "nyc", activityId: activity, venueId: venue.id,
+    place: { name: venue.name, area: venue.area }, window: { start: at, end: at + 90 * 60_000 },
+    invited: ids, alternates: [], hostId: "a", partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
+    probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
+  }, at - DAY);
+  const state = w.net.exportState();
+  const completed = state.opps.find(o => o.id === source.id)!;
+  completed.stage = "done";
+  completed.meetingAt = at;
+  completed.finalized = true;
+  completed.status = ids.map(id => [id, "yes"]);
+  completed.bookedAt = Object.fromEntries(ids.map(id => [id, at - HOUR]));
+  completed.post = Object.fromEntries(ids.map(id => [id, { came: true, again: true, otherNoShow: false, named: [] }]));
+  for (const id of ids) state.interactions.push({ id: `${source.id}:fb:${id}`, kind: "group", category: "social",
+    participants: ids, at: at + 2 * HOUR, outcome: "completed", contributors: [] });
+  for (const member of state.members) member.stated = { at: now - 1, until: future + DAY, windows: [{ start: future, end: future + 3 * HOUR }] };
+  w.net.importState(state);
+  w.clock.set(now);
+
+  await w.net.tick(now);
+  const proposed = w.net.exportState().opps.find(o => o.plan?.repeatOf === completed.id);
+  expect(proposed).toMatchObject({ generator: "friends_repeat", stage: "review", participants: ids,
+    plan: { activityId: activity, venueId: venue.id, hostId: "b", alternates: [], quorum: 3, window: { start: future } } });
+  expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
+
+  const blocked = w.net.exportState();
+  blocked.blocks.push("a|b");
+  w.net.importState(blocked);
+  expect(w.net.review(proposed!.id, "approve", { reviewer: "sim_staff" })).toBe(false);
   expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });
 

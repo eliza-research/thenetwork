@@ -145,6 +145,37 @@ export function canReserveRecurring(s: FriendsRun, kind: RecurringKind, members:
   return (s.phase === "CrewSessions" && kind === "Session") || (((s.phase === "CrewOffers" && kind === "Offer") || (s.phase === "RepeatPlans" && kind === "Repeat")) && !members.some((memberId: string) => !recurringAvailable(s, memberId)));
 }
 
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatSourceAllowed(completed: boolean, settlementComplete: boolean, crewActive: boolean, alreadyOffered: boolean): boolean {
+  return completed && settlementComplete && !(crewActive || alreadyOffered);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatAttendanceAllowed(booked: boolean, came: boolean, again: boolean, noShowReported: boolean, crewDeclined: boolean): boolean {
+  return booked && came && again && !(noShowReported || crewDeclined);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatRosterCurrent(expected: string[], offered: string[]): boolean {
+  return expected.length >= 3 && expected.length <= 6 && equal_friendsWeek(expected, offered);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatHostIndex(previousIndex: number, seats: number): number {
+  return previousIndex < 0 || exact_friendsWeek(previousIndex + 1) >= seats ? 0 : exact_friendsWeek(previousIndex + 1);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function lawFriendsRepeatNeedsOriginalRoster(expected: string[], offered: string[]): boolean {
+  //@ ensures \result === true
+  return !friendsRepeatRosterCurrent(expected, offered) || equal_friendsWeek(expected, offered);
+}
+
 /** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function newPlanUsed(s: FriendsRun, memberId: string): boolean {
@@ -346,4 +377,12 @@ export function lookup0_friendsWeek(m: Record<string, number>, k: string, otherw
 export function exact_friendsWeek(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_friendsWeek(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_friendsWeek((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

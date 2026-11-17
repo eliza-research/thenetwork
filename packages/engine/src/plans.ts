@@ -212,7 +212,7 @@ export interface Plan {
   /** Members probed (primary group, plus alternates once backfilled). */
   invited: MemberId[];
   alternates: MemberId[];
-  hostId?: MemberId; crewId?: string;
+  hostId?: MemberId; crewId?: string; repeatOf?: string;
   /** Activity-partner plan (exactly 2, one-to-one rules) or a group plan (3-6). */
   partner: boolean;
   size: { min: number; target: number; max: number };

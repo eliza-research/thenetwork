@@ -372,7 +372,7 @@ Models: [photos and rating](../models/photos_rating.md), [photo relay item](../m
 
 Build a new session around the shared activity, overlapping availability, travel limits and a rotating host. Recheck membership, blocks and eligibility before each session. When a group is ready for its own chat, let its consenting members take it forward. Friends targets the same members meeting again.
 
-Models: [plan crew](../models/plan_crew.md), [plan run](../models/plan_run.md).
+Models: [Friends weekly repeats](../friendsWeek.md#a-friends-repeat-uses-its-own-completed-table-and-a-fresh-review), [plan crew](../models/plan_crew.md), [plan run](../models/plan_run.md).
 
 ## Story F33 — Choose a hiring introduction
 
