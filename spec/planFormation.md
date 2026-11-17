@@ -32,6 +32,19 @@ pure def lawReachablePlanVenueWins(travelTieBreak: bool): bool =
   preferPlanVenue(true, false, travelTieBreak) and not(preferPlanVenue(false, true, travelTieBreak))
 ```
 
+### Check pairs inside the available slot pool
+
+For each activity and time, check each pair of distinct members in the ranked
+availability pool. The configured pool size bounds this work. Keep an edge only
+when the lane's current pair rules give it a value. Use those values for the
+group and partner searches. The checker may reuse the same pair's result
+within one planner run.
+
+```quint
+pure def planSlotPairCanConnect(pairWorth: int): bool =
+  pairWorth >= 0
+```
+
 ### Search for a qualifying group before an activity partner
 
 Search for a group when the capacity and the current pool meet the group minimums. Both the minimum score for any participant and the whole proposal score must meet their thresholds. If no group qualifies, look for a pair when partner plans are enabled, the activity allows pairs, and the place can hold two people.

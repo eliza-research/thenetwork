@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY } from "@thenetwork/core";
+import { DAY, type Facet } from "@thenetwork/core";
 import { World } from "../../engine/src/world.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
@@ -38,4 +38,42 @@ test("planned groups and partner fallbacks fit their public venue capacity", () 
       }
     }
   }
+});
+
+test("plans find a compatible group among the members available at the slot", () => {
+  // spec/planFormation.md, "Check pairs inside the available slot pool"
+  const now = Date.UTC(2026, 9, 12, 15), tz = "America/New_York", area = "Greenpoint";
+  const ids = Array.from({ length: 24 }, (_, i) => `runner-${String(i).padStart(2, "0")}`);
+  // The rest of the city has equivalent tastes and ranks earlier in the discovery lists.
+  const available = ids.slice(-4);
+  const facets: [Facet["kind"], string, string[]][] = [
+    ["goal", "find a running partner", ["lane:Friend", "running"]],
+    ["interest", "running", ["running"]],
+    ["offer", "run with someone", ["running"]],
+  ];
+  const input: EngineInput = {
+    now, intents: [], edges: [], recentProposals: [],
+    members: ids.map(id => ({
+      id, name: id, age: 30, homeCity: "nyc", state: "normal", apps: ["ntwrk"], joinedAt: now - 100 * DAY, unansweredProactive: 0,
+      prefs: { categoriesOptIn: ["social"], quietHours: [22, 8], romanceOptIn: false, formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false },
+    })),
+    facets: ids.flatMap(memberId => facets.map(([kind, value, tags]) => ({
+      id: `${memberId}/${kind}`, memberId, kind, value, tags, scope: "shareable", provenance: "said", confidence: 1, app: "ntwrk",
+    }))),
+    presence: ids.map(memberId => ({ memberId, city: "nyc", type: "home", areas: [area] })),
+  };
+  const evidence = new Map<string, PlanEvidence>(available.map(memberId => [memberId, {
+    memberId, tz, stated: { at: now, until: now + 8 * DAY, windows: [{ start: now, end: now + 8 * DAY }] },
+  }]));
+  const venue: Venue = { id: "public-park", name: "Public park", area, city: "nyc", public: true, ageMin: 18, capacity: 6,
+    priceTier: 0, activities: ["group_run"], hours: { weekday: [9, 22], weekend: [9, 22] }, source: "curated" };
+  const run = (snapshot: EngineInput) => planProposals(new World(snapshot, resolveConfig({}), localEmbed),
+    { now, city: "nyc", tz, evidence, venues: [venue] });
+  expect(run(input)).toMatchObject([{ activityId: "group_run", invited: expect.arrayContaining(available), quorum: 3, partner: false }]);
+
+  const [from, to] = available;
+  const blocked = run({ ...input, edges: [{ from, to, type: "blocked", strength: 1, explicit: true, createdAt: now }] });
+  expect(blocked.every(plan => ![...plan.invited, ...plan.alternates].includes(from) ||
+    ![...plan.invited, ...plan.alternates].includes(to))).toBe(true);
+  expect(blocked.some(plan => !plan.partner)).toBe(false);
 });

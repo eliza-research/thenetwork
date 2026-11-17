@@ -14,7 +14,7 @@ import { buildCircles } from "./match/circles.ts";
 import { compareText, type EntityId, type MatchProfile } from "./match/profile.ts";
 import { mutualEdges, type MatchEdge } from "./match/search.ts";
 import type { GroupStats, Role } from "./types.ts";
-import type { World } from "./world.ts";
+import { pairKey, type World } from "./world.ts";
 
 export interface ComposeOptions {
   /** Ordered candidate pool (already member-eligible), with anchor affinity per member. */
@@ -43,27 +43,47 @@ export function groupLane(category: Category): MatchLane {
 /** Only a Peers lane with a circle maximum forms groups: never romance, never a two-sided lane. */
 export const formsGroups = (lane: MatchLane): boolean => laneShape(lane) === "Peers" && laneLimits(lane).circleMaximum > 0;
 
-/** The pool's lane profiles and the lane's search edges between them. */
+/** A pool's lane profiles and eligible edges. */
 export interface PoolGraph {
   readonly lane: MatchLane;
   readonly profiles: ReadonlyMap<MemberId, MatchProfile>;
   readonly edges: readonly MatchEdge[];
   /** Member pairs of `edges`, best value first. */
   readonly pairs: readonly { readonly a: MemberId; readonly b: MemberId; readonly value: number }[];
-  /** The pair value when either member's bounded search kept the other, else undefined. */
+  /** The value of an edge in this pool. */
   value(a: MemberId, b: MemberId): number | undefined;
 }
 
-/** Edges come only from the members' memoized bounded searches (w.match.candidates): no pair is scored here. */
-export function poolGraph(w: World, lane: MatchLane, ids: readonly MemberId[]): PoolGraph {
+type PoolPairScore = (a: MatchProfile, b: MatchProfile, key: string) => number | undefined;
+
+/** Check each unordered pair in a pool whose size is bounded by its caller. */
+function scorePoolPairs(profiles: readonly MatchProfile[], score: PoolPairScore): MatchEdge[] {
+  const edges: MatchEdge[] = [];
+  for (const [i, first] of profiles.entries()) {
+    for (let j = i + 1; j < profiles.length; j++) {
+      const second = profiles[j]!;
+      const [a, b] = compareText(first.id, second.id) < 0 ? [first, second] : [second, first];
+      const key = pairKey(a.id, b.id);
+      const value = score(a, b, key);
+      if (value !== undefined) edges.push({ a: a.id, b: b.id, key, value });
+    }
+  }
+  return edges.sort((x, y) => y.value - x.value || compareText(x.key, y.key));
+}
+
+/** Use bounded discovery searches, or score the pairs directly when a caller has a bounded slot pool. */
+export function poolGraph(w: World, lane: MatchLane, ids: readonly MemberId[], score?: PoolPairScore): PoolGraph {
   const profiles = new Map<MemberId, MatchProfile>();
   for (const id of ids) {
     const profile = w.match.profileIn(id, lane);
     if (profile) profiles.set(id, profile);
   }
-  const memberOf = new Map([...profiles.values()].map(p => [p.id, p.memberId] as const));
-  const edges = mutualEdges([...profiles.values()].map(profile => ({ profile, result: w.match.candidates(profile) })))
-    .filter(e => memberOf.has(e.a) && memberOf.has(e.b));
+  const profileList = [...profiles.values()];
+  const memberOf = new Map(profileList.map(p => [p.id, p.memberId] as const));
+  const edges = score
+    ? scorePoolPairs(profileList, score)
+    : mutualEdges(profileList.map(profile => ({ profile, result: w.match.candidates(profile) })))
+      .filter(e => memberOf.has(e.a) && memberOf.has(e.b));
   const pairs = edges.map(e => ({ a: memberOf.get(e.a)!, b: memberOf.get(e.b)!, value: e.value }));
   const links = new Map<MemberId, Map<MemberId, number>>();
   const link = (x: MemberId, y: MemberId, value: number) => {

@@ -51,6 +51,18 @@ export function lawReachablePlanVenueWins(travelTieBreak: boolean): boolean {
   return preferPlanVenue(true, false, travelTieBreak) && !preferPlanVenue(false, true, travelTieBreak);
 }
 
+/** Story: Find a public activity that fits the group / Check pairs inside the available slot pool (spec/planFormation.md) */
+//@ pure
+export function planSlotPairCanConnect(pairWorth: number): boolean {
+  return pairWorth >= 0;
+}
+
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
+//@ pure
+export function searchForPlanGroup(available: number, minimumInvite: number, maximumGroup: number, minimumGroup: number): boolean {
+  return available >= minimumInvite && maximumGroup >= minimumGroup;
+}
+
 /** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
 export function planScoreQualifies(minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
@@ -61,12 +73,6 @@ export function planScoreQualifies(minimumScore: number, overallScore: number, m
 //@ pure
 export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean, activityMinimum: number, capacity: number): boolean {
   return !hasGroup && partnerEnabled && activityMinimum <= 2 && capacity >= 2;
-}
-
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
-//@ pure
-export function searchForPlanGroup(available: number, minimumInvite: number, maximumGroup: number, minimumGroup: number): boolean {
-  return available >= minimumInvite && maximumGroup >= minimumGroup;
 }
 
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */

@@ -22,7 +22,7 @@ import {
 } from "../../core/src/generated/planDecision.ts";
 import {
   cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
-  planActivityWindowEnd, planCanFitPlace, planScoreQualifies, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
+  planActivityWindowEnd, planCanFitPlace, planScoreQualifies, planSlotPairCanConnect, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
@@ -34,7 +34,7 @@ import { isMinor, memberReason, publicEventPreferencesAllow, requiredPairValues 
 import { initial as initialFormation, step as stepFormation } from "../../core/src/generated/groupFormation.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { chooseCircle, circleKey, formsGroups, groupLane, leastMiseryUtility, pairCircle, poolCircles, poolGraph, type GroupCircle } from "./group.ts";
-import { compareText } from "./match/profile.ts";
+import { compareText, type MatchProfile } from "./match/profile.ts";
 import { eligiblePair } from "./match/pair.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";
@@ -258,7 +258,7 @@ interface Cand { plan: Plan; rank: number }
  * and each public event in the horizon: the demand pool D(w) = eligible adults with a stated or
  * inferred window for the whole activity; per activity with >= 2 fitting members, the open,
  * age-appropriate public venue that covers the most of their areas; the pool's coherent circles of 3-6 (group.ts poolCircles,
- * from the lane's bounded search edges), ranked by least misery, then the best pairs for
+ * from current pair values in the ranked slot pool), ranked by least misery, then the best pairs for
  * activity-partner activities when no circle clears the floors; floors on min u_i and U; every
  * primary group is admitted by the groupFormation machine. Greedy across candidates by U: one plan
  * per member per run.
@@ -307,6 +307,17 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
     if (acts.length) whens.push({ slot: { start: e.start, end: e.end }, event: e, acts: [acts[0]!] });
   }
 
+  // spec/planFormation.md, "Check pairs inside the available slot pool"
+  const pairValues = new Map<string, number>();
+  const scoreSlotPair = (a: MatchProfile, b: MatchProfile, key: string): number | undefined => {
+    let value = pairValues.get(key);
+    if (value === undefined) {
+      value = w.match.value(a, b);
+      pairValues.set(key, value);
+    }
+    return planSlotPairCanConnect(value) ? value : undefined;
+  };
+
   const cands: Cand[] = [];
   for (const wh of whens) {
     const start = wh.slot.start;
@@ -342,7 +353,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
         place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier, capacity: v.capacity };
       }
       const pool2 = pool.filter(id => ageOk(id, place.ageMin));
-      const graph = poolGraph(w, lane, pool2);
+      const graph = poolGraph(w, lane, pool2, scoreSlotPair);
       const compat = (x: MemberId, y: MemberId) => { const v = graph.value(x, y); return v === undefined ? -Infinity : v / pairValueScale; };
       const input = (id: MemberId): PlanMemberInput => ({
         id, fit: fits.get(id)!.get(a.id)!, timeFit: avail.get(id)!,
