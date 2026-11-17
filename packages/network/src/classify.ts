@@ -828,7 +828,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
-  // A duration names no offered slot, with or without an "in|within" prefix.
+  // A duration names no offered slot, with or without an "in|within" prefix,
+  // and with a "from now|today" suffix ("a week from now works").
   // "2 hours works" is a bare duration (a meeting length, or a relative time with
   // no reference time to bind it to); "in 2 hours works" is a relative duration
   // with no clock to bind it to. Either way it is not a clear yes to any offered
@@ -841,7 +842,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // mention ("Saturday I'm at a wedding") does not.
   const bareDuration = [...t.matchAll(/\b(?:(in|within)\s+)?((?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?|(?:a\s+)?couple(?:\s+of)?)\s+(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?))\b/g)].some(m => !m[1]);
   const relativeDuration = /\b(?:in|within)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?)\s*)?(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?)\b/.test(t);
-  if ((bareDuration || relativeDuration) && ![...named].some(k => strong.has(k) || (c.answer === "yes" && namedAdditive.has(k)))) return unclear;
+  const fromNowDuration = /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?)\s+(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?))\s+from\s+(?:now|today)\b/.test(t);
+  if ((bareDuration || relativeDuration || fromNowDuration) && ![...named].some(k => strong.has(k) || (c.answer === "yes" && namedAdditive.has(k)))) return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

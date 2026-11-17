@@ -365,3 +365,15 @@
 {"text":"in two hours works","label":"unclear"}
 {"text":"within 2 hours works","label":"unclear"}
 {"text":"Saturday works, and in 2 hours too","label":"yes","keys":["b"]}
+{"text":"a week from now works","label":"unclear"}
+{"text":"2 hours from now works","label":"unclear"}
+{"text":"3 days from now works","label":"unclear"}
+{"text":"an hour from now works","label":"unclear"}
+{"text":"a day from now works","label":"unclear"}
+{"text":"30 minutes from now works","label":"unclear"}
+{"text":"a few days from now works","label":"unclear"}
+{"text":"half an hour from now works","label":"unclear"}
+{"text":"a week from today works","label":"unclear"}
+{"text":"2 days from today works","label":"unclear"}
+{"text":"in a week from now works","label":"unclear"}
+{"text":"Saturday works, a week from now too","label":"yes","keys":["b"]}
