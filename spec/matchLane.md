@@ -53,7 +53,7 @@ The table below is the starting table. Each number is a decision. Change a numbe
 | Lane | utilityFloor | parityBand | parityFreeGap | penalty per point | balance | exchangeFloor | tolerance % | offset | weeklyCapacity | searchLimit | searchBudget | circle min/max/pairFloor |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Friend | 300 | 100 | 100 | 0 | no | 0 | 100 | 0 | 3 | 12 | 600 | 3/6/350 |
-| Date | 350 | 15 | 5 | 10 | no | 0 | 100 | 0 | 2 | 10 | 600 | 0/0/0 |
+| Date | 350 | 15 | 10 | 10 | no | 0 | 100 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Cofounder | 400 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Intro | 350 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 3 | 12 | 600 | 3/6/400 |
 | Hire | 400 | 15 | 5 | 15 | no | 0 | 100 | 0 | 3 | 10 | 600 | 0/0/0 |
@@ -61,7 +61,7 @@ The table below is the starting table. Each number is a decision. Change a numbe
 | Invest | 400 | 15 | 5 | 15 | no | 0 | 100 | 0 | 2 | 8 | 400 | 0/0/0 |
 
 - **Utility floor.** Decision: each member must get at least this much from the other, so a pair is never one-sided. The work lanes (Cofounder, Hire, Invest) ask for more than the social lanes. The acceptance rate of the two sides of approved probes tunes it; a floor that refuses pairs that both sides accept in the per-app worlds is too high.
-- **Parity band and free gap.** Decision: the private standing gap, after the offset, must stay inside the band plus both uncertainties, and the gap inside the free gap costs nothing. Friend has no vertical standing, so its band is the full range. Date uses a band of 15 points on the private appearance standing, plus both uncertainties. Cofounder and Intro use track record and allow a wider band than Hire and Invest. The reply and acceptance rate by standing gap tunes it, and the parity gate counter (pairs past the band) must stay 0.
+- **Parity band and free gap.** Decision: the private standing gap, after the offset, must stay inside the band plus both uncertainties, and the gap inside the free gap costs nothing. Friend has no vertical standing, so its band is the full range. Date uses a band of 15 points on the private appearance standing, plus both uncertainties. Date uses a free gap of 10 points, not 5. With 5, each point of a small gap that is inside the rating noise lowered the pair value, and members at the edge of the rating range, where fewer partners sit near them, lost their weekly assignment to pairs in the middle. On the slop block's pinned seeds (13 to 16, 4 weeks, 300 per city, with the exposure floor in the weekly assignment), the lowest rating quintile's dates against the overall rate went from 0.839 to 0.928 (gate 0.85 or more). Dates per member-month against random went from 0.822 to 0.834, and second dates per seed against random went from 1.811 to 1.541. On seeds 1 to 8, the same change moved the lowest quintile from 0.853 to 0.960 and kept second dates per member-month at 0.041. The penalty per point past the free gap stays 10, so each point of a large gap still costs the same; only the first 10 points are free. Cofounder and Intro use track record and allow a wider band than Hire and Invest. The reply and acceptance rate by standing gap tunes it, and the parity gate counter (pairs past the band) must stay 0.
 - **Penalty per point.** Decision: each point of gap past the free gap lowers the pair value by this much. Hire and Invest use the largest penalty, because a level mismatch costs both sides most there. The acceptance rate by gap inside the band tunes it.
 - **Balance, exchange floor and tolerance.** Decision: Cofounder and Intro require a balanced exchange. Each side must receive at least 200 and the two values may differ by at most 50 percent of the larger. Mentor has no balance rule, because the Offering side consents to the asymmetry. Hire and Invest use the parity band and offset as their two-way check. The share of accepted introductions that one side reports as one-sided tunes it.
 - **Offset.** Decision: a mentor sits 25 standing points above a mentee. Every other lane has offset 0: an employer seat meets a candidate of its level, and a fund meets founders of its traction tier. The mentee acceptance rate by gap tunes it.
@@ -88,7 +88,7 @@ pure def laneLimits(lane: MatchLane): LaneLimits =
         circleMinimum: 3, circleMaximum: 6, circlePairFloor: 350
       }
     | Date => {
-        rules: { utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10,
+        rules: { utilityFloor: 350, parityBand: 15, parityFreeGap: 10, parityPenaltyPerPoint: 10,
                  balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 },
         standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600,
         circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0

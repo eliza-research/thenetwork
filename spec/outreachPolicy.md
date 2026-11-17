@@ -66,7 +66,7 @@ pure def lawRecruitingRequiresAdult(kind: str): bool =
 
 ### An eligible join receipt can ride on a current reply
 
-Tell the inviter when a person joins through their attributed invitation. Share the first name and join status only. The account, consent, age and block checks still apply when the notice goes out. If the notice cannot go out by itself, carry it on an existing reply to a direct member message. A provider, an assistant submitting a profile, or the passage of time does not create a reply. Clear stale receipts after 30 days.
+Tell the inviter when a person joins through their attributed invitation. Share the first name and join status only. The account, consent, age and block checks still apply when the notice goes out. If the notice cannot go out by itself, carry it on an existing reply to a direct member message. A notice never rides a reply about an opportunity in which the invitee has a role (a participant or an alternate): it would name the invitee there before every yes, so it waits. A provider, an assistant submitting a profile, or the passage of time does not create a reply. Clear stale receipts after 30 days.
 
 ```quint
 pure val inviteJoinNoticeLifetimeMs: int = 2592000000
@@ -74,12 +74,15 @@ pure val inviteJoinNoticeLifetimeMs: int = 2592000000
 pure def inviteJoinNoticeCurrent(attributed: bool, inviteeConsents: bool, bothEligible: bool, ageMs: int): bool =
   attributed and inviteeConsents and bothEligible and ageMs >= 0 and ageMs < inviteJoinNoticeLifetimeMs
 
-pure def inviteJoinNoticeMayRideReply(directMemberTurn: bool, reply: bool, carriesMemberText: bool): bool =
-  directMemberTurn and reply and not(carriesMemberText)
+pure def inviteJoinNoticeMayRideReply(directMemberTurn: bool, reply: bool, carriesMemberText: bool, inviteeHasRole: bool): bool =
+  directMemberTurn and reply and not(carriesMemberText) and not(inviteeHasRole)
 
 pure def lawInviteJoinNoticeNeedsAttribution(inviteeConsents: bool, bothEligible: bool, ageMs: int): bool =
   not(inviteJoinNoticeCurrent(false, inviteeConsents, bothEligible, ageMs))
 
-pure def lawInviteJoinNoticeRequiresMemberTurn(reply: bool, carriesMemberText: bool): bool =
-  not(inviteJoinNoticeMayRideReply(false, reply, carriesMemberText))
+pure def lawInviteJoinNoticeRequiresMemberTurn(reply: bool, carriesMemberText: bool, inviteeHasRole: bool): bool =
+  not(inviteJoinNoticeMayRideReply(false, reply, carriesMemberText, inviteeHasRole))
+
+pure def lawInviteJoinNoticeNeverNamesARole(directMemberTurn: bool, reply: bool, carriesMemberText: bool): bool =
+  not(inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, true))
 ```

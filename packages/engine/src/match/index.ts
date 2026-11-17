@@ -1,15 +1,23 @@
-// The candidate index: blocks of compatible partners sorted by (standing, ordinal), with one posting
-// list per tag for offers, seeks and interests. A posting holds block positions in ascending order,
-// so it is sorted by (standing, ordinal) too, and a standing window is one binary-search range in
-// every posting. Memory is O(total tags); the build is one sort per block, O(T log T).
-import { blockKey, partnerSide, type MatchProfile } from "./profile.ts";
+// The candidate index: blocks of compatible partners sorted by (segment, standing, ordinal), with one
+// posting list per tag for offers, seeks and interests. Each segment is one range of block positions,
+// so a standing window inside a segment is one binary-search range. A posting holds block positions
+// in ascending order, so the window of a segment is one binary-search range in every posting too.
+// Memory is O(total tags); the build is one sort per block, O(T log T).
+import { blockKey, compareText, partnerSide, type MatchProfile } from "./profile.ts";
 
 /** Tag id -> positions in `CandidateBlock.profiles`, ascending. */
 export type Postings = ReadonlyMap<number, readonly number[]>;
 
+/** Block positions [start, end). */
+export interface Span { readonly start: number; readonly end: number }
+/** The positions of one segment; `segment` undefined holds the profiles without a segment. */
+export interface SegmentSpan extends Span { readonly segment: string | undefined }
+
 export interface CandidateBlock {
-  /** Sorted by (standing asc, ordinal asc). */
+  /** Sorted by (segment asc, profiles without a segment first; standing asc; ordinal asc). */
   readonly profiles: readonly MatchProfile[];
+  /** One entry per segment present, in block order. */
+  readonly segments: readonly SegmentSpan[];
   readonly byOrdinal: ReadonlyMap<number, MatchProfile>;
   readonly offers: Postings;
   readonly seeks: Postings;
@@ -29,6 +37,25 @@ function postingsOf(profiles: readonly MatchProfile[], tags: (p: MatchProfile) =
   return postings;
 }
 
+function compareSegment(x: MatchProfile, y: MatchProfile): number {
+  const a = x.segment?.own, b = y.segment?.own;
+  if (a === b) return 0;
+  if (a === undefined) return -1;
+  if (b === undefined) return 1;
+  return compareText(a, b);
+}
+
+function segmentsOf(sorted: readonly MatchProfile[]): SegmentSpan[] {
+  const spans: SegmentSpan[] = [];
+  let start = 0;
+  for (let i = 1; i <= sorted.length; i++) {
+    if (i < sorted.length && compareSegment(sorted[i - 1], sorted[i]) === 0) continue;
+    spans.push({ segment: sorted[start].segment?.own, start, end: i });
+    start = i;
+  }
+  return spans;
+}
+
 export function buildCandidateIndex(profiles: readonly MatchProfile[]): CandidateIndex {
   const groups = new Map<string, MatchProfile[]>();
   for (const p of profiles) {
@@ -38,9 +65,10 @@ export function buildCandidateIndex(profiles: readonly MatchProfile[]): Candidat
   }
   const blocks = new Map<string, CandidateBlock>();
   for (const [key, group] of groups) {
-    const sorted = [...group].sort((x, y) => x.standing - y.standing || x.ordinal - y.ordinal);
+    const sorted = [...group].sort((x, y) => compareSegment(x, y) || x.standing - y.standing || x.ordinal - y.ordinal);
     blocks.set(key, {
       profiles: sorted,
+      segments: segmentsOf(sorted),
       byOrdinal: new Map(sorted.map(p => [p.ordinal, p] as const)),
       offers: postingsOf(sorted, p => p.offers),
       seeks: postingsOf(sorted, p => p.seeks),

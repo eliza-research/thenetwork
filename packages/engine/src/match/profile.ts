@@ -40,6 +40,13 @@ export interface EntityStanding {
   /** Exact source identities used for the estimate. Kept out of public match profiles and logs. */
   readonly evidenceIds?: readonly string[];
 }
+/**
+ * A hard-constraint segment of one membership (spec/candidateSearch.md, "Segment blocking never drops
+ * a pair the pair gate admits"): its own segment and the segments it can pair with. A pack gives
+ * segments only as a superset of its own pair rules.
+ */
+export interface EntitySegment { readonly own: string; readonly partners: readonly string[] }
+export interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
 /** Scalar attributes compared by closeness: `of` returns one whole number per entry of `costs`. */
 export interface PackTraits {
   readonly costs: readonly number[];
@@ -52,6 +59,8 @@ export interface PackVectors {
   tags(w: World, entity: MatchEntity): EntityTags;
   standing(w: World, entity: MatchEntity): EntityStanding;
   readonly traits?: PackTraits;
+  /** The entity's segment; undefined pairs with every segment. */
+  segment?(w: World, entity: MatchEntity): EntitySegment | undefined;
   /** Directed value of `b` for `a`, 0..1000 (whole number). */
   packValue?(w: World, a: MatchProfile, b: MatchProfile): number;
 }
@@ -71,6 +80,8 @@ export interface MatchProfile {
   readonly seeks: TagSet;
   readonly interests: TagSet;
   readonly traits: readonly number[];
+  /** Absent: the profile reaches every partner and every partner reaches it. */
+  readonly segment?: MatchSegment;
 }
 
 /** The legacy category whose opt-in, cooldowns and pack pair rules apply to a lane. */
@@ -130,6 +141,7 @@ const normalTags = (tags: readonly string[]): string[] => tags.map(t => t.trim()
 interface Draft {
   readonly entity: MatchEntity; readonly id: EntityId; readonly key: string;
   readonly capacity: number; readonly tags: EntityTags; readonly standing: EntityStanding; readonly traits: readonly number[];
+  readonly segment?: MatchSegment;
 }
 
 /**
@@ -144,6 +156,13 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
   const traitCount = vectors.traits?.costs.length ?? 0;
   const drafts: Draft[] = [];
   const seen = new Set<string>();
+  // Packs memoize partner lists, so members with the same list share one set.
+  const partnerSets = new WeakMap<readonly string[], ReadonlySet<string>>();
+  const partnerSet = (partners: readonly string[]): ReadonlySet<string> => {
+    let set = partnerSets.get(partners);
+    if (!set) { set = new Set(partners); partnerSets.set(partners, set); }
+    return set;
+  };
   for (const memberId of w.ids) {
     if (sendTimeReason(w, memberId) !== null) continue;
     for (const membership of vectors.memberships(w, memberId)) {
@@ -161,8 +180,10 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       const rated = vectors.standing(w, entity);
       const traits = vectors.traits ? vectors.traits.of(w, entity).map(t => wholeNumber(t, "trait")) : [];
       if (traits.length !== traitCount) throw new Error(`entity ${id} has ${traits.length} traits, the pack declares ${traitCount}`);
+      const segment = vectors.segment?.(w, entity);
       drafts.push({
         entity, id, key: blockKey(lane, side, market), capacity, traits,
+        ...(segment ? { segment: { own: segment.own, partners: partnerSet(segment.partners) } } : {}),
         tags: { offers: normalTags(raw.offers), seeks: normalTags(raw.seeks), interests: normalTags(raw.interests) },
         standing: {
           standing: clamp(wholeNumber(rated.standing, "standing"), standingCeiling),
@@ -184,6 +205,7 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       standing: observe(d.entity, d.standing.standing, d.standing.evidenceIds), uncertainty: d.standing.uncertainty, capacity: d.capacity,
       offers: interner.tagSet(d.tags.offers), seeks: interner.tagSet(d.tags.seeks), interests: interner.tagSet(d.tags.interests),
       traits: d.traits,
+      ...(d.segment ? { segment: d.segment } : {}),
     };
   });
 }

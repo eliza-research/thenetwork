@@ -54,6 +54,19 @@ export function lawWindowComplete(standing: number, otherStanding: number, offse
   return !(otherUncertainty <= uncertaintyCeiling && pairValue_parityAllowed(pairValue_standingGap(standing, otherStanding, offset), band, uncertainty, otherUncertainty)) || inSearchWindow(otherStanding, standing, offset, band, uncertainty, uncertaintyCeiling);
 }
 
+/** Story: Search only where a pair can have a value / Segment blocking never drops a pair the pair gate admits (spec/candidateSearch.md) */
+//@ pure
+export function segmentPairAllowed(reachesOther: boolean, otherReaches: boolean): boolean {
+  return reachesOther && otherReaches;
+}
+
+/** Story: Search only where a pair can have a value / Segment blocking never drops a pair the pair gate admits (spec/candidateSearch.md) */
+//@ pure
+export function lawSegmentBlockingComplete(reachesOther: boolean, otherReaches: boolean): boolean {
+  //@ ensures \result === true
+  return !segmentPairAllowed(reachesOther, otherReaches) || reachesOther;
+}
+
 /** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
 //@ pure
 export function lawCandidateBoundSound(side: pairValue_PairSide, other: pairValue_PairSide, offset: number, rules: pairValue_PairRules, utilityBound: number, otherUtilityBound: number): boolean {

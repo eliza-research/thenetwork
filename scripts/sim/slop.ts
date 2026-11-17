@@ -209,9 +209,15 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
         expect(mutualMarkets(a, c, slopPack.options, ["sf", "nyc", "la"]).map(m => m.market)).toContain(p.city);
       }
     }
-    // Negative control: a pack without the orientation rule is caught by the same check.
-    const broken = makeSlopPack();
-    (broken.eligibility as unknown as { pairRules: unknown[] }).pairRules = broken.eligibility.pairRules.filter(r => r.id !== "orientation_mismatch");
+    // Negative control: a pack without the orientation rule is caught by the same check. The Date
+    // segment also encodes orientation (partners are the pools a member seeks), so the broken pack
+    // drops it too; otherwise the gate refuses the same pairs as segment_unreachable.
+    const base = makeSlopPack();
+    const broken: typeof base = {
+      ...base,
+      eligibility: { ...base.eligibility, pairRules: base.eligibility.pairRules.filter(r => r.id !== "orientation_mismatch") },
+      ...(base.vectors ? { vectors: { ...base.vectors, segment: undefined } } : {}),
+    };
     const P = slopProfiles(inputs.get(1)!);
     const bad = (await run(inputs.get(1)!, 1, broken)).proposals.filter(p => { const [a, c] = p.participants.map(id => P.get(id)!); return !a!.seeks.includes(c!.is!) || !c!.seeks.includes(a!.is!); });
     expect(bad.length).toBeGreaterThan(0);

@@ -72,8 +72,8 @@ export function inviteJoinNoticeCurrent(attributed: boolean, inviteeConsents: bo
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 //@ pure
-export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean): boolean {
-  return directMemberTurn && reply && !carriesMemberText;
+export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean, inviteeHasRole: boolean): boolean {
+  return directMemberTurn && reply && !carriesMemberText && !inviteeHasRole;
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
@@ -85,9 +85,16 @@ export function lawInviteJoinNoticeNeedsAttribution(inviteeConsents: boolean, bo
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 //@ pure
-export function lawInviteJoinNoticeRequiresMemberTurn(reply: boolean, carriesMemberText: boolean): boolean {
+export function lawInviteJoinNoticeRequiresMemberTurn(reply: boolean, carriesMemberText: boolean, inviteeHasRole: boolean): boolean {
   //@ ensures \result === true
-  return !inviteJoinNoticeMayRideReply(false, reply, carriesMemberText);
+  return !inviteJoinNoticeMayRideReply(false, reply, carriesMemberText, inviteeHasRole);
+}
+
+/** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
+//@ pure
+export function lawInviteJoinNoticeNeverNamesARole(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean): boolean {
+  //@ ensures \result === true
+  return !inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, true);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

@@ -29,6 +29,23 @@ pure def lawWindowComplete(standing: int, otherStanding: int, offset: int, band:
   implies inSearchWindow(otherStanding, standing, offset, band, uncertainty, uncertaintyCeiling)
 ```
 
+### Segment blocking never drops a pair the pair gate admits
+
+A pack can give a membership a hard-constraint segment: one opaque segment of its own and the set of segments it can pair with. The member's home zone and travel class are an example, or a dating pool and a location cell. One member reaches another when either membership has no segment, or when the other's segment is in the member's partner segments. The one pair gate admits a pair only when each member reaches the other, before it applies the pack pair rules.
+
+The index sorts the members of a block by segment, then by standing, then by ordinal. So each segment is one range of positions, and the standing window inside a segment is one binary-search range. A search walks only the window ranges of the segments that the searching member reaches, and the segment of the members without a segment. The walk therefore holds every partner that the searching member reaches.
+
+This is the blocking-completeness theorem. It has two halves. The gate half: a pair that the gate admits has a searching member who reaches the partner (`lawSegmentBlockingComplete`). This law states only that half, and it is simple by design. The walk half: the shell (search.ts `windowSpans`) walks the range of every segment that the searching member reaches and the range of the members without a segment, so a reached partner is inside the walked ranges. The law does not state the walk half; the code and the exactness check against brute force hold it. Together, blocking by segment never drops a feasible pair. With the standing window (`lawWindowComplete`), the walked ranges hold every partner that can have a pair value.
+
+A pack gives segments only as a superset of its own pair rules. If a segment refuses a pair that the pack rules admit, the gate refuses the pair, and the search and the brute-force oracle agree, so the exactness check cannot see it. The matching block therefore counts each pair that the segment check refuses and the pack rules admit, and requires none.
+
+```quint
+pure def segmentPairAllowed(reachesOther: bool, otherReaches: bool): bool = reachesOther and otherReaches
+
+pure def lawSegmentBlockingComplete(reachesOther: bool, otherReaches: bool): bool =
+  segmentPairAllowed(reachesOther, otherReaches) implies reachesOther
+```
+
 ### A bound is never below the value of the pair it covers
 
 The shell bounds the value of each candidate before it checks the candidate. For a candidate it touched, it knows both tag sets, both standings and both exchanges, so it computes the lane pair value with each utility replaced by an upper bound: the tag terms and the closeness are exact, and only the pack term, which the shell does not read before a check, counts at full value. The pair gate (minors, blocks, holds) can only lower a value to `noPairValue`. A higher utility never lowers the pair value: the floors are the only admission conditions that read a utility, and the harmonic value does not decrease when either utility increases. So the bound is never below the pair value (`lawCandidateBoundSound`).
@@ -71,9 +88,9 @@ pure def lawUnseenBoundSound(side: PairSide, other: PairSide, offset: int, rules
 
 ### The posting walk covers or bounds every partner in the window
 
-The shell walks the nonempty posting ranges of shared interests and of each side's seeks against the other side's offers. It starts with the shortest range. An untouched partner can only share tags from ranges that remain open. An unfinished range stays open when the walk stops partway through it.
+The shell walks the nonempty posting ranges of shared interests and of each side's seeks against the other side's offers. The range of one tag is the part of its posting inside the walked window ranges. It starts with the shortest range. An untouched partner can only share tags from ranges that remain open. An unfinished range stays open when the walk stops partway through it.
 
-The upper bound counts only the utility terms the pack provides. The open ranges bound the searcher's affinity and complement hit counts. For the other direction the bound allows full coverage while a relevant range is open. Closeness and custom pack value count at their maximum when present. If the bound still allows an untagged pair after the tag ranges are exhausted, the shell can walk the whole standing window. The lane floors apply as specified.
+The upper bound counts only the utility terms the pack provides. The open ranges bound the searcher's affinity and complement hit counts. For the other direction the bound allows full coverage while a relevant range is open. Closeness and custom pack value count at their maximum when present. If the bound still allows an untagged pair after the tag ranges are exhausted, the shell can walk the whole window: the standing window inside each segment the member reaches. When the next tag range is at least as long as the whole window, the shell walks the whole window in its place: that costs no more touches and leaves no partner untouched. The lane floors apply as specified.
 
 Each visited posting or whole-window entry costs one touch, including a repeated visit to the same candidate. The shell stops visiting entries when their count reaches `searchTouchesPerCheck` times the lane's search budget. The search can still check candidates it has already touched.
 
@@ -185,7 +202,7 @@ pure def sometimesDroppedCandidate(s: CandidateSearch): bool = s.bestDropped >= 
 
 The shell checks the touched candidates in the order of their bounds, highest first, and then ordinal, lowest first. It passes as `unseenBound` the higher of the next touched candidate's bound and the bound of the candidates it did not touch, or `noPairValue` when no candidate is left that can have a value. The search is exact when nothing is unseen, or when the kept list is full and every kept value is above the unseen bound.
 
-The standing window contains every feasible partner (`lawWindowComplete`). The largest pending bound covers all touched candidates, and the untouched bound covers any remaining candidate in the window (`lawCandidateBoundSound`, `lawUnseenBoundSound`). Kept candidates rank above dropped candidates by value and then ordinal (`alwaysKeptRankAboveDropped`). An exact search closes only when no unchecked candidate can enter (`alwaysExactBeatsUnseen`). It returns the first `limit` feasible partners by descending value and ascending ordinal, or every feasible partner when fewer than `limit` exist.
+The walked segment ranges contain every partner the gate can admit (`lawSegmentBlockingComplete`), and the standing window contains every feasible partner (`lawWindowComplete`). The largest pending bound covers all touched candidates, and the untouched bound covers any remaining candidate in the window (`lawCandidateBoundSound`, `lawUnseenBoundSound`). Kept candidates rank above dropped candidates by value and then ordinal (`alwaysKeptRankAboveDropped`). An exact search closes only when no unchecked candidate can enter (`alwaysExactBeatsUnseen`). It returns the first `limit` feasible partners by descending value and ascending ordinal, or every feasible partner when fewer than `limit` exist.
 
 ```quint
 pure val unseenBoundValues = Set(-1, 2, 4, 6)

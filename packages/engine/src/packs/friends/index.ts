@@ -17,7 +17,7 @@ import { networkConstraints } from "../network/ontology.ts";
 import { objectivesFor, OBJECTIVES } from "../network/taxonomy.ts";
 import { FRIENDS_ACTIVITY, FRIENDS_ASK_QUESTIONS, FRIENDS_KIND_PHRASE, FRIENDS_SAFE_FALLBACK, friendsKindBits, friendsProbeText } from "./copy.ts";
 import { FRIENDS_GENERATORS } from "./generators.ts";
-import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutes } from "./geo.ts";
+import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutes, withinTransitTolerance } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 import { FRIENDS_CANDIDATE_POST_RULES, FRIENDS_CANDIDATE_PRE_RULES, friendsMemberRules, friendsPairRules } from "./rules.ts";
 import { friendsVectors } from "./vectors.ts";
@@ -41,7 +41,7 @@ export const friendsGeo: GeoModel = {
     const info = friendsInfo(w);
     const ia = info.get(a), ib = info.get(b);
     if (!ia?.home || !ib?.home) return null;
-    return transitMinutes(ia.home, ib.home) > ia.tolerance + ib.tolerance ? "beyond_transit_tolerance" : null;
+    return withinTransitTolerance(transitMinutes(ia.home, ib.home), ia.tolerance, ib.tolerance) ? null : "beyond_transit_tolerance";
   },
 };
 
