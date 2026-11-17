@@ -287,7 +287,7 @@ export class Accounts {
     const policy = stepPhoneChange(current, { type: "checkStartPolicy", oldNumberAllowed: !await this.banned(who.e164, person) });
     if (policy.phase !== "AwaitingRateLimit") return numberChangeRefused(policy.failure);
     const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY });
-    const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok });
+    const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok, startsBefore: slot.count - 1 });
     if (rated.phase !== "AwaitingCodeSend") return numberChangeRefused(rated.failure);
     const sent = stepPhoneChange(rated, { type: "recordCodeSend", sendAccepted: await sendCode() });
     if (sent.phase !== "AwaitingPendingWrite") return numberChangeRefused(sent.failure);
@@ -323,8 +323,10 @@ export class Accounts {
       const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
       const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), now: () => this.now() });
-      if (moved === "stale_request") return numberChangeRefused("NoPendingChange");
-      const moveResult = { ok: "MoveApplied", number_in_use: "MoveNumberTaken", no_phone: "MoveMissingPhone", banned: "MoveBanned" } as const;
+      const moveResult = {
+        ok: "MoveApplied", number_in_use: "MoveNumberTaken", no_phone: "MoveMissingPhone", banned: "MoveBanned",
+        stale_request: "MoveRequestStale",
+      } as const;
       const result = stepPhoneChange(allowed, { type: "recordMove", moveResult: moveResult[moved] });
       if (result.phase !== "Moved") return numberChangeRefused(result.failure);
       return { ok: true };

@@ -3,7 +3,7 @@
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
 import { confirmedUnderage, recordedAgeFloorApplies } from "../../core/src/generated/memberAge.ts";
-import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
+import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
@@ -434,7 +434,10 @@ export class MemoryPeopleStore implements PeopleStore {
     let n = 0;
     for (const [k, c] of this.challenges) if (rowBeforeCutoff(c.expiresAt, before)) { this.challenges.delete(k); n++; }
     for (const [k, s] of this.sessions) if (sessionPastRetention(s.expiresAt, s.revokedAt !== null, s.revokedAt ?? before, before)) { this.sessions.delete(k); n++; }
-    for (const [k, l] of this.limits) if (rowBeforeCutoff(l.lastAt, before - (LONG_RATE_WINDOWS[rateKind(k)] ?? 0))) { this.limits.delete(k); n++; }
+    for (const [k, l] of this.limits) {
+      const cutoff = rateCounterCutoff(before, LONG_RATE_WINDOWS[rateKind(k)] ?? 0);
+      if (rowBeforeCutoff(l.lastAt, cutoff)) { this.limits.delete(k); n++; }
+    }
     for (const [k, p] of this.pending) if (rowBeforeCutoff(p.at, before)) { this.pending.delete(k); n++; }
     for (const [k, c] of this.phoneChanges) if (phoneChangePastRetention(c.confirmedAt !== null, c.requestedAt, before)) { this.phoneChanges.delete(k); n++; }
     return n;
@@ -456,7 +459,7 @@ export class MemoryPeopleStore implements PeopleStore {
       const change = this.phoneChanges.get(m.changeId);
       const at = m.now();
       if (!change || change.confirmedAt !== null || change.personId !== m.personId || change.newE164 !== m.newE164
-        || change.requestedAt > at || !pendingWindowOpen(at - change.requestedAt)) return "stale_request";
+        || !pendingWindowOpen(at - change.requestedAt)) return "stale_request";
       if (!lockedPhoneMoveAllowed(await this.isBanned(m.oldHash, m.personId), await this.isBanned(m.newHash))) return "banned";
       if (this.phones.has(m.newE164)) return "number_in_use";
       this.phones.delete(m.oldE164);

@@ -3,6 +3,7 @@
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { confirmedUnderage, minMemberAge, textUseAllowedAtAge, underageCleanupRequired } from "../../core/src/generated/memberAge.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
+import { rateCounterCutoff } from "../../core/src/generated/platformRetention.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
@@ -454,9 +455,11 @@ export class PgPeopleStore implements PeopleStore {
       n += (await tx`delete from platform.otp_challenges where expires_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
       const long = Object.keys(LONG_RATE_WINDOWS);
-      n += (await tx`delete from platform.rate_limits where last_at < ${b} and not (split_part(bucket, ':', 1) = any(${this.sql.array(long, "TEXT")})) returning 1`).length;
+      const ordinaryRateCutoff = ts(rateCounterCutoff(before, 0));
+      n += (await tx`delete from platform.rate_limits where last_at < ${ordinaryRateCutoff} and not (split_part(bucket, ':', 1) = any(${this.sql.array(long, "TEXT")})) returning 1`).length;
       for (const kind of long) {
-        n += (await tx`delete from platform.rate_limits where split_part(bucket, ':', 1) = ${kind} and last_at < ${ts(before - LONG_RATE_WINDOWS[kind]!)} returning 1`).length;
+        const cutoff = ts(rateCounterCutoff(before, LONG_RATE_WINDOWS[kind]!));
+        n += (await tx`delete from platform.rate_limits where split_part(bucket, ':', 1) = ${kind} and last_at < ${cutoff} returning 1`).length;
       }
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;
@@ -551,7 +554,7 @@ export class PgPeopleStore implements PeopleStore {
       const [pending] = await tx<{ requested_at: Date }[]>`select requested_at from platform.phone_changes
         where id=${m.changeId}::uuid and person_id=${m.personId}::uuid and new_e164=${m.newE164} and confirmed_at is null for update`;
       const at = m.now();
-      if (!pending || pending.requested_at.getTime() > at || !pendingWindowOpen(at - pending.requested_at.getTime())) return "stale_request";
+      if (!pending || !pendingWindowOpen(at - pending.requested_at.getTime())) return "stale_request";
       if (!lockedPhoneMoveAllowed(await this.isBanned(m.oldHash, m.personId, tx), await this.isBanned(m.newHash, null, tx))) return "banned";
       // The new number is checked again inside the transaction (a join or another change may have taken it).
       const [taken] = await tx`select 1 from platform.phone_identities where e164 = ${m.newE164}`;

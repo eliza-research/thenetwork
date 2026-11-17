@@ -127,6 +127,44 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect((await store.findPhone(A))).toBeDefined();
   }, T);
 
+  // spec/phoneChange.md, "A challenge needs a send slot and a persisted request"
+  test("the fourth daily change request sends no code and keeps the third request pending", async () => {
+    const t = setup();
+    const oldNumber = "+12125550268";
+    const targets = ["+12125550269", "+12125550270", "+12125550271"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    for (const phone of targets) {
+      expect(await browser.call("POST", "/api/me/phone/start", { phone })).toEqual({ status: 200, body: { ok: true } });
+    }
+    expect(await browser.call("POST", "/api/me/phone/start", { phone: "+12125550272" })).toEqual({
+      status: 429, body: { ok: false, error: "rate_limited" },
+    });
+    expect(t.sends).toEqual([oldNumber, ...targets]);
+    const owner = await store.findPhone(oldNumber);
+    if (!owner) throw new Error("The member is missing");
+    expect(await store.pendingPhoneChange(owner.personId)).toMatchObject({ newE164: targets[2] });
+  }, T);
+
+  // spec/phoneChange.md, "A live pending request needs a valid code"
+  test("a clock rollback leaves the new code available until its request starts", async () => {
+    const t = setup();
+    const [oldNumber, newNumber] = ["+12125550273", "+12125550274"];
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    t.tick(MIN);
+    expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
+    const input = { code: t.codes.get(newNumber) };
+    t.tick(-1);
+    expect(await browser.call("POST", "/api/me/phone/confirm", input)).toEqual({
+      status: 409, body: { ok: false, error: "no_pending_change" },
+    });
+    t.tick(1);
+    expect((await browser.call("POST", "/api/me/phone/confirm", input)).status).toBe(200);
+  }, T);
+
   // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
   test("a provider verification that finishes after the pending move expires leaves the number unchanged", async () => {
     const t = setup();

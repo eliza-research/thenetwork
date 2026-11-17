@@ -1,9 +1,11 @@
 // Canonical account erasure and Notify retention on real PostgreSQL; synthetic records only.
 import { setTimeout as sleep } from "node:timers/promises";
 import {afterAll, beforeAll, describe, expect, test} from "vitest";
+import {DAY} from "../../core/src/clock.ts";
 import {Accounts} from "../src/accounts.ts";
 import {APPS} from "../src/apps.ts";
 import {PgPeopleStore} from "../src/pg-store.ts";
+import {MemoryPeopleStore} from "../src/store.ts";
 import {PgNotifyStore} from "../../notify/src/pg-store.ts";
 import {dropDb, migratedDb, pgAvailable} from "./pg.ts";
 
@@ -15,6 +17,24 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     accounts = new Accounts(people, {hashKey: "synthetic-retention-fixture", now: () => now, apps: id => APPS[id]});
   }, 120_000);
   afterAll(async () => {await people?.close(); if (url) await dropDb(url);});
+
+  // spec/platformRetention.md, "Retain the STOP hint count for its full window"
+  test("rate cleanup retains each counter at its cutoff and removes older counters", async () => {
+    const stopHintCutoff = now - 30 * DAY;
+    const counters = [
+      { bucket: "ordinary:keep", lastAt: now, retained: true },
+      { bucket: "ordinary:expire", lastAt: now - 1, retained: false },
+      { bucket: "stop_hint:keep", lastAt: stopHintCutoff, retained: true },
+      { bucket: "stop_hint:expire", lastAt: stopHintCutoff - 1, retained: false },
+    ];
+    for (const store of [people, new MemoryPeopleStore()]) {
+      for (const { bucket, lastAt } of counters) await store.hit(bucket, DAY, lastAt);
+      await store.purge(now);
+      for (const { bucket, lastAt, retained } of counters) {
+        expect((await store.hit(bucket, DAY, lastAt)).count).toBe(retained ? 2 : 1);
+      }
+    }
+  });
 
   test("app leave preserves other apps and STOP; full erasure waits for admitted writes and fences late references", async () => {
     const person = await accounts.createPerson(phone, "inbound_message", 28);
