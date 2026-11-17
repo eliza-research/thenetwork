@@ -145,6 +145,19 @@ export function planAlternateCanRemain(s: CityPlanRun, memberId: string): boolea
   return s.phase === "PlansPublished" && !memberAlreadyInvited(s, memberId);
 }
 
+/** Story: Use the same activity window for availability and a proposal / A Friends template supplies the start and the activity supplies the end (spec/planFormation.md) */
+//@ pure
+export function planActivityWindowEnd(startsAt: number, durationMinutes: number): number {
+  return exact_planFormation(startsAt + exact_planFormation(durationMinutes * 60000));
+}
+
+/** Story: Use the same activity window for availability and a proposal / A Friends template supplies the start and the activity supplies the end (spec/planFormation.md) */
+//@ pure
+export function lawPlanActivityWindowEndsAfterStart(startsAt: number, durationMinutes: number): boolean {
+  //@ ensures \result === true
+  return !(durationMinutes > 0) || planActivityWindowEnd(startsAt, durationMinutes) > startsAt;
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: CityPlanRun, event: Event): boolean {

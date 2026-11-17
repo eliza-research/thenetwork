@@ -45,6 +45,7 @@ const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapsho
 
 export async function friendsScheduleGates(b: Block): Promise<void> {
   await friendsReachableVenueGate(b);
+  await friendsActivityDurationGate(b);
   await b.run("friends repeat plans keep the local weekday and time across DST, with the minimum lead", () => {
     const s = friendsSnapshotAfter(1);
     const past = s.outcomes.find(o => o.positive.length >= 2)!;
@@ -302,6 +303,32 @@ export async function friendsReachableVenueGate(b: Block): Promise<void> {
     expect(propose(20, venues.filter(venue => venue.id === "central-reservoir")).map(plan => plan.venueId)).toEqual(["central-reservoir"]);
     expect(propose(20)).toMatchObject(expected);
     expect(propose(17)).toEqual([]);
+  });
+}
+
+export async function friendsActivityDurationGate(b: Block): Promise<void> {
+  await b.run("Friends checks availability through the end of the actual activity", () => {
+    const venue = PLAN_VENUES.find(v => v.id === "inwood-hill")!;
+    const ids = ["a", "b", "c"];
+    const mini = new Mini(ids.map((id, index) => ({ id, name: ["Ada", "Bev", "Cam"][index]!, age: 30, area: "Inwood", interests: ["hiking"] })));
+    for (const id of ids) mini.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+      tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    const world = new World(mini.ctx().snapshot(), resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    const start = Date.UTC(2026, 9, 10, 14);
+    const propose = (hoursFree: number, busyAt: number) => {
+      const evidence = new Map<MemberId, PlanEvidence>(ids.map(id => [id, {
+        memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows: [{ start, end: start + hoursFree * HOUR }], at: START, until: START + 7 * DAY },
+        ...(id === "c" ? { calendar: { observedAt: START, expiresAt: START + DAY,
+          coverage: { start: START, end: START + 7 * DAY }, busy: [{ start: start + busyAt * HOUR, end: start + (busyAt + 1) * HOUR }] } } : {}),
+      }]));
+      return planFriendsWeek(world, { now: START, tz: NYC_TZ, evidence, venues: [venue], crews: [], outcomes: [], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, universal: false, partnerIntros: 0 }, FRIENDS_PLANS).plans.filter(plan => plan.activityId === "day_hike");
+    };
+    const open = propose(4, 4);
+    expect(open).toMatchObject([{ venueId: venue.id, window: { start, end: start + 4 * HOUR } }]);
+    expect([...open[0]!.invited].sort()).toEqual(ids);
+    expect(propose(4, 3)).toEqual([]);
+    expect(propose(2, 4)).toEqual([]);
   });
 }
 

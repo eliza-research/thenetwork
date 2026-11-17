@@ -39,7 +39,7 @@ import {
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue, pairValueScale } from "../../../../core/src/generated/pairValue.ts";
-import { isPlanAlternate } from "../../../../core/src/generated/planFormation.ts";
+import { isPlanAlternate, planActivityWindowEnd } from "../../../../core/src/generated/planFormation.ts";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason, pairReason } from "../../filters.ts";
@@ -212,10 +212,20 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     return true;
   };
   const out: FriendsWeek = { sessions: [], offers: [], repeats: [], plans: [], partners: [] };
-  const slotsAll = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att);
+  const templates = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att);
+  const windowsByDuration = new Map<number, TimeSlot[]>();
+  const activityWindow = (start: number, durationMinutes: number): TimeSlot => ({ start, end: planActivityWindowEnd(start, durationMinutes) });
+  const slotsFor = (activity: ActivityType): TimeSlot[] => {
+    let windows = windowsByDuration.get(activity.durationMin);
+    if (!windows) {
+      windows = templates.map(slot => activityWindow(slot.start, activity.durationMin));
+      windowsByDuration.set(activity.durationMin, windows);
+    }
+    return windows.filter(slot => (activity.dayparts as string[]).includes(daypartOf(slot.start, tz, att)));
+  };
   const dayKey = (t: number) => { const lp = localParts(t, tz); return `${lp.month}-${lp.day}`; };
   const freeBySlot = new Map<TimeSlot, Map<MemberId, number>>();
-  /** hasWindow for a member with evidence at one of `slotsAll`, read once a run per member and slot. */
+  /** Availability for the actual activity window, read once per member and window. */
   const freeAt = (id: MemberId, slot: TimeSlot): number => {
     let row = freeBySlot.get(slot);
     if (!row) { row = new Map(); freeBySlot.set(slot, row); }
@@ -288,14 +298,14 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
 
   const timeOptions = (p: FriendsPlan, venue: Venue | undefined): TimeSlot[] => {
     const a = activityById.get(p.activityId)!;
-    const cands = slotsAll.filter(s => (a.dayparts as string[]).includes(daypartOf(s.start, tz, att)) && (!venue || venueOpen(venue, s, a.durationMin, tz, att)));
+    const cands = slotsFor(a).filter(s => !venue || venueOpen(venue, s, a.durationMin, tz, att));
     const scored = cands.map(s => ({ s, e: p.invited.reduce((sum, id) => sum + (inp.evidence.get(id) ? planFreeProb(inp.evidence.get(id)!, s, now, pcfg, att).p : 0.3), 0) }))
       .filter(x => dayKey(x.s.start) !== dayKey(p.window.start)).sort((x, y) => (y.e - x.e) || (x.s.start - y.s.start));
     const opts: TimeSlot[] = [p.window];
     for (const x of scored) {
       if (opts.length >= 3) break;
       if (x.e < 1.5 || opts.some(o => dayKey(o.start) === dayKey(x.s.start))) continue;
-      opts.push({ start: x.s.start, end: x.s.start + a.durationMin * 60_000 });
+      opts.push(x.s);
     }
     return opts.sort((x, y) => x.start - y.start);
   };
@@ -371,7 +381,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const alternates = compatibleAlternates(ids, o.attended.filter(id => !ids.includes(id) && eligible(id) && recurringAvailable(week, id)), partner ? 0 : 2);
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id, ...(v ? { venueId: v.id } : {}),
-        place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: { start, end: start + a.durationMin * 60_000 },
+        place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: activityWindow(start, a.durationMin),
         invited: ids, alternates, partner,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: circleScore(circle), u: {}, familiar: {}, createdAt: now, category: "social",
@@ -458,7 +468,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const cand = pool.filter(id => newPlanAvailable(week, id) && fitOf(id, a, universal) >= fitFloor && (w.get(id)?.m.age ?? 0) >= a.ageMin);
       if (cand.length < minInvite) continue;
       // Only times at which some venue offers the activity and is open.
-      const slots = slotsAll.filter(sl => (a.dayparts as string[]).includes(daypartOf(sl.start, tz, att)) && venueOpenFor(a, sl));
+      const slots = slotsFor(a).filter(sl => venueOpenFor(a, sl));
       const pf = new Map(cand.map(id => [id, slots.map(sl => freeAt(id, sl))] as const));
       // Up to `tableOptions` options on distinct days where the MOST candidates are free (yes-sayers
       // must agree on one option for quorum, so overlap beats coverage).
@@ -482,11 +492,12 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
         const table = growTable(order, seed);
         if (table.members.length < minInvite) continue;
         const first = chosen.map(i => ({ i, n: table.members.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (x.i - y.i))[0]!;
-        const start = slots[first.i]!.start;
+        const window = slots[first.i]!;
+        const { start } = window;
         const invited = table.members.slice(0, pcfg.size.max), alternates = table.members.slice(pcfg.size.max);
         const plan: Plan = {
           id: `plan_${sha256(`table|${a.id}|${start}|${[...invited].sort().join(",")}|${now}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id,
-          place: { name: a.label }, window: { start, end: start + a.durationMin * 60_000 }, invited, alternates, partner: false,
+          place: { name: a.label }, window, invited, alternates, partner: false,
           size: { min: pcfg.size.min, target: invited.length, max: pcfg.size.max }, quorum: pcfg.quorum.group,
           probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
           score: Math.round((1e4 * table.total) / (table.pairs * pairValueScale)) / 1e4, u: {}, familiar: {}, createdAt: now, category: "social",
@@ -496,7 +507,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
         if (!fp || !seatedCircle(fp.invited)) continue;
         const venue = venueById.get(fp.venueId!)!;
         fp.options = chosen.map(i => slots[i]!).sort((x, y) => x.start - y.start)
-          .filter(o => venueOpen(venue, o, a.durationMin, tz, att)).map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
+          .filter(o => venueOpen(venue, o, a.durationMin, tz, att));
         if (!reserve({ type: "reserveNewPlan", invited: fp.invited, alternates: fp.alternates, reserveAlternates: pol.openTable })) continue;
         out.plans.push(fp);
         break;
@@ -540,13 +551,14 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (!friendsPartnerEligible(w, a, b)) continue;
       const act = pairActivity(w, a, b, pcfg);
       if (!act) continue;
-      const slots = slotsAll.filter(sl => (act.dayparts as string[]).includes(daypartOf(sl.start, tz, att)) && venueOpenFor(act, sl))
+      const slots = slotsFor(act).filter(sl => venueOpenFor(act, sl))
         .map(sl => ({ sl, p: Math.min(freeAt(a, sl), freeAt(b, sl)) }))
         .filter(x => x.p > 0).sort((x, y) => (y.p - x.p) || (x.sl.start - y.sl.start));
       if (!slots.length) continue;
-      const start = slots[0]!.sl.start;
+      const window = slots[0]!.sl;
+      const { start } = window;
       const plan: Plan = {
-        id: `plan_${sha256(`partner|${key}|${start}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: act.id, place: { name: act.label }, window: { start, end: start + act.durationMin * 60_000 },
+        id: `plan_${sha256(`partner|${key}|${start}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: act.id, place: { name: act.label }, window,
         invited: [a, b], alternates: [], partner: true, size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR,
         score: Math.round((1e4 * value) / pairValueScale) / 1e4, u: {}, familiar: {}, createdAt: now, category: "hobby",
       };
@@ -555,7 +567,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const venue = venueById.get(fp.venueId!)!;
       const days = new Set<string>();
       fp.options = slots.filter(x => venueOpen(venue, x.sl, act.durationMin, tz, att))
-        .filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => ({ start: x.sl.start, end: x.sl.start + act.durationMin * 60_000 })).sort((x, y) => x.start - y.start);
+        .filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => x.sl).sort((x, y) => x.start - y.start);
       if (!reserve({ type: "reservePartner", pair, limit: pol.partnerIntros })) continue;
       out.partners.push(fp);
     }
