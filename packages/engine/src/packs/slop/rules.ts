@@ -6,12 +6,14 @@
 // Stated preferences are filters only (PRD 40.5): mutual gender / orientation inclusion, age ranges
 // both ways, stated dealbreakers, radius or cities. There is no race or ethnicity rule (no field).
 // Safety: observed safety cues and the Network's own records hold a member for human review.
-import { DAY } from "@thenetwork/core";
+import { DAY, type City, type MemberId } from "@thenetwork/core";
+import { slopPairConstraintsCurrent } from "../../../../core/src/generated/datingRadius.ts";
 import type { MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
+import type { EngineInput } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
-import { limitMiles } from "./geo.ts";
-import type { SlopPackOptions } from "./options.ts";
+import { limitMiles, mutualMarkets } from "./geo.ts";
+import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
 import { slopProfiles, type SlopProfile } from "./profile.ts";
 import { statedDealbreaker } from "./score.ts";
 
@@ -64,6 +66,35 @@ export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null 
   return null;
 }
 
+function seekingMatches(a: SlopProfile, b: SlopProfile): boolean {
+  return !!a.is && !!b.is && a.seeks.includes(b.is) && b.seeks.includes(a.is);
+}
+
+function ageRangeReason(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): string | null {
+  const ra = ageRangeOf(a, o), rb = ageRangeOf(b, o);
+  if (!ra || !rb) return "age_range_unknown";
+  return b.age >= ra[0] && b.age <= ra[1] && a.age >= rb[0] && a.age <= rb[1] ? null : "age_range";
+}
+
+/** Recheck the pair in its reviewed market without repeating discovery, ranking or pacing. */
+export function slopHardPairCurrent(input: EngineInput, pair: readonly MemberId[], market: City, options: SlopPackOptions = SLOP_DEFAULT_OPTIONS): boolean {
+  const [first, second] = pair;
+  if (pair.length !== 2 || first === undefined || second === undefined || first === second) return false;
+  const profiles = slopProfiles(input);
+  const a = profiles.get(first), b = profiles.get(second);
+  if (!a || !b) return false;
+  return slopPairConstraintsCurrent({
+    adults: a.adult && b.adult,
+    optedIn: a.optedIn && b.optedIn && !a.paused && !b.paused,
+    safetyClear: !reviewReason(a, options) && !reviewReason(b, options),
+    complete: missingFields(a, options).length === 0 && missingFields(b, options).length === 0,
+    seeksMutually: seekingMatches(a, b),
+    agesFit: ageRangeReason(a, b, options) === null,
+    dealbreakersClear: !statedDealbreaker(a, b) && !statedDealbreaker(b, a),
+    radiusFits: mutualMarkets(a, b, options, [market]).length !== 0,
+  });
+}
+
 export function slopMemberRules(o: SlopPackOptions): MemberRule[] {
   return [
     // The only lane slop.date offers is dating; members must have opted in (adults only: core).
@@ -107,17 +138,14 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
       // Mutual gender / orientation inclusion: each is in the other's seeking set.
       id: "orientation_mismatch", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
-        if (!pa.is || !pb.is) return "orientation_mismatch";
-        return pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is) ? null : "orientation_mismatch";
+        return seekingMatches(pa, pb) ? null : "orientation_mismatch";
       },
     },
     {
       // Age ranges both ways (claimed age; minors never get here: core).
       id: "age_range", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
-        const ra = ageRangeOf(pa, o), rb = ageRangeOf(pb, o);
-        if (!ra || !rb) return "age_range_unknown";
-        return pb.age >= ra[0] && pb.age <= ra[1] && pa.age >= rb[0] && pa.age <= rb[1] ? null : "age_range";
+        return ageRangeReason(pa, pb, o);
       },
     },
     {

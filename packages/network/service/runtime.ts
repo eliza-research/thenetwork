@@ -30,6 +30,7 @@ import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwo
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
+import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
@@ -43,12 +44,13 @@ import {
 } from "../../core/src/generated/sharedContext.ts";
 import { ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
+import { appTagFacet } from "../src/apphooks.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
-import { effectiveParticipation, intentOf, loadSnapshot } from "./snapshot.ts";
+import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
@@ -376,6 +378,73 @@ export class NetworkRuntime {
     const active = cofounderPairCurrent(first !== second, true, true, eligible);
     const bothAccepted = opp.participants.every(id => opp.status.some(([key, status]) => key === id && status === "yes") && opp.contacted.includes(id));
     return cofounderDeliveryAllowed(active, opp.review?.decision === "approve", revealing, bothAccepted) ? { ok: true } : refused;
+  }
+
+  private async slopContact(tx: SQL, row: QueueRow) {
+    if (this.app.id !== "slop" || row.app !== this.app.id || !row.oppId || !row.memberId) return;
+    const [contact] = await tx<{ type: "probe" | "proposal"; body: string }[]>`select msg.type,msg.body from network.messages msg
+      where msg.app_id=${row.app} and msg.id=${row.id} and msg.opportunity_id=${row.oppId}
+        and msg.member_id=${row.memberId} and msg.direction='outbound' and msg.type in ('probe','proposal')`;
+    return contact;
+  }
+
+  /** Lock the exact reviewed pair before the queue takes its usual one-recipient locks. */
+  async lockSlopPairAdmission(tx: SQL, row: QueueRow): Promise<void> {
+    if (!await this.slopContact(tx, row)) return;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state
+      where id=${this.pg.id} and app_id=${row.app} for share`;
+    const opp = saved?.state.opps.find(item => item.id === row.oppId);
+    if (!opp || opp.participants.length !== 2 || !opp.participants.includes(row.memberId!)) return;
+    await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+      where member.app_id=${row.app} and member.id in ${tx(opp.participants)} order by person.id for update of person`;
+    await tx`select id from network.members where app_id=${row.app} and id in ${tx(opp.participants)} order by id for update`;
+  }
+
+  /** Recheck both live Slop profiles after the asynchronous gates, in the queue's claim transaction. */
+  async slopPairAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck> {
+    const contact = await this.slopContact(tx, row);
+    if (!contact) return { ok: true };
+    const refused: RecipientCheck = { ok: false, reason: "slop_pair_changed" };
+    const check = this.wiring.hooks?.hardDatingPairCurrent;
+    if (!check || contact.body !== row.text) return refused;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${row.app}`;
+    const state = saved?.state;
+    const opp = state?.opps.find(item => item.id === row.oppId);
+    if (!state || !opp || opp.category !== "romance" || opp.participants.length !== 2 || !opp.participants.includes(row.memberId!)) return refused;
+    const [first, second] = opp.participants as [MemberId, MemberId];
+    const reveal = contact.type === "proposal";
+    const now = this.clock.now();
+    const stageCurrent = reveal ? opp.stage === "scheduled" : opp.stage === "probing" && opp.contacted.includes(row.memberId!)
+      && opp.status.some(([memberId, status]) => memberId === row.memberId && status === "probing");
+    const approved = stageCurrent && opp.review?.decision === "approve" && !opp.review.invalidated;
+    const accepted = opp.participants.every(id => opp.status.some(([memberId, status]) => memberId === id && status === "yes"));
+    if (!slopPairContactAllowed(approved, first !== second, reveal, accepted)) return refused;
+    if (!opp.participants.every(id => storedInviteNoticePartyCurrent(state, id) && !state.trust?.some(t => t.id === id && t.level !== "ok"))) return refused;
+    const pair = [first, second].sort().join("|");
+    if (state.blocks.includes(pair) || state.avoid.includes(pair) || await this.canonicalPairBlocked(tx, first, second)) return refused;
+    for (const party of (await this.relayParties(opp.participants, tx)).values()) if (!party.adult || party.held || party.optedOut) return refused;
+
+    const [members, facets, presence, blocks] = await Promise.all([
+      tx`select m.id,m.name,m.home_city,m.prefs,m.participation_state,m.participation_window,m.joined_at,m.unanswered_proactive,a.age
+        from network.members m join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
+        where m.app_id=${row.app} and m.id in ${tx(opp.participants)} and m.account_status='active' and not m.opted_out order by m.id`,
+      tx`select * from network.facets where app_id=${row.app} and member_id in ${tx(opp.participants)} and status<>'rejected'
+        and ${automatedFacetPredicate(tx)} order by member_id,id`,
+      tx`select * from network.presence where app_id=${row.app} and member_id in ${tx(opp.participants)} order by member_id,city,type`,
+      tx`select from_id,to_id,created_at from network.edges where app_id=${row.app} and type='blocked' and to_id in ${tx(opp.participants)} order by from_id,to_id`,
+    ]);
+    const input: Parameters<typeof check>[0] = {
+      now, members: members.map(m => ({ id: m.id, name: m.name, homeCity: m.home_city, prefs: m.prefs, age: m.age,
+        state: effectiveParticipation(m as Parameters<typeof effectiveParticipation>[0], now).state,
+        joinedAt: m.joined_at?.getTime() ?? 0, unansweredProactive: m.unanswered_proactive })),
+      facets: [...facets.map(facetOf), ...state.members.filter(m => opp.participants.includes(m.id))
+        .flatMap(m => (m.appTags ?? []).map(tag => appTagFacet(m.id, tag)))],
+      presence: presence.map(presenceOf), intents: [], recentProposals: [],
+      edges: blocks.map(e => ({ from: e.from_id, to: e.to_id, type: "blocked", strength: 1, explicit: true, createdAt: e.created_at.getTime() })),
+      recentAsks: state.asks, feedback: state.feedback, interactions: state.interactions,
+    };
+    const prepared = this.wiring.hooks?.engineInput?.(input) ?? input;
+    return check(prepared, opp.participants) ? { ok: true } : refused;
   }
 
   /**

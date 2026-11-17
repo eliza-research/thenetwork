@@ -57,6 +57,7 @@ import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } 
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
+import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { rescheduleAnswerAfterReceipt, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
@@ -2859,6 +2860,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+    if (!this.currentDatingPair(o)) return "slop_pair_changed";
     if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor,
       lane: o.lane, cofounderIntents: o.cofounderIntents, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
@@ -3000,6 +3002,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private advanceProbes(o: Opp) {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
+    if (!this.currentDatingPair(o)) return this.close(o, "slop_pair_changed", { releasePartial: true });
     if (isGatheringRepeat(o) && !this.repeatSourceCurrent(o)) return this.close(o, "gathering repeat consent changed");
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", false, false)) {
@@ -3358,6 +3361,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * not on the cap, and only while the member has at most 2 messages unanswered.
    */
   private reveal(o: Opp) {
+    if (!this.currentDatingPair(o)) return this.close(o, "slop_pair_changed", { releasePartial: true });
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", true,
       o.participants.every(p => o.status.get(p) === "available" && o.contacted.has(p)))) {
@@ -5330,6 +5334,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
+  /** Recheck this same reviewed pair without using its own pending proposal as a discovery exclusion. */
+  private currentDatingPair(o: Pick<Opp, "category" | "participants">): boolean {
+    const check = this.opts.hooks?.hardDatingPairCurrent;
+    if (!check || this.app.id !== "slop" || o.category !== "romance") return true;
+    const [first, second] = o.participants;
+    if (!first || !second || this.avoid.has(pairKey(first, second))) return false;
+    return o.participants.every(id => this.checkRecipient(id, "reveal", { about: o.participants, reply: false }).ok)
+      && check(this.packInput(this.now()), o.participants);
+  }
+
   private fromProposal(p: Proposal & { seat?: Opp["seat"] }, origin: Origin, now: number): Opp | undefined {
     if (p.participants.some(id => !this.eligibleIn(p, id))) { if (origin === "player") this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "participant unavailable" }); return undefined; }
     const tags = [...new Set(p.participants.flatMap(id => [...(this.knownProfiles().get(id)?.interests ?? [])]))].slice(0, 6);
@@ -5497,7 +5511,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const facets = input.facets.filter(f => adult.has(f.memberId));
     for (const m of this.members.values()) {
       if (!adult.has(m.id)) continue;
-      for (const t of m.appTags ?? []) facets.push({ id: `${m.id}:app:${t.tag}`, memberId: m.id, kind: t.kind, value: t.tag, tags: [t.tag], scope: t.scope, provenance: "said", confidence: 0.9, validFrom: t.at, source: "chat", observedAt: t.at, inferred: false, confirmedByMember: true });
+      for (const tag of m.appTags ?? []) facets.push(appTagFacet(m.id, tag));
     }
     const out: EngineInput = {
       ...input,
@@ -5792,6 +5806,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   private send(m: MemberState, body: string, meta: SimMeta, kind: SendKind, o: SendOpts = {}): SendResult {
     const now = this.now();
     const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? meta.plan?.planId ?? "");
+    if (this.app.id === "slop" && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
+      && (o.hook?.t === "probe" || o.hook?.t === "times" || o.hook?.t === "reveal")) {
+      const approved = opportunity.review?.decision === "approve" && !opportunity.review.invalidated;
+      const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes");
+      if (!slopPairContactAllowed(approved, this.currentDatingPair(opportunity), o.hook.t === "reveal", accepted)) {
+        return this.refuse(m.id, kind, "slop_pair_changed", this.hookFns(m, o.hook));
+      }
+    }
     if (opportunity?.lane === "Cofounder" && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal")) {
       const revealing = meta.type === "proposal" || o.key?.startsWith(RESCHEDULE_QUEUE_PREFIX) === true;
       const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes" && opportunity.contacted.has(id));

@@ -12,7 +12,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { START } from "./mini.ts";
@@ -281,6 +281,92 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     debug(all.join(" | "));
     expect(all.some(b => /looking for women/.test(b))).toBe(true);
     expect(all.some(b => /looking for men/.test(b))).toBe(false);
+    await s.close(); svc = undefined;
+  }, T);
+
+  test.each(["before booking", "before queued reveal"] as const)("a current dating limit stops an approved match %s", async (phase) => {
+    // spec/datingRadius.md, "Both members' current dating limits apply until reveal"
+    const clock = new SimClock(START);
+    const queued = phase === "before queued reveal";
+    const attempted: string[] = [];
+    const adapter = new BlooioAdapter({ app: "slop", from: "+12125550169", clock, liveGate: () => true, log: () => {}, provider: {
+      kind: "sim", send: async request => {
+        attempted.push(request.idempotencyKey);
+        return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
+      },
+    } });
+    const s = svc = new NetworkService({
+      url: URL_, clock, instance: "slop-current-limits", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
+      tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 4 }, photoStorage: null, notify: false,
+      adapter: () => adapter,
+    });
+    await s.start();
+    const phones = queued ? ["+12125550167", "+12125550168"] : ["+12125550165", "+12125550166"];
+    const profiles = queued ? [
+      ["Fern, 49", "I'm a woman into men. Live in Greenpoint, love climbing and live music", "I'm a woman looking for men, 47 to 58, within 5 miles of 11222"],
+      ["Gabe, 51", "I'm a man into women. Williamsburg, I climb and go to shows", "I'm a man looking for women, 45 to 55, within 5 miles of 11211"],
+    ] : [
+      ["Della, 29", "I'm a woman into men. Live in Greenpoint, love climbing and live music", "I'm a woman looking for men, 27 to 38, within 5 miles of 11222"],
+      ["Ezra, 31", "I'm a man into women. Williamsburg, I climb and go to shows", "I'm a man looking for women, 25 to 35, within 5 miles of 11211"],
+    ];
+    for (const [idx, phone] of phones.entries()) {
+      for (const body of ["slop", ...profiles[idx]!, "Something serious, no smokers", "Weekend evenings work best"]) await text(s, clock, phone, body);
+      await adapter.engaged(phone);
+    }
+    const ids = await Promise.all(phones.map(memberId));
+    expect(ids).toEqual([expect.any(String), expect.any(String)]);
+    expect((await staff(s, ADMIN, "POST", "/apps/slop/matching", { on: true })).status).toBe(200);
+    type Review = { oppId: string; revision: number; proposal: { participants: string[] } };
+    let item: Review | undefined;
+    for (let i = 0; i < 12 && !item; i++) {
+      await run(s, clock, 2 * HOUR);
+      const queue = await (await staff(s, REVIEWER, "GET", "/apps/slop/review")).json() as { items: Review[] };
+      item = queue.items.find(row => ids.every(id => row.proposal.participants.includes(id!)));
+    }
+    expect(item).toBeDefined();
+    const { oppId, revision } = item!;
+    expect(await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(oppId)}`, { decision: "approve", revision })).json()).toEqual({ ok: true });
+    const probes = () => sql<{ id: string; member_id: string }[]>`select id,member_id from network.messages where app_id='slop' and opportunity_id=${oppId} and type='probe' and direction='outbound' order by ts,id`;
+    for (let hour = 0; hour < 24 && !(await probes()).length; hour++) await run(s, clock, HOUR);
+    const [first] = await probes();
+    expect(first).toBeDefined();
+    const firstPhone = phones[ids.indexOf(first!.member_id)]!;
+    const secondPhone = phones.find(phone => phone !== firstPhone)!;
+    await text(s, clock, firstPhone, "Yes, the first time works");
+    for (let hour = 0; hour < 24 && (await probes()).length < 2; hour++) await run(s, clock, HOUR);
+    const deliveredProbes = await probes();
+    expect(deliveredProbes).toHaveLength(2);
+    expect(attempted).toEqual(expect.arrayContaining(deliveredProbes.map(probe => `tn:${probe.id}`)));
+
+    const reveals = () => sql<{ id: string }[]>`select id from network.messages where app_id='slop' and opportunity_id=${oppId} and type='proposal' and direction='outbound'`;
+    if (queued) {
+      await adapter.queue.setLineSafety("review");
+      await text(s, clock, secondPhone, "Yes, the first time works");
+      const staged = await reveals();
+      expect(staged).toHaveLength(2);
+      for (const row of staged) expect(await adapter.queue.statusOf(row.id)).toBe("retry_scheduled");
+    }
+
+    // The verified member's assistant updates their dating age range after both anonymous probes.
+    const [owner] = await sql<{ person_id: string }[]>`select person_id from platform.phone_identities where e164=${firstPhone}`;
+    const preference = firstPhone === phones[0] ? "men" : "women";
+    expect(await s.submitProfile(owner!.person_id, "slop", firstPhone, `I'm looking for ${preference}, ages 40 to 45, within 5 miles.`)).toBe("accepted");
+    const rt = s.runtimeFor("slop")!;
+    expect((await rt.pg.load())?.members.find(m => m.id === first!.member_id)?.appTags?.map(tag => tag.tag)).toContain("romance:age:40-45");
+    if (queued) {
+      await adapter.queue.setLineSafety(undefined);
+      clock.advance(HOUR);
+      await rt.deliver();
+      for (const row of await reveals()) {
+        expect(await adapter.queue.statusOf(row.id)).toBe("suppressed_ineligible");
+        expect(attempted).not.toContain(`tn:${row.id}`);
+      }
+    } else {
+      await text(s, clock, secondPhone, "Yes, the first time works");
+      const [row] = await sql`select state from network.opportunities where app_id='slop' and id=${oppId}`;
+      expect(row?.state).not.toBe("SCHEDULED");
+      expect(await reveals()).toEqual([]);
+    }
     await s.close(); svc = undefined;
   }, T);
 });

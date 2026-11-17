@@ -31,3 +31,23 @@ pure def lawPairDecisionSymmetric(adjustedMiles: int, firstLimit: int, secondLim
   withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) ==
     withinAdjustedRadius(adjustedMiles, secondLimit, firstLimit)
 ```
+
+### Both members' current dating limits apply until reveal
+
+Recheck the exact pair at review approval, before either anonymous probe, before booking, and when the queued probe or reveal is claimed. Both members must still be eligible adults with complete dating settings and no current safety hold. Both must still fit the other's stated seeking, age range, dealbreakers, and travel limits in the app's market. If either person's authority changes, stop the outdated invitation or reveal. Keep the review and each member's consent as separate requirements.
+
+```quint
+type CurrentSlopPair = { adults: bool, optedIn: bool, safetyClear: bool, complete: bool,
+  seeksMutually: bool, agesFit: bool, dealbreakersClear: bool, radiusFits: bool }
+
+pure def slopPairConstraintsCurrent(pair: CurrentSlopPair): bool = and {
+  pair.adults, pair.optedIn, pair.safetyClear, pair.complete,
+  pair.seeksMutually, pair.agesFit, pair.dealbreakersClear, pair.radiusFits,
+}
+
+pure def slopPairContactAllowed(approved: bool, pairCurrent: bool, reveal: bool, bothConsented: bool): bool =
+  approved and pairCurrent and (not(reveal) or bothConsented)
+
+pure def lawSlopPairRevealNeedsCurrentConsent(approved: bool, pairCurrent: bool, bothConsented: bool): bool =
+  slopPairContactAllowed(approved, pairCurrent, true, bothConsented) implies (approved and pairCurrent and bothConsented)
+```
