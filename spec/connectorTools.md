@@ -71,13 +71,24 @@ pure def lawGrantCoversPublicTools(tool: ToolName, hasRead: bool, hasWrite: bool
 
 ### The member status decides which member tool can act
 
-The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join on the site or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support.
+The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join on the site or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status.
 
 ```quint
 type MemberStatus = NotJoined | Invited | Onboarding | Active | Stopped | OnHold
 type NextStep = JoinOnSite | GetInvitation | AcceptInvitation | ReplyToLastText | AlreadySignedUp | TextStart | EmailSupport
 
 pure def liveMember(status: MemberStatus): bool = status == Active or status == Onboarding
+
+pure def connectorMembershipStatus(storedStatus: str, reviewRequired: bool, optedOut: bool): MemberStatus =
+  if (reviewRequired or storedStatus == "restricted") OnHold
+  else if (storedStatus == "paused") Stopped
+  else if (storedStatus == "active") (if (optedOut) Stopped else Active)
+  else if (storedStatus == "onboarding") (if (optedOut) Stopped else Onboarding)
+  else if (storedStatus == "invited") Invited
+  else NotJoined
+
+pure def lawStoppedMembershipCannotSubmitProfile(storedStatus: str, reviewRequired: bool): bool =
+  not(liveMember(connectorMembershipStatus(storedStatus, reviewRequired, true)))
 
 pure def toolAllowedFor(tool: ToolName, status: MemberStatus): bool =
   if (tool == SubmitProfileTool) liveMember(status)
@@ -219,7 +230,7 @@ pure def changeMemberStatus(c: Connection, newStatus: MemberStatus): Connection 
 
 ### The agent sends an approved profile once, only for a live member, within the daily limit
 
-The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once; the agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
+The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once. The agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. Check the exact phone owner and any current opt-out again before forwarding a claimed profile to the app. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
 
 ```quint
 pure val profileDailyCap = 5

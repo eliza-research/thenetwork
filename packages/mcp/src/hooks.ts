@@ -3,8 +3,9 @@
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
 import type { Accounts, AppInfo, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canJoinApp, canMatchInApp, lowestAge, normalizePhone } from "@thenetwork/platform";
+import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
+import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { Grant } from "./store.ts";
 
@@ -59,14 +60,14 @@ export interface PlatformHooks {
   /** Wire the one temporary-draft cleanup consumer to canonical age recording, including null-person phones. */
   setSignupAgeCleanup?(fn: (phoneKey: string, app: McpAppId) => Promise<void>): void;
   /** The person's own state in one app. */
-  status(personId: string, app: McpAppId): Promise<PublicStatus>;
+  status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
   /** Current adult Slop member and phone owner, with no safety hold or ban. Never enrolls anyone. */
   customChatGptSlopEligible?(personId: string, phoneKey: string): Promise<boolean>;
   /**
    * The profile the person gave their assistant, delivered to their own member on this app as if they
    * had texted it (the Network reads it with the same rules). Undefined: the platform does not take profiles.
    */
-  submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member">;
+  submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped">;
   /** Scope the private retry receipt to this exact authorized grant and approved profile. */
   profileSubmissionFingerprint?(app: McpAppId, grantId: string, text: string): string;
   /**
@@ -82,18 +83,13 @@ export interface PlatformHooks {
   createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
 }
 
-/** Platform membership state -> what the person's agent sees. */
-export function publicStatus(state: MembershipState | undefined, review: string | null | undefined): PublicStatus {
-  if (review) return "on_hold";
-  switch (state) {
-    case undefined: case "removed": return "not_joined";
-    case "invited": return "invited";
-    case "onboarding": return "onboarding";
-    case "active": return "active";
-    case "paused": return "stopped";
-    // A safety restriction is not explained to an agent; the person sees the details on the site.
-    case "restricted": return "on_hold";
-  }
+const PUBLIC_STATUS: Record<MemberStatus, PublicStatus> = {
+  NotJoined: "not_joined", Invited: "invited", Onboarding: "onboarding", Active: "active", Stopped: "stopped", OnHold: "on_hold",
+};
+
+/** Only the coarse status reaches the person's agent. */
+export function publicStatus(state: MembershipState | undefined, review: string | null | undefined, optedOut = false): PublicStatus {
+  return PUBLIC_STATUS[connectorMembershipStatus(state ?? "", !!review, optedOut)];
 }
 
 export interface PlatformParts {
@@ -208,16 +204,21 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       submitProfile: async (personId: string, id: McpAppId, key: string, text: string) => {
         // The grant holds only the keyed hash: the number is found here, and only for that same person.
         const who = await p.accounts.byPhoneHash(key);
-        return who && who.person.id === personId ? p.submitProfile!(personId, id, who.e164, text) : "not_member";
+        if (!who || who.person.id !== personId) return "not_member";
+        if (resolveConsent(await p.store.lastConsent(who.e164, id)) === "opted_out") return "stopped";
+        return p.submitProfile!(personId, id, who.e164, text);
       },
     } : {}),
     ...(p.updates ? { updates: p.updates } : {}),
     ...(p.assistantLinked ? { assistantLinked: p.assistantLinked } : {}),
-    async status(personId, id) {
+    async status(personId, id, key) {
       const app = p.app(id);
       if (!app) return "not_joined";
+      const who = await p.accounts.byPhoneHash(key);
+      if (!who || who.person.id !== personId) return "on_hold";
       const m = await p.store.getMembership(personId, app.id);
-      return publicStatus(m?.state, m?.review);
+      const optedOut = resolveConsent(await p.store.lastConsent(who.e164, app.id)) === "opted_out";
+      return publicStatus(m?.state, m?.review, optedOut);
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

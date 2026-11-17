@@ -422,6 +422,75 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     } finally { await people.close(); }
   }, 120_000);
 
+  // spec/connectorTools.md, "Check status shows only the person's own status in this one app"
+  test("connector status and profile admission honor a committed STOP before membership projection", async () => {
+    await migrate(testUrl.toString(), { lockTimeout: "5s" });
+    const people = new PgPeopleStore(testUrl.toString()), harness = setup({ store });
+    const now = () => harness.clock.t;
+    const web = createPublicApi({ store: people, otp: harness.provider, hashKey: "test-hash-key", sessionSecret: "test-session-secret",
+      now, env: { PLATFORM_ENV: "dev" }, minStartMs: 0, minVerifyMs: 0 });
+    const submitted: string[] = [];
+    const oauth = createMcpHandler({ store, now, minOtpStartMs: 0, log: () => {}, platform: platformHooks({
+      store: people, accounts: web.accounts, otp: web.otp, sessions: web.sessions, app: id => APPS[id], cookieName: id => `sid_${id}`,
+      async submitProfile(_personId, app) { submitted.push(app); return "accepted"; },
+    }) });
+    const peer = { requestIP: () => ({ address: "192.0.2.191" }) };
+    const env = { ...harness, fetch: async (req: Request) => (await oauth.fetch(req, peer))! };
+    const phone = "+12125550191";
+    try {
+      const person = await web.accounts.createPerson(phone, "otp_sms", 32);
+      await people.putMembership({ app: "friends", personId: person.id, memberId: `friends_${person.id}`, state: "onboarding",
+        review: null, firstName: "Rae", profile: {}, joinedAt: now(), leftAt: null });
+      await people.putMembership({ app: "peon", personId: person.id, memberId: `peon_${person.id}`, state: "active",
+        review: null, firstName: "Rae", profile: {}, joinedAt: now(), leftAt: null });
+      const scope = "membership:read profile:write";
+      const friends = await connect(env, "friends.help", phone, { scope });
+      harness.clock.t += 60_000;
+      const peon = await connect(env, "peon.biz", phone, { scope });
+      expect([friends.tokenRes.status, peon.tokenRes.status]).toEqual([200, 200]);
+      const friendsTool = (tool: "check_status" | "submit_profile", args = {}) =>
+        call(env, "https://friends.help/mcp", tool, args, { token: friends.token.access_token });
+      const peonTool = (tool: "check_status" | "submit_profile", args = {}) =>
+        call(env, "https://peon.biz/mcp", tool, args, { token: peon.token.access_token });
+      expect((await friendsTool("check_status")).body?.result.structuredContent).toMatchObject({ app: "friends", status: "onboarding" });
+      expect((await peonTool("check_status")).body?.result.structuredContent).toMatchObject({ app: "peon", status: "active" });
+
+      // Exercise the exact carrier ledger commit before any app membership projection finishes.
+      await web.accounts.stop(APPS.friends, { e164: phone, personId: person.id }, "keyword:stop");
+      expect((await people.getMembership(person.id, "friends"))?.state).toBe("onboarding");
+      expect((await people.getMembership(person.id, "peon"))?.state).toBe("active");
+      expect((await friendsTool("check_status")).body?.result.structuredContent)
+        .toMatchObject({ app: "friends", status: "stopped", next_step: expect.stringContaining("text START") });
+      const profile = { about: "I would like a hiking group." };
+      expect((await friendsTool("submit_profile", profile)).body?.result.structuredContent)
+        .toMatchObject({ app: "friends", submitted: false, status: "stopped" });
+      expect((await peonTool("submit_profile", profile)).body?.result.structuredContent)
+        .toMatchObject({ app: "peon", submitted: false, status: "stopped" });
+      expect(submitted).toEqual([]);
+
+      harness.clock.t += 1000;
+      await web.accounts.recordConsent({ e164: phone, app: "peon", state: "opted_in", source: "keyword:start", at: now() });
+      expect((await peonTool("check_status")).body?.result.structuredContent).toMatchObject({ app: "peon", status: "active" });
+      expect((await peonTool("submit_profile", profile)).body?.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
+      expect((await friendsTool("check_status")).body?.result.structuredContent).toMatchObject({ app: "friends", status: "stopped" });
+      expect(submitted).toEqual(["peon"]);
+
+      const originalClaim = store.claimProfileSubmission.bind(store);
+      const claim = vi.spyOn(store, "claimProfileSubmission").mockImplementationOnce(async (...args) => {
+        const result = await originalClaim(...args);
+        expect(result).toBe("ProfileClaimStart");
+        harness.clock.t += 1000;
+        await web.accounts.stop(APPS.peon, { e164: phone, personId: person.id }, "keyword:stop");
+        return result;
+      });
+      try {
+        expect((await peonTool("submit_profile", { about: "I am learning ceramics." })).body?.result.structuredContent)
+          .toMatchObject({ app: "peon", submitted: false, status: "stopped" });
+        expect(submitted).toEqual(["peon"]);
+      } finally { claim.mockRestore(); }
+    } finally { await people.close(); }
+  }, 120_000);
+
   test("the first member tool request after phone reassignment ends a limited grant and its refresh token", async () => {
     // spec/connectorTools.md, "A grant that no longer belongs to the phone's person ends the connection"
     await migrate(testUrl.toString(), { lockTimeout: "5s" });

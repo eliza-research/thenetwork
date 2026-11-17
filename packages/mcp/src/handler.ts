@@ -1260,7 +1260,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         }
         if (!o.platform.withSignupAgePolicy || !o.platform.setSignupAgeCleanup) return json(403, { error: "not_allowed" });
         return o.platform.withSignupAgePolicy(key, c.app.id, async allowed => {
-          const status = who.personId === null ? "not_joined" : await o.platform.status(who.personId, c.app.id);
+          const status = who.personId === null ? "not_joined" : await o.platform.status(who.personId, c.app.id, key);
           const decision = signupDraftClaimRoute(status, allowed);
           if (decision === "RefuseClaim") return json(403, { error: "not_allowed" });
           const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;

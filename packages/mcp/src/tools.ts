@@ -355,7 +355,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         const person = g.personId;
         const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: owner === "GrantOwnerMatches" });
         if (preparedOwner.phase !== "CheckMembership") return { kind: "invalid_grant" };
-        const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
+        const status = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
         const preparedMembership = stepDraftPreparation(preparedOwner, { type: "observeMembership", status });
         if (preparedMembership.phase !== "WriteDraft") return { kind: "error", message: "Use your existing profile; this form is for joining." };
         const at = requestedAt + Math.ceil(performance.now() - started);
@@ -372,7 +372,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!g) return { kind: "invalid_grant" };
       const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
       if (refusal) return refusal;
-      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app);
+      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
       const a = c.apps[g.app];
       return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a), manage_url: a.links.support } };
     }
@@ -386,7 +386,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const { submitProfile, profileSubmissionFingerprint } = c.hooks;
       const store = c.store;
       if (!submitProfile || !profileSubmissionFingerprint || !store || c.now === undefined) return { kind: "error", message: "Profiles cannot be sent here yet." };
-      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app);
+      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (person === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
       const fingerprint = profileSubmissionFingerprint(g.app, g.id, chk.about!);
@@ -396,9 +396,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         if (claim === "ProfileClaimRefused") return { kind: "invalid_grant" };
         if (claim === "ProfileClaimPending") return unresolved;
         if (claim === "ProfileClaimStart") {
-          const accepted = await submitProfile(person, g.app, g.phoneKey, chk.about!) === "accepted";
+          const delivery = await submitProfile(person, g.app, g.phoneKey, chk.about!);
+          const accepted = delivery === "accepted";
           const stored = await store.finishProfileSubmission(g.id, fingerprint, accepted);
-          if (!accepted) return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
+          if (!accepted) {
+            const status = delivery === "stopped" ? "stopped" : "not_joined";
+            return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
+          }
           if (!profileSubmissionAccepted(claim, true, stored)) return unresolved;
         }
       } catch {

@@ -137,8 +137,21 @@ export function liveMember(status: MemberStatus): boolean {
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
 //@ pure
+export function connectorMembershipStatus(storedStatus: string, reviewRequired: boolean, optedOut: boolean): MemberStatus {
+  return reviewRequired || storedStatus === "restricted" ? "OnHold" : (storedStatus === "paused" ? "Stopped" : (storedStatus === "active" ? (optedOut ? "Stopped" : "Active") : (storedStatus === "onboarding" ? (optedOut ? "Stopped" : "Onboarding") : (storedStatus === "invited" ? "Invited" : "NotJoined"))));
+}
+
+/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
+//@ pure
 export function nextStepFor(status: MemberStatus, inviteOnly: boolean): NextStep {
   return status === "NotJoined" ? (inviteOnly ? "GetInvitation" : "JoinOnSite") : (status === "Invited" ? "AcceptInvitation" : (status === "Onboarding" ? "ReplyToLastText" : (status === "Active" ? "AlreadySignedUp" : (status === "Stopped" ? "TextStart" : "EmailSupport"))));
+}
+
+/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
+//@ pure
+export function lawStoppedMembershipCannotSubmitProfile(storedStatus: string, reviewRequired: boolean): boolean {
+  //@ ensures \result === true
+  return !liveMember(connectorMembershipStatus(storedStatus, reviewRequired, true));
 }
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -286,6 +299,12 @@ export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
+export function memberResult(r: ToolResult): boolean {
+  return r === "StatusShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "DraftSaved" || r === "DraftRefused" || r === "UpdatesShown" || r === "TooManyToday";
+}
+
+/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
+//@ pure
 export function decideGrantOwner(available: boolean, held: boolean, samePerson: boolean): GrantOwnerDecision {
   return !available ? "GrantOwnerUnavailable" : (held ? "GrantOwnerHeld" : (samePerson ? "GrantOwnerMatches" : "GrantOwnerChanged"));
 }
@@ -315,8 +334,8 @@ export function callAfterOwnerChange(c: Connection): Connection {
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
-export function memberResult(r: ToolResult): boolean {
-  return r === "StatusShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "DraftSaved" || r === "DraftRefused" || r === "UpdatesShown" || r === "TooManyToday";
+export function alwaysMemberResultsNeedConnection(c: Connection): boolean {
+  return !memberResult(c.lastResult) || c.phase === "Connected";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -324,12 +343,6 @@ export function memberResult(r: ToolResult): boolean {
 export function lawOnlyObservedOwnerChangeEndsGrant(available: boolean, held: boolean, samePerson: boolean): boolean {
   //@ ensures \result === true
   return (decideGrantOwner(available, held, samePerson) === "GrantOwnerChanged") === (available && !held && !samePerson);
-}
-
-/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
-//@ pure
-export function alwaysMemberResultsNeedConnection(c: Connection): boolean {
-  return !memberResult(c.lastResult) || c.phase === "Connected";
 }
 
 /** Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app (spec/connectorTools.md) */
