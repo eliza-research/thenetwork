@@ -121,6 +121,8 @@ export interface PeonPopulation { candidates: Candidate[]; companies: Company[];
 
 export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
   const perCity = o.perCity ?? 400, jobsPerCity = o.jobsPerCity ?? 80;
+  if (!Number.isSafeInteger(perCity) || perCity < 0) throw new Error("Peon perCity must be a non-negative safe integer");
+  if (!Number.isSafeInteger(jobsPerCity) || jobsPerCity < 0) throw new Error("Peon jobsPerCity must be a non-negative safe integer");
   const candidates: Candidate[] = [], companies: Company[] = [], jobs: Job[] = [];
   const sealed = new Map<MemberId, Sealed>();
   const cities: City[] = ["nyc", "sf"];
