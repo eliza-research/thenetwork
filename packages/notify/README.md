@@ -28,6 +28,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
   - **`notifyTick`.** Runs the outcome sweep, then `dispatch`. The inbox's own sends go out as a unit of work on the member's network (`runtime.system(..., type "notify")`), so the platform consent ledger, the member's opt-out and the person cap apply, as for every other send.
 - **MCP.** `packages/mcp` has the tool `get_updates` (scope `membership:read`, the grant's own app only, optional `update_token`). Its hooks `updates` and `assistantLinked` are wired in `serve.ts`. The assistant is identified by the client's redirect hosts (`assistantOf`). Consent marks the assistant active, and every revocation path marks it inactive.
 - **Ticks.** `deploy/backend/backend.ts` runs `svc.notifyTick()` once per round, after the networks. The standalone `serve.ts` does the same. Replicas may overlap safely: a delivery id is recorded once.
+- **Outcomes.** Closing a delivery and counting its surface outcome commit together. A failed write leaves the outcome pending for retry. Reply outcomes count on the replying surface; ignored outcomes count on the delivery target.
 - **Migrations.** `packages/observatory/db/migrate.ts` applies `db/schema.sql` as the repeatable `9002_notify_schema`, with grants to `network_service`.
 
 **Prototypes and the plugin:**
