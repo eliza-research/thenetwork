@@ -64,6 +64,11 @@ export interface Preferences {
   categoriesOptIn: Category[]; quietHours: [number, number]; // local hours [start,end)
   romanceOptIn: boolean; formats: ("one_to_one" | "small_group" | "event")[];
   maxTravelMinutes: number; onlyWhenAsked: boolean;
+  /** The invite-only ntwrk app was joined on the shared line with no invitation (founder decision 2):
+   *  the platform sets this; the conversation goes on, but the member is held out of matching until
+   *  staff invite them (mvp-gaps "ntwrk": a stranger "gets nothing proactive from ntwrk while it
+   *  stays invite-only"). No other join path writes it. */
+  inviteHold?: boolean;
 }
 /** How a source was linked: OAuth, a profile URL the member gave, a paste, or a found-and-confirmed public profile. */
 export type SourceLink = "oauth" | "profile_url" | "paste" | "found_profile";

@@ -23,7 +23,7 @@ import { Block, expect } from "./gate.ts";
 import * as H from "./pipeline/harness.ts";
 
 const phone = (n: number) => `+1212555${String(100 + n).padStart(4, "0")}`;
-const P = { ana: phone(1), ben: phone(2), cy: phone(3), dee: phone(4), eli: phone(5), fay: phone(6), gus: phone(7), hal: phone(8), ivy: phone(9), jo: phone(10) };
+const P = { ana: phone(1), ben: phone(2), cy: phone(3), dee: phone(4), eli: phone(5), fay: phone(6), gus: phone(7), hal: phone(8), ivy: phone(9), jo: phone(10), zoe: phone(21), wes: phone(22) };
 const DELIVERED = new Set(["delivered", "read"]);
 /** 13:00 New York plus `h` hours on the first day (EDT is UTC-4). */
 const nyAt = (day: number, h: number, m = 0) => H.START + day * DAY + (h - 13) * HOUR + m * MINUTE;
@@ -249,6 +249,37 @@ async function script(w: World) {
   await H.run(w.svc, clock, fake, 4 * DAY, HOUR);
   await H.receipts(w.svc, clock, fake);
   void inFlight;
+
+  debug("14");
+  // ---- 14. The invite-only gap world (mvp-gaps 4.1 "ntwrk"). A stranger texts the shared line with
+  // no keyword, is enrolled in slop by the "dating" answer (founder decision 2), and while ntwrk
+  // stays invite-only must get nothing proactive from the ntwrk network. An invited member asks for
+  // a climbing partner: the stranger is the only other ntwrk member, so the ask can only go through
+  // the stranger, and must end unfilled (the honest "none found" answer), not as a probe to them.
+  const zoe: string[] = [];
+  for (const t of ["hi there", "Zoe, 27", "dating", "I love climbing and board games, I live in Greenpoint", "Weekends, mostly. Greenpoint", "One-on-one is good."]) zoe.push(await say(w, P.zoe, t));
+  await H.staff(w.svc, H.ADMIN, "POST", "/apps/ntwrk/invite", { phone: P.wes });
+  const wes: string[] = [await say(w, P.wes, "Wes, 31")];
+  for (const t of ["I love climbing and board games, I live in Greenpoint", "Weekends, mostly. Greenpoint", "One-on-one is good."]) wes.push(await say(w, P.wes, t));
+  // Matching goes on for ntwrk (the same switch section 4 uses for friends), so the invited
+  // member's ask is served by the ntwrk matching machinery, not parked.
+  await H.staff(w.svc, H.ADMIN, "POST", "/apps/ntwrk/matching", { on: true });
+  // The invited member asks; the stranger never asks for anything.
+  const wesAsk = await say(w, P.wes, "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+  // Two more days, so the request retries at least once: approve anything the ntwrk review queue holds,
+  // so an uninvited-stranger proposal would reach its probe if the gates let it through.
+  // One day (the request retries once, after its 20-hour quiet gap), then the staff approves
+  // anything the ntwrk review queue holds. The requester's confirm question ("Want me to check if
+  // they're up for it?") goes out; the invited member answers, so the participant's probe would
+  // reach the stranger if the gates let it through. The flush crosses the night, and the clock
+  // stays inside the line-caps block's window below.
+  await H.run(w.svc, clock, fake, DAY, 30 * MINUTE);
+  const nQueue = await (await H.staff(w.svc, H.REVIEWER, "GET", "/apps/ntwrk/review")).json();
+  for (const item of ((nQueue.items ?? []) as any[])) await H.staff(w.svc, H.REVIEWER, "POST", `/apps/ntwrk/review/${item.oppId}`, { decision: "approve", secondsSpent: 30 });
+  await H.run(w.svc, clock, fake, 6 * HOUR, 30 * MINUTE);
+  wes.push(await say(w, P.wes, "Sure, please check"));
+  await H.run(w.svc, clock, fake, 13 * HOUR, 30 * MINUTE);
+  w.notes.zoe = { zoe, wes, wesAsk };
 }
 
 async function gates(b: Block, w: World) {
@@ -274,6 +305,26 @@ async function gates(b: Block, w: World) {
     expect((notes.joins as any).ana.slice(0, 2)).toEqual(["join_asked", "joined"]);
     // A forged webhook (wrong secret) is refused before anything is stored.
     expect(notes.forged).toEqual({ status: 401, stored: 0 });
+  });
+
+  await b.run("pipeline: the invite-only ntwrk app: a no-keyword stranger is enrolled in slop and gets nothing proactive from ntwrk (mvp-gaps 4.1)", async () => {
+    const nz = notes.zoe as { zoe: string[]; wes: string[]; wesAsk: string };
+    // The gate itself first: no proactive row and no opportunity-tied row from ntwrk to the stranger.
+    const proactive = await sql`select id, kind, body from platform.outbound where to_address = ${P.zoe} and app_id = 'ntwrk' and kind = 'proactive'`;
+    expect(proactive.map((r: any) => r.id)).toEqual([]);
+    const oppTied = await sql`select id from platform.outbound where to_address = ${P.zoe} and app_id = 'ntwrk' and opportunity_id is not null`;
+    expect(oppTied.map((r: any) => r.id)).toEqual([]);
+    // Not a vacuous pass: the stranger joined The Network with no keyword, answered "dating",
+    // completed onboarding, and was enrolled in the app they named.
+    expect(nz.zoe).toEqual(["join_asked", "joined", "handled", "handled", "handled", "handled"]);
+    expect(await memberships(P.zoe)).toEqual(["ntwrk", "slop"]);
+    // The invited member joined the invite-only app through the staff invite, asked, and the ask
+    // was recorded and answered (the acknowledgment or the honest "none found"): the stranger was
+    // the only possible answer, so the ask must end unfilled without the stranger ever appearing.
+    expect(nz.wes[0]).toEqual("joined");
+    expect(await memberships(P.wes)).toEqual(["ntwrk"]);
+    expect((await sql`select count(*)::int as n from network.events where app_id = 'ntwrk' and type = 'request'`)[0].n).toBeGreaterThan(0);
+    expect(fake.to(P.wes).some(d => /On it\.|couldn't find someone/.test(d.text))).toBe(true);
   });
 
   await b.run("pipeline: 0 lost outbound messages (every row the provider took is one delivered row, every delivered row was taken once, network.messages agrees)", async () => {
