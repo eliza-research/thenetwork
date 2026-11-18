@@ -176,6 +176,7 @@ export class Projector {
       case "outcome": {
         const o = s.opps.get(r.proposalId);
         const showed = Object.entries(r.attendance).filter(([, a]) => a.showed).map(([id]) => id);
+        const held = showed.length >= 2;
         for (const [id, a] of Object.entries(r.attendance)) {
           // A member who said no to a booked plan was not expected: not a no-show (the plan is booked first).
           if (!a.showed && o?.status[id] === "declined") continue;
@@ -184,12 +185,11 @@ export class Projector {
             o.status[id] = a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show";
             if (a.showed) o.enjoyment[id] = a.enjoyment;
           }
-          if (a.showed) {
+          if (a.showed && held) {
             const k = this.counters(id);
-            if (k) { k.meetings++; if (showed.length >= 2) { k.enjoymentSum += a.enjoyment; k.enjoymentN++; } }
+            if (k) { k.meetings++; k.enjoymentSum += a.enjoyment; k.enjoymentN++; }
           }
         }
-        const held = showed.length >= 2;
         if (held) {
           c.meetingsHeld++;
           for (const id of showed) { c.enjoymentSum += r.attendance[id]!.enjoyment; c.enjoymentN++; }
