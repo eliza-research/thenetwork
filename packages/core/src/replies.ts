@@ -86,6 +86,12 @@ const RULES: Rule[] = [
   // Negated hedges ("not sure", "really not sure") before refusals.
   r("unsure", "\\b(?:not (?:sure|certain|100%|positive|definitely|decided)|no estoy segur[oa])\\b"),
   // Time refusals: "not thursday", "can't do tonight", "except fridays", "pero no el jueves".
+  // An availability word may sit between the negator and the day: "not free Thursday", "not available
+  // on Friday", "not around Thursday", "not in town Friday". Without this rule no time-refusal rule
+  // matches, so "not around Thursday, but Friday works" is a plain yes and the calendar books the day
+  // the member refused. Only words whose negation means unavailable are listed: "not at work Thursday"
+  // and "not working Thursday" mean the member is free that day, so they stay out of this rule.
+  r("timeNeg", `\\b(?:not|never)\\s+(?:be\\s+)?(?:free|available|around|in town)\\s+(?:(?:on|the|this|for)\\s+)?${DAY}\\b`),
   r("timeNeg", `(?:\\b(?:not|no|except|excepto|menos|never|nunca)|\\b(?:can't|cannot|can not|won't|don't|no puedo)(?: do| make| make it)?)(?: on| the| el| los| la| this)?\\s+${DAY}\\b`),
   // Strong refusals (multi-word first).
   r("no", "\\b(?:absolutely|definitely|certainly|totally|hell|heck|of course|obviously|surely|honestly|really|seriously) (?:not|no)\\b", true),

@@ -182,3 +182,8 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"I'm not around Thursday, but Friday works","label":"unsure"}
+{"text":"not in town Friday, but Saturday works","label":"unsure"}
+{"text":"I'm not around Thursday","label":"no"}
+{"text":"I'm not free Thursday, but Friday works","label":"unsure"}
+{"text":"I'm not around people I don't know","label":"unsure"}
