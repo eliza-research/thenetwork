@@ -168,8 +168,14 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async ban(b: Ban) {
-    await this.sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
-      values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+    await this.sql.begin(async tx => {
+      if (b.personId) await tx`select pg_advisory_xact_lock(hashtext(${`platform:profile-share:${b.personId}`}))`;
+      await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+        values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+      if (b.personId) await tx`update platform.share_grants set revoked_at = ${ts(b.at)}
+        where person_id = ${b.personId} and revoked_at is null`;
+      if (b.phoneHash) await tx`delete from platform.pending_texts where phone_hash = ${b.phoneHash}`;
+    });
   }
   async isBanned(phoneHash: string, personId?: string | null) {
     const [r] = await this.sql`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;

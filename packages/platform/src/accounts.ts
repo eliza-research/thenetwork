@@ -530,10 +530,13 @@ export class Accounts {
     if (fromApp === app.id || !fields.length || fields.some(f => !(SHAREABLE_FIELDS as readonly string[]).includes(f))) return false;
     const person = await this.personFor(who.e164);
     if (!person) return false;
-    const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
-    const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited";
-    if (!live(to) || !live(from)) return false;
-    await this.store.putShareGrant({ personId: person.id, fromApp, toApp: app.id, fields: [...new Set(fields)], grantedAt: this.now(), revokedAt: null });
-    return true;
+    return this.store.withLock(`profile-share:${person.id}`, async () => {
+      if (await this.banned(who.e164, person)) return false;
+      const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
+      const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited" && m.state !== "restricted";
+      if (!live(to) || !live(from)) return false;
+      await this.store.putShareGrant({ personId: person.id, fromApp, toApp: app.id, fields: [...new Set(fields)], grantedAt: this.now(), revokedAt: null });
+      return true;
+    });
   }
 }

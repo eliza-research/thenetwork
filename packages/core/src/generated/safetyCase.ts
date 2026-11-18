@@ -147,7 +147,20 @@ export function lawDismissedReportStaysDismissed(decision: ReportDecision, sameM
   return reportAfterDecision("ReportDismissed", decision, sameMember, reportMatches) === "ReportDismissed";
 }
 
-/** Story: Clear a mistaken minor signal after checking ages / A clear requires a known adult record and no stated minor age (spec/safetyCase.md:101) */
+/** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md:97) */
+//@ pure
+export function inboundAllowedAfterBan(banned: boolean, compliance: boolean): boolean {
+  return !banned || compliance;
+}
+
+/** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md:97) */
+//@ pure
+export function lawBanBlocksOrdinaryInbound(compliance: boolean): boolean {
+  //@ ensures \result === true
+  return inboundAllowedAfterBan(true, compliance) === compliance;
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A clear requires a known adult record and no stated minor age (spec/safetyCase.md:111) */
 //@ pure
 export function minorClearResult(actorPresent: boolean, memberKnown: boolean, hasSignal: boolean, ageKnown: boolean, recordMinor: boolean, statedMinor: boolean): StaffActionResult {
   return !actorPresent ? "ActorRequired" : (!memberKnown ? "UnknownMember" : (!hasSignal ? "NoMinorSignal" : (!ageKnown ? "AgeUnknown" : (recordMinor ? "RecordMinor" : (statedMinor ? "StatedMinor" : "AllowedAction")))));
