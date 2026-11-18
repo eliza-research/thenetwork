@@ -15,7 +15,7 @@ import { DryRunAdapter } from "../service/channel.ts";
 import { jobPostingRoutes } from "../service/postings.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
-import { POSTING_COPY } from "../src/jobs.ts";
+import { POSTING_COPY, postingFacts, postingFromFacts } from "../src/jobs.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -127,4 +127,15 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:0"]);
     expect(snap.facets.filter(f => f.memberId === seat).flatMap(f => f.tags)).toContain("peon:verified");
   }, T);
+
+  test("a closed posting keeps its zero openings when it is read back from its rows", () => {
+    const closed = {
+      id: "job_closed", managerId: "m_rowan", title: "data analyst", family: "data_analyst", openings: 0,
+      payMin: 90, payMax: 120, mode: "hybrid" as const, area: "brooklyn", must: [], nice: [],
+      status: "closed" as const, closedReason: "filled" as const, createdAt: 1, updatedAt: 2,
+    };
+    const { intent, facets } = postingFacts(closed);
+    expect(facets.flatMap(f => f.tags)).toContain("peon:openings:0");
+    expect(postingFromFacts(intent, facets).openings).toBe(0);
+  });
 });
