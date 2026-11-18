@@ -380,7 +380,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     }
 
     // ---- 6. monthly adverse-impact audit (peon's monitor): flagged companies are held -------------
-    if (matcher.audit && matcher.audit !== "off" && (week === 3 || week === 7)) {
+    if (matcher.audit && matcher.audit !== "off" && (week + 1) % 4 === 0) {
       const flags = auditCompanies(flows, world);
       audits.push(flags);
       if (matcher.audit === "hold") for (const fl of flags) holdCompany(fl.company, `audit: ${fl.reason}`);
