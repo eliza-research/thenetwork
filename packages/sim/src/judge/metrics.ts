@@ -611,7 +611,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     for (const [id, a] of att) {
       slots++;
       if (a.showed) showed++;
-      if (a.cancelledWithNotice) notice++;
+      if (a.cancelledWithNotice || a.cancelledByNetwork) notice++;
       if (a.showed && shows.length >= 2) {
         enjoySum += a.enjoyment; enjoyN++;
         if (a.enjoyment >= valueT && !firstValue.has(id)) firstValue.set(id, o.at);

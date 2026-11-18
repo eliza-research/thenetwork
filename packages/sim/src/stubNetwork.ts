@@ -317,7 +317,7 @@ export class StubNetwork implements NetworkUnderTest {
       this.send(this.member(id), keep
         ? `Quick update: ${m.first} can't make it today, sorry about the change. The rest of you are still on.`
         : `Quick update: ${m.first} can't make it today, so I'm calling this one off. Sorry about that, I'll look for another time.`,
-        { type: "cancellation", proposalId: opp.p.id });
+        { type: "cancellation", proposalId: opp.p.id, meetingCancelled: !keep });
     }
     if (!keep) opp.stage = "cancelled";
   }
