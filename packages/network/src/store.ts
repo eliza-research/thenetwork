@@ -6,7 +6,7 @@
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
 // The SQL is in packages/network/db/network-state.sql.
 import { SQL } from "bun";
-import type { ConsentNetwork, NetworkState } from "./network.ts";
+import { attendanceOf, type ConsentNetwork, type NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { emptyRelayState, RELAY_LOG_MAX, type RelayState } from "./relay.ts";
 
@@ -83,24 +83,27 @@ const REVIEW_REASONS = new Set(["weak_reason", "privacy_risk", "capacity_concern
 const date = (t: number | undefined | null) => (typeof t === "number" && Number.isFinite(t) ? new Date(t) : null);
 
 /** Opportunity states in the console's words (core OpportunityState, plus SKIPPED for never sent). */
-function oppState(o: NetworkState["opps"][number]): string {
+function oppState(o: NetworkState["opps"][number], attendance: ReturnType<typeof attendanceOf> | undefined): string {
   switch (o.stage) {
     case "review": return "IN_REVIEW";
     case "probing": return "PROPOSED";
     case "scheduled": return "SCHEDULED";
-    case "done": return "COMPLETED";
+    case "done": return attendance ? (attendance.present.length >= 2 ? "COMPLETED" : "ABANDONED") : "SCHEDULED";
     default: return o.closedFrom === "scheduled" ? "CANCELLED" : "SKIPPED";
   }
 }
 const SOURCE: Record<string, string> = { engine: "engine", request: "member", plans: "member", second_encounter: "network", newcomer_welcome: "network", player: "player" };
 
 /** A participant's status in the console's words (observatory ParticipantStatus). */
-function partStatus(o: NetworkState["opps"][number], s: string | undefined, id: string): string {
+function partStatus(o: NetworkState["opps"][number], s: string | undefined, id: string, attendance: ReturnType<typeof attendanceOf> | undefined): string {
   switch (s) {
     case "probing": return "checking";
     case "available": case "unavailable": case "dropped": return s;
     // A booked plan is confirmed for a member once it reached them (silence = in); before that they are not told yet.
-    case "yes": return o.stage === "done" ? "attended" : o.stage === "scheduled" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
+    case "yes":
+      if (attendance?.present.includes(id)) return "attended";
+      if (attendance?.absent.includes(id)) return "no_show";
+      return o.stage === "scheduled" || o.stage === "done" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
     case "no": return "declined";
     default: return "pending"; // queued, or not contacted yet
   }
@@ -111,10 +114,12 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
   const opportunities: Row[] = [], participations: Row[] = [], review_items: Row[] = [];
   for (const o of state.opps) {
     const status = new Map(o.status);
-    for (const id of o.participants) participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: partStatus(o, status.get(id), id), enjoyment: null, invited_at: null, responded_at: null });
+    // "done" means feedback was requested. Attendance is only settled by the finalizer's evidence.
+    const attendance = o.stage === "done" && o.finalized ? attendanceOf(o) : undefined;
+    for (const id of o.participants) participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: partStatus(o, status.get(id), id, attendance), enjoyment: null, invited_at: null, responded_at: null });
     for (const id of o.alternates) if (!o.participants.includes(id)) participations.push({ opportunity_id: o.id, member_id: id, role: "alternate", status: "alternate", enjoyment: null, invited_at: null, responded_at: null });
     opportunities.push({
-      id: o.id, kind: o.kind, state: oppState(o), source: SOURCE[o.origin] ?? "network", generator: o.generator, category: o.category, city,
+      id: o.id, kind: o.kind, state: oppState(o, attendance), source: SOURCE[o.origin] ?? "network", generator: o.generator, category: o.category, city,
       objective: o.objective, score: o.score, components: o.components, explanations: o.explanations, exploration: o.exploration,
       window_start: null, window_end: null, meeting_at: date(o.meetingAt), reason: o.closedReason ?? null, run_id: o.runId ?? null,
       created_at: date(o.createdAt), updated_at: date(savedAt),
