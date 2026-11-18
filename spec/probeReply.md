@@ -33,3 +33,18 @@ If a model reads a clear yes, use the offered times the person chose. If they ga
 pure def pickedTimes(chosen: List[str], offered: List[str]): List[str] =
   if (chosen.length() > 0) chosen else offered
 ```
+
+### A suggested alternative needs a separate yes before asking for new times
+
+A counter-offer alone does not accept the opportunity. A clear yes stated before a request for a different time may lead to a new time offer, when the previous offer included times. It does not accept any of the old times.
+
+```quint
+pure def mayRetryCounter(offeredTimes: bool, separateYes: bool): bool =
+  offeredTimes and separateYes
+
+pure def lawABareCounterDoesNotAccept(offeredTimes: bool): bool =
+  not(mayRetryCounter(offeredTimes, false))
+
+pure def lawAnUntimedProbeNeedsASeparateAnswer(separateYes: bool): bool =
+  not(mayRetryCounter(false, separateYes))
+```

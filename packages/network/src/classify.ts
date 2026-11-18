@@ -10,6 +10,7 @@
 import { parseReply, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
+import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
 
@@ -614,7 +615,7 @@ const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(
 
 export type YesNo = "yes" | "no" | "counter" | "unclear";
 /** Why a reply reads as it does. "mixed": a refusal, then a yes ("no... ok fine yes"): ask again. */
-export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "none";
+export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "slot" | "none";
 export interface Consent { answer: YesNo; why: ConsentWhy }
 
 /** A time word right after a refusal makes it a refusal of that time, not of the offer ("can't do Thursday"). */
@@ -651,15 +652,15 @@ const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|o
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
 const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b/;
-const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
+const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|time|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|(?:can|could) we find (?:a different|another) (?:day|time)|how about|what about|later date|the week after|push it)\b/;
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
 
-/** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
-export function consentOf(body: string): Consent {
+/** A counter is a separate scheduling request. A yes inside that request does not answer the offer. */
+function consentScan(body: string): Consent & { separateYes?: boolean } {
   const t = normText(body).replace(HARMLESS_NO, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
-  let refusalAt = Infinity, affirmAt = Infinity, cond = false, hedge = false, counter = false, question = false;
+  let refusalAt = Infinity, affirmAt = Infinity, counterAt = Infinity, cond = false, hedge = false, question = false;
   for (const s of sentencesOf(t)) {
     // A question of the member's own ("Anyone around who'd want to meet someone to date?") is not an
     // answer: a yes elsewhere in the message ("Honestly this is great timing") is not consent to the probe.
@@ -695,17 +696,32 @@ export function consentOf(body: string): Consent {
       }
       if (COND_RX.test(x)) cond = true;
       if (HEDGE_RX.test(x)) hedge = true;
-      if (COUNTER_RX.test(x)) counter = true;
+      const alternative = COUNTER_RX.exec(x);
+      if (alternative) counterAt = Math.min(counterAt, at + alternative.index);
     }
   }
   if (refusalAt < Infinity) return affirmAt > refusalAt && affirmAt < Infinity ? { answer: "unclear", why: "mixed" } : { answer: "no", why: "refusal" };
-  if (counter) return { answer: "counter", why: "counter" };
-  if (cond) return { answer: "unclear", why: "conditional" };
+  const shared = parseReply(body);
+  if (cond || shared.reason === "conditional_yes" || /\b(?:pending (?:the|a|my|our|your) |contingent on |if [^,.!?]{1,45}\b(?:permits?|allows?)\b)/.test(t)) {
+    return { answer: "unclear", why: "conditional" };
+  }
   if (hedge || question) return { answer: "unclear", why: "hedged" };
+  if (counterAt < Infinity) {
+    const lead = t.slice(0, counterAt);
+    const boundary = Math.max(lead.lastIndexOf(","), lead.lastIndexOf("."), lead.lastIndexOf("!"), lead.lastIndexOf(";"));
+    const interest = /^(?:i'?m |i am )?interested[.!]?\s*$/.test(lead.slice(0, boundary));
+    return { answer: "counter", why: "counter", separateYes: (affirmAt < boundary || interest) && shared.answer !== "no" };
+  }
   // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
   // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  if (affirmAt < Infinity) return shared.answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
   return { answer: "unclear", why: "none" };
+}
+
+/** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
+export function consentOf(body: string): Consent {
+  const { answer, why } = consentScan(body);
+  return { answer, why };
 }
 
 /** A member's free-text yes or no (probes, plan probes, crew offers, the booked plan). */
@@ -754,6 +770,44 @@ function clauseAt(t: string, i: number, len: number): string {
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
 
+const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
+const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
+const NAMED_EXCLUSION = /\b(?:(?:any day|any ?time|anything|everything|all|whichever) but|except|other than|apart from|aside from|excluding|barring)\s+(?:on\s+)?$/;
+const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
+const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
+type TimeMention = { at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening" };
+
+function clockMinute(m: RegExpMatchArray): number {
+  if (m[4]) return m[4] === "noon" ? 12 * 60 : 0;
+  return ((Number(m[1]) % 12) + (m[3] === "pm" ? 12 : 0)) * 60 + Number(m[2] ?? 0);
+}
+
+function partOf(minute: number): TimeMention["part"] {
+  return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
+}
+
+function timeMentions(text: string): TimeMention[] {
+  const days = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
+  const times: TimeMention[] = [...text.matchAll(CLOCK_MENTION)].map(m => ({ at: m.index!, end: m.index! + m[0].length, minute: clockMinute(m) }));
+  for (const m of text.matchAll(DAYPART_MENTION)) {
+    const part = /^morning/.test(m[0]) ? "morning" : /^(?:afternoon|lunch)/.test(m[0]) ? "afternoon" : "evening";
+    if (m[0] === "after work" && /\b(?:free|off)\s*$/.test(text.slice(0, m.index))) continue;
+    times.push({ at: m.index!, end: m.index! + m[0].length, part });
+  }
+  for (const t of times.sort((a, b) => a.at - b.at)) {
+    const next = days.find(d => t.end <= d.at && CONNECTS_TIME.test(text.slice(t.end, d.at)));
+    const previous = days.find(d => d.end <= t.at && CONNECTS_TIME.test(text.slice(d.end, t.at)));
+    const d = previous ?? next;
+    if (d) {
+      days.splice(days.indexOf(d), 1);
+      t.at = Math.min(d.at, t.at);
+      t.end = Math.max(d.end, t.end);
+      t.day = d.day;
+    }
+  }
+  return [...days, ...times.filter(t => t.day || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
+}
+
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
@@ -768,8 +822,11 @@ function clauseAt(t: string, i: number, len: number): string {
  */
 export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
   const t = normText(body);
-  const c = consentOf(body);
-  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
+  const c = consentScan(body);
+  if (!options.length || c.answer === "counter") {
+    const yes = c.answer === "yes" || c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
+    return { answer: c.answer === "no" ? "no" : yes ? "yes" : "unclear", keys: [], why: c.why };
+  }
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
@@ -786,7 +843,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
   for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
   const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
-  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  if (alone && all.includes(alone[1]!)) { pos.add(alone[1]!); strong.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
@@ -795,19 +852,32 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
-  for (const [re, dayName] of DAY_WORDS) {
-    const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
-  }
-  for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
-    const label = `${Number(m[1])}${m[2]}`;
-    mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+  let namedExclusion = false;
+  const unresolved: TimeMention[] = [];
+  const offered = options.map(o => {
+    const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
+    return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
+  });
+  for (const m of timeMentions(t)) {
+    const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
+      && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
+    const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
+    const refused = exclusion || negatedAt(t, m.at, m.end - m.at);
+    if (refused) {
+      namedExclusion ||= exclusion;
+      for (const key of matching) neg.add(key);
+    } else if (!matching.length || matching.length > 1 && !m.part
+      || m.part && !m.day && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
+        && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
+      // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
+      unresolved.push(m);
+    } else mark(matching, m.at, m.end - m.at);
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
-  if (!residue) for (const k of pos) strong.add(k);
+  if (!residue && !/\?/.test(t)) for (const k of pos) strong.add(k);
   const picked = all.filter(k => pos.has(k));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
@@ -820,11 +890,14 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
-  if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
-  if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
+  if (allAt && !negatedAt(t, allAt.index, allAt[0].length)
+    && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
+    return open.length ? { answer: "yes", keys: open, why: c.why } : { ...unclear, why: "slot" };
+  }
+  if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
+  if (c.answer === "yes" || namedExclusion && open.length) return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
-  return unclear;
+  return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }
 
 const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\\b)`);

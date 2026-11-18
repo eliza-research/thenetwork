@@ -7,6 +7,7 @@
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -66,6 +67,21 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: accuracy >= 97% (n ${lines.length})`, lines.length >= (file === "consent-replies.jsonl" ? 300 : 75) && ok / lines.length >= 0.97, pct(ok / lines.length));
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
+
+  const slots = await jsonl<{ text: string; labels?: string[]; answer: "yes" | "no" | "unclear"; keys: string[] }>("network/probe-offered-slots.jsonl");
+  const wrongSlots = slots.filter(row => {
+    const options = row.labels?.map((label, i) => ({ key: OPTIONS[i]!.key, label, start: i, end: i + 1 })) ?? OPTIONS;
+    const reply = parseProbeReply(row.text, options);
+    if (reply.answer !== row.answer || JSON.stringify(reply.keys) !== JSON.stringify(row.keys)) return true;
+    // Ambiguous or counter-offered times are a signal. A model yes for an offered key cannot replace it.
+    if (row.answer === "unclear") {
+      const merged = mergeConsent(reply, { consent: "yes", times: options.slice(0, 1).map(o => o.key), wants: [], notWanted: [], interests: [], skills: [] }, options);
+      return merged.answer !== "unclear";
+    }
+    return false;
+  });
+  b.gate("probe replies keep accepted, ambiguous and unoffered times distinct", slots.length >= 25 && wrongSlots.length === 0,
+    wrongSlots.map(row => row.text).join(" | "));
 
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);
