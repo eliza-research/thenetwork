@@ -114,7 +114,7 @@ export class GameSource implements DataSource {
   /** Recent refusals, guard blocks and review expiries (health alerts look at the last 24 h). */
   private recent: { t: number; key: string }[] = [];
   /** When each member texted STOP; who invited someone (scorecard, growth). */
-  private optOutAt = new Map<MemberId, number>();
+  private optOutTimes = new Map<MemberId, number[]>();
   private inviters = new Set<MemberId>();
   /** Leak-guard fallbacks per member and time (the timeline marks those messages). */
   private guardFallback = new Set<string>();
@@ -200,7 +200,7 @@ export class GameSource implements DataSource {
     this.takeover = new TakeoverAgent(persona, this.start, () => { this.store.clock.waitingForPlayer = true; this.push(); });
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
-    this.recent = []; this.optOutAt.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
+    this.recent = []; this.optOutTimes.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
       seed: o.seed, review: o.review, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
       onEngineRun: (log, proposals, at) => {
@@ -254,7 +254,10 @@ export class GameSource implements DataSource {
 
   private onRecord(r: RunRecord) {
     this.records.push(r);
-    if (r.type === "opt_out") this.optOutAt.set(r.memberId, r.t);
+    if (r.type === "opt_out") {
+      const times = this.optOutTimes.get(r.memberId) ?? [];
+      times.push(r.t); this.optOutTimes.set(r.memberId, times);
+    }
     else if (r.type === "network_log") {
       const d = r.detail as Record<string, any>;
       if (r.kind === "send_refused") this.recent.push({ t: r.t, key: `send_refused:${d.reason}` });
@@ -343,7 +346,7 @@ export class GameSource implements DataSource {
     const members = [...this.store.members.values()];
     const c = this.store.counts;
     const card = scorecard({
-      now, start: this.start, members, opps, requests, optOutAt: this.optOutAt, invites: c.invites, accepts: c.accepts,
+      now, start: this.start, members, opps, requests, optOutTimes: this.optOutTimes, invites: c.invites, accepts: c.accepts,
       messages: this.world.channel.all().filter(m => !m.system).map(m => ({ memberId: m.memberId, ts: m.ts, direction: m.direction, proactive: !!m.meta?.proactive, status: m.status })),
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0),
       sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
