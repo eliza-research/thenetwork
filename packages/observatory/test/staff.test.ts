@@ -474,10 +474,7 @@ describe("tokens, Access keys and the lab (OBS-11)", () => {
       await lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester");
       await expect(lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester")).rejects.toThrow("queue is full");
     } finally {
-      lab.dispose();
-      // Killed children still finish their final save; keep the owned directory until they do.
-      const deadline = Date.now() + 5000;
-      while (lab.running && Date.now() < deadline) await Bun.sleep(10);
+      await lab.dispose();
       expect(lab.running).toBe(0);
     }
   });

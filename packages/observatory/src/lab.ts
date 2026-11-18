@@ -86,6 +86,9 @@ export class Lab {
   private seq = 0;
   private loaded: Promise<void>;
   private children = new Set<ReturnType<typeof Bun.spawn>>();
+  private jobs = new Set<Promise<void>>();
+  private closed = false;
+  private closing?: Promise<void>;
   readonly dir: string;
   private script: string;
   private concurrency: number;
@@ -129,6 +132,7 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
+    if (this.closed) throw new Error("the simulation lab has stopped");
     if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
     const now = Date.now();
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
@@ -149,15 +153,18 @@ export class Lab {
   get queued() { return this.queue.length; }
 
   private pump() {
-    while (this.active < this.concurrency && this.queue.length) {
+    while (!this.closed && this.active < this.concurrency && this.queue.length) {
       const job = this.queue.shift()!;
       this.active++;
-      this.exec(job.run, job.seed).finally(() => { this.active--; this.pump(); });
+      const work = this.exec(job.run, job.seed).finally(() => { this.active--; this.jobs.delete(work); this.pump(); });
+      this.jobs.add(work);
     }
   }
 
   private async exec(run: LabRun, seed: number) {
     if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
+    // Shutdown can happen while the first status write is pending, before a child exists to kill.
+    if (this.closed) return;
     const r = run.request;
     try {
       const child = Bun.spawn([process.execPath, "run", this.script, ...labArgs(r, seed)], {
@@ -194,6 +201,23 @@ export class Lab {
     return next;
   }
 
-  /** Stop children (server shutdown). */
-  dispose() { for (const c of this.children) c.kill(); this.children.clear(); this.queue = []; }
+  /** Stop accepting work, reap children, and finish all status writes before server shutdown returns. */
+  dispose(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    this.queue = [];
+    for (const c of this.children) c.kill();
+    this.closing = (async () => {
+      await this.loaded;
+      await Promise.allSettled([...this.jobs]);
+      for (const run of this.runs.values()) if (run.status === "queued" || run.status === "running") {
+        run.status = "failed";
+        run.error = [run.error, "the server stopped before the run finished"].filter(Boolean).join("; ");
+        run.finishedAt = Date.now();
+        await this.save(run);
+      }
+      await Promise.all([...this.saving.values()]);
+    })();
+    return this.closing;
+  }
 }
