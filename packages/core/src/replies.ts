@@ -275,7 +275,9 @@ const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|dej
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
 const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
-const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
+// "and" ends a clause only when the next clause carries its own opt-out verb ("Don't stop calling
+// and stop texting me"), so "stop and go" and "stop and unsubscribe" keep the single-clause reading.
+const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b|\band\b(?=[^,;.!?]*(?:\bstop\b|\bunsubscribe\b|\bremove\b|\bopt\b))/i;
 
 function optOutClauses(text: string, norm: (value: string) => string): string[] {
   const t = norm(text);
