@@ -519,10 +519,14 @@ function mergeDistance(previous: Distance | undefined, next: Distance): Distance
   return next;
 }
 
+// "5 miles", "2.5 mi" and spelled "two miles", "twenty-five miles": the same unit and context checks apply.
+const DISTANCE_RX = new RegExp(`(?<![\\d.$])(\\d{1,3}(?:\\.\\d+)?|\\b(?:${NUM_WORD_RX}|one|two|three|four|five|six|seven|eight|nine)\\b)\\s*(?:(?:-|to|or)\\s*(\\d{1,3}))?\\s*(?:ish\\s*)?(mi\\b|mis\\b|miles?\\b|mile\\b|mls\\b|miels\\b|km\\b|kms\\b|kilomet(?:er|re)s?\\b|k\\b(?=\\s*(?:radius|max|away|tops)))`);
+const distanceNum = (w: string) => (/^\d/.test(w) ? Number(w) : wordNum(w));
+
 function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance> | undefined {
   let best: Cand<Distance> | undefined;
   for (const s of sentences(t)) {
-    for (const m of all(/(?<![\d.$])(\d{1,3}(?:\.\d+)?)\s*(?:(?:-|to|or)\s*(\d{1,3}))?\s*(?:ish\s*)?(mi\b|mis\b|miles?\b|mile\b|mls\b|miels\b|km\b|kms\b|kilomet(?:er|re)s?\b|k\b(?=\s*(?:radius|max|away|tops)))/, s.text)) {
+    for (const m of all(DISTANCE_RX, s.text)) {
       const around = s.text;
       const pos = /\b(?:within|radius|away|max|tops|or less|or closer|up to|no more than|not more than|no further|under|travel|go|is fine|works|ok|okay|of|from|around|near|distance|far|willing|limit|range|date|dating|meet)\b/.test(around);
       const negCtx = /\b(?:run|ran|running|walk|walked|bike|biked|biking|commute|marathon|hike|hiked|drive to work|swim)\b/.test(around);
@@ -530,7 +534,7 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
       const short = s.text.trim().split(/\s+/).length <= 5 || (!!seg && seg.text.trim().split(/\s+/).length <= 3);
       if (asked !== "distance" && (!(pos || short) || negCtx) && !/^\s*(?:like\s+|maybe\s+|about\s+|within\s+)?\d{1,3}\s*(?:mi|miles?)\b\W*$/.test(around)) continue;
       if (negated(s.text, m.index, 2) && !/\b(?:no more than|not more than|not over|no further than|not further than)\s*$/.test(s.text.slice(0, m.index))) continue;
-      let n = Math.max(Number(m[1]), m[2] ? Number(m[2]) : 0);
+      let n = Math.max(distanceNum(m[1]!), m[2] ? Number(m[2]) : 0);
       if (/^k/.test(m[3]!)) n = Math.round(n * 0.621);
       if (!(n >= 1 && n <= 200)) continue;
       best = cand<Distance>(mergeDistance(best?.value, { mode: "radius", miles: Math.round(n) }), s, m, /^k/.test(m[3]!) ? 0.85 : 0.95);
