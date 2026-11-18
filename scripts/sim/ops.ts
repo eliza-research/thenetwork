@@ -90,7 +90,7 @@ export async function opsBlock(b: Block): Promise<void> {
       id: "slop:nyc", app: "slop",
       health: async () => ({ lastTick: { stored: T0 - 30_000, savedAt: T0 - 20_000 }, backlog: { review: 0, reviewOverdue: 0, deferred: 0, outboundWaiting: 0 } }),
       since: async () => ({
-        statuses: { delivered: 90, read: 4, failed: 3, failed_no_address: 2, parked_error: 1, fell_back: 5, dry_run: 50, refused_opted_out: 7, suppressed_opt_out: 1, queued: 9 },
+        statuses: { delivered: 90, read: 4, failed: 3, failed_no_address: 2, parked_error: 1, fell_back: 5, dry_run: 50, refused_opted_out: 7, suppressed_opt_out: 1, queued: 9, unknown_acceptance: 7 },
         events: [{ type: "review_expired", action: null, n: 2 }, { type: "safety_action", action: "ban", n: 1 }, { type: "safety_action", action: "lift_hold", n: 3 }],
         reports: [{ kind: "scam" }, { kind: "no_show" }], sms: { today: 4, yesterday: 1 },
       }),
