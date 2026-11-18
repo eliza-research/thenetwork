@@ -45,3 +45,6 @@
 {"text": "I don't want messages anymore", "match": "likely"}
 {"text": "I don't want to get texts anymore", "match": "likely"}
 {"text": "I don't want coffee anymore", "match": "none"}
+{"text": "I don't want texts about jobs", "match": "none"}
+{"text": "I don't want texts on weekends", "match": "none"}
+{"text": "I don't want texts after 9pm", "match": "none"}

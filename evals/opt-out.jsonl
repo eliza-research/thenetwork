@@ -160,3 +160,6 @@
 {"text": "I don't want to receive messages anymore", "label": "stop", "lang": "en"}
 {"text": "I don't want coffee anymore", "label": "not_stop", "lang": "en"}
 {"text": "I don't want to date anymore", "label": "not_stop", "lang": "en"}
+{"text": "I don't want texts about jobs", "label": "not_stop", "lang": "en"}
+{"text": "I don't want texts on weekends", "label": "not_stop", "lang": "en"}
+{"text": "I don't want texts after 9pm", "label": "not_stop", "lang": "en"}
