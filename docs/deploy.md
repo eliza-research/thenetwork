@@ -465,7 +465,7 @@ Every costed event is a row in `network.cost_ledger` (migration 0020): the app, 
 | `otp_verify` | Twilio Verify sends a login code | 0.058 per code | `COST_TWILIO_VERIFY_USD` |
 | `photo_rating` | The Clef rater is called for a member (not for a refusal) | 0.000425 per photo (0.0017 for 4 photos) | `COST_CLEF_PHOTO_USD` |
 | `llm` | An LLM call is priced by the provider (`CostLedger.llmHooks(app, purpose)` on a core client) | The provider's own price (Surplus reports it) | none |
-| `sms_fallback` | An outbound message is stored as `fell_back` (sent by SMS) | 0.0083 per message | `COST_SMS_USD` |
+| `sms_fallback` | An outbound message has an accepted `sms` receipt (on its acceptance day), or a legacy `fell_back` row | 0.0083 per message | `COST_SMS_USD` |
 | `blooio_line` | Once a day, app `shared` | `COST_BLOOIO_LINE_MONTHLY_USD` / 30 per line | `COST_BLOOIO_LINES` (default 1) |
 
 - Today no LLM path is wired into the service. When one is (for example `understand`), build its client as `defaultLLM(svc.cost.llmHooks("<app>", "understand"))` so each call is in the ledger.
