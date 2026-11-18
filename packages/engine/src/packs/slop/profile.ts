@@ -20,6 +20,7 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
 import type { EngineInput } from "../../types.ts";
+import { memberIdResolver } from "../../identity.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
@@ -102,16 +103,19 @@ export interface SlopProfile {
   history: History;
 }
 
-const cache = new WeakMap<EngineInput, Map<MemberId, SlopProfile>>();
+type Canonical = (id: MemberId) => MemberId;
+const cache = new WeakMap<EngineInput, Map<Canonical | undefined, Map<MemberId, SlopProfile>>>();
 /** An unanswered question older than this counts as silence (SlopPackOptions.silentFallback). */
 export const SILENT_AFTER_DAYS = 7;
 
-/** Typed dating profiles for every member of an engine input (cached per input object). */
-export function slopProfiles(input: EngineInput, canonical: (id: MemberId) => MemberId = x => x): Map<MemberId, SlopProfile> {
-  let out = cache.get(input);
+/** Typed dating profiles, using the input's aliases by default (cached per input and resolver). */
+export function slopProfiles(input: EngineInput, canonical?: Canonical): Map<MemberId, SlopProfile> {
+  let byResolver = cache.get(input);
+  if (!byResolver) { byResolver = new Map(); cache.set(input, byResolver); }
+  let out = byResolver.get(canonical);
   if (out) return out;
-  out = buildProfiles(input, canonical);
-  cache.set(input, out);
+  out = buildProfiles(input, canonical ?? memberIdResolver(new Set(input.members.map(m => m.id)), input.idAliases));
+  byResolver.set(canonical, out);
   return out;
 }
 

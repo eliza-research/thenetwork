@@ -6,6 +6,7 @@ import { canBeMatched, DAY } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
+import { memberIdResolver } from "./identity.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
@@ -80,14 +81,9 @@ export class World {
     this.pack = pack;
     this.now = input.now;
     this.embed = embed;
-    const aliases = input.idAliases ?? {};
     const memberIds = new Set(input.members.map(m => m.id));
     // Resolve alias chains; unknown ids are kept as-is (they simply never match a member).
-    this.canonical = (id: MemberId) => {
-      let cur = id; let hops = 0;
-      while (!memberIds.has(cur) && aliases[cur] !== undefined && hops++ < 8) cur = aliases[cur]!;
-      return cur;
-    };
+    this.canonical = memberIdResolver(memberIds, input.idAliases);
     const C = this.canonical;
     this.dim = embed("dimension probe").length;
     const now = this.now;
