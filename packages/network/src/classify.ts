@@ -96,11 +96,28 @@ const CATEGORY_WORDS: [RegExp, Category][] = [
   [/\b(friends?|people|hang|dinner|community)\b/i, "social"],
 ];
 
-/** Sentences (and clauses after "but"): the scope of a negation or a disclosure. */
+/**
+ * Sentences (and clauses after "but"): the scope of a negation or a disclosure. A period that
+ * starts an abbreviation ("y.o.", "e.g.") is not a sentence end: it is immediately followed by a
+ * lowercase letter, whereas a real sentence break is followed by a space, a capital, or the end of
+ * the text. Not splitting there is what keeps "I'm 15 y.o." one sentence, so the explicit-age rule
+ * (which reads each sentence) still sees the whole form.
+ */
 export function sentencesOf(t: string): { text: string; at: number }[] {
   const out: { text: string; at: number }[] = [];
-  const re = /[^.!?;\n]+[.!?;\n]*/g;
-  for (const m of t.matchAll(re)) if (m[0].trim()) out.push({ text: m[0], at: m.index! });
+  const re = /[!?;\n]|[.](?![a-z])/g;
+  let start = 0;
+  let m: RegExpExecArray | null;
+  // any letter or digit, any script — an all-caps or abbreviation-only sentence is still a sentence
+  const hasContent = (s: string) => /[\p{L}\p{Nd}]/u.test(s);
+  while ((m = re.exec(t)) !== null) {
+    const end = m.index + m[0].length;
+    const text = t.slice(start, end);
+    if (hasContent(text)) out.push({ text, at: start });
+    start = end;
+  }
+  const tail = t.slice(start);
+  if (hasContent(tail)) out.push({ text: tail, at: start });
   return out.length ? out : [{ text: t, at: 0 }];
 }
 
