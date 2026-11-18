@@ -11,7 +11,14 @@ async function main() {
   const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
   const perCity = Number(arg("per-city", "400")), jobsPerCity = Number(arg("jobs", "80")), weeks = Number(arg("weeks", "8"));
   const arms = arg("arms", "keyword,keyword3,greedy,oracle,pack")!.split(",");
-  const realism = arg("realism", "v2") === "v1" ? REALISM_V1 : REALISM_V2;
+  const realismName = arg("realism", "v2");
+  if (realismName !== "v1" && realismName !== "v2") throw new Error("--realism must be v1 or v2");
+  const realism = realismName === "v1" ? REALISM_V1 : REALISM_V2;
+  const gateArm = arg("gate-arm", "pack")!;
+  if (process.argv.includes("--gate-arm")) {
+    if (!Object.hasOwn(ARMS, gateArm) || !arms.includes(gateArm)) throw new Error("--gate-arm must name a known arm selected by --arms");
+    if (!arms.includes("keyword")) throw new Error("--gate-arm requires keyword in --arms for comparison");
+  }
 
   const all: Record<string, PeonMetrics[]> = {};
   for (const a of arms) {
@@ -77,7 +84,6 @@ async function main() {
   for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${arms.map(a => fmt(all[a]!.map(f), pct, d)).join(" | ")} |`);
 
   // ---- gates (the pack against keyword on the same seeds) -----------------------------------------
-  const gateArm = arg("gate-arm", "pack")!;
   if (all[gateArm] && all.keyword) {
     const show = (title: string, gs: GateResult[]) => {
       console.log(`\n| ${title} | ${ARMS[gateArm]!.name} | pass |\n|---|---:|---|`);
