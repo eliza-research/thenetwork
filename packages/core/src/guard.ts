@@ -129,7 +129,7 @@ const PROVIDERS = "gmail|googlemail|yahoo|ymail|hotmail|outlook|icloud|protonmai
 // and closes for the full TLD list ("example . ai", "example 。 co").
 const SENTENCE_DOT_TLDS = "com|net|org|io|xyz|biz|info";
 const SOCIAL_APPS = "ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id";
-const HANDLE_VALUE = "(?!(?:a|an|the|me|my|same|private|you|it|later|too|now|today|tomorrow|tonight|soon|please|thanks|instead|first|also)\\b)@?[a-z][a-z0-9_.]{2,29}(?![a-z0-9_.@])";
+const HANDLE_VALUE = "(?!(?:a|an|the|me|my|same|private|you|it|later|too|now|today|tomorrow|tonight|soon|please|thanks|instead|first|also|and|or|but|then|again|after|before|afterwards|sometime|whenever|noon|midnight|morning|afternoon|evening|night|down|back|here|there|home|free)\\b)@?[a-z][a-z0-9_.]{2,29}(?![a-z0-9_.@])";
 
 /** Contact-detail patterns, run on `plain` text (punctuation kept) and on the contact variants (`contactVariants`). */
 export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
@@ -154,7 +154,10 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "handle", re: /(?:^|[^a-z0-9._%+-])@[a-z0-9_][a-z0-9_.]{1,29}|[a-z0-9]@[a-z0-9_]{2,30}(?![a-z0-9_]*\.[a-z])/ },
   // "ig: samlee_nyc", "my insta is samlee_nyc", "snap @sam", "discord sam#1234".
   { name: "handle", re: new RegExp("\\b(?:" + SOCIAL_APPS + ")\\b\\s*(?:[:=]|is|handle|handle is|is at|at)?\\s*@?(?:[a-z0-9_.]*[_.\\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@]\\s*)[a-z][a-z0-9]{2,29})") },
-  { name: "handle", re: new RegExp("\\b(?:(?:handle|username|user name|screen name|gamertag)\\s*(?:is\\b|[:=])\\s*|(?:(?:find|add|follow|dm|message|hit) me(?: up)?|hmu) on (?:" + SOCIAL_APPS + ") (?:as )?)" + HANDLE_VALUE) },
+  { name: "handle", re: new RegExp("\\b(?:(?:handle|username|user name|screen name|gamertag)\\s*(?:is\\b|[:=])\\s*|(?:(?:find|add|follow|dm|message|hit) me(?: up)?|hmu) on (?:" + SOCIAL_APPS + ")\\b[\\s,;:]*(?:as )?)" + HANDLE_VALUE) },
+  // "my snap is mayaxyz", "whatsapp me at maya": a plain handle after app + is / app + (me) at. The
+  // HANDLE_VALUE word list keeps ordinary tails out ("my insta is private", "whatsapp me at noon").
+  { name: "handle", re: new RegExp("\\b(?:" + SOCIAL_APPS + ")\\s+(?:me\\s+)?(?:is|at)\\s+" + HANDLE_VALUE) },
   { name: "handle", re: new RegExp("\\b(?:search(?: for)?|look up|add|follow)\\s+" + HANDLE_VALUE + "\\s+on\\s+(?:" + SOCIAL_APPS + ")\\b") },
   { name: "handle", re: /\b(?:cashapp|cash app|cashtag)\b\s*(?:[:=]|is)?\s*\$[a-z][a-z0-9_]{1,19}/ },
 ];
