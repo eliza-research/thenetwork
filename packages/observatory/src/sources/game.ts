@@ -603,20 +603,18 @@ export class GameSource implements DataSource {
     const hits: SearchHit[] = [];
     const name = (id: string) => this.store.member(id)?.name ?? id;
     for (const m of this.world.channel.all()) {
-      if (hits.length >= limit) break;
       // Only what the agent sent; never what a member wrote.
       if (m.direction !== "outbound" || m.system || !re.test(m.body)) continue;
       hits.push({ memberId: m.memberId, memberName: name(m.memberId), t: m.ts, kind: "message", snippet: snippet(m.body, re), type: m.meta?.type, ...(m.meta?.proposalId ? { opportunityId: m.meta.proposalId } : {}) });
     }
     for (const r of this.records) {
-      if (hits.length >= limit) break;
       const row = eventOf(r);
       if (!row) continue;
       const e = describe(row, name);
       if (!e.memberId || !(re.test(e.text) || re.test(e.type))) continue;
       hits.push({ memberId: e.memberId, memberName: name(e.memberId), t: e.t, kind: "event", snippet: e.text, type: e.type, ...(e.opportunityId ? { opportunityId: e.opportunityId } : {}) });
     }
-    return hits.sort((a, b) => b.t - a.t);
+    return hits.sort((a, b) => b.t - a.t).slice(0, Math.max(0, limit));
   }
 
   // ------------------------------------------------------------------ controls
