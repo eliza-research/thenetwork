@@ -154,3 +154,11 @@
 {"text":"I said stop by at 7","label":"not_stop","lang":"en"}
 {"text":"I said cancel","label":"not_stop","lang":"en"}
 {"text":"stop slop stop slop","label":"not_stop","lang":"en"}
+{"text":"basta ya","label":"stop","lang":"es"}
+{"text":"ya basta","label":"stop","lang":"es"}
+{"text":"basta por favor","label":"stop","lang":"es"}
+{"text":"ya basta por favor","label":"stop","lang":"es"}
+{"text":"para ya","label":"stop","lang":"es"}
+{"text":"alto ya","label":"stop","lang":"es"}
+{"text":"basta de hablar de mi ex","label":"not_stop","lang":"es"}
+{"text":"baja ya, te espero abajo","label":"not_stop","lang":"es"}

@@ -369,6 +369,10 @@ const OPT_OUT_ES: RegExp[] = [
   /\bya no me (?:escribas|escriban|envies|mandes)\b/,
   /\bno mas mensajes\b/,
   /\bnumero equivocado\b/,
+  // A Spanish stop word with the emphasis "ya" or a courtesy word around it ("basta ya", "ya basta
+  // por favor", "para ya"): the same shape the English table allows for "STOP PLEASE". "baja" is
+  // left out on purpose, because "baja ya" can mean "come down now".
+  /^(?:ya )?(?:no mas mensajes|no mas|para|parar|alto|basta|cancelar|detener)(?: (?:ya|por favor|porfavor|please|pls|gracias|ahora|ahora mismo|de una vez))*$/,
 ];
 
 /**
