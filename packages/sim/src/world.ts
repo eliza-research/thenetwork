@@ -440,7 +440,8 @@ export class World {
     // Next initiative: adversaries every 1-2 days; others ~ every 3-12 days by social energy.
     const gapDays = p.hidden.adversarial ? r.range(1, 2) : r.logNormal(6 / (0.5 + p.hidden.socialEnergy), 0.4);
     const next = nextLocalHour(this.clock.now() + gapDays * DAY, p.homeCity, r.int(Math.max(p.routine.wake, 8), 21));
-    if (next < end && !mem.optedOut) this.scheduler.at(next, "initiative", { personaId: id });
+    // Keep the routine clock alive for START; the guard above skips activity while stopped.
+    if (next < end) this.scheduler.at(next, "initiative", { personaId: id });
   }
 
   private onFlakeCheck(meetingId: string, personaId: MemberId) {
