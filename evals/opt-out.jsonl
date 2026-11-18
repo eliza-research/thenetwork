@@ -154,3 +154,12 @@
 {"text":"I said stop by at 7","label":"not_stop","lang":"en"}
 {"text":"I said cancel","label":"not_stop","lang":"en"}
 {"text":"stop slop stop slop","label":"not_stop","lang":"en"}
+{"text": "I don't want texts anymore", "label": "stop", "lang": "en"}
+{"text": "I don't want messages anymore", "label": "stop", "lang": "en"}
+{"text": "I don't want to get texts anymore", "label": "stop", "lang": "en"}
+{"text": "I don't want to receive messages anymore", "label": "stop", "lang": "en"}
+{"text": "I don't want coffee anymore", "label": "not_stop", "lang": "en"}
+{"text": "I don't want to date anymore", "label": "not_stop", "lang": "en"}
+{"text": "I don't want texts about jobs", "label": "not_stop", "lang": "en"}
+{"text": "I don't want texts on weekends", "label": "not_stop", "lang": "en"}
+{"text": "I don't want texts after 9pm", "label": "not_stop", "lang": "en"}

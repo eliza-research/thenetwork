@@ -270,7 +270,7 @@ export interface OptOutReading {
 
 const EXACT_EN = /^(?:stop|stopall|stop all|unsubscribe|cancel|end|quit|optout|opt out|opt-out|revoke)$/;
 const EXACT_ES = /^(?:para|parar|alto|baja|cancelar|detener|basta|no mas)$/;
-const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
+const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already|i (?:don't|do not) want (?:to (?:get|receive) )?(?:(?:(?:any|any more|more|no more|these|your|the|this|those) )?(?:texts?|messages?|msgs?|sms|notifications?|spam) anymore|(?:(?:any|any more|more|no more|these|your|the|this|those) )(?:texts?|messages?|msgs?|sms|notifications?|spam)))\b/;
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
@@ -353,7 +353,7 @@ const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
   /\b(?:remove|delete|lose) my (?:number|phone number|info|contact)\b/,
   new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to|email) ${ME}\\b`),
-  new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
+  new RegExp(`\\bi (?:don't|do not|dont) want (?:to (?:get|receive) )?(?:(?:(?:any|any more|anymore|more|no more|these|your|the|this|those) )?${MSGS} anymore|(?:(?:any|any more|anymore|more|no more|these|your|the|this|those) )${MSGS})\\b`),
   /\bleave me alone\b/,
   /\bwrong number\b/,
   // "remove me", "take me off", "take me off the list" on their own.
