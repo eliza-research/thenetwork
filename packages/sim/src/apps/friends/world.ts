@@ -24,6 +24,7 @@ import { Rng, hash32 } from "@thenetwork/core";
 import { FriendsOracle, ORACLE_PARAMS, type HarmEvent, type OracleParams } from "./oracle.ts";
 import { FRIEND_ACTIVITIES, SLOTS, generateFriendsPersonas, isReal, type FriendsGenOptions, type FriendsPersona } from "./persona.ts";
 import { buildFriendsSnapshot, emptyFriendsState, slotDay, slotTime, weekTime, type CrewState, type FriendsNetworkState, type FriendsSnapshot } from "./snapshot.ts";
+import { simulationWeeks } from "../weeks.ts";
 
 export type ProposalKind = "plan" | "partner" | "repeat" | "crew_offer" | "crew_session";
 export interface FriendsProposal {
@@ -93,7 +94,7 @@ export const pk = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a
 const dk = (a: MemberId, b: MemberId) => `${a}>${b}`;
 
 export function createFriendsWorld(o: Omit<FriendsRunOptions, "matcher">): FriendsWorld {
-  const weeks = o.weeks ?? 8;
+  const weeks = simulationWeeks(o.weeks, 8);
   const personas = o.personas ?? generateFriendsPersonas({ ...o, seed: o.seed });
   return {
     seed: o.seed, weeks, personas, oracle: new FriendsOracle(personas, o.seed, { ...ORACLE_PARAMS, ...(o.params ?? {}) }), state: emptyFriendsState(),
