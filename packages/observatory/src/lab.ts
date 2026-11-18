@@ -4,6 +4,7 @@
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { APP_IDS, DEFAULT_APP, isAppId, matchingAllowed, type AppId } from "./apps.ts";
 import { REPO } from "./staff.ts";
@@ -83,7 +84,6 @@ export class Lab {
   private runs = new Map<string, LabRun>();
   private queue: { run: LabRun; seed: number }[] = [];
   private active = 0;
-  private seq = 0;
   private loaded: Promise<void>;
   private children = new Set<ReturnType<typeof Bun.spawn>>();
   readonly dir: string;
@@ -131,7 +131,7 @@ export class Lab {
     await this.loaded;
     if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
     const now = Date.now();
-    const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
+    const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${randomUUID()}`;
     const run: LabRun = {
       id, request: req, requestedBy, status: "queued", createdAt: now, progress: { done: 0, total: req.seeds.length }, results: [],
       file: join(this.dir, `${id}.json`),
