@@ -90,6 +90,11 @@
 {"text":"interested, but none of those days work for me","label":"yes","keys":[]}
 {"text":"neither works this week sorry","label":"yes","keys":[]}
 {"text":"none of those, but I'm up for it another day","label":"yes","keys":[]}
+{"text":"9pm works","label":"yes","keys":[]}
+{"text":"8:30am works for me","label":"yes","keys":[]}
+{"text":"noon works","label":"yes","keys":[]}
+{"text":"7pm works","label":"yes","keys":["a"]}
+{"text":"Thursday 9pm","label":"unclear"}
 {"text":"would love to, can we find another time?","label":"yes"}
 {"text":"Interested, but could we do a different day?","label":"yes"}
 {"text":"yes but next week would be better","label":"yes"}
