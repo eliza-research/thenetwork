@@ -30,7 +30,7 @@ const { values: a } = parseArgs({
     days: { type: "string", default: "14" },
     mode: { type: "string", default: "discrete" },
     speed: { type: "string", default: "1440" },
-    seed: { type: "string", default: "1" },
+    seed: { type: "string" },
     network: { type: "string", default: "stub" },
     engine: { type: "string" },
     llm: { type: "boolean", default: false },
@@ -81,7 +81,7 @@ if (a.help) {
   process.exit(0);
 }
 
-const seed = Number(a.seed);
+const seed = Number(a.seed ?? "1");
 const mode = a.mode as RunMode;
 if (!["discrete", "accelerated", "realtime"].includes(mode)) throw new Error(`bad --mode ${mode}`);
 
@@ -105,7 +105,8 @@ const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["qualit
 if (a.scenario) {
   const s = await loadScenario(a.scenario);
   const k = Number(a.k);
-  const res = await runScenarioPassK(s, k, { network: sc => makeNetwork(engine, sc.stub), engine, agent, writeLog: !a["no-log"] });
+  const res = await runScenarioPassK(s, k, { seed: a.seed === undefined ? undefined : seed,
+    network: sc => makeNetwork(engine, sc.stub), engine, agent, writeLog: !a["no-log"] });
   for (const run of res.runs) {
     console.log(`\n[${run.pass ? "PASS" : "FAIL"}] ${s.name} seed=${run.seed}${run.world.dir ? `  log=${run.world.dir}` : ""}`);
     for (const r of run.results) console.log(`  ${r.status.padEnd(7)} ${r.expectation.check}${"persona" in r.expectation ? `(${(r.expectation as any).persona})` : ""}: ${r.detail}`);
