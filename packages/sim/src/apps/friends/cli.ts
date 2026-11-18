@@ -5,11 +5,11 @@ import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
 import { runFriendsWorld } from "./world.ts";
+import { parseSeedRange } from "../seeds.ts";
 
 async function main() {
   const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
-  const parseSeeds = (s: string) => s.split(",").flatMap(r => { const [a, b] = r.split("-").map(Number); return Array.from({ length: (b ?? a!) - a! + 1 }, (_, i) => a! + i); });
-  const seeds = parseSeeds(arg("seeds", "1-4")!);
+  const seeds = (arg("seeds", "1-4") ?? "").split(",").flatMap(parseSeedRange);
   const n = Number(arg("n", "400")), weeks = Number(arg("weeks", "8")), planCap = Number(arg("plan-cap", "1"));
 
   const packOverride = arg("pack");

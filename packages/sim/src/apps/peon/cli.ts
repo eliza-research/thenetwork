@@ -4,11 +4,11 @@ import { ARMS } from "./arms.ts";
 import { historicalGates, officialGates, type GateResult } from "./gates.ts";
 import { peonMetrics, poolImpact, STAGES, type PeonMetrics } from "./metrics.ts";
 import { REALISM_V1, REALISM_V2, runPeonWorld } from "./world.ts";
+import { parseSeedRange } from "../seeds.ts";
 
 async function main() {
   const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
-  const [s0, s1] = arg("seeds", "1-4")!.split("-").map(Number);
-  const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
+  const seeds = parseSeedRange(arg("seeds", "1-4"));
   const perCity = Number(arg("per-city", "400")), jobsPerCity = Number(arg("jobs", "80")), weeks = Number(arg("weeks", "8"));
   const arms = arg("arms", "keyword,keyword3,greedy,oracle,pack")!.split(",");
   const realism = arg("realism", "v2") === "v1" ? REALISM_V1 : REALISM_V2;

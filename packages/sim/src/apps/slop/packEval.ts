@@ -15,6 +15,7 @@ import { parseAppearance } from "@thenetwork/engine/src/packs/slop/appearance.ts
 import { CHECKIN_DEFAULTS, RATER_DEFAULTS, demoGroupOf, raterFacet, RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
 import { runSlopWorld, runSlopWorldAsync, type SlopRunResult } from "./world.ts";
 import { BODY_TYPE_DEFAULTS, type BodyTypeModel } from "./bodyType.ts";
+import { parseSeedRange } from "../seeds.ts";
 
 export interface ArmResult { arm: string; seeds: number[]; metrics: SlopMetrics[]; extra: Extra[] }
 /** Metrics the world's slopMetrics does not compute. */
@@ -477,8 +478,7 @@ if (import.meta.main) {
   const argv = process.argv;
   const arg = (k: string, d?: string) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1]! : d; };
   const all = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? [argv[i + 1]!] : []));
-  const [s0, s1] = arg("seeds", "1-4")!.split("-").map(Number);
-  const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
+  const seeds = parseSeedRange(arg("seeds", "1-4"));
   const weeks = Number(arg("weeks", "4")), perCity = Number(arg("per-city", "300"));
   const arms = arg("arms", "random,greedy,oracle,slop")!.split(",").filter(Boolean);
   const variants = all("variant"), names = all("variant-name");
