@@ -216,8 +216,8 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "venue": text = `Venue: ${p.venue}`; keep("venue", "meetingAt"); break;
     case "request": text = `Asked for ${requestLabel(p)}`; keep("kind", "category", "desireId"); break;
     case "request_result":
-      text = p.outcome === "fulfilled" ? `Request fulfilled in ${p.hours}h` : p.outcome === "probing" ? `Request: checking ${p.candidates ?? ""} candidates`.replace("  ", " ") : `Request waiting (${human(p.reason)})`;
-      severity = p.outcome === "fulfilled" ? "good" : p.outcome === "waiting" ? "warn" : undefined; keep("outcome", "reason", "hours", "candidates"); break;
+      text = p.outcome === "fulfilled" ? `Request fulfilled in ${p.hours}h` : p.outcome === "booked" ? `Request booked in ${p.hours}h` : p.outcome === "probing" ? `Request: checking ${p.candidates ?? ""} candidates`.replace("  ", " ") : `Request waiting (${human(p.reason)})`;
+      severity = p.outcome === "fulfilled" || p.outcome === "booked" ? "good" : p.outcome === "waiting" ? "warn" : undefined; keep("outcome", "reason", "hours", "candidates"); break;
     case "request_withdrawn_want": text = "Request closed: the want was withdrawn"; break;
     case "trust": text = `Trust ${String(p.from).toUpperCase()} → ${String(p.to).toUpperCase()} (${human(p.why)})`; severity = p.to === "ok" ? "info" : "bad"; keep("from", "to", "why", "score"); break;
     case "abuse": text = `Abuse handled: ${(p.kinds as string[] | undefined)?.map(human).join(", ") ?? "?"}`; severity = "bad"; keep("risk"); break;
