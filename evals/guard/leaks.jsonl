@@ -220,3 +220,17 @@
 {"text": "2, 3, 4, 5, 6, 7, 8", "want": "clean", "note": "preserve unrelated text and existing grouped phone formats"}
 {"text": "212 , 555 - 0102", "want": "contact", "note": "preserve unrelated text and existing grouped phone formats"}
 {"text": "555-.0102", "want": "contact", "note": "preserve unrelated text and existing grouped phone formats"}
+{"text":"my snap is mayaxyz","want":"contact","note":"plain handle after app + is"}
+{"text":"my signal is maya","want":"contact","note":"plain handle after app + is"}
+{"text":"my discord is mayaxyz","want":"contact","note":"plain handle after app + is"}
+{"text":"add me on snap, mayaxyz","want":"contact","note":"comma between the app and the handle"}
+{"text":"hit me up on ig, mayaxyz","want":"contact","note":"comma between the app and the handle"}
+{"text":"whatsapp me at mayaxyz","want":"contact","note":"app + me + at + a plain handle"}
+{"text":"snap me at maya_xyz","want":"contact","note":"app + me + at + a handle"}
+{"text":"my instagram is private","want":"clean","note":"is + a private word, not a handle"}
+{"text":"whatsapp me at noon","want":"clean","note":"at + a time word, not a handle"}
+{"text":"my insta is down","want":"clean","note":"is + a state word, not a handle"}
+{"text":"find me on instagram and tiktok","want":"clean","note":"two app names, no handle"}
+{"text":"add me on snap sometime","want":"clean","note":"time word after the app, not a handle"}
+{"text":"find me on tiktok after work","want":"clean","note":"time word after the app, not a handle"}
+{"text":"hmu on snap whenever you're free","want":"clean","note":"time word after the app, not a handle"}
