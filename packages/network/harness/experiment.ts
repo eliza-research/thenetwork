@@ -201,12 +201,13 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     const c = consent.counters;
     const fulfilled = consent.requests.filter(r => r.kind === "people" && r.outcome === "fulfilled");
     const hours = fulfilled.map(r => (r.fulfilledAt! - r.at) / 3_600_000).sort((a, b) => a - b);
+    const middle = Math.floor(hours.length / 2);
     const people = consent.requests.filter(r => r.kind === "people");
     res.scorecard.optIn = r3(c.probeYes / Math.max(1, c.probeYes + c.probeNo + c.probeExpired));
     Object.assign(res, {
       probes: c.probesSent, probeYesRate: res.scorecard.optIn,
       requests: people.length, requestFulfillRate: r3(fulfilled.length / Math.max(1, people.length)),
-      requestMedianHours: hours.length ? Math.round(hours[Math.floor(hours.length / 2)]!) : null,
+      requestMedianHours: hours.length ? Math.round(hours.length % 2 ? hours[middle]! : (hours[middle - 1]! + hours[middle]!) / 2) : null,
       abuseHandled: c.abuse, holds: c.holds, invitesSent: c.invitesSent, gate: consent.gateReasons, counters: { ...c },
       falseFlags: records.filter(r => r.type === "network_log" && r.kind === "abuse" && !personas.get(String(r.detail.memberId))?.hidden.adversarial).length,
       falseRestricted: [...consent.trust.all()].filter(([id, t]) => t.level !== "ok" && !personas.get(id)?.hidden.adversarial && !t.events.some(e => e.kind === "block_abuse")).length,
