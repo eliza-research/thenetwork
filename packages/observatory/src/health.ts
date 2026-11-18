@@ -109,6 +109,12 @@ function metric(m: Omit<ScoreMetric, "met">): ScoreMetric {
 }
 const share = (a: number, b: number) => (b > 0 ? a / b : null);
 
+/** Joined-member time within the observed period; a missing join time retains the whole-period fallback. */
+export function observedMemberWeeks(members: ObsMember[], start: number, now: number): number {
+  return members.filter(m => m.joined && !m.declined)
+    .reduce((sum, m) => sum + Math.max(0, now - Math.max(start, m.joinedAt ?? start)) / (7 * DAY), 0);
+}
+
 /** When each member first got something of value: an attended meeting, a fulfilled people request, or an answered plans request. */
 export function firstValue(opps: ObsOpportunity[], requests: ObsRequest[]): Map<MemberId, number> {
   const first = new Map<MemberId, number>();
@@ -174,7 +180,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     && (o.review.decision === "approve" || o.review.decision === "reject"));
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
-  const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
+  const memberWeeks = observedMemberWeeks(joined, x.start, x.now);
   const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && m.status === "delivered").length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
@@ -189,7 +195,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
       how: "Pairs whose first meeting both enjoyed (>= 0.6) who met again through the Network within 60 days. Direct meetings are not seen, so this is a lower bound." }),
     metric({ key: "first_value_14d", label: "First outcome in 14 days", value: share(fast, due.length), unit: "share", n: due.length, target: { op: ">=", value: 0.6 },
       how: "Members who joined at least 14 days ago and attended a meeting, or had a request fulfilled or answered, within 14 days of joining." }),
-    metric({ key: "attention_burden", label: "Proactive messages per member per week", value: joined.length ? delivered / joined.length / weeks : null, unit: "per_member_week", n: delivered,
+    metric({ key: "attention_burden", label: "Proactive messages per member per week", value: share(delivered, memberWeeks), unit: "per_member_week", n: delivered,
       how: "Delivered agent-started messages, per joined member, per week of the period." }),
     metric({ key: "reviewer_minutes", label: "Reviewer minutes per sent proposal", value: x.reviewSeconds > 0 && x.sentProposals > 0 ? x.reviewSeconds / 60 / x.sentProposals : null, unit: "minutes", n: x.sentProposals, target: { op: "<=", value: 2 },
       how: "Recorded review time over opportunities a person approved that started (the simulated reviewer is left out). No value until reviewers record time." }),
