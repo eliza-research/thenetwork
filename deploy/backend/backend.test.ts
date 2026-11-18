@@ -8,19 +8,24 @@ import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { migrate } from "../../packages/observatory/db/migrate.ts";
+import { liveSendAllowed } from "../../packages/network/service/channel.ts";
+import { SimClock } from "../../packages/core/src/clock.ts";
+import { createPublicEventRefresh } from "./public-events.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
 import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
+import { RELAY_PHOTO_RESOLVE_PATH } from "../../packages/core/src/svc/contract.ts";
 import {
-  BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
+  BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, liveSendTable, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
 } from "./backend.ts";
 
 const SECRET = "s".repeat(40);
 const DEPLOYED = {
   PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: SECRET,
-  TURNSTILE_SECRET_KEY: "fake", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  TURNSTILE_SECRET_KEY: "fake", TURNSTILE_SITE_KEY: "fake-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/x",
 };
 
 describe("config", () => {
@@ -75,6 +80,55 @@ describe("config", () => {
     expect(() => loadConfig({ ...DEPLOYED, OTP_PROVIDER: "dev" })).toThrow(/OTP_PROVIDER=twilio/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_PROXY_SECRET: "short" })).toThrow(/at least 32/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_HASH_KEY: "short" })).toThrow(/at least 32/);
+  });
+
+  // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
+  test("a deployed backend refuses to start without the signup connector, the shared line or the staff API (audit OPS29, PER33)", () => {
+    // Each of these booted green before: /mcp answered 404, /internal/turn 503 no_secret, every staff route 401.
+    for (const k of ["TURNSTILE_SITE_KEY", "NETWORK_SERVICE_TOKENS", "SERVICE_TURN_SECRET", "NETWORK_PUBLIC_EVENTS_DATABASE_URL"]) {
+      expect(() => loadConfig({ ...DEPLOYED, [k]: undefined }), k).toThrow(k);
+      expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", [k]: undefined }), k).toThrow(k);
+    }
+    expect(() => loadConfig({ ...DEPLOYED, TURNSTILE_SITE_KEY: "  " })).toThrow("TURNSTILE_SITE_KEY");
+    expect(() => loadConfig({ ...DEPLOYED, SERVICE_TURN_SECRET: "t".repeat(31) })).toThrow(/SERVICE_TURN_SECRET of at least 32/);
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)},reviewer@slop:short-token` })).toThrow(/every NETWORK_SERVICE_TOKENS token/);
+    // Production entries name their app (the service's own rule, checked before the service starts).
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", NETWORK_SERVICE_TOKENS: `admin:${"a".repeat(40)}` })).toThrow(/names no app/);
+    // Dev keeps its shortcuts: none of these is required there.
+    const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
+    expect(dev.warnings.join(" ")).toMatch(/NETWORK_SERVICE_TOKENS is not set/);
+  });
+
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  test("with NETWORK_CHANNEL=eliza_cloud the backend does not own the carrier webhook (audit SHA43)", () => {
+    expect(loadConfig(DEPLOYED).blooioWebhook).toBe(true);
+    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "blooio" }).blooioWebhook).toBe(true);
+    const cloud = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", BLOOIO_WEBHOOK_SECRET: "w".repeat(40) });
+    // Off whether or not the live flags make Cloud sends live: the gateway owns inbound either way.
+    expect([cloud.channel, cloud.blooioWebhook]).toEqual(["dry-run", false]);
+    expect(cloud.warnings.join(" ")).toMatch(/BLOOIO_WEBHOOK_SECRET is ignored/);
+    expect(cloud.warnings.join(" ")).not.toMatch(/BLOOIO_WEBHOOK_SECRET is not set/);
+  });
+
+  // docs/deploy.md section 6, the live-send table (audit PER34, SHA41: founder decisions, behavior unchanged and pinned)
+  test("the live-send table: which flag makes which app's queued sends live; signed-turn replies are never gated by a backend flag", () => {
+    const table = (e: Record<string, string | undefined>) => {
+      const c = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", BLOOIO_FROM: "+12125550100", ...e });
+      return Object.fromEntries(liveSendTable({ ...DEPLOYED, ...e }, c.channel, liveSendAllowed).map(r => [r.app, `${r.queued}|${r.turnReplies}`]));
+    };
+    const row = (ntwrk: string, slop: string, friends: string, peon: string) =>
+      ({ ntwrk: `${ntwrk}|sent by the gateway`, slop: `${slop}|sent by the gateway`, friends: `${friends}|sent by the gateway`, peon: `${peon}|sent by the gateway` });
+    const NETWORK_CLOUD_DELIVERY_ORIGIN = "https://cloud.example.test";
+    expect(table({})).toEqual(row("dry-run", "dry-run", "dry-run", "dry-run"));
+    expect(table({ BLOOIO_ALLOW_SEND: "1", SLOP_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1", PEON_LIVE_APPROVED: "1" })).toEqual(row("dry-run", "dry-run", "dry-run", "dry-run"));
+    // NTWRK_LIVE_APPROVED is the global approval: slop cannot go live without it, and with it ntwrk is live too.
+    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" })).toEqual(row("live", "dry-run", "dry-run", "dry-run"));
+    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1" })).toEqual(row("live", "live", "dry-run", "dry-run"));
+    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1", PEON_LIVE_APPROVED: "1" })).toEqual(row("live", "live", "live", "live"));
+    expect(table({ NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", SLOP_LIVE_APPROVED: "1" }).slop).toBe("live|sent by the gateway");
+    // --dry-run wins over every flag.
+    const c = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN, BLOOIO_FROM: "+12125550100", BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, ["--dry-run"]);
+    expect(liveSendTable({ ...DEPLOYED, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, c.channel, liveSendAllowed).map(r => r.queued)).toEqual(["dry-run", "dry-run", "dry-run", "dry-run"]);
   });
 
   test("the staff API never shares the public port", () => {
@@ -256,10 +310,25 @@ describe("routing", () => {
     expect(calls.at(-1)!.path).toBe("/webhooks/blooio/slop");
   });
 
-  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay included (it was 404), each under its own body cap", async () => {
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  test("with the Eliza gateway as the inbound owner, neither port serves the legacy Blooio webhook (audit SHA43)", async () => {
+    const { svc, calls } = fakeService();
+    const b = createBackend({ svc, config: cfg({ blooioWebhook: false }), log: silent, ping: async () => true });
+    for (const path of ["/webhooks/blooio", "/webhooks/blooio/slop"]) {
+      const pub = await b.publicFetch(new Request(`http://api.example.test${path}`, { method: "POST", body: "{}" }));
+      const staff = await b.staffFetch(new Request(`http://10.0.0.2:4848${path}`, { method: "POST", body: "{}" }));
+      expect([pub.status, (await pub.json()).error, staff.status, (await staff.json()).error]).toEqual([404, "webhook_not_served", 404, "webhook_not_served"]);
+    }
+    expect(calls).toEqual([]);
+    // The signed turn route stays open: it is how the gateway hands the backend each message.
+    expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "{}" }))).status).toBe(200);
+    expect((await b.staffFetch(new Request("http://10.0.0.2:4848/review"))).status).toBe(200);
+  });
+
+  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay and the relay-photo resolve included (both were 404), each under its own body cap", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
-    for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
+    for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay", RELAY_PHOTO_RESOLVE_PATH,
       "/internal/profile-suggestions/preview", "/internal/profile-suggestions/decide", "/internal/profile-suggestions/delete", "/internal/profile-suggestions/collect", "/internal/profile-suggestions/consent-context",
       PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath]) {
       const r = await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
@@ -274,6 +343,9 @@ describe("routing", () => {
       method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) },
     }));
     expect(oversizedCalendar.status).toBe(413);
+    // Eliza Cloud resolves one approved photo descriptor; its cap is 16 KiB (relay-endpoint.ts RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES).
+    const oversizedResolve = await b.publicFetch(new Request(`http://api.example.test${RELAY_PHOTO_RESOLVE_PATH}`, { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }));
+    expect(oversizedResolve.status).toBe(413);
     expect(calls.length).toBe(n);
     // The same size is fine on the turn route (256 KiB).
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);
@@ -366,6 +438,24 @@ describe("deployed tick round", () => {
     await b.tickAll();
     await b.tickAll();
     expect(svc.rounds).toEqual([...round, ...round]);
+  });
+
+  // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("the public event catalog refresh runs in every round on its own key, beside the network work (audit PER32)", async () => {
+    const { svc } = fakeService();
+    let refreshes = 0, release: () => void = () => {};
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true,
+      publicEvents: async () => { if (++refreshes === 1) await new Promise<void>(r => { release = r; }); } });
+    const first = b.tickAll();
+    await sleep(10);
+    // A slow feed holds only its own worker: the network round finished, and a second round skips the busy refresh.
+    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    await b.tickAll().then(() => undefined, () => undefined);
+    expect(refreshes).toBe(1);
+    release();
+    await first;
+    await b.tickAll();
+    expect(refreshes).toBe(2);
   });
 
   test("a redrive or retention error does not stop the remaining workers", async () => {
@@ -464,10 +554,17 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       await owner.unsafe(`create role ${role} login nosuperuser nobypassrls`);
       await owner.unsafe(`grant network_service to ${role}`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
+      // The catalog ingest login, and a fresh catalog, so the first tick round does not reach the real feed.
+      await owner.unsafe(`drop role if exists ${role}_events`).catch(() => {});
+      await owner.unsafe(`create role ${role}_events login nosuperuser nobypassrls`);
+      await owner.unsafe(`grant network_public_event_ingest to ${role}_events`);
+      await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}_events`);
+      await owner`insert into network.public_event_imports (source, checked_at) values ('nyc-parks', now())`;
     } finally { await owner.close(); }
     const svcUrl = Object.assign(new URL(url), { username: role }).toString();
+    const eventsUrl = Object.assign(new URL(url), { username: `${role}_events` }).toString();
     const env: Record<string, string> = {
-      ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
+      ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, NETWORK_PUBLIC_EVENTS_DATABASE_URL: eventsUrl, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
       PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
@@ -513,6 +610,72 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     expect(logs).toMatch(/"msg":"shutdown complete".*"clean":true/);
     expect(logs).toMatch(/"sends":"dry-run"/);
     expect(logs).not.toMatch(/"sends":"live"/);
+    // The live-send table is in the boot log (docs/deploy.md section 6), and the signup connector is on.
+    expect(logs).toMatch(/"msg":"live sends".*"inbound":"backend webhook".*"ntwrk: queued dry-run, turn replies sent by the gateway"/);
+    expect(logs).toMatch(/"msg":"mcp".*"enabled":true/);
+  }, 30_000);
+});
+
+// spec/publicEventCatalog.md, "The backend scans once a day, at most one process at a time, and waits after a failed attempt"
+describe.skipIf(!pgAvailable)("public event catalog refresh (dev Postgres, the ingest login; audit PER32)", () => {
+  let url = "";
+  const role = `backend_events_${process.pid}`;
+  afterAll(async () => { if (url) await dropDb(url); });
+
+  test("scans when the catalog is missing or a day old, never twice at once, and waits an hour after a failure", async () => {
+    url = await emptyDb("backend_events");
+    await migrate(url, { lockTimeout: "5s" });
+    const owner = new SQL({ url, max: 1 });
+    const HOUR = 3_600_000, DAY = 24 * HOUR;
+    const clock = new SimClock(Date.UTC(2026, 9, 6, 12));
+    let feedCalls = 0, feedDown = false;
+    const feed: typeof fetch = async () => {
+      feedCalls++;
+      if (feedDown) return new Response(null, { status: 503 });
+      return Response.json([{ guid: "2257118", title: "Outdoor climbing", categories: "Fitness", location: "McCarren Park",
+        starttime: "2026-10-09T18:00:00.000", endtime: "2026-10-09T19:00:00.000", coordinates: "40.7206,-73.9518",
+        link: { url: "https://www.nycgovparks.org/events/2026/10/09/climbing" } }]);
+    };
+    const events = await (async () => {
+      await owner.unsafe(`drop role if exists ${role}`).catch(() => {});
+      await owner.unsafe(`create role ${role} login nosuperuser nobypassrls`);
+      await owner.unsafe(`grant network_public_event_ingest to ${role}`);
+      await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
+      return new SQL({ url: Object.assign(new URL(url), { username: role }).toString(), max: 2 });
+    })();
+    try {
+      const refresh = createPublicEventRefresh({ sql: events, clock, request: feed });
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+      expect(await refresh()).toEqual({ kind: "not_due" });
+      clock.advance(DAY - 1);
+      expect(await refresh()).toEqual({ kind: "not_due" });
+      clock.advance(1);
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+      expect(feedCalls).toBe(2);
+      // A failed scan keeps the last publication, and the next attempt waits for the retry interval.
+      clock.advance(DAY);
+      feedDown = true;
+      await expect(refresh()).rejects.toThrow(/HTTP 503/);
+      const [kept] = await owner`select checked_at from network.public_event_imports`;
+      expect(new Date(kept.checked_at).getTime()).toBe(clock.now() - DAY);
+      clock.advance(HOUR - 1);
+      expect(await refresh()).toEqual({ kind: "not_due" });
+      expect(feedCalls).toBe(3);
+      feedDown = false;
+      clock.advance(1);
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+      // Another process holds the lease: this one does not scan, and scans once the lease is free.
+      clock.advance(DAY);
+      await owner`select pg_advisory_lock(hashtext('thenetwork-public-events-refresh'))`;
+      expect(await refresh()).toEqual({ kind: "lease_held" });
+      await owner`select pg_advisory_unlock(hashtext('thenetwork-public-events-refresh'))`;
+      expect(feedCalls).toBe(4);
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+    } finally {
+      await events.close();
+      await owner.unsafe(`drop owned by ${role}`).catch(() => {});
+      await owner.close();
+    }
   }, 30_000);
 });
 

@@ -5,6 +5,19 @@
 /** Story: Publish a job with a clear pay range / A posting has between one and fifty openings (spec/postingPolicy.md) */
 export const maxOpenings: number = 50;
 
+/** Story: Only the manager's own text controls a job posting / Only the member's own text in the thread issues a command (spec/postingPolicy.md) */
+//@ pure
+export function inboundMayCommand(source: string): boolean {
+  return source === "thread";
+}
+
+/** Story: Only the manager's own text controls a job posting / Only the member's own text in the thread issues a command (spec/postingPolicy.md) */
+//@ pure
+export function lawAssistantProfileNeverCommands(source: string): boolean {
+  //@ ensures \result === true
+  return !inboundMayCommand(source) || source !== "mcp";
+}
+
 /** Story: Publish a job with a clear pay range / Job drafts need a title and pay range before read-back (spec/postingPolicy.md) */
 //@ pure
 export function missingPostingFields(isClose: boolean, hasTitle: boolean, hasPay: boolean): string[] {

@@ -113,7 +113,7 @@ pure def checkTextJoinAge(joining: TextJoin, ageAllowed: bool): TextJoin =
 
 ### An active membership gets its welcome and at most one follow-up
 
-The service writes app consent and membership before it creates the runtime member. A waitlist ends after the membership write. An active member gets the normal welcome. If the person has another app, offer limited base-profile sharing without naming that app. Otherwise an uninvited shared-line Network join asks what the member is looking for.
+The service writes app consent and membership before it creates the runtime member. A waitlist ends after the membership write. An active member gets the normal welcome. If the person has another app, offer limited base-profile sharing without naming that app. Otherwise an uninvited shared-line Network join asks what the member is looking for. The follow-up is a reply to the member's join answer, so a signed turn returns it with the welcome. Changed on 2026-11-17 (audit SHA39): before, the follow-up was queued as a separate transactional text, and a dry-run backend never sent it.
 
 ```quint
 pure def canRecordTextMembership(joining: TextJoin): bool =

@@ -10,9 +10,9 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
-The [signup draft rules](../mcpSignupDraft.md) drive draft preparation,
-session-bound reads, discard, and expiry. The draft waits for the
-person's final Join submission.
+The connector no longer writes signup drafts: `prepare_signup` and the browser draft routes were removed
+(audit MCP16 and SIG46), so no action creates a draft. The draft state stays only for the platform's
+number change, which still moves rows of the old table until the platform removes it.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -571,33 +571,6 @@ module oauth_mcp {
     }
   }
 
-  /**
-   * T:275-292 and P:47-60 prepare_signup (friends and ntwrk; friends here): the age policy first
-   * (withSignupAgePolicy, K:126-135: canJoinApp, 13 on every app, so only an under-13 person is
-   * refused; a 13-17 person may prepare a Join form), then grantStillTheirs (invalid_grant revokes the
-   * grant, H:895-899), the status, then (SD-395 fix) the quota, then one draft row per grant, with the
-   * grant's phone key.
-   */
-  action prepareSignup(t: int): bool = all {
-    bearerOk(t),
-    val g = oa.toks.get(t).g
-    val gr = oa.grants.get(g)
-    val q = oa.quota.get(g)
-    val count = if (q.count <= PROFILE_CAP) q.count + 1 else q.count
-    val now = personForKey(pf, gr.phone)
-    val st = statusOf(pf, now, gr.app)
-    all {
-      gr.app == "friends", not(pf.under13.contains(now)),
-      if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "prepare")
-      else all {
-        count <= PROFILE_CAP, st == "not_joined" or st == "invited",
-        oa' = { ...oa, quota: oa.quota.set(g, { ...q, count: count }),
-                drafts: if (oa.drafts.get(g).exists) oa.drafts else oa.drafts.set(g, { exists: true, phone: gr.phone, scrubbed: false }) },
-        gh' = { ...gh, last: eff("prepare", now, g, not(oa.drafts.get(g).exists)) },
-        pf' = pf, ib' = ib, pc' = pc,
-      },
-    }
-  }
 
   // ---------------------------------------------------------------- crashes (a process stops between two statements)
   /** Before the approval's transaction nothing is written; after it, linked(true) may not run (SD-186 part (a), kept by contract). */
@@ -890,7 +863,7 @@ module oauth_mcp {
     refrCheck(t), refrRotate(t), revokeEndpoint(t), revokeAccessToken(t),
   }
   /** The client calls a tool. */
-  action toolFamily(t: int): bool = any { getUpdates(t), checkStatus(t), submitProfile(t), prepareSignup(t) }
+  action toolFamily(t: int): bool = any { getUpdates(t), checkStatus(t), submitProfile(t) }
 
   // ================================================================ invariants (from the rules)
 
@@ -1263,12 +1236,6 @@ module oauth_mcp {
     init.then(connect(1, "cF", false)).then(expireGrant(1))
       .expect(ib.active.contains("p1") and not(activeExactlyGrants) and safety)
 
-  /** SD-384 fix (e2e "a signup draft follows its grant to the new number"). */
-  run draftMoveTest =
-    init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1))
-      .expect(oa.drafts.get(2).exists)
-      .then(movePhone("p1", "n1", "n2"))
-      .expect(oa.grants.get(2).phone == "n2" and oa.drafts.get(2).phone == "n2" and draftFollowsGrant and safety)
 
   /**
    * Q-oauth_mcp-1 fix (consent-forget.pg.test.ts "a grant approved while the person leaves the app does

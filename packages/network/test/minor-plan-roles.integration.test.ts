@@ -13,8 +13,8 @@ const climber = (id: string) => ({
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }],
 });
 
-/** A reviewed group plan of a, b, c and d (quorum 4) with e as its alternate, every invitee probed. */
-async function probedGroupPlan() {
+/** A reviewed group plan of a, b, c and d (quorum 4 unless given) with e as its alternate, every invitee probed. */
+async function probedGroupPlan(quorum = 4) {
   const ids = ["a", "b", "c", "d", "e"];
   const w = new Mini(ids.map(climber), { review: "human" });
   await w.onboard(...ids);
@@ -22,7 +22,7 @@ async function probedGroupPlan() {
   const plan: plans.Plan = {
     id: "plan_group", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
     window: { start: now + 5 * DAY, end: now + 5 * DAY + 2 * HOUR }, invited: ["a", "b", "c", "d"], alternates: ["e"],
-    partner: false, size: { min: 3, target: 4, max: 4 }, quorum: 4, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {},
+    partner: false, size: { min: 3, target: 4, max: 4 }, quorum, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {},
     createdAt: now, category: "hobby",
   };
   (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
@@ -90,6 +90,72 @@ test("a member who said yes to a plan and whose record age goes under 18 takes t
   await w.run(DAY);
   expect(w.meetings).toEqual([]);
   expect(w.sent.slice(from).filter(s => s.meta.proposalId === opp().id && s.meta.type !== "info")).toEqual([]);
+});
+
+// spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": the Network checks
+// every member on the plan or asked about it again at the moment it books. Before, a, who said yes, had a record age
+// of 16 by the time the quorum came; the reveal check left a out, and the two adults got a fallback plan from a plan
+// that a minor was asked about.
+test("a plan whose member who said yes is now a minor by the record closes at the quorum instead of booking or falling back", async () => {
+  const { w, opp, record } = await probedGroupPlan(3);
+  await w.say("a", "yes");
+  record("a").age = 16;
+  const from = w.mark();
+  await w.say("b", "yes");
+  await w.say("c", "yes");
+  expect(opp()).toMatchObject({ stage: "closed", closedReason: "minors policy" });
+  expect(w.log("plan_booked")).toEqual([]);
+  expect(w.log("plan_fallback")).toEqual([]);
+  expect(w.net.exportState().opps.filter(o => o.id !== opp().id)).toEqual([]);
+  expect(w.sent.slice(from).filter(s => s.to === "a")).toEqual([]);
+});
+
+/**
+ * A friends crew of a, b, c and d that came from a table e was asked about and declined. e joined with no record age
+ * and stated 30.
+ */
+async function crewFromATableEWasAskedAbout() {
+  const activity = "coffee_crawl";
+  const venue = PLAN_VENUES.find(v => v.activities.includes(activity))!;
+  const ids = ["a", "b", "c", "d", "e"];
+  const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara", "Dov", "Eve"][index]!, age: id === "e" ? undefined : 30, area: venue.area,
+    interests: ["coffee", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard("a", "b", "c", "d");
+  for (const text of ["hi!", "I'm 30.", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await w.say("e", text);
+  const crewIds = ["a", "b", "c", "d"];
+  const at = Date.UTC(2026, 9, 10, 16);
+  const source = w.net["submitPlan"]({ id: "crew-source-table", city: "nyc", activityId: activity, venueId: venue.id,
+    place: { name: venue.name, area: venue.area }, window: { start: at, end: at + 90 * 60_000 },
+    invited: crewIds, alternates: ["e"], hostId: "a", partner: false, size: { min: 3, target: 4, max: 4 }, quorum: 3,
+    probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
+  }, at - DAY)!;
+  const crew: plans.Crew = { id: "crew_abcd", activityId: activity, venueId: venue.id, city: "nyc", members: crewIds,
+    cadenceDays: 7, hostRotation: crewIds, sessions: [], handedOff: false, slot: { start: at } };
+  const state = w.net.exportState();
+  const done = state.opps.find(o => o.id === source.id)!;
+  done.stage = "done";
+  done.meetingAt = at;
+  done.contacted = ids;
+  done.status = [...crewIds.map(id => [id, "yes"] as [string, "yes"]), ["e", "no"]];
+  state.plans!.crews.push(crew);
+  state.plans!.crewOffers.push({ crew, planId: source.id, at: at + DAY, offered: crewIds, yes: crewIds, no: [], resolved: true });
+  w.net.importState(state);
+  return { w, crew };
+}
+
+// spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows": a crew meets at the
+// time and place of the table it came from. Before, e, who was asked about that table and declined, was found to
+// be a minor, and the crew of four adults still got its next session.
+test.each(["I'm 16, is that ok?", "I am 12 years old"])("a crew ends when a member asked about the table it came from writes %s", async text => {
+  const { w, crew } = await crewFromATableEWasAskedAbout();
+  await w.say("e", text);
+  expect(w.net.exportState().plans!.crews.map(c => c.id)).not.toContain(crew.id);
+  w.clock.advance(DAY);
+  await w.net.tick(w.clock.now());
+  expect(w.net.exportState().opps.filter(o => o.plan?.crewId === crew.id)).toEqual([]);
+  expect(w.log("crew_session")).toEqual([]);
 });
 
 // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"

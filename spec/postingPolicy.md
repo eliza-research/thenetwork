@@ -1,5 +1,20 @@
 # Job posting policy
 
+## Story: Only the manager's own text controls a job posting
+
+> As a hiring manager, I want only my own words in the thread to start, confirm or close a job posting, so text that my AI assistant wrote for my profile cannot publish or end a job.
+
+### Only the member's own text in the thread issues a command
+
+An inbound text has a source. "thread" is text that the member wrote in the conversation. "mcp" is profile text that the member's AI assistant sent through the connector's submit_profile tool. The Network learns profile facts from both sources: age, wants, wants that the member no longer has, interests, skills and availability. Only thread text is a command: a job post, its confirmation or its close, STOP, START, HELP and leave, a yes or no to a probe, a plan, a crew or a booked date, a cancellation, a reschedule, feedback, a block or a report, a number swap, a friend invitation, a standing-intent change, a participation control, a survey answer and every other member command. This rule is new: before it, assistant profile text reached job posting intake and the invitation survey reader, so the text "Yes, post it" could publish a job without the manager's own yes.
+
+```quint
+pure def inboundMayCommand(source: str): bool = source == "thread"
+
+pure def lawAssistantProfileNeverCommands(source: str): bool =
+  inboundMayCommand(source) implies source != "mcp"
+```
+
 ## Story: Publish a job with a clear pay range
 
 > As a hiring manager, I want Eliza to collect the title and pay range, read the details back, and publish only a posting the Network can use.

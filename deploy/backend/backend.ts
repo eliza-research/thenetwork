@@ -1,4 +1,5 @@
-import { backendBoot, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
+import { backendBoot, backendWebhookServed, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
+import { parseTokenGrants } from "../../packages/observatory/src/staff.ts";
 import {
   backendAcceptsWork, canStartTimer, initial as lifecycleInitial, step as stepBackendLifecycle,
 } from "../../packages/core/src/generated/backendLifecycle.ts";
@@ -10,7 +11,8 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // (packages/network/service) for a host that gives the process one public port (Railway):
 //
 //   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
-//                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service)
+//                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service); 404 on both
+//                                                 ports with NETWORK_CHANNEL=eliza_cloud, where the Eliza gateway owns the carrier
 //                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates, /internal/relay
 //                                                 the Eliza gateway's signed calls (SERVICE_TURN_SECRET, checked by the service; STOP,
 //                                                 START, HELP and leave are answered inside the turn). A body over 256 KiB is refused here.
@@ -27,13 +29,13 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // before the public API or the MCP server sees the request: a verified request gets Host = the signed
 // site host (which picks the app) and keeps the signed visitor IP for the rate limits; any other
 // request loses every proxy and forwarding header, so a client can never pick either one.
-import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
+import { APPS, appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
 import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
-import { RELAY_MAX_BODY_BYTES, RELAY_PATH } from "../../packages/network/service/relay-endpoint.ts";
+import { RELAY_MAX_BODY_BYTES, RELAY_PATH, RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES, RELAY_PHOTO_RESOLVE_PATH } from "../../packages/network/service/relay-endpoint.ts";
 import { SUGGESTION_PATH } from "../../packages/network/service/profile-suggestion-endpoint.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
@@ -52,12 +54,13 @@ const HEALTH_FAILURE = {
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
 const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
-  PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath,
+  RELAY_PHOTO_RESOLVE_PATH, PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath,
   ...["preview", "decide", "delete", "collect", "consent-context"].map(action => SUGGESTION_PATH + action)]);
 const MAX_INTERNAL_BODY = 256 * 1024;
 const internalCap = (path: string) => {
   if (path === PROFILE_REVIEW_DISCONNECT_PATH || path === PROFILE_REVIEW_WITHDRAWAL_PATH) return 4096;
   if (path === calendarOwnerPath) return CALENDAR_SCHEDULING_MAX_BODY;
+  if (path === RELAY_PHOTO_RESOLVE_PATH) return RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES;
   return path === RELAY_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
 };
 
@@ -81,6 +84,10 @@ export interface BackendConfig {
   migrateOnBoot: boolean;
   /** "dry-run" unless NETWORK_CHANNEL=blooio with BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (each app also needs its own flag). */
   channel: "dry-run" | "blooio" | "eliza_cloud";
+  /** The backend owns the carrier webhook (/webhooks/blooio on both listeners). False with NETWORK_CHANNEL=eliza_cloud: the Eliza gateway owns it. */
+  blooioWebhook: boolean;
+  /** The public event catalog's ingest login (NETWORK_PUBLIC_EVENTS_DATABASE_URL): the scheduled refresh runs as it. Required when deployed. */
+  publicEventsUrl?: string;
   shutdownGraceMs: number;
   tickMs: number;
   /** /healthz answers 503 "tick_late" when a network's tick has not finished in this process for this long (TICK_LATE_MS). */
@@ -103,12 +110,15 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
   const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
+  const staffTokens = [...parseTokenGrants(e.NETWORK_SERVICE_TOKENS, { explicitApp: env === "production" }).keys()];
   const policy = backendBoot({
     environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), database: Boolean(databaseUrl),
     migrate: migrateOnBoot, migrationUrl: Boolean(e.MIGRATION_DATABASE_URL),
     sameLoginUrl: Boolean(e.MIGRATION_DATABASE_URL && databaseUrl && e.MIGRATION_DATABASE_URL === databaseUrl),
-    turnstile: Boolean(e.TURNSTILE_SECRET_KEY), proxyLength: proxySecret?.length ?? 0,
+    turnstile: Boolean(e.TURNSTILE_SECRET_KEY), turnstileSite: Boolean(e.TURNSTILE_SITE_KEY?.trim()), proxyLength: proxySecret?.length ?? 0,
     hashLength: e.PLATFORM_HASH_KEY?.length ?? 0, leakKeyBytes: new TextEncoder().encode(e.LEAK_LABEL_KEY ?? "").length,
+    turnSecretLength: e.SERVICE_TURN_SECRET?.length ?? 0, staffTokenCount: staffTokens.length,
+    shortestStaffTokenLength: Math.min(...staffTokens.map(t => t.length), 0x7fffffff), publicEventsLogin: Boolean(e.NETWORK_PUBLIC_EVENTS_DATABASE_URL),
   });
   const { deployed } = policy;
   const missing: string[] = [];
@@ -116,8 +126,12 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (deployed) {
     if (policy.hashMissing) missing.push("PLATFORM_HASH_KEY");
     if (policy.turnstileMissing) missing.push("TURNSTILE_SECRET_KEY");
+    // The MCP connector and its authorize page (the agent signup path) are off without the site key.
+    if (policy.turnstileSiteMissing) missing.push("TURNSTILE_SITE_KEY");
     missing.push(...otpConfigProblems(e));
     if (policy.proxyMissing) missing.push("PLATFORM_PROXY_SECRET");
+    if (policy.staffTokensMissing) missing.push("NETWORK_SERVICE_TOKENS");
+    if (policy.publicEventsLoginMissing) missing.push("NETWORK_PUBLIC_EVENTS_DATABASE_URL");
   }
   // Deployed: migrations run as the owner, the service as a login that RLS and the grants apply to
   // (audit: one superuser URL made every policy and grant moot in production).
@@ -130,6 +144,11 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
   if (policy.leakKeyShort) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
+  // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
+  if (policy.turnSecretShort) throw new Error(`PLATFORM_ENV=${env} needs SERVICE_TURN_SECRET of at least ${SECRET_MIN} characters (the Eliza gateway's signed routes)`);
+  if (policy.staffTokenShort) throw new Error(`PLATFORM_ENV=${env} needs every NETWORK_SERVICE_TOKENS token to have at least ${SECRET_MIN} characters`);
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  const blooioWebhook = backendWebhookServed(e.NETWORK_CHANNEL ?? "");
 
   const warnings: string[] = [];
   const num = (name: string, v: string | undefined, dflt: number) => {
@@ -172,8 +191,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (cloudAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=eliza_cloud without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
   if (channel === "eliza_cloud" && (!e.NETWORK_CLOUD_DELIVERY_ORIGIN || !e.SERVICE_TURN_SECRET || e.SERVICE_TURN_SECRET.length<32 || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("Cloud sends need NETWORK_CLOUD_DELIVERY_ORIGIN, SERVICE_TURN_SECRET and BLOOIO_FROM");
   if (channel === "blooio" && (!e.BLOOIO_API_KEY || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("live sends need BLOOIO_API_KEY and BLOOIO_FROM");
-  if (!e.NETWORK_SERVICE_TOKENS) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
-  if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
+  if (!staffTokens.length) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
+  if (blooioWebhook && !e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
+  if (!blooioWebhook && e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is ignored: with NETWORK_CHANNEL=eliza_cloud the Eliza gateway owns the carrier webhook and /webhooks/blooio is not served");
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
   const build = (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40);
   const tickMs = Number(e.TICK_MS ?? 60_000);
@@ -187,6 +207,8 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     build,
     migrateOnBoot,
     channel,
+    blooioWebhook,
+    ...(e.NETWORK_PUBLIC_EVENTS_DATABASE_URL ? { publicEventsUrl: e.NETWORK_PUBLIC_EVENTS_DATABASE_URL } : {}),
     shutdownGraceMs: Number(e.SHUTDOWN_GRACE_MS ?? 25_000),
     tickMs,
     tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
@@ -194,6 +216,23 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
   };
+}
+
+/**
+ * Which send of which app is live under this configuration (docs/deploy.md section 6, the live-send table).
+ * Queued sends (proposals, probes, relays, notices, reminders, and replies on the legacy Blooio webhook) leave
+ * through the channel adapter, which asks `allowed` (liveSendAllowed) per app. Replies to a signed
+ * /internal/turn go back to the Eliza gateway in the response, and the gateway sends them: no backend
+ * flag gates them, for any app. The founder has not decided to change either fact (audit PER34, SHA41).
+ */
+export interface LiveSendRow { app: AppId; flags: string[]; queued: "live" | "dry-run"; turnReplies: "sent by the gateway" }
+export function liveSendTable(e: Env, channel: BackendConfig["channel"], allowed: (env: Env, app: AppId) => boolean): LiveSendRow[] {
+  return (Object.keys(APPS) as AppId[]).map(app => ({
+    app,
+    flags: ["NETWORK_CHANNEL", "BLOOIO_ALLOW_SEND", "NTWRK_LIVE_APPROVED", ...(app === "ntwrk" ? [] : [`${app.toUpperCase()}_LIVE_APPROVED`])],
+    queued: channel !== "dry-run" && allowed(e, app) ? "live" : "dry-run",
+    turnReplies: "sent by the gateway",
+  }));
 }
 
 /**
@@ -313,8 +352,11 @@ export interface BackendDeps {
   now?: () => number;
   /** Monitoring (ops.ts createOps): one round in each tick, and the snapshot for GET /ops/metrics. */
   ops?: { tick(): Promise<unknown>; metrics(): Promise<unknown> };
+  /** The public event catalog refresh (public-events.ts), one attempt per tick round beside the network work. */
+  publicEvents?: () => Promise<unknown>;
 }
 
+const isBlooioWebhook = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
 const MCP_PATH = /^\/(mcp(\/.*)?|oauth\/.*|\.well-known\/oauth-[a-z-]+(\/.*)?)$/;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
@@ -384,7 +426,9 @@ export function createBackend(d: BackendDeps) {
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || INTERNAL_PATHS.has(path)) {
+      } else if (isBlooioWebhook(path) && !c.blooioWebhook) {
+        res = json(404, { ok: false, error: "webhook_not_served" });
+      } else if (isBlooioWebhook(path) || INTERNAL_PATHS.has(path)) {
         // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
         res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
@@ -408,7 +452,9 @@ export function createBackend(d: BackendDeps) {
   const staffFetch = async (req: Request): Promise<Response> => {
     const t0 = performance.now();
     const path = new URL(req.url).pathname;
-    const res = backendAcceptsWork(lifecycle) ? await track(svc.fetch(req)) : json(503, { ok: false, error: "shutting_down" });
+    // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages": the service also routes the webhook here.
+    const res = !backendAcceptsWork(lifecycle) ? json(503, { ok: false, error: "shutting_down" })
+      : isBlooioWebhook(path) && !c.blooioWebhook ? json(404, { ok: false, error: "webhook_not_served" }) : await track(svc.fetch(req));
     log.info("http", { port: "staff", method: req.method, route: routeLabel(path), status: res.status, ms: Math.round(performance.now() - t0) });
     return stamp(res);
   };
@@ -446,7 +492,9 @@ export function createBackend(d: BackendDeps) {
   };
   // A hung service worker leaves the health monitor's own round available.
   const ops = d.ops;
-  const tickAll = () => Promise.all([networksThenNotify(), ops && serviceTick("ops", () => ops.tick())]).then(() => undefined);
+  const publicEvents = d.publicEvents;
+  const tickAll = () => Promise.all([networksThenNotify(), ops && serviceTick("ops", () => ops.tick()),
+    publicEvents && serviceTick("public_events", publicEvents)]).then(() => undefined);
   const startTicks = () => {
     if (!canStartTimer(lifecycle)) return Promise.resolve(undefined);
     lifecycle = stepBackendLifecycle(lifecycle, { type: "startTimer", at: now() });

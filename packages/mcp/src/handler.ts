@@ -8,10 +8,9 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
 // (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
 import { createHmac } from "node:crypto";
-import { devShortcutsAllowed, ipBucket, parseJoin, signupAccountView, type Env } from "@thenetwork/platform";
+import { devShortcutsAllowed, ipBucket, parseJoin, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
-import { signupDraftAppEnabled, signupDraftBrowserAction, signupDraftBrowserSource, signupDraftClaimRoute, signupDraftDiscardAllowed } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
   type BrowserForm, type StoredPage, browserEntryMayResume, browserSignupAppAllowed, browserSignupConsentAllowed,
   browserSignupJoinAllowed, browserSignupMemberAllowed, browserSignupOpenAllowed, browserSignupOwnerBindingAllowed,
@@ -31,7 +30,11 @@ import {
   browserGrantVisibility, browserOwnsLiveGrant, browserRemovalProofMatches, removalConfirmationEndsAt,
   removalFormMayRevoke, removalListRetry, type RemoveReply,
 } from "../../core/src/generated/connectedAssistants.ts";
-import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
+import {
+  configuredHostServes, connectorAddressCeilingMinute, connectorAnonymousPerAddressMinute, connectorLimitKey, connectorRegisterLimit,
+  connectorRegisterPerAddressHour, connectorAssistantRegisterPerAddressHour, connectorRequestsPerGrantMinute, connectorTokenAddressCeilingMinute,
+  connectorTokenPerGrantMinute, profileDailyCap, profileLimitReached,
+} from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
@@ -96,11 +99,16 @@ export const TTL = {
   codeMs: 5 * 60_000,
   requestMs: 15 * 60_000,
 };
+/** spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling". */
 export const LIMITS = {
-  registerPerIpHour: 20,
+  registerPerIpHour: connectorRegisterPerAddressHour,
+  registerAssistantPerIpHour: connectorAssistantRegisterPerAddressHour,
   authorizePerIpHour: 60,
-  tokenPerIpMinute: 30,
-  mcpPerIpMinute: 120,
+  tokenPerGrantMinute: connectorTokenPerGrantMinute,
+  tokenPerIpMinute: connectorTokenAddressCeilingMinute,
+  mcpPerIpMinute: connectorAnonymousPerAddressMinute,
+  mcpPerGrantMinute: connectorRequestsPerGrantMinute,
+  mcpIpCeilingMinute: connectorAddressCeilingMinute,
   statusPerGrantMinute: 30,
 };
 
@@ -257,7 +265,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   const store = o.store ?? new MemoryOAuthStore();
   const now = o.now ?? Date.now;
-  o.platform.setSignupAgeCleanup?.((key, app) => store.discardSignupDrafts(key, app, now()));
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
   const log = o.log ?? (s => console.log(s));
@@ -437,11 +444,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   async function register(c: Ctx): Promise<Response> {
     if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
-    if (await limited(`reg:ip:${sha256hex(ipBucket(c.ip))}`, lim.registerPerIpHour, 3_600_000)) return tooMany(3600);
     const b = await readJson(c.req);
+    const uris = b?.redirect_uris;
+    const valid = Array.isArray(uris) && uris.length >= 1 && uris.length <= 5 && uris.every(redirectUriAllowed);
+    // spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling"
+    const assistantRedirect = valid && assistantOf({ redirectUris: uris as string[], surface: "full" }) !== "web";
+    const registerLimit = connectorRegisterLimit(assistantRedirect) === connectorRegisterPerAddressHour ? lim.registerPerIpHour : lim.registerAssistantPerIpHour;
+    if (await limited(`reg:${assistantRedirect ? "assistant" : "ip"}:${sha256hex(ipBucket(c.ip))}`, registerLimit, 3_600_000)) return tooMany(3600);
     const bad = (d: string, error = "invalid_client_metadata") => json(400, { error, error_description: d });
     if (!b) return bad("The body must be a JSON object.");
-    const uris = b.redirect_uris;
     if (!Array.isArray(uris) || uris.length < 1 || uris.length > 5) return bad("redirect_uris must list 1 to 5 URIs.", "invalid_redirect_uri");
     if (!uris.every(redirectUriAllowed)) return bad("Each redirect URI must be https (http only for localhost), with no fragment and no wildcard.", "invalid_redirect_uri");
     const method = (b.token_endpoint_auth_method ?? "client_secret_basic") as ClientAuthMethod;
@@ -981,6 +992,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         type: "readCode", clientMatches: ac?.clientId === client.id, used: !!ac && ac.usedAt !== null, live: !!ac && !(ac.expiresAt <= at),
       });
       if (!ac) return refused(read);
+      if (await limited(`token:grant:${ac.grantId}`, lim.tokenPerGrantMinute, 60_000)) return tooMany(60);
       if (read.phase === "RevokeGrant") {
         // OAuth 2.1 4.1.3: a second use of a code revokes what the first use issued.
         await revokeGrant(ac.grantId, at);
@@ -1016,6 +1028,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (grantType === "refresh_token") {
       const raw = form.get("refresh_token") ?? "";
       const t = raw ? await store.getToken(sha256hex(raw)) : undefined;
+      if (t && await limited(`token:grant:${t.grantId}`, lim.tokenPerGrantMinute, 60_000)) return tooMany(60);
       const read = stepToken(tokenInitial, {
         type: "readRefresh", refreshMatches: !!t && t.kind === "refresh" && t.clientId === client.id && t.revokedAt === null && !(t.expiresAt <= at),
       });
@@ -1256,9 +1269,16 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     // 2026-07-28: no GET stream and no sessions. Legacy session ids are ignored, never minted.
     if (c.req.method !== "POST") return json(405, rpcError(null, -32600, "Method not allowed. Use POST."), { allow: "POST, OPTIONS", ...cors });
     const out = (status: number, body: unknown, headers: Record<string, string> = {}) => json(status, body, { ...cors, ...headers });
-    if (await limited(`mcp:ip:${sha256hex(ipBucket(c.ip))}`, lim.mcpPerIpMinute, 60_000)) return out(429, rpcError(null, -31029, "Too many requests"), { "retry-after": "60" });
-
+    const address = sha256hex(ipBucket(c.ip));
+    const tooManyRequests = () => out(429, rpcError(null, -31029, "Too many requests"), { "retry-after": "60" });
+    // spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling"
+    if (await limited(`mcp:ceiling:${address}`, lim.mcpIpCeilingMinute, 60_000)) return tooManyRequests();
     const auth = await bearer(c, resource);
+    const verified = auth !== null && typeof auth === "object";
+    const limitKey = connectorLimitKey(verified);
+    if (limitKey === "GrantLimitKey" && verified
+      ? await limited(`mcp:grant:${auth.grant.id}`, lim.mcpPerGrantMinute, 60_000)
+      : await limited(`mcp:ip:${address}`, lim.mcpPerIpMinute, 60_000)) return tooManyRequests();
     if (auth === "unavailable")return out(503,rpcError(null,-32603,"Your connection cannot be checked right now. Please try again shortly."),{"retry-after":"5"});
     if (auth === "invalid") return out(401, rpcError(null, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token", error_description: "The access token is invalid, expired or for another resource" }) });
     const surface: Surface = pathSurface === "openai" || auth?.client.surface === "openai" ? "openai" : "full";
@@ -1338,15 +1358,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           }
           if (await limited(`status:grant:${auth.grant.id}`, lim.statusPerGrantMinute, 60_000)) return out(429, rpcError(id, -31029, "Too many requests"), { "retry-after": "60" });
           const args = checkArgs(tool, params.arguments, [], host);
-          // spec/connectorTools.md: the generated guard of the call. A draft on a host without Join drafts gets the
-          // answer of its argument check, as the tool gives it.
+          // spec/connectorTools.md: the generated guard of the call.
           if (!canCallTool(connectionOf(host, surface, auth.token.scopes), tool)) {
-            const text = tool === "prepare_signup" && !args.ok ? args.message : "The person must sign in on the site and allow access first.";
-            return result({ content: [{ type: "text", text }], isError: true });
+            return result({ content: [{ type: "text", text: "The person must sign in on the site and allow access first." }], isError: true });
           }
           // A profile is a few messages a day at most (each one reaches the member's own app as a text).
           // Only a well-formed profile counts (a refused one never reaches the app).
-          if ((tool === "submit_profile" || tool === "prepare_signup") && args.ok) {
+          if (tool === "submit_profile" && args.ok) {
             // spec/connectorTools.md, "within the daily limit": the earlier calls of this grant in the store's day.
             const sentToday = Math.min((await store.hit(`profile:grant:${auth.grant.id}`, PROFILE_DAY_MS, now())) - 1, profileDailyCap);
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
@@ -1396,37 +1414,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         return mcp(c, o.surface ?? "full");
       case "/mcp/openai":
         return c.app.openai ? mcp(c, "openai") : json(404, { error: "not_found" });
-      case "/oauth/signup-draft":
-      case "/oauth/signup-draft/discard": {
-        if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
-        // Same-origin session only. No draft IDs, phone or facts in URLs or request bodies.
-        const browserConfirmed = req.headers.get("origin") !== null || req.headers.get("sec-fetch-site") === "same-origin";
-        if (!signupDraftBrowserSource(originOk(c), browserConfirmed, !!url.search)) return json(403, { error: "not_allowed" });
-        if (!signupDraftAppEnabled(c.app.id)) return json(404, { error: "not_found" });
-        const who = await o.platform.session?.(c.app.id, req);
-        if(who==="unavailable")return temporarilyUnavailable();
-        if (!who) return json(401, { error: "sign_in_required" });
-        const key = o.platform.phoneKey(who.e164);
-        const action = signupDraftBrowserAction(who.personId === await o.platform.personForKey(key), p.endsWith("/discard"));
-        if (action === "RefuseBrowserAction") return json(403, { error: "not_allowed" });
-        const signupView = signupAccountView(c.app.id, key, who.personId);
-        if (action === "CheckDiscardView") {
-          const body = await readJson(req);
-          if (!signupDraftDiscardAllowed(action, !!body && body.signupView === signupView)) return json(403, { error: "not_allowed" });
-          await store.discardSignupDrafts(key, c.app.id, now());
-          return json(200, { discarded: true }, who.setCookie ? { "set-cookie": who.setCookie } : {});
-        }
-        if (!o.platform.withSignupAgePolicy || !o.platform.setSignupAgeCleanup) return json(403, { error: "not_allowed" });
-        return o.platform.withSignupAgePolicy(key, c.app.id, async allowed => {
-          const status = who.personId === null ? "not_joined" : await o.platform.status(who.personId, c.app.id, key);
-          const decision = signupDraftClaimRoute(status, allowed);
-          if (decision === "RefuseClaim") return json(403, { error: "not_allowed" });
-          const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
-          const response = json(200, { draft: draft ?? null, signupView }, { "cache-control": "no-store" });
-          if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
-          return response;
-        });
-      }
       case "/oauth/register": {
         const res = await register(c);
         res.headers.set("access-control-allow-origin", "*");

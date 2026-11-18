@@ -1,6 +1,8 @@
 // Generated from spec/runtimeUnit.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/runtimeUnit.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+export const maxEngineAttempts = 2;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export const initial = { phase: "LoadingSnapshot" };
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -77,6 +79,50 @@ export function canRecordRestore(unit) {
 export function recordRestore(unit) {
     //@ ensures (inv(unit) && canRecordRestore(unit)) ==> stepSaveFollowsAction(unit, "recordRestore", \result)
     return { phase: "RunningAction" };
+}
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function tickMayStartBesideEngine(engineInFlight) {
+    return !engineInFlight;
+}
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function engineAttemptAllowed(attempt) {
+    return attempt >= 0 && attempt < maxEngineAttempts;
+}
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function lawComputingTickSkips(engineInFlight) {
+    //@ ensures \result === true
+    return !engineInFlight || !tickMayStartBesideEngine(engineInFlight);
+}
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function lawEngineAttemptsBounded(attempt) {
+    //@ ensures \result === true
+    return !engineAttemptAllowed(attempt) || attempt < maxEngineAttempts;
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function preparedRunUsable(sameKey, sameConfig, sameSharedEvidence) {
+    return sameKey && sameConfig && sameSharedEvidence;
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function preparedItemCommits(runUsable, membersUnchanged) {
+    return runUsable && membersUnchanged;
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawChangedMemberNeverCommits(runUsable, membersUnchanged) {
+    //@ ensures \result === true
+    return !(!membersUnchanged) || !preparedItemCommits(runUsable, membersUnchanged);
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawStaleRunNeverCommits(sameKey, sameConfig, sameSharedEvidence, membersUnchanged) {
+    //@ ensures \result === true
+    return !(!preparedRunUsable(sameKey, sameConfig, sameSharedEvidence)) || !preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), membersUnchanged);
 }
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure

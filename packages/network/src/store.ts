@@ -4,10 +4,12 @@
 //    normalized rows the console reads (opportunities, participations, review_items, requests).
 //    Every unit of work (a tick, an inbound message, a staff action) runs under one Postgres advisory
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
+//    A tick's engine run computes between two units, without the lock (runTick, tick-engine.ts).
 // The SQL is in packages/network/db/network-state.sql.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { tickMayEnter, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
+import { engineAttemptAllowed, tickMayEnter, tickMayStartBesideEngine, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
+import { captureEngine, computeEngine, EngineRunDue, preparedEngine, type EngineStep } from "./tick-engine.ts";
 import { runStoredNetworkUnit } from "../../core/src/vibe/runtimeUnitShell.js";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
@@ -62,15 +64,36 @@ function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwor
   });
 }
 
+/** Stores whose tick computes an engine run without the lock, until that tick ends. */
+const computing = new WeakSet<NetworkStore>();
+
 /**
  * One tick, stored: under the lock, load the stored state, tick, then save. Returns false when another
- * process holds the lock (nothing ran). The state is loaded on every call, so this Network never
- * ticks from an old copy.
+ * holder has the lock or this store's engine run is in flight (nothing ran). The state is loaded on
+ * every call, so this Network never ticks from an old copy.
+ * spec/runtimeUnit.md, "The engine runs on a snapshot outside the store lock": a tick that reaches
+ * its engine run ends that unit unsaved, computes the run without the lock, then waits for the lock
+ * and ticks again on the newest state with the computed result.
  */
 export async function runTick(net: ConsentNetwork, store: NetworkStore | undefined, now: number): Promise<boolean> {
   const s = storeOf(net, store);
-  const done = await s.withTickLock(() => stored(net, s, async n => { await n.tick(now); return true; }));
-  return done === true;
+  if (!tickMayStartBesideEngine(computing.has(s))) return false;
+  const unit = (engine: EngineStep) => () => stored(net, s, async n => { await n.tick(now, engine); return true as const; });
+  try {
+    let engine: EngineStep = captureEngine;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (await (attempt === 0 ? s.withTickLock(unit(engine)) : s.withLock(unit(engine)))) === true;
+      } catch (e) {
+        if (!(e instanceof EngineRunDue)) throw e;
+        if (!engineAttemptAllowed(attempt)) return false;
+        computing.add(s);
+        engine = preparedEngine(await computeEngine(e.request));
+      }
+    }
+  } finally {
+    computing.delete(s);
+  }
 }
 
 /**

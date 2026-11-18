@@ -40,8 +40,11 @@ module plan_crew {
   // ------------------------------------------------------------------------------------------------
   // Constants
 
-  pure val MEMBERS = Set("a", "b", "c")
+  pure val MEMBERS = Set("a", "b", "c", "d")
   pure val CREW0 = Set("a", "b", "c")
+  // The members asked about the plan the crew came from: the crew, and d, who was asked and declined. The crew
+  // meets at that plan's time and place (crewSource and knowsCrew, network.ts).
+  pure val SOURCE_ASKED = Set("a", "b", "c", "d")
   pure val MAXT = 13
   pure val CREW_TIMEOUT = 3    // crew offer resolves after 3 days (network.ts:3221)
   pure val HANDOFF = 3         // pcfg.crews.handOffAfterSessions
@@ -111,7 +114,7 @@ module plan_crew {
    */
   action minorSignal(m: str): bool = all {
     not(minors.contains(m)), minors' = minors.union(Set(m)),
-    crewOpps' = if (crewMembers.contains(m)) crewOpps.keys().mapBy(k => if (crewOpps.get(k) == "review") "failed" else crewOpps.get(k)) else crewOpps,
+    crewOpps' = if (crewMembers.contains(m) or SOURCE_ASKED.contains(m)) crewOpps.keys().mapBy(k => if (crewOpps.get(k) == "review") "failed" else crewOpps.get(k)) else crewOpps,
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
     crewSessions' = crewSessions, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
     crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold,
@@ -119,7 +122,7 @@ module plan_crew {
   }
 
   /** spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows". */
-  def crewKnownToAMinor: bool = crewMembers.exists(id => minors.contains(id))
+  def crewKnownToAMinor: bool = crewMembers.union(SOURCE_ASKED).exists(id => minors.contains(id))
 
   // ------------------------------------------------------------------------------------------------
   // Crew actions
@@ -314,6 +317,16 @@ module plan_crew {
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick)
       .then(minorSignal("b"))
+      .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
+      .then(crewWeekPass).then(crewTick)
+      .fail()
+
+  /** d, who was asked about the plan the crew came from and is not in the crew, is found to be a minor: the crew ends. */
+  run minorAskedAboutSourceEndsCrewTest =
+    init
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick)
+      .then(minorSignal("d"))
       .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
       .then(crewWeekPass).then(crewTick)
       .fail()

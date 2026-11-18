@@ -186,6 +186,65 @@ export function lawAtomicMemberReplyNeedsExactKind(expected: string, actual: str
   return !atomicMemberReplyMatches(expected, actual, count, directReply) || (expected === actual && count === 1 && directReply);
 }
 
+/** Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted (spec/signedInbox.md) */
+//@ pure
+export function storedReplyAdmitted(ordinaryReply: boolean, optedOut: boolean, held: boolean, banned: boolean): boolean {
+  return !ordinaryReply || !(optedOut || held || banned);
+}
+
+/** Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted (spec/signedInbox.md) */
+//@ pure
+export function lawOptedOutNumberGetsNoOrdinaryReply(held: boolean, banned: boolean): boolean {
+  //@ ensures \result === true
+  return !storedReplyAdmitted(true, true, held, banned);
+}
+
+/** Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted (spec/signedInbox.md) */
+//@ pure
+export function lawComplianceAlwaysReplays(optedOut: boolean, held: boolean, banned: boolean): boolean {
+  //@ ensures \result === true
+  return storedReplyAdmitted(false, optedOut, held, banned);
+}
+
+/** Story: Handle each signed message once without delaying consent / A direct reply in a turn is collected only when consent allows it (spec/signedInbox.md) */
+//@ pure
+export function directReplyCollectable(compliance: boolean, optedOut: boolean): boolean {
+  return compliance || !optedOut;
+}
+
+/** Story: Handle each signed message once without delaying consent / A direct reply in a turn is collected only when consent allows it (spec/signedInbox.md) */
+//@ pure
+export function lawNoDirectOrdinaryReplyAfterOptOut(compliance: boolean): boolean {
+  //@ ensures \result === true
+  return !directReplyCollectable(compliance, true) || compliance;
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function openReplayAnswersCurrent(admitted: boolean, sameMember: boolean, contextAvailable: boolean): boolean {
+  return admitted && sameMember && contextAvailable;
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function lawOpenReplayNeedsAdmission(sameMember: boolean, contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return !openReplayAnswersCurrent(false, sameMember, contextAvailable);
+}
+
+/** Story: Handle each signed message once without delaying consent / Every collected reply passes the line's leak guard (spec/signedInbox.md) */
+//@ pure
+export function collectedReplyMayLeave(leakReasons: number): boolean {
+  return leakReasons === 0;
+}
+
+/** Story: Handle each signed message once without delaying consent / Every collected reply passes the line's leak guard (spec/signedInbox.md) */
+//@ pure
+export function lawLeakingReplyIsNotCollected(leakReasons: number): boolean {
+  //@ ensures \result === true
+  return !(leakReasons > 0) || !collectedReplyMayLeave(leakReasons);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: SignedInbox, event: Event): boolean {

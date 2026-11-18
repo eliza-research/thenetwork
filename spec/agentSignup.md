@@ -1,6 +1,6 @@
 # Sign up through the person's own agent
 
-A person asks their own agent to help join an app. The agent drafts the profile in conversation. For ntwrk.party, slop.date and friends.help, the app's native connector brings the person to their own browser for phone confirmation, enrollment and authorization. The browser owns credentials and signup consent. A narrowly authorized connector records the approved profile through MCP afterward. [The signup handoff](agentPhoneHandoff.md) and [connector tools](connectorTools.md) define the serving rules. The agent never uses a website account portal, a direct phone API or a private cookie jar.
+A person asks their own agent to help join an app. The agent drafts the profile in conversation. For ntwrk.party, slop.date and friends.help, the app's native connector brings the person to their own browser for phone confirmation, enrollment and authorization. The browser owns credentials and signup consent. A narrowly authorized connector records the approved profile through MCP afterward. [Connector browser authorization](oauthBrowserAuthorization.md) and [connector tools](connectorTools.md) define the serving rules. The agent never uses a website account portal, a direct phone API or a private cookie jar.
 
 The site build checks each served skill's step markers against this model. This checks documented step order. The app and connector independently enforce membership and OAuth authority on each request. The model keeps no phone numbers, codes, invitation secrets or profile values.
 

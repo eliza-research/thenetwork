@@ -3,6 +3,8 @@
 
 /** Story: Make a choice about a proposed opportunity / A model reading cannot replace a definite or qualified answer (spec/probeReply.md) */
 export type ReplyReading = "KeepOffline" | "HeardYes" | "HeardNo";
+/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
+export type LateProbeRoute = "TellProbeEnded" | "NotALateProbeAnswer";
 
 
 /** Story: Make a choice about a proposed opportunity / A model reading cannot replace a definite or qualified answer (spec/probeReply.md) */
@@ -69,4 +71,31 @@ export function lawWeakAcknowledgementNeedsLatestProbe(precedingMessages: number
 export function lawWeakAcknowledgementNeedsUninterruptedTurn(precedingMessages: number, acceptedAt: number, receivedAt: number, now: number): boolean {
   //@ ensures \result === true
   return !weakProbeAcknowledgementAllowed(true, true, false, precedingMessages, true, acceptedAt, receivedAt, now);
+}
+
+/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
+//@ pure
+export function lateProbeRoute(direct: boolean, answered: boolean, latestProbe: boolean, receiptAccepted: boolean, acceptedAt: number, endedAt: number, receivedAt: number, alreadyTold: boolean): LateProbeRoute {
+  return direct && answered && latestProbe && receiptAccepted && acceptedAt <= receivedAt && endedAt <= receivedAt && !alreadyTold ? "TellProbeEnded" : "NotALateProbeAnswer";
+}
+
+/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
+//@ pure
+export function lawALateAnswerIsToldOnce(direct: boolean, answered: boolean, latestProbe: boolean, receiptAccepted: boolean, acceptedAt: number, endedAt: number, receivedAt: number): boolean {
+  //@ ensures \result === true
+  return lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true) === "NotALateProbeAnswer";
+}
+
+/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
+//@ pure
+export function lawALateAnswerNeedsTheDeliveredProbe(direct: boolean, answered: boolean, latestProbe: boolean, acceptedAt: number, endedAt: number, receivedAt: number): boolean {
+  //@ ensures \result === true
+  return lateProbeRoute(direct, answered, latestProbe, false, acceptedAt, endedAt, receivedAt, false) === "NotALateProbeAnswer";
+}
+
+/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
+//@ pure
+export function lawAnAnswerBeforeTheExpiryIsNotLate(direct: boolean, answered: boolean, latestProbe: boolean, acceptedAt: number, endedAt: number, receivedAt: number): boolean {
+  //@ ensures \result === true
+  return !(receivedAt < endedAt) || lateProbeRoute(direct, answered, latestProbe, true, acceptedAt, endedAt, receivedAt, false) === "NotALateProbeAnswer";
 }

@@ -12,7 +12,7 @@ import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
-import {NetworkService} from "../service/service.ts";
+import {lookingForAsk, NetworkService} from "../service/service.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
@@ -40,7 +40,7 @@ const start = async (routePolicy?: Record<string, unknown>, collectedQueue = fal
       a.direct = async () => { escaped++; return "dry_run"; };
       a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({ id: r.id, status: "dry_run" })); };
       return a;
-    },log:()=>{},
+    },log:(l:string)=>{if(process.env.DEBUG_LOG)console.log(l);},
   });
   await service.start();
   server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
@@ -415,7 +415,8 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   expect(await service.accounts.optedIn("slop",phone)).toBe(false);
   const rows=await sql`select status,inbound_id from network.messages where app_id='slop' and inbound_id='msg:blooio:member-stop'`;
   expect(rows.length).toBe(1);expect(rows[0].status).toBe("collected");
-  expect((await sql`select id from platform.outbound where id=${body.replyIds[0]}`).length).toBe(0);
+  // A dry-run backend keeps the collected confirmation as thread history only: "collected" is never a status the queue drains.
+  expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status:"collected",line:"dry-run"}]);
   const ack:TurnReceiptRequest={channel:input.channel,messageId:input.messageId,replyIds:body.replyIds,outcome:"unknown",providerMessageIds:[],historyRecorded:false};
   expect((await receipt({...ack,replyIds:["unrelated-output"]})).status).toBe(409);
   const unknown=await receipt(ack);expect(unknown.status).toBe(200);expect(await unknown.json()).toEqual({ok:true,replayed:false});
@@ -437,6 +438,75 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   expect(await service.accounts.optedIn("slop",phone)).toBe(false);
   await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
+
+const joinFriendsByText = async (phone: string, prefix: string) => {
+  expect((await post(turn(`${prefix}-start`, phone, "friends.help", "friends"))).status).toBe(200);
+  const join = turn(`${prefix}-profile`, phone, "Noa, 29", "friends");
+  const joined = await (await post(join)).json() as any;
+  expect(joined).toMatchObject({outcome: "handled", reason: "joined", replyKind: "reply"});
+  let n = 0;
+  for (const text of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) {
+    clock.advance(MINUTE); expect((await post(turn(`${prefix}-onboard-${++n}`, phone, text, "friends"))).status).toBe(200);
+  }
+  return {join, joined};
+};
+
+// spec/signedInbox.md, "A stored ordinary reply goes out only while the number stays admitted"
+// spec/signedInbox.md, "A replayed open turn answers with the current context"
+// spec/signedInbox.md, "Every collected reply passes the line's leak guard"
+test("a signed replay answers with current consent and context, and dry-run collected replies join the thread history", async () => {
+  const phone = "+12125550174", before = escaped;
+  const {join, joined} = await joinFriendsByText(phone, "replay");
+  const history = await sql`select id,status,line from platform.outbound where id in ${sql(joined.replyIds as string[])}`;
+  expect(history.length).toBeGreaterThan(0);
+  expect(history.every(row => row.status === "collected" && row.line === "dry-run")).toBe(true);
+  const chat = turn("replay-open", phone, "Tell me something about the weather", "friends");
+  const open = await (await post(chat)).json() as any;
+  expect(open).toMatchObject({outcome: "open", app: "friends", context: {state: "open"}});
+  await service.runtimes.get("friends:nyc")!.scoped(tx => tx`update network.members set participation_state='quiet' where app_id='friends' and id=${open.memberId}`);
+  const changed = await post(chat);
+  expect(changed.status).toBe(200);
+  expect(await changed.json()).toEqual({...open, context: {...open.context, state: "busy"}});
+  const stop = turn("replay-stop", phone, "STOP", "friends");
+  const stopped = await (await post(stop)).json() as any;
+  expect(stopped).toMatchObject({outcome: "handled", replyKind: "compliance"});
+  const lateJoin = await post(join);
+  expect(lateJoin.status).toBe(409);
+  expect(await lateJoin.json()).toEqual({error: "turn_context_changed", retryable: false});
+  expect((await post(chat)).status).toBe(409);
+  expect(await (await post(stop)).json()).toEqual(stopped);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+// spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
+test("a member with more than fifty shareable facts gets the newest fifty in the open context", async () => {
+  const phone = "+12125550175";
+  const {joined} = await joinFriendsByText(phone, "facets");
+  const member = joined.memberId as string;
+  for (let i = 0; i < 55; i++) {
+    await service.runtimeFor("friends")!.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+      values ('friends', ${`${member}:many-${i}`}, ${member}, 'interest', ${`Shared interest number ${i}`}, '{}', 'shareable', 'said', 'confirmed', ${new Date(clock.now() - (60 - i) * MINUTE)})`);
+  }
+  await service.runtimeFor("friends")!.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+    values ('friends', ${`${member}:long`}, ${member}, 'interest', ${"x".repeat(301)}, '{}', 'shareable', 'said', 'confirmed', ${new Date(clock.now() - MINUTE)})`);
+  const open = await (await post(turn("facets-open", phone, "Tell me something about the weather", "friends"))).json() as any;
+  expect(open).toMatchObject({outcome: "open", app: "friends", memberId: member});
+  expect(open.context.facets).toHaveLength(50);
+  expect(open.context.facets).toContain("Shared interest number 54");
+  expect(open.context.facets).not.toContain("Shared interest number 0");
+  expect(open.context.facets.every((fact: string) => fact.length <= 300)).toBe(true);
+}, 60_000);
+
+// spec/textEnrollment.md, "An active membership gets its welcome and at most one follow-up"
+test("a no-keyword join answers with the welcome and the looking-for question in the same handled turn", async () => {
+  const phone = "+12125550176", before = escaped;
+  expect((await post(turn("network-join-start", phone, "hey there"))).status).toBe(200);
+  const joined = await (await post(turn("network-join-profile", phone, "Mo, 30"))).json() as any;
+  expect(joined).toMatchObject({outcome: "handled", app: "ntwrk", reason: "joined", replyKind: "reply"});
+  expect(joined.replies.length).toBeGreaterThan(1);
+  expect(joined.replies.at(-1)).toBe(lookingForAsk(30));
+  expect(escaped).toBe(before);
+}, 60_000);
 
 test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;

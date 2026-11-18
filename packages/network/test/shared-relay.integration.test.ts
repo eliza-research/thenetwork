@@ -17,6 +17,7 @@ import type {AuditEntry} from "../../observatory/src/types.ts";
 import type {NetworkState} from "../src/network.ts";
 import {PHOTO_CONSENT,type PhotoStorage} from "../../platform/src/photos.ts";
 import type {QueueOptions} from "../../blooio/src/outbound-queue.ts";
+import {collectNetwork,evaluate,runtimeProbe} from "../../../deploy/backend/ops.ts";
 const db=`network_relay_${randomUUID().replaceAll("-","")}`,url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const secret="synthetic-current-relay-signing-secret-20261009",clock=new SimClock(Date.UTC(2026,9,9,16));
@@ -198,6 +199,56 @@ test("unknown acceptance stays false until receipt-only recovery; photos and a c
   try {
     const unavailable=await open("relay-unavailable","tell Sam I'll be there soon");expect(await(await post(RELAY_PATH,unavailable)).json()).toMatchObject({decision:"hold",delivered:false});expect(posts).toBe(before);
   } finally {classifierFails=false;}
+},60_000);
+
+// spec/relayDecision.md, "A relay names its match when the member has more than one live match"; spec/sharedContext.md, "Active items list only the member's live matches with a safe summary"
+test("with two live matches the open context offers both; an unnamed relay asks which one and sends nothing; a named one reaches only that match",async()=>{
+  clock.advance(11*MINUTE);await fixturePair();clock.advance(MINUTE);
+  // A second live match for Ari (with Cy), newer than the one with Sam.
+  await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),base=st.opps.find(op=>op.id==="relay-pair")!;
+    st.opps.push({...base,id:"relay-pair-cy",participants:[fromId,thirdId],status:[[fromId,"yes"],[thirdId,"yes"]],contacted:[fromId,thirdId],createdAt:clock.now()});n.importState(st);});
+  try {
+    clock.advance(MINUTE);expect((await post(TURN_PATH,turn(b,"two-matches-sam-reply","Sounds good, thanks"))).status).toBe(200);
+    const unnamed=await open("two-matches-unnamed","tell Sam I'm on my way");
+    const [row]=await sql`select response from platform.inbound where id='msg:blooio:two-matches-unnamed'`;
+    expect(row.response.context.activeItems).toEqual([{id:"relay-pair-cy",kind:"match",summary:"Match with Cy"},{id:"relay-pair",kind:"match",summary:"Match with Sam"}]);
+    const before=posts,calls=classifications;
+    expect(await(await post(RELAY_PATH,unnamed)).json()).toEqual({decision:"none",senderNotice:"You have more than one match. Tell me which one this is for and I'll pass it on.",delivered:false,replayed:false});
+    expect(posts).toBe(before);expect(classifications).toBe(calls);
+    expect((await sql`select item_id from network.relay_records where from_member=${fromId} and at>${new Date(clock.now()-MINUTE)}`).length).toBe(0);
+    const named=await open("two-matches-named","tell Sam I'm on my way");
+    expect(await(await post(RELAY_PATH,{...named,itemId:"relay-pair"})).json()).toMatchObject({decision:"pass",delivered:true});
+    expect(posts).toBe(before+1);expect(sent.at(-1)).toMatchObject({to:b,text:'Ari says: "I\'m on my way"'});
+  } finally {
+    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState();st.opps=st.opps.filter(op=>op.id!=="relay-pair-cy");n.importState(st);});
+  }
+},60_000);
+
+// spec/relayLifecycle.md, "A held item that staff do not decide by its review deadline expires unsent"
+test("a held relay item expires unsent at its review deadline, its sender is told, and the expiry reaches the operations alert",async()=>{
+  clock.advance(11*MINUTE);await fixturePair();
+  const rt=service.runtimeFor("friends")!;classifierFails=true;
+  let request:RelaySendRequest;
+  try { request=await open("relay-hold-expiry","tell Sam I'll bring the tickets");expect(await(await post(RELAY_PATH,request)).json()).toMatchObject({decision:"hold",delivered:false}); }
+  finally {classifierFails=false;}
+  const held=(await rt.readState(n=>n.relayHeld())).filter(h=>h.from===fromId&&h.status==="held"),before=posts;
+  expect(held).toHaveLength(1);const item=held[0]!;expect(item.deadline).toBe(item.at+12*HOUR);
+  clock.advance(11*HOUR);await service.tick();
+  expect((await rt.readState(n=>n.relayHeld())).map(h=>h.itemId)).toContain(item.itemId);
+  // Past the deadline (in the sender's daytime): expired, the text gone, nothing sent to Sam, and Ari is told.
+  clock.advance(10*HOUR);await service.tick();
+  expect((await rt.readState(n=>n.relayHeld())).map(h=>h.itemId)).not.toContain(item.itemId);
+  const [state]=await sql`select state from network.network_state where id='friends:nyc'`,st=typeof state.state==="string"?JSON.parse(state.state):state.state;
+  const stored=st.relay.held.find((h:any)=>h.itemId===item.itemId);expect(stored).toMatchObject({status:"expired",decidedBy:"system:expired"});expect(stored.text).toBeUndefined();
+  expect(posts).toBe(before);
+  expect((await sql`select body from network.messages where member_id=${fromId} and id=${`relay-expired:${item.itemId}`}`).map((r:any)=>r.body))
+    .toEqual(["I couldn't check your last message to your match in time, so I didn't pass it on. You can send it again."]);
+  expect((await sql`select payload from network.events where app_id='friends' and type='review_expired'`).map((r:any)=>r.payload.relayItemId)).toContain(item.itemId);
+  const metrics=await collectNetwork(runtimeProbe(rt),clock.now());expect(metrics.reviewExpired24h).toBeGreaterThan(0);
+  expect(evaluate({networks:[metrics],cost:{day:"d",totalUsd:0,byApp:{},budgets:[]}},{tickLateMs:Infinity,sendFailureRate:1,sendFailureMin:Infinity,outboundBacklog:Infinity,reviewBacklog:Infinity,budgetWarnShare:Infinity})
+    .map(a=>a.key)).toContain("review_sla:friends:nyc");
+  // A staff release after expiry does nothing.
+  expect(await rt.unitOfWork(n=>n.releaseRelay(item.itemId,"staff"))).toEqual({ok:false,reason:"not_held"});expect(posts).toBe(before);
 },60_000);
 
 test("closing the pair or a recipient STOP after classification and the async dispatch checks prevents relay",async()=>{

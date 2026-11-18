@@ -1029,6 +1029,9 @@ module identity_sagas {
       src != "", src != dst,
       not(w.phones.get(src).hold), not(stale(w, src)),
       personFor(w, src) == p,
+      // spec/phoneChange.md, "The request uses the existing account": the start needs a fresh sign-in on src
+      // (a platform code or a Cloud phone proof; both prove that the person's human holds src).
+      w.holder.get(src) == w.humanOf.get(p),
       w.holder.get(dst) == w.humanOf.get(p),
       set3(w, { ...s, mv: { pc: 1, p: p, src: src, dst: dst } }, { ...g, last: "number change: code verified (from, to)", args: [src, dst] }),
     }

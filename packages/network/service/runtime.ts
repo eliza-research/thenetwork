@@ -2,7 +2,8 @@
 // of platform.networks). What a runtime does:
 //  - Every unit of work (a tick, an inbound message, a staff action) runs under this network's own
 //    PgStore advisory lock (key network-tick-<app>:<city>), loads the newest stored state and a fresh
-//    snapshot of this app's rows, and saves after. A slow network never blocks another one.
+//    snapshot of this app's rows, and saves after. A slow network never blocks another one. A tick's
+//    engine run (with the model judge) computes between two tick units, without the lock (store.ts runTick).
 //  - Every query on a network table runs in a transaction with `set_config('app.app_id', <app>, true)`
 //    (scoped()), so the service works under the network_service role, whose row-level security shows
 //    one app per transaction (audit network-service-M1). Every row also names its app explicitly.
@@ -41,7 +42,7 @@ import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
-  contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
+  contextActiveItemCount, contextFacetEligible, contextFacetKept, contextFacetSizeLimit, contextMatchItemShown, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
 import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
@@ -58,7 +59,7 @@ import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { BlooioAdapter, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { collectedReplyGuard, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
@@ -72,7 +73,7 @@ import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import { recordedChatAge } from "../../core/src/generated/memberAge.ts";
 import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
-import { atomicMemberReplyMatches } from "../../core/src/generated/signedInbox.ts";
+import { atomicMemberReplyMatches, collectedReplyMayLeave } from "../../core/src/generated/signedInbox.ts";
 import type { RecordedMemberAge } from "../../platform/src/store.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
@@ -257,7 +258,9 @@ export class NetworkRuntime {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
+      // The in-memory ledger takes an event when its unit commits (save below): a tick unit that ends unsaved to
+      // compute its engine run outside the lock records nothing (spec/runtimeUnit.md).
+      onLedger: e => { this.unit.capital.push(e); },
       onAgeStated: (memberId, age, o) => {
         if (profileAgeCounts(o.explicit, o.declined, canBeMatched(age))) {
           this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined) });
@@ -288,7 +291,8 @@ export class NetworkRuntime {
   }
 
   private get sql() { return this.host.sql; }
-  private get clock() { return this.host.clock; }
+  /** The service clock (the dry-run line queue reads it too). */
+  get clock() { return this.host.clock; }
   /** The service's connection pool (the persisted queue writes platform.outbound with it). */
   get db(): SQL { return this.host.sql; }
   /** This instance's name (the queue's lease owner). */
@@ -837,6 +841,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
+        for (const e of u.capital) this.capital.onLedger(e);
         if (u.recordedAges) this.recordedAges.push(...u.recordedAges);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
@@ -1215,7 +1220,7 @@ export class NetworkRuntime {
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
-    const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
+    const queue = u.collected.size ? collectedReplyGuard(this.adapter) : undefined;
     for (const send of u.sends) {
       if (!send.invitationJoins?.length) continue;
       if (!ok(send.memberId) || send.invitationJoins.some(member => u.forget.has(member)) || !await this.invitationNoticeCurrent(tx, send.memberId, send.invitationJoins)) {
@@ -1235,7 +1240,8 @@ export class NetworkRuntime {
       const approvedContact = bookedLink ?? reviewToken;
       const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (approvedContact ? [approvedContact] : undefined);
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
-      if (reasons.length) {
+      // spec/signedInbox.md, "Every collected reply passes the line's leak guard"
+      if (!collectedReplyMayLeave(reasons.length)) {
         u.collected.delete(s.id);
         if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls"
           || privateMemberMessage(s.type) || (u.atomicReply && s.type === u.atomicReply)) {
@@ -1519,7 +1525,7 @@ export class NetworkRuntime {
     return this.calendarViews.run(view, operation);
   }
 
-  /** One tick under the lock (skipped when another holder has it), then delivery. */
+  /** One tick (skipped when another holder has the lock); its engine run computes without the lock (store.ts runTick). Then delivery. */
   async tick(): Promise<boolean> {
     const now = this.clock.now();
     const ran = await this.withSchedulingCalendar({ kind: "tick" }, () => runTick(this.net, this.store, this.clock.now()));
@@ -1595,17 +1601,32 @@ export class NetworkRuntime {
       // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
       const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: safe(firstName) && safe(member.homeCity) });
       if (labels.phase !== "CheckingFacets") return null;
+      const newest = (f: { observedAt?: number; validFrom?: number }) => f.observedAt ?? f.validFrom ?? 0;
       const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
-        !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value)).map(f => f.value);
-      // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
+        !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value))
+        .filter(f => f.value.length <= contextFacetSizeLimit)
+        .sort((a, b) => newest(b) - newest(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .filter((f, rank) => contextFacetKept(rank, f.value.length)).map(f => f.value);
       const ready = stepContext(labels, { type: "checkFacets", facetCount: facets.length,
-        oversized: facets.length <= contextFacetLimit && facets.some(f => f.length > contextFacetSizeLimit),
+        oversized: facets.some(f => f.length > contextFacetSizeLimit),
       });
       if (ready.phase !== "ContextReady") return null;
       const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
+      const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
+      // spec/sharedContext.md, "Active items list only the member's live matches with a safe summary"
+      const stored = await this.store.load();
+      if (stored) this.net.importState(stored);
+      this.unit = newUnit();
+      const shown = this.net.relayLiveMatches(memberId as MemberId).flatMap(({ match, otherFirstName }) => {
+        const summary = `Match with ${otherFirstName}`;
+        // The other member's first name is the one name this item may carry; everything else stays forbidden.
+        const itemSafe = (text: string) => outputLeaks(text, { forbidden: forbidden.filter(x => x.toLowerCase() !== otherFirstName.toLowerCase()), facts, contacts: true }).length === 0;
+        return contextMatchItemShown(true, ageEligible, !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
+      });
+      const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: contextSinglePlayer(present, present && canBeMatched(await accounts.lowestAge(e164, binding.person))),
+        activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(present, present && ageEligible),
       };
     });
   }

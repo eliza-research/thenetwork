@@ -4,7 +4,7 @@
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
 export type Surface = "FullSurface" | "OpenAiSurface";
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
-export type ToolName = "AppInfoTool" | "StartSignupTool" | "PrepareSignupTool" | "CheckStatusTool" | "ReadProfileTool" | "SubmitProfileTool" | "GetUpdatesTool";
+export type ToolName = "AppInfoTool" | "StartSignupTool" | "CheckStatusTool" | "ReadProfileTool" | "SubmitProfileTool" | "GetUpdatesTool";
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
 export type AppId = "Ntwrk" | "Slop" | "Peon" | "Friends";
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
@@ -16,13 +16,15 @@ export type NextStep = "JoinOnSite" | "GetInvitation" | "AcceptInvitation" | "Re
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 export type ConnectionPhase = "Unbound" | "Unavailable" | "Anonymous" | "Connected" | "Revoked";
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-export type ToolResult = "NoResult" | "PublicFacts" | "AppNotAvailable" | "SignInNeeded" | "StatusShown" | "ProfileAccepted" | "ProfileNotForStatus" | "DraftSaved" | "DraftRefused" | "UpdatesShown" | "TooManyToday" | "SavedProfileShown" | "SavedProfileUnavailable";
+export type ToolResult = "NoResult" | "PublicFacts" | "AppNotAvailable" | "SignInNeeded" | "StatusShown" | "ProfileAccepted" | "ProfileNotForStatus" | "UpdatesShown" | "TooManyToday" | "SavedProfileShown" | "SavedProfileUnavailable";
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-export interface Connection { phase: ConnectionPhase; host: AppId; surface: Surface; hasWrite: boolean; hasProfileRead: boolean; status: MemberStatus; profileApproved: boolean; profileSent: boolean; sentToday: number; draftPrepared: boolean; tokenUnseen: boolean; otherUnseen: boolean; lastShown: number; lastResult: ToolResult }
+export interface Connection { phase: ConnectionPhase; host: AppId; surface: Surface; hasWrite: boolean; hasProfileRead: boolean; status: MemberStatus; profileApproved: boolean; profileSent: boolean; sentToday: number; tokenUnseen: boolean; otherUnseen: boolean; lastShown: number; lastResult: ToolResult }
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 export type GrantOwnerDecision = "GrantOwnerMatches" | "GrantOwnerChanged" | "GrantOwnerHeld" | "GrantOwnerUnavailable";
 /** Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen (spec/connectorTools.md) */
 export interface UpdateRead { shown: number; tokenLeft: boolean; otherLeft: boolean }
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export type ConnectorLimitKey = "AddressLimitKey" | "GrantLimitKey";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -37,19 +39,32 @@ export type Event =
   | { type: "approveProfile" }
   | { type: "startNewDay" }
   | { type: "callSubmitProfile"; accepted: boolean }
-  | { type: "callPrepareSignup"; joinAgeAllowed: boolean }
   | { type: "receiveUpdate"; forReference: boolean }
   | { type: "callGetUpdates"; tokenGiven: boolean; tokenOwn: boolean };
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 export const profileDailyCap: number = 5;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorAnonymousPerAddressMinute: number = 120;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorRequestsPerGrantMinute: number = 120;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorAddressCeilingMinute: number = 6000;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorTokenPerGrantMinute: number = 30;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorTokenAddressCeilingMinute: number = 600;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorRegisterPerAddressHour: number = 20;
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export const connectorAssistantRegisterPerAddressHour: number = 1000;
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-export const initial: Connection = { phase: "Unbound", host: "Ntwrk", surface: "FullSurface", hasWrite: false, hasProfileRead: false, status: "NotJoined", profileApproved: false, profileSent: false, sentToday: 0, draftPrepared: false, tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: "NoResult" };
+export const initial: Connection = { phase: "Unbound", host: "Ntwrk", surface: "FullSurface", hasWrite: false, hasProfileRead: false, status: "NotJoined", profileApproved: false, profileSent: false, sentToday: 0, tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: "NoResult" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: Connection): boolean {
-  return alwaysWriteNeedsConnection(current) && alwaysUnboundHasNoDraft(current) && alwaysOpenAiHidesSlop(current) && alwaysMemberResultsNeedConnection(current) && alwaysSentProfileWasApproved(current) && alwaysDailyProfileCap(current) && alwaysDraftOnlyOnFriendsOrNtwrk(current) && alwaysShownCountIsSmall(current);
+  return alwaysWriteNeedsConnection(current) && alwaysOpenAiHidesSlop(current) && alwaysMemberResultsNeedConnection(current) && alwaysSentProfileWasApproved(current) && alwaysDailyProfileCap(current) && alwaysShownCountIsSmall(current);
 }
 
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
@@ -80,7 +95,7 @@ export function configuredHostServes(surface: Surface, host: AppId, openAiEnable
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
 //@ pure
 export function toolListed(host: AppId, surface: Surface, tool: ToolName): boolean {
-  return hostServes(surface, host) && (tool !== "PrepareSignupTool" || host === "Friends" || host === "Ntwrk");
+  return hostServes(surface, host);
 }
 
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
@@ -95,13 +110,6 @@ export function lawConfiguredOptOutBlocksOpenAiHost(host: AppId): boolean {
 export function lawOpenAiNeverOffersSlop(tool: ToolName): boolean {
   //@ ensures \result === true
   return !appOffered("OpenAiSurface", "Slop") && !toolListed("Slop", "OpenAiSurface", tool);
-}
-
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
-//@ pure
-export function lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): boolean {
-  //@ ensures \result === true
-  return !toolListed(host, surface, "PrepareSignupTool") || (host === "Friends" || host === "Ntwrk");
 }
 
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
@@ -165,7 +173,7 @@ export function lawStoppedMembershipCannotSubmitProfile(storedStatus: string, re
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
 //@ pure
 export function toolAllowedFor(tool: ToolName, status: MemberStatus): boolean {
-  return tool === "SubmitProfileTool" ? liveMember(status) : (tool === "ReadProfileTool" ? status === "Active" : (tool === "PrepareSignupTool" ? status === "NotJoined" || status === "Invited" : true));
+  return tool === "SubmitProfileTool" ? liveMember(status) : (tool === "ReadProfileTool" ? status === "Active" : true);
 }
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -173,13 +181,6 @@ export function toolAllowedFor(tool: ToolName, status: MemberStatus): boolean {
 export function lawSubmitOnlyForLiveMembers(status: MemberStatus): boolean {
   //@ ensures \result === true
   return toolAllowedFor("SubmitProfileTool", status) === (status === "Active" || status === "Onboarding");
-}
-
-/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
-//@ pure
-export function lawDraftOnlyBeforeJoining(status: MemberStatus): boolean {
-  //@ ensures \result === true
-  return toolAllowedFor("PrepareSignupTool", status) === (status === "NotJoined" || status === "Invited");
 }
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -211,30 +212,26 @@ export function canAuthorize(c: Connection): boolean {
 //@ pure
 export function authorize(c: Connection, withWrite: boolean, withProfileRead: boolean): Connection {
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepSavedProfileNeedsReadAuthority(c, "authorize", \result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepNothingSentAtTheLimit(c, "authorize", \result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepSubmitOnlyForLiveMember(c, "authorize", \result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepReadingNeverAddsUnseen(c, "authorize", \result)
-  return { ...c, phase: "Connected", hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, draftPrepared: false, lastResult: "NoResult" };
+  return { ...c, phase: "Connected", hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, lastResult: "NoResult" };
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
 export function callWithoutAccess(c: Connection, tool: ToolName): Connection {
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callWithoutAccess", \result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepNothingSentAtTheLimit(c, "callWithoutAccess", \result)
@@ -251,12 +248,6 @@ export function alwaysWriteNeedsConnection(c: Connection): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function alwaysUnboundHasNoDraft(c: Connection): boolean {
-  return !(c.phase === "Unbound") || !c.draftPrepared;
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
 export function canCallPublicTool(c: Connection, tool: ToolName): boolean {
   return (c.phase === "Anonymous" || c.phase === "Connected") && scopeFor(tool) === "NoScope";
 }
@@ -265,12 +256,10 @@ export function canCallPublicTool(c: Connection, tool: ToolName): boolean {
 //@ pure
 export function callPublicTool(c: Connection, tool: ToolName, app: AppId): Connection {
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callPublicTool", \result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
@@ -289,12 +278,10 @@ export function alwaysOpenAiHidesSlop(c: Connection): boolean {
 //@ pure
 export function connect(c: Connection, host: AppId, surface: Surface, openAiEnabled: boolean): Connection {
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepSavedProfileNeedsReadAuthority(c, "connect", \result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepNothingSentAtTheLimit(c, "connect", \result)
@@ -318,6 +305,12 @@ export function lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): 
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
+export function memberResult(r: ToolResult): boolean {
+  return r === "StatusShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "UpdatesShown" || r === "TooManyToday" || r === "SavedProfileShown" || r === "SavedProfileUnavailable";
+}
+
+/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
+//@ pure
 export function decideGrantOwner(available: boolean, held: boolean, samePerson: boolean): GrantOwnerDecision {
   return !available ? "GrantOwnerUnavailable" : (held ? "GrantOwnerHeld" : (samePerson ? "GrantOwnerMatches" : "GrantOwnerChanged"));
 }
@@ -332,12 +325,10 @@ export function canCallAfterOwnerChange(c: Connection): boolean {
 //@ pure
 export function callAfterOwnerChange(c: Connection): Connection {
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callAfterOwnerChange", \result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepNothingSentAtTheLimit(c, "callAfterOwnerChange", \result)
@@ -348,8 +339,8 @@ export function callAfterOwnerChange(c: Connection): Connection {
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
-export function memberResult(r: ToolResult): boolean {
-  return r === "StatusShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "DraftSaved" || r === "DraftRefused" || r === "UpdatesShown" || r === "TooManyToday" || r === "SavedProfileShown" || r === "SavedProfileUnavailable";
+export function alwaysMemberResultsNeedConnection(c: Connection): boolean {
+  return !memberResult(c.lastResult) || c.phase === "Connected";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -357,12 +348,6 @@ export function memberResult(r: ToolResult): boolean {
 export function lawOnlyObservedOwnerChangeEndsGrant(available: boolean, held: boolean, samePerson: boolean): boolean {
   //@ ensures \result === true
   return (decideGrantOwner(available, held, samePerson) === "GrantOwnerChanged") === (available && !held && !samePerson);
-}
-
-/** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
-//@ pure
-export function alwaysMemberResultsNeedConnection(c: Connection): boolean {
-  return !memberResult(c.lastResult) || c.phase === "Connected";
 }
 
 /** Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app (spec/connectorTools.md) */
@@ -375,12 +360,10 @@ export function canCallCheckStatus(c: Connection): boolean {
 //@ pure
 export function callCheckStatus(c: Connection): Connection {
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callCheckStatus", \result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepNothingSentAtTheLimit(c, "callCheckStatus", \result)
@@ -393,12 +376,10 @@ export function callCheckStatus(c: Connection): Connection {
 //@ pure
 export function changeMemberStatus(c: Connection, newStatus: MemberStatus): Connection {
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepSavedProfileNeedsReadAuthority(c, "changeMemberStatus", \result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepNothingSentAtTheLimit(c, "changeMemberStatus", \result)
@@ -435,12 +416,10 @@ export function sometimesSavedProfileShown(c: Connection): boolean {
 //@ pure
 export function callReadProfile(c: Connection, currentMembership: boolean, safeFields: boolean): Connection {
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callReadProfile", \result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepNothingSentAtTheLimit(c, "callReadProfile", \result)
@@ -465,12 +444,10 @@ export function canApproveProfile(c: Connection): boolean {
 //@ pure
 export function approveProfile(c: Connection): Connection {
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> stepSavedProfileNeedsReadAuthority(c, "approveProfile", \result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> stepNothingSentAtTheLimit(c, "approveProfile", \result)
@@ -495,12 +472,10 @@ export function canStartNewDay(c: Connection): boolean {
 //@ pure
 export function startNewDay(c: Connection): Connection {
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> stepSavedProfileNeedsReadAuthority(c, "startNewDay", \result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> stepNothingSentAtTheLimit(c, "startNewDay", \result)
@@ -524,19 +499,17 @@ export function alwaysDailyProfileCap(c: Connection): boolean {
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
 export function stepNothingSentAtTheLimit(before: Connection, via: string, after: Connection): boolean {
-  return !(before.sentToday >= profileDailyCap && (via === "callSubmitProfile" || via === "callPrepareSignup")) || (after.lastResult === "TooManyToday" && after.profileSent === before.profileSent && after.draftPrepared === before.draftPrepared && after.sentToday === before.sentToday);
+  return !(before.sentToday >= profileDailyCap && via === "callSubmitProfile") || (after.lastResult === "TooManyToday" && after.profileSent === before.profileSent && after.sentToday === before.sentToday);
 }
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
 export function callSubmitProfile(c: Connection, accepted: boolean): Connection {
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepNothingSentAtTheLimit(c, "callSubmitProfile", \result)
@@ -549,36 +522,6 @@ export function callSubmitProfile(c: Connection, accepted: boolean): Connection 
 //@ pure
 export function stepSubmitOnlyForLiveMember(before: Connection, via: string, after: Connection): boolean {
   return !(after.profileSent && !before.profileSent) || (via === "callSubmitProfile" && liveMember(before.status) && before.phase === "Connected" && before.hasWrite && before.profileApproved);
-}
-
-/** Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant (spec/connectorTools.md) */
-//@ pure
-export function canCallPrepareSignup(c: Connection): boolean {
-  return c.phase === "Connected" && c.hasWrite && (c.host === "Friends" || c.host === "Ntwrk");
-}
-
-/** Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant (spec/connectorTools.md) */
-//@ pure
-export function alwaysDraftOnlyOnFriendsOrNtwrk(c: Connection): boolean {
-  return !c.draftPrepared || (c.host === "Friends" || c.host === "Ntwrk");
-}
-
-/** Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant (spec/connectorTools.md) */
-//@ pure
-export function callPrepareSignup(c: Connection, joinAgeAllowed: boolean): Connection {
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysUnboundHasNoDraft(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysOpenAiHidesSlop(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysMemberResultsNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysSentProfileWasApproved(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysShownCountIsSmall(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callPrepareSignup", \result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepNothingSentAtTheLimit(c, "callPrepareSignup", \result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepSubmitOnlyForLiveMember(c, "callPrepareSignup", \result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepReadingNeverAddsUnseen(c, "callPrepareSignup", \result)
-  return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (joinAgeAllowed && toolAllowedFor("PrepareSignupTool", c.status) && !c.draftPrepared ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), draftPrepared: true, lastResult: "DraftSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "DraftRefused" } as Connection));
 }
 
 /** Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen (spec/connectorTools.md) */
@@ -597,12 +540,10 @@ export function canCallGetUpdates(c: Connection): boolean {
 //@ pure
 export function receiveUpdate(c: Connection, forReference: boolean): Connection {
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepSavedProfileNeedsReadAuthority(c, "receiveUpdate", \result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepNothingSentAtTheLimit(c, "receiveUpdate", \result)
@@ -627,12 +568,10 @@ export function stepReadingNeverAddsUnseen(before: Connection, via: string, afte
 //@ pure
 export function callGetUpdates(c: Connection, tokenGiven: boolean, tokenOwn: boolean): Connection {
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysOpenAiHidesSlop(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysShownCountIsSmall(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callGetUpdates", \result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepNothingSentAtTheLimit(c, "callGetUpdates", \result)
@@ -664,6 +603,32 @@ export function lawForeignReferenceShowsNothing(tokenUnseen: boolean, otherUnsee
   return local_2.shown === 0 && local_2.tokenLeft === tokenUnseen && local_2.otherLeft === otherUnseen;
 }
 
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function connectorRegisterLimit(assistantRedirect: boolean): number {
+  return assistantRedirect ? connectorAssistantRegisterPerAddressHour : connectorRegisterPerAddressHour;
+}
+
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function connectorLimitKey(grantVerified: boolean): ConnectorLimitKey {
+  return grantVerified ? "GrantLimitKey" : "AddressLimitKey";
+}
+
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function lawAddressCeilingAboveEachPersonLimit(assistantRedirect: boolean): boolean {
+  //@ ensures \result === true
+  return connectorAddressCeilingMinute >= connectorRequestsPerGrantMinute && connectorAddressCeilingMinute >= connectorAnonymousPerAddressMinute && connectorTokenAddressCeilingMinute >= connectorTokenPerGrantMinute && connectorRegisterLimit(assistantRedirect) >= connectorRegisterPerAddressHour;
+}
+
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function lawVerifiedRequestsCountPerGrant(grantVerified: boolean): boolean {
+  //@ ensures \result === true
+  return (connectorLimitKey(grantVerified) === "GrantLimitKey") === grantVerified;
+}
+
 /** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
 //@ pure
 export function sometimesProfileAccepted(c: Connection): boolean {
@@ -680,18 +645,6 @@ export function sometimesProfileNotForStatus(c: Connection): boolean {
 //@ pure
 export function sometimesTooManyToday(c: Connection): boolean {
   return c.lastResult === "TooManyToday";
-}
-
-/** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
-//@ pure
-export function sometimesDraftSaved(c: Connection): boolean {
-  return c.lastResult === "DraftSaved";
-}
-
-/** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
-//@ pure
-export function sometimesDraftRefused(c: Connection): boolean {
-  return c.lastResult === "DraftRefused";
 }
 
 /** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
@@ -744,7 +697,6 @@ export function enabled(current: Connection, event: Event): boolean {
   if (event.type === "approveProfile") return canApproveProfile(current);
   if (event.type === "startNewDay") return canStartNewDay(current);
   if (event.type === "callSubmitProfile") return canCallSubmitProfile(current);
-  if (event.type === "callPrepareSignup") return canCallPrepareSignup(current);
   if (event.type === "receiveUpdate") return canReceiveUpdate(current);
   if (event.type === "callGetUpdates") return canCallGetUpdates(current);
   return false;
@@ -766,7 +718,6 @@ export function step(current: Connection, event: Event): Connection {
   if (event.type === "approveProfile") return canApproveProfile(current) ? approveProfile(current) : current;
   if (event.type === "startNewDay") return canStartNewDay(current) ? startNewDay(current) : current;
   if (event.type === "callSubmitProfile") return canCallSubmitProfile(current) ? callSubmitProfile(current, event.accepted) : current;
-  if (event.type === "callPrepareSignup") return canCallPrepareSignup(current) ? callPrepareSignup(current, event.joinAgeAllowed) : current;
   if (event.type === "receiveUpdate") return canReceiveUpdate(current) ? receiveUpdate(current, event.forReference) : current;
   if (event.type === "callGetUpdates") return canCallGetUpdates(current) ? callGetUpdates(current, event.tokenGiven, event.tokenOwn) : current;
   return current;
@@ -787,8 +738,8 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean" && typeof raw.withProfileRead === "boolean") return { type: "authorize", withWrite: raw.withWrite, withProfileRead: raw.withProfileRead };
-  if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool")) return { type: "callWithoutAccess", tool: raw.tool };
-  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends")) return { type: "callPublicTool", tool: raw.tool, app: raw.app };
+  if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool")) return { type: "callWithoutAccess", tool: raw.tool };
+  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends")) return { type: "callPublicTool", tool: raw.tool, app: raw.app };
   if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };
@@ -797,7 +748,6 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "approveProfile") return { type: "approveProfile" };
   if (raw.type === "startNewDay") return { type: "startNewDay" };
   if (raw.type === "callSubmitProfile" && typeof raw.accepted === "boolean") return { type: "callSubmitProfile", accepted: raw.accepted };
-  if (raw.type === "callPrepareSignup" && typeof raw.joinAgeAllowed === "boolean") return { type: "callPrepareSignup", joinAgeAllowed: raw.joinAgeAllowed };
   if (raw.type === "receiveUpdate" && typeof raw.forReference === "boolean") return { type: "receiveUpdate", forReference: raw.forReference };
   if (raw.type === "callGetUpdates" && typeof raw.tokenGiven === "boolean" && typeof raw.tokenOwn === "boolean") return { type: "callGetUpdates", tokenGiven: raw.tokenGiven, tokenOwn: raw.tokenOwn };
   return undefined;
@@ -817,8 +767,8 @@ export function parseState(x: unknown): Connection | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Unbound" || raw.phase === "Unavailable" || raw.phase === "Anonymous" || raw.phase === "Connected" || raw.phase === "Revoked") && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.hasWrite === "boolean" && typeof raw.hasProfileRead === "boolean" && (raw.status === "NotJoined" || raw.status === "Invited" || raw.status === "Onboarding" || raw.status === "Active" || raw.status === "Stopped" || raw.status === "OnHold") && typeof raw.profileApproved === "boolean" && typeof raw.profileSent === "boolean" && Number.isSafeInteger(raw.sentToday) && typeof raw.draftPrepared === "boolean" && typeof raw.tokenUnseen === "boolean" && typeof raw.otherUnseen === "boolean" && Number.isSafeInteger(raw.lastShown) && (raw.lastResult === "NoResult" || raw.lastResult === "PublicFacts" || raw.lastResult === "AppNotAvailable" || raw.lastResult === "SignInNeeded" || raw.lastResult === "StatusShown" || raw.lastResult === "ProfileAccepted" || raw.lastResult === "ProfileNotForStatus" || raw.lastResult === "DraftSaved" || raw.lastResult === "DraftRefused" || raw.lastResult === "UpdatesShown" || raw.lastResult === "TooManyToday" || raw.lastResult === "SavedProfileShown" || raw.lastResult === "SavedProfileUnavailable") && Object.keys(raw).length === 14)) return undefined;
-  const parsed: Connection = ({ phase: raw.phase, host: raw.host, surface: raw.surface, hasWrite: raw.hasWrite, hasProfileRead: raw.hasProfileRead, status: raw.status, profileApproved: raw.profileApproved, profileSent: raw.profileSent, sentToday: raw.sentToday, draftPrepared: raw.draftPrepared, tokenUnseen: raw.tokenUnseen, otherUnseen: raw.otherUnseen, lastShown: raw.lastShown, lastResult: raw.lastResult });
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Unbound" || raw.phase === "Unavailable" || raw.phase === "Anonymous" || raw.phase === "Connected" || raw.phase === "Revoked") && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.hasWrite === "boolean" && typeof raw.hasProfileRead === "boolean" && (raw.status === "NotJoined" || raw.status === "Invited" || raw.status === "Onboarding" || raw.status === "Active" || raw.status === "Stopped" || raw.status === "OnHold") && typeof raw.profileApproved === "boolean" && typeof raw.profileSent === "boolean" && Number.isSafeInteger(raw.sentToday) && typeof raw.tokenUnseen === "boolean" && typeof raw.otherUnseen === "boolean" && Number.isSafeInteger(raw.lastShown) && (raw.lastResult === "NoResult" || raw.lastResult === "PublicFacts" || raw.lastResult === "AppNotAvailable" || raw.lastResult === "SignInNeeded" || raw.lastResult === "StatusShown" || raw.lastResult === "ProfileAccepted" || raw.lastResult === "ProfileNotForStatus" || raw.lastResult === "UpdatesShown" || raw.lastResult === "TooManyToday" || raw.lastResult === "SavedProfileShown" || raw.lastResult === "SavedProfileUnavailable") && Object.keys(raw).length === 13)) return undefined;
+  const parsed: Connection = ({ phase: raw.phase, host: raw.host, surface: raw.surface, hasWrite: raw.hasWrite, hasProfileRead: raw.hasProfileRead, status: raw.status, profileApproved: raw.profileApproved, profileSent: raw.profileSent, sentToday: raw.sentToday, tokenUnseen: raw.tokenUnseen, otherUnseen: raw.otherUnseen, lastShown: raw.lastShown, lastResult: raw.lastResult });
   return inv(parsed) ? parsed : undefined;
 }
 

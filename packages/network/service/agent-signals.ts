@@ -1,0 +1,134 @@
+import { agentOptOutParticipation, agentSignalAfterDecision, agentSignalRoute, type AgentSignalPhase } from "../../core/src/generated/staffSafetyService.ts";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
+import { allowed } from "../../observatory/src/staff.ts";
+import type { StaffRole, StaffUser } from "../../observatory/src/types.ts";
+import type { AppId } from "../../platform/src/apps.ts";
+import { readCapped } from "../../platform/src/body.ts";
+
+export type AgentSignalKind = "opt_out" | "travel" | "safety_concern";
+export type AgentSignal = { kind: AgentSignalKind; evidence: string };
+
+const KINDS: readonly AgentSignalKind[] = ["opt_out", "travel", "safety_concern"];
+const WAITING_TAGS = ["signal:opt_out", "signal:safety_concern"];
+const SIGNAL_PATH = /^\/signals\/([^/]{1,600})$/;
+const BODY_LIMIT = 4096;
+const FACET_STATUS = { SignalWaiting: "proposed", SignalReviewed: "confirmed", SignalDismissed: "rejected" } as const satisfies Record<AgentSignalPhase, string>;
+const PHASE: Record<string, AgentSignalPhase> = { proposed: "SignalWaiting", confirmed: "SignalReviewed", rejected: "SignalDismissed" };
+
+/** Parse the contract's signal list at the signed boundary. */
+export function parseAgentSignals(input: unknown): AgentSignal[] | undefined {
+  if (!Array.isArray(input) || input.length > 20) return;
+  const signals: AgentSignal[] = [];
+  for (const signal of input) {
+    if (!signal || typeof signal !== "object" || Array.isArray(signal) || Object.keys(signal).length !== 2) return;
+    const { kind, evidence } = signal as Record<string, unknown>;
+    if (!KINDS.includes(kind as AgentSignalKind) || typeof evidence !== "string" || !evidence.trim() || evidence.length > 500) return;
+    signals.push({ kind: kind as AgentSignalKind, evidence });
+  }
+  return signals;
+}
+
+/**
+ * spec/staffSafetyService.md, "An agent signal goes to the decision that owns it".
+ * Call inside the action transaction after the original turn and membership locks.
+ */
+export async function recordAgentSignals(tx: SQL, o: { app: AppId; memberId: string; actionId: string; signals: AgentSignal[]; now: number }): Promise<{ recorded: number }> {
+  const at = new Date(o.now);
+  for (const [index, signal] of o.signals.entries()) {
+    const status = agentSignalRoute(signal.kind) === "SignalPausesApp" ? FACET_STATUS.SignalReviewed : FACET_STATUS.SignalWaiting;
+    await tx`insert into network.facets(app_id,id,member_id,kind,value,tags,privacy_scope,provenance,source,status,valid_from)
+      values(${o.app},${`service-signal:${o.actionId}:${index}`},${o.memberId},'fact',${signal.evidence},${tx.array([`signal:${signal.kind}`], "TEXT")},
+        'agent_private','inferred','chat',${status},${at})`;
+  }
+  if (o.signals.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
+    values(${o.app},${at},'agent',${o.memberId},'network_signals_proposed','member',${o.memberId},${{ kinds: o.signals.map(signal => signal.kind), count: o.signals.length }}::jsonb)`;
+  if (o.signals.some(signal => signal.kind === "opt_out")) {
+    const [member] = await tx<{ participation_state: string }[]>`select participation_state from network.members where app_id=${o.app} and id=${o.memberId}`;
+    if (!member) throw new Error("Agent opt-out member is unavailable");
+    const state = agentOptOutParticipation("opt_out", member.participation_state);
+    const saved = await tx`update network.members set participation_state=${state}, participation_window=null
+      where app_id=${o.app} and id=${o.memberId} and (participation_state is distinct from ${state} or participation_window is not null) returning id`;
+    if (saved.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
+      values(${o.app},${at},'agent',${o.memberId},'member_state_requested','member',${o.memberId},${{ state: "paused", from: null, until: null, source: "agent_signal" }}::jsonb)`;
+  }
+  return { recorded: o.signals.length };
+}
+
+/** True when a signal in the list opens or joins the member's safety case. */
+export function agentSignalsOpenCase(signals: readonly AgentSignal[]): boolean {
+  return signals.some(signal => agentSignalRoute(signal.kind) === "SignalOpensSafetyCase");
+}
+
+export interface AgentSignalReviewDeps {
+  app: AppId;
+  user: StaffUser;
+  now(): number;
+  scoped<T>(run: (tx: SQL) => Promise<T>): Promise<T>;
+  /** The member's open safety case in the runtime, by member. */
+  openCases(memberIds: string[]): Promise<Map<string, string>>;
+}
+
+type Json = (body: unknown, status?: number) => Response;
+const json: Json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+
+async function audit(tx: SQL, d: AgentSignalReviewDeps, entry: { action: string; ok: boolean; memberId?: string; reason?: string; detail: Record<string, unknown> }) {
+  await tx`insert into network.staff_audit (at, actor, roles, action, target_type, target_id, reason, mode, ok, detail, app_id)
+    values (${new Date(d.now())}, ${d.user.id}, ${tx.array(d.user.roles as StaffRole[], "TEXT")}, ${entry.action}, ${entry.memberId ? "member" : null},
+      ${entry.memberId ?? null}, ${entry.reason ?? null}, 'real', ${entry.ok}, ${entry.detail}::jsonb, ${d.app})`;
+}
+
+function parseDecision(input: unknown): { dismiss: boolean; reason: string } | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 2) return;
+  const { decision, reason } = input as Record<string, unknown>;
+  if ((decision !== "reviewed" && decision !== "dismissed") || typeof reason !== "string" || reason.length > 2000 || reason.trim().length < 5) return;
+  return { dismiss: decision === "dismissed", reason: reason.trim() };
+}
+
+/** spec/staffSafetyService.md, "Safety staff decide a waiting agent signal once". Undefined: not a signal route. */
+export async function handleAgentSignalReview(req: Request, path: string, d: AgentSignalReviewDeps): Promise<Response | undefined> {
+  const need = (roles: StaffRole[]) => allowed(d.user, roles, d.app, "real") ? undefined
+    : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(role => `${role}@${d.app}`).join(" or ")}` }, 403);
+  if (path === "/signals") {
+    if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+    const no = need(["reviewer", "safety"]); if (no) return no;
+    const rows = await d.scoped(async tx => {
+      await audit(tx, d, { action: "read_agent_signals", ok: true, detail: {} });
+      return tx<{ id: string; member_id: string; tags: string[]; value: string; valid_from: Date }[]>`select id,member_id,tags,value,valid_from from network.facets
+        where app_id=${d.app} and status='proposed' and tags && ${tx.array(WAITING_TAGS, "TEXT")} order by valid_from desc, id limit 200`;
+    });
+    const cases = await d.openCases([...new Set(rows.map(row => row.member_id))]);
+    return json({ ok: true, signals: rows.map(row => ({ id: row.id, memberId: row.member_id,
+      kind: row.tags.find(tag => WAITING_TAGS.includes(tag))!.slice("signal:".length), evidence: row.value, at: row.valid_from.getTime(),
+      caseId: cases.get(row.member_id) ?? null })) });
+  }
+  const match = SIGNAL_PATH.exec(path);
+  if (!match) return;
+  if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  const no = need(["safety"]); if (no) return no;
+  let id: string;
+  try { id = decodeURIComponent(match[1]!); } catch { return json({ ok: false, error: "invalid_signal" }, 400); }
+  const bytes = await readCapped(req, BODY_LIMIT);
+  if (bytes === "too_large") return json({ ok: false, error: "payload_too_large" }, 413);
+  let input: unknown;
+  try { input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { return json({ ok: false, error: "invalid_signal_decision" }, 400); }
+  const decision = parseDecision(input);
+  if (!decision) return json({ ok: false, error: "invalid_signal_decision" }, 400);
+  const outcome = await d.scoped(async tx => {
+    const [row] = await tx<{ member_id: string; status: string }[]>`select member_id,status from network.facets
+      where app_id=${d.app} and id=${id} and tags && ${tx.array(WAITING_TAGS, "TEXT")} for update`;
+    const detail = { signal: id, decision: decision.dismiss ? "dismissed" : "reviewed" };
+    await audit(tx, d, { action: "decide_agent_signal", ok: true, memberId: row?.member_id, reason: decision.reason, detail: { ...detail, phase: "requested" } });
+    const phase = row ? PHASE[row.status] : undefined;
+    const next = phase && agentSignalAfterDecision(phase, true, decision.dismiss);
+    if (!row || !phase || next === phase) {
+      const refused = row ? "already_decided" : "unknown_signal";
+      await audit(tx, d, { action: "decide_agent_signal", ok: false, memberId: row?.member_id, detail: { ...detail, phase: "refused", refused } });
+      return { ok: false as const, reason: refused };
+    }
+    await tx`update network.facets set status=${FACET_STATUS[next!]} where app_id=${d.app} and id=${id}`;
+    await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
+      values(${d.app},${new Date(d.now())},'reviewer',${d.user.id},'agent_signal_decided','member',${row.member_id},${detail}::jsonb)`;
+    return { ok: true as const };
+  });
+  return outcome.ok ? json({ ok: true }) : json(outcome, outcome.reason === "unknown_signal" ? 404 : 409);
+}

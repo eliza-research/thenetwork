@@ -122,6 +122,10 @@ module runtime_ops {
     oppSeq: str -> int,
     oppRows: (str, int) -> str,
     minted: Set[(str, int)],
+    /** spec/runtimeUnit.md: per replica, the tick's engine run ("idle" or "computing") and the STOPs committed when it was captured. */
+    eng: str -> { phase: str, seen: Set[str] },
+    /** Ghost: members a tick commit contacted although their STOP was committed. */
+    contactedAfterStop: Set[str],
   }
 
   /** M-140, M-141: one tick loop. Ages are -1 when no row waits. */
@@ -311,6 +315,7 @@ module runtime_ops {
       used: Set(), acked: Set(), channel: channel,
       backup: Set(), backupTaken: false, restored: false, rolledBack: Set(), rolesOnSource: false,
       twoCities: twoCities, oppSeq: NETWORKS.mapBy(_ => 0), oppRows: Map(), minted: Set(),
+      eng: REPLICAS.mapBy(_ => { phase: "idle", seen: Set() }), contactedAfterStop: Set(),
     },
     tk: { tickSet: tickSet, inboxAge: -1, expiredAge: -1, lastTickRan: 0, lastSave: 0, lastRoundAt: -1 },
     al: { st: ALERT_KEYS.mapBy(_ => CLOSED), sigWaiting: 0, lastOpsAt: -1, posts: 0,
@@ -394,6 +399,30 @@ module runtime_ops {
    * in any other city (SD-111 fix, d351405). Every network still has seed NETWORK_SEED (server.ts:80).
    */
   pure def oppId(n: str, seq: int): (str, int) = (if (n == "slop:nyc") "slop" else n, seq)
+  /**
+   * store.ts runTick, spec/runtimeUnit.md "The engine runs on a snapshot outside the store lock" (OPS23): the first
+   * tick unit takes the lock, loads, reaches its engine run, records the request, ends without a save and releases
+   * the lock, in one step. The engine run then computes without the lock: inbound units take the lock meanwhile.
+   * A tick does not start while this replica's engine run computes.
+   */
+  action tickCapture(r: str): bool = all {
+    s.st.unit.get(r).phase == "idle", s.st.lockHolder == "", s.st.eng.get(r).phase == "idle",
+    s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "computing", seen: s.st.committed }) } },
+  }
+  /**
+   * The commit unit waits for the lock, loads the newest state and ticks again with the computed result
+   * (spec/runtimeUnit.md "A prepared engine result commits only for members whose evidence did not change").
+   * The result names the members who had not stopped at capture; the tick's gates on the newest state drop
+   * every member whose STOP is committed now. Its save writes the newest state, so every committed STOP stays.
+   */
+  action tickCommit(r: str): bool = all {
+    s.st.eng.get(r).phase == "computing", s.st.lockHolder == "", s.st.unit.get(r).phase == "idle",
+    val proposed = EVENTS.exclude(s.st.eng.get(r).seen)
+    val contacted = proposed.exclude(s.st.committed)
+    s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "idle", seen: Set() }),
+      contactedAfterStop: s.st.contactedAfterStop.union(contacted.intersect(s.st.committed)) } },
+  }
+
   action mint(n: str): bool = all {
     s.st.twoCities or n == "slop:nyc", s.st.oppSeq.get(n) < 2,
     val seq = s.st.oppSeq.get(n) + 1
@@ -671,7 +700,7 @@ module runtime_ops {
     advance,
     nondet r = oneOf(REPLICAS)
     nondet e = oneOf(EVENTS)
-    any { takeLock(r, e), load(r), apply(r), save(r), saveFails(r), loseConnection(r) },
+    any { takeLock(r, e), load(r), apply(r), save(r), saveFails(r), loseConnection(r), tickCapture(r), tickCommit(r) },
     nondet n = oneOf(NETWORKS) mint(n),
     backupRun,
     restore,
@@ -808,10 +837,14 @@ module runtime_ops {
    */
   val staffRouted = staffRouteExists(s.cf.target)
 
+  /** AGENTS.md STOP: a member whose STOP is committed is never contacted from a tick's engine run (OPS23). */
+  val noContactAfterStop = s.st.contactedAfterStop == Set()
+
   val safety = and {
     noLostWrite, restoreRolesNotOnSource, oppIdsOwned, dueHasCaller, tickLateSeen,
     alertResolvedOnlyOnRead, bumpPosted, noSilentClose, heartbeatHonest, oneReportPerWeek, skippedWeekSeen,
     biasReadsCommitted, closeBeforeKill, bootLoginComplete, migrationOnce, llmAttemptBound, guardSound,
+    noContactAfterStop,
   }
 
   /** The invariants of the open defects (SD-050, SD-159, SD-169). Each fails; see its comment. */
@@ -832,6 +865,9 @@ module runtime_ops {
   val witness_wranglerDryRun = not(s.wr.ran and s.wr.allowed)
   val witness_cfStopped = not(s.cf.cronSinceInactive and not(s.cf.containerRunning) and s.cf.buildIdOk and s.cf.configSet)
   val witness_biasLateAlert = not(s.al.st.get("late").open and s.al.st.get("late").sent)
+  /** A STOP commits while a tick's engine run computes without the lock (OPS23). */
+  val witness_stopDuringEngine = not(REPLICAS.exists(r => s.st.eng.get(r).phase == "computing"
+    and s.st.committed.exists(e => not(s.st.eng.get(r).seen.contains(e)))))
   val witness_lockLostSaveFails = not(s.st.lostConn and s.st.acked.size() == 1)
   val witness_handMadeLoginRefused = not(s.bt.roleExists and not(s.bt.member) and s.bt.step == "failed")
 
@@ -853,6 +889,17 @@ module runtime_ops {
     .expect(noLostWrite and s.st.committed == Set("stop2") and s.st.acked == Set("stop2"))
 
   /** With the lock held the whole time, the same two units keep both STOPs. */
+  /**
+   * OPS23 fixed: A's tick captures its engine run and computes without the lock; B's STOP unit takes the lock and
+   * commits stop1 meanwhile; A's commit contacts stop2's member only and keeps stop1.
+   * (Before the fix: the engine ran under A's lock, so B's unit waited for the whole run.)
+   */
+  run stopDuringEngineTest = initProd
+    .then(tickCapture("A"))
+    .then(takeLock("B", "stop1")).then(load("B")).then(apply("B")).then(save("B"))
+    .then(tickCommit("A"))
+    .expect(noContactAfterStop and noLostWrite and s.st.committed == Set("stop1") and s.st.eng.get("A").phase == "idle")
+
   run lockedUnitsTest = initProd
     .then(takeLock("A", "stop1")).then(load("A")).then(apply("A")).then(save("A"))
     .then(takeLock("B", "stop2")).then(load("B")).then(apply("B")).then(save("B"))

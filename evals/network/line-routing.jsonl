@@ -1,0 +1,72 @@
+{"kind": "first", "text": "slop", "reading": {"command": "LineNoCommand", "app": "slop"}, "decision": {"outcome": "join_asked", "app": "slop"}}
+{"kind": "first", "text": "slop.date", "reading": {"command": "LineNoCommand", "app": "slop"}, "decision": {"outcome": "join_asked", "app": "slop"}}
+{"kind": "first", "text": "SLOP.DATE", "reading": {"command": "LineNoCommand", "app": "slop"}, "decision": {"outcome": "join_asked", "app": "slop"}}
+{"kind": "first", "text": "join slop", "reading": {"command": "LineNoCommand", "app": "slop"}, "decision": {"outcome": "join_asked", "app": "slop"}}
+{"kind": "first", "text": "www.slop.date", "reading": {"command": "LineNoCommand", "app": "slop"}, "decision": {"outcome": "join_asked", "app": "slop"}}
+{"kind": "first", "text": "slop.", "reading": {"command": "LineNoCommand", "app": "slop"}, "decision": {"outcome": "join_asked", "app": "slop"}}
+{"kind": "first", "text": "peon", "reading": {"command": "LineNoCommand", "app": "peon"}, "decision": {"outcome": "join_asked", "app": "peon"}}
+{"kind": "first", "text": "peon.biz", "reading": {"command": "LineNoCommand", "app": "peon"}, "decision": {"outcome": "join_asked", "app": "peon"}}
+{"kind": "first", "text": "join peon.biz", "reading": {"command": "LineNoCommand", "app": "peon"}, "decision": {"outcome": "join_asked", "app": "peon"}}
+{"kind": "first", "text": "Peon.biz", "reading": {"command": "LineNoCommand", "app": "peon"}, "decision": {"outcome": "join_asked", "app": "peon"}}
+{"kind": "first", "text": "friends", "reading": {"command": "LineNoCommand", "app": "friends"}, "decision": {"outcome": "join_asked", "app": "friends"}}
+{"kind": "first", "text": "friends.help", "reading": {"command": "LineNoCommand", "app": "friends"}, "decision": {"outcome": "join_asked", "app": "friends"}}
+{"kind": "first", "text": "Friends.Help!", "reading": {"command": "LineNoCommand", "app": "friends"}, "decision": {"outcome": "join_asked", "app": "friends"}}
+{"kind": "first", "text": "join friends.help", "reading": {"command": "LineNoCommand", "app": "friends"}, "decision": {"outcome": "join_asked", "app": "friends"}}
+{"kind": "first", "text": "the network", "reading": {"command": "LineNoCommand", "app": "ntwrk"}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "ntwrk.party", "reading": {"command": "LineNoCommand", "app": "ntwrk"}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "hey", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "hi there, a friend told me about this", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "my ex is on slop.date", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "is peon.biz legit?", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "I want to find friends", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "hello! how does this work", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "slop date night ideas?", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "HELP", "reading": {"command": "LineHelp", "app": null}, "decision": {"outcome": "handled", "app": "ntwrk"}}
+{"kind": "first", "text": "help", "reading": {"command": "LineHelp", "app": null}, "decision": {"outcome": "handled", "app": "ntwrk"}}
+{"kind": "first", "text": "STOP", "reading": {"command": "LineStop", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
+{"kind": "first", "text": "leave slop.date", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "handled", "app": "ntwrk"}}
+{"kind": "join", "text": "Sam, 29", "reading": {"age": 29, "name": "Sam"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "I'm Ana and I'm 31", "reading": {"age": 31, "name": "Ana"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Maya 24", "reading": {"age": 24, "name": "Maya"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "29, Jo", "reading": {"age": 29, "name": "Jo"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Name's Lee, 45", "reading": {"age": 45, "name": "Lee"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "my name is Pat and I am 52 years old", "reading": {"age": 52, "name": "Pat"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "hey I'm Kai, 22", "reading": {"age": 22, "name": "Kai"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Kim 16", "reading": {"age": 16, "name": "Kim"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "I'm 15, Tay", "reading": {"age": 15, "name": "Tay"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Ben, 13", "reading": {"age": 13, "name": "Ben"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Ola 17", "reading": {"age": 17, "name": "Ola"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Ray 18", "reading": {"age": 18, "name": "Ray"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "Lu 12", "reading": {"age": 12, "name": "Lu"}, "decision": {"outcome": "under_age"}}
+{"kind": "join", "text": "I am 11 years old", "reading": {"age": 11}, "decision": {"outcome": "under_age"}}
+{"kind": "join", "text": "Mo, 9", "reading": {"age": 9, "name": "Mo"}, "decision": {"outcome": "under_age"}}
+{"kind": "join", "text": "Sounds good, 7 works for me", "reading": {"age": null}, "decision": {"outcome": "join_asked"}}
+{"kind": "join", "text": "Sure, 25 works", "reading": {"age": null}, "decision": {"outcome": "join_asked"}}
+{"kind": "join", "text": "Dee", "reading": {"age": null, "name": "Dee"}, "decision": {"outcome": "join_asked"}}
+{"kind": "join", "text": "I'm 40", "reading": {"age": 40}, "decision": {"outcome": "join_asked"}}
+{"kind": "join", "text": "Zed 130", "reading": {"age": null}, "decision": {"outcome": "join_asked"}}
+{"kind": "lookingFor", "text": "dating and friends please", "reading": {"friends": "MentionWanted", "dating": "MentionWanted", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["friends", "slop"]}}
+{"kind": "lookingFor", "text": "new friends", "reading": {"friends": "MentionWanted", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["friends"]}}
+{"kind": "lookingFor", "text": "a job", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionWanted", "everything": false}, "decision": {"apps": ["peon"]}}
+{"kind": "lookingFor", "text": "hiring for my startup", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionWanted", "everything": false}, "decision": {"apps": ["peon"]}}
+{"kind": "lookingFor", "text": "romance", "reading": {"friends": "MentionAbsent", "dating": "MentionWanted", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["slop"]}}
+{"kind": "lookingFor", "text": "a relationship", "reading": {"friends": "MentionAbsent", "dating": "MentionWanted", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["slop"]}}
+{"kind": "lookingFor", "text": "looking for love", "reading": {"friends": "MentionAbsent", "dating": "MentionWanted", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["slop"]}}
+{"kind": "lookingFor", "text": "a girlfriend", "reading": {"friends": "MentionAbsent", "dating": "MentionWanted", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["slop"]}}
+{"kind": "lookingFor", "text": "career stuff and hanging out", "reading": {"friends": "MentionWanted", "dating": "MentionAbsent", "work": "MentionWanted", "everything": false}, "decision": {"apps": ["friends", "peon"]}}
+{"kind": "lookingFor", "text": "people to hang out with and gigs", "reading": {"friends": "MentionWanted", "dating": "MentionAbsent", "work": "MentionWanted", "everything": false}, "decision": {"apps": ["friends", "peon"]}}
+{"kind": "lookingFor", "text": "all of them", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["friends", "slop", "peon"]}}
+{"kind": "lookingFor", "text": "everything", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["friends", "slop", "peon"]}}
+{"kind": "lookingFor", "text": "all three please", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["friends", "slop", "peon"]}}
+{"kind": "lookingFor", "text": "everything but not dating", "reading": {"friends": "MentionAbsent", "dating": "MentionRefused", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["friends", "peon"]}}
+{"kind": "lookingFor", "text": "all of these except dating", "reading": {"friends": "MentionAbsent", "dating": "MentionRefused", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["friends", "peon"]}}
+{"kind": "lookingFor", "text": "never dating, everything else", "reading": {"friends": "MentionAbsent", "dating": "MentionRefused", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["friends", "peon"]}}
+{"kind": "lookingFor", "text": "all three, no work stuff", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionRefused", "everything": true}, "decision": {"apps": ["friends", "slop"]}}
+{"kind": "lookingFor", "text": "everything, just not friends", "reading": {"friends": "MentionRefused", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": true}, "decision": {"apps": ["slop", "peon"]}}
+{"kind": "lookingFor", "text": "not dating, just friends", "reading": {"friends": "MentionWanted", "dating": "MentionRefused", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["friends"]}}
+{"kind": "lookingFor", "text": "I work at a bank, looking for friends", "reading": {"friends": "MentionWanted", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["friends"]}}
+{"kind": "lookingFor", "text": "I'm dating someone, so just friends", "reading": {"friends": "MentionWanted", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": false}, "decision": {"apps": ["friends"]}}
+{"kind": "lookingFor", "text": "nothing right now", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionAbsent", "everything": false}, "decision": {"apps": []}}
+{"kind": "lookingFor", "text": "no dating", "reading": {"friends": "MentionAbsent", "dating": "MentionRefused", "work": "MentionAbsent", "everything": false}, "decision": {"apps": []}}
+{"kind": "lookingFor", "text": "no work and no dating, friends", "reading": {"friends": "MentionWanted", "dating": "MentionRefused", "work": "MentionRefused", "everything": false}, "decision": {"apps": ["friends"]}}
+{"kind": "lookingFor", "text": "dating but not work", "reading": {"friends": "MentionAbsent", "dating": "MentionWanted", "work": "MentionRefused", "everything": false}, "decision": {"apps": ["slop"]}}

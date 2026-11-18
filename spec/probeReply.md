@@ -64,3 +64,30 @@ pure def lawWeakAcknowledgementNeedsLatestProbe(precedingMessages: int, accepted
 pure def lawWeakAcknowledgementNeedsUninterruptedTurn(precedingMessages: int, acceptedAt: int, receivedAt: int, now: int): bool =
   not(weakProbeAcknowledgementAllowed(true, true, false, precedingMessages, true, acceptedAt, receivedAt, now))
 ```
+
+### A late answer to an expired probe hears once that the invitation ended
+
+When a one-to-one probe expires without an answer, the member can still reply to it. A direct reply that answers yes, no or with a short acknowledgement gets one honest answer: the invitation ended and nothing was shared. The reply counts only when the expired probe is still the latest message the Network sent the member, the transport accepted that exact probe, and the reply arrived after the acceptance and after the expiry. The Network records no consent and no availability from it, and it does not open a model turn about it. A second late reply gets nothing. Changed in this revision: before, a short reply was dropped without an answer and a longer one opened a model turn with no matching item (audit OPP19).
+
+```quint
+type LateProbeRoute = TellProbeEnded | NotALateProbeAnswer
+
+pure def lateProbeRoute(direct: bool, answered: bool, latestProbe: bool, receiptAccepted: bool,
+    acceptedAt: int, endedAt: int, receivedAt: int, alreadyTold: bool): LateProbeRoute =
+  if (direct and answered and latestProbe and receiptAccepted and acceptedAt <= receivedAt and endedAt <= receivedAt
+      and not(alreadyTold)) TellProbeEnded
+  else NotALateProbeAnswer
+
+pure def lawALateAnswerIsToldOnce(direct: bool, answered: bool, latestProbe: bool, receiptAccepted: bool,
+    acceptedAt: int, endedAt: int, receivedAt: int): bool =
+  lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true) == NotALateProbeAnswer
+
+pure def lawALateAnswerNeedsTheDeliveredProbe(direct: bool, answered: bool, latestProbe: bool,
+    acceptedAt: int, endedAt: int, receivedAt: int): bool =
+  lateProbeRoute(direct, answered, latestProbe, false, acceptedAt, endedAt, receivedAt, false) == NotALateProbeAnswer
+
+pure def lawAnAnswerBeforeTheExpiryIsNotLate(direct: bool, answered: bool, latestProbe: bool, acceptedAt: int,
+    endedAt: int, receivedAt: int): bool =
+  receivedAt < endedAt implies
+    lateProbeRoute(direct, answered, latestProbe, true, acceptedAt, endedAt, receivedAt, false) == NotALateProbeAnswer
+```

@@ -7,6 +7,8 @@ export type ContextMode = "ModeOpen" | "ModeBusy" | "ModeTraveling" | "ModePause
 export type ContextPhase = "CheckingAccount" | "CheckingMembership" | "CheckingMember" | "CheckingLabels" | "CheckingFacets" | "ContextReady" | "Withheld";
 /** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export interface SharedContext { phase: ContextPhase }
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+export type OpenTurnAnswer = "AnswerOpen" | "AnswerUnavailable";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -20,6 +22,8 @@ export type Event =
 export const contextFacetLimit: number = 50;
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 export const contextFacetSizeLimit: number = 300;
+/** Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary (spec/sharedContext.md) */
+export const contextActiveItemLimit: number = 20;
 /** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export const initial: SharedContext = { phase: "CheckingAccount" };
 
@@ -82,6 +86,12 @@ export function contextFacetEligible(own: boolean, shareable: boolean, confirmed
 
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
+export function contextFacetKept(rank: number, textSize: number): boolean {
+  return rank >= 0 && rank < contextFacetLimit && textSize <= contextFacetSizeLimit;
+}
+
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
+//@ pure
 export function canCheckLabels(context: SharedContext): boolean {
   return context.phase === "CheckingLabels";
 }
@@ -91,6 +101,13 @@ export function canCheckLabels(context: SharedContext): boolean {
 export function checkLabels(context: SharedContext, labelsSafe: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckLabels(context)) ==> stepContextRequiresFacetChecks(context, "checkLabels", \result)
   return { phase: labelsSafe ? "CheckingFacets" : "Withheld" };
+}
+
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
+//@ pure
+export function lawKeptFactsFitTheLimits(rank: number, textSize: number): boolean {
+  //@ ensures \result === true
+  return !contextFacetKept(rank, textSize) || (rank < contextFacetLimit && textSize <= contextFacetSizeLimit);
 }
 
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
@@ -129,6 +146,45 @@ export function contextSinglePlayer(present: boolean, ageEligible: boolean): boo
 export function lawIneligibleAgeIsSinglePlayer(present: boolean): boolean {
   //@ ensures \result === true
   return contextSinglePlayer(present, false);
+}
+
+/** Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary (spec/sharedContext.md) */
+//@ pure
+export function contextMatchItemShown(liveMatch: boolean, ageEligible: boolean, summarySafe: boolean): boolean {
+  return liveMatch && ageEligible && summarySafe;
+}
+
+/** Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary (spec/sharedContext.md) */
+//@ pure
+export function contextActiveItemCount(shownMatches: number): number {
+  return shownMatches < 0 ? 0 : (shownMatches > contextActiveItemLimit ? contextActiveItemLimit : shownMatches);
+}
+
+/** Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary (spec/sharedContext.md) */
+//@ pure
+export function lawActiveItemsAtMostTwenty(shownMatches: number): boolean {
+  //@ ensures \result === true
+  return contextActiveItemCount(shownMatches) >= 0 && contextActiveItemCount(shownMatches) <= contextActiveItemLimit;
+}
+
+/** Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary (spec/sharedContext.md) */
+//@ pure
+export function lawIneligibleAgeGetsNoActiveItem(liveMatch: boolean, summarySafe: boolean): boolean {
+  //@ ensures \result === true
+  return !contextMatchItemShown(liveMatch, false, summarySafe);
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
+export function openTurnAnswer(contextAvailable: boolean): OpenTurnAnswer {
+  return contextAvailable ? "AnswerOpen" : "AnswerUnavailable";
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
+export function lawUnavailableContextStillAnswers(contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openTurnAnswer(contextAvailable) === "AnswerUnavailable" === !contextAvailable;
 }
 
 /** Do the rules allow this event in this state? */

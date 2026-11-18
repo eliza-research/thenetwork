@@ -212,7 +212,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(directs.length).toBe(answered + 1);
   }, T);
 
-  test("one person in two apps: the link notice names no app, SHARE stores a grant, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
+  // spec/baseProfileShare.md, "Story: Reuse my approved basics in a second app"
+  test("one person in two apps: the link notice names no app, SHARE grants and reuses only shareable interests, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
@@ -226,9 +227,24 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(slopOut.map(x => x.type).sort()).toEqual(["info", "onboarding"]);
     expect(slopOut.find(x => x.type === "info").body).toBe(copyFor(brandOf(APPS.slop)).linkNotice);
     for (const x of slopOut) for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(x.body.toLowerCase()).not.toContain(word.toLowerCase());
-    // SHARE answers the notice (the last app that wrote to them is slop): a grant, nothing copied.
+    // The friends member's facts: one confirmed interest is shareable; a private, a sensitive, an unconfirmed
+    // interest, one bound to an opportunity and a plain fact are not.
+    const fact = (id: string, kind: string, value: string, scope: string, status: string, sensitive: string | null) =>
+      sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, sensitive, valid_from)
+        values (${FR}, ${`${fr.id}:${id}`}, ${fr.id}, ${kind}, ${value}, ${sql.array(["climbing"], "TEXT")}, ${scope}, 'said', ${status}, ${sensitive}, ${new Date(clock.now() - HOUR)})`;
+    await fact("i1", "interest", "rock climbing", "matchable", "confirmed", null);
+    await fact("i2", "interest", "private poker nights", "agent_private", "confirmed", null);
+    await fact("i3", "interest", "support group", "matchable", "confirmed", "health");
+    await fact("i4", "interest", "salsa", "matchable", "proposed", null);
+    await fact("i5", "interest", "a one-off picnic", "opportunity_specific", "confirmed", null);
+    await fact("f1", "fact", "works nights", "shareable", "confirmed", null);
+    // SHARE answers the notice (the last app that wrote to them is slop): a grant, then slop reads it.
     expect(await text(s, clock, p, "SHARE")).toBe("handled");
     expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["first_name", "city", "interests"] });
+    expect((await sql`select kind, value, privacy_scope, source, status from network.facets where app_id = 'slop' and member_id = ${sl.id} and source = 'share_grant'`).map((r: any) => ({ ...r })))
+      .toEqual([{ kind: "interest", value: "rock climbing", privacy_scope: "matchable", source: "share_grant", status: "confirmed" }]);
+    // The joined app keeps the first name and city it was told.
+    expect((await sql`select name from network.members where app_id = 'slop' and id = ${sl.id}`)[0]).toEqual({ name: "Sam" });
 
     // STOP on the friends app's own line with PLATFORM_STOP_SCOPE=app: that app only.
     const { s: own } = service(clock, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } });

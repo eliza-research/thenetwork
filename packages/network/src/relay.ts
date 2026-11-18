@@ -25,6 +25,7 @@
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
 import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
+import { relayTarget, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
@@ -78,6 +79,8 @@ export interface RelayHost {
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
+  /** The network's review window: a held item expires unsent this long after it was held. */
+  reviewWindowMs: number;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
 }
@@ -90,9 +93,15 @@ export interface RelayHeld {
   /** Set on a listing (ConsentNetwork.relayHeld) when the sender's age is now in doubt: the text is withheld. */
   textHidden?: "minor";
   photoIds?: string[];
-  status: "held" | "released" | "rejected";
+  status: "held" | "released" | "rejected" | "expired";
   decidedBy?: string; decidedAt?: number;
 }
+/** A held item as staff and the alerts see it: with its review deadline (exclusive), the hold time plus the network's review window. */
+export type RelayHeldItem = RelayHeld & { deadline: number };
+/** A held item that expired unsent, and the notice its sender gets. */
+export interface RelayHoldExpired { itemId: string; matchId: string; from: MemberId; notice: string }
+/** The target of a member's relay request (spec/relayDecision.md) and, when there is one, its match. */
+export interface RelayTargetResult { choice: RelayTargetChoice; match?: RelayMatch }
 /** One relay thread per match: the delivered wording only (the engine's RelayThreadMessage). */
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 /** A member asked to swap numbers; waiting for the other member's own request. */
@@ -117,7 +126,7 @@ export function withdrawsSwap(text: string): boolean {
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
 
-/** A member's relay request (POST /internal/relay). The recipient is always the member's current match. */
+/** A member's relay request (POST /internal/relay). The recipient is the named live match, or the member's only one. */
 export interface RelayAsk {
   /** Idempotent item id: signed action-derived for text, durable selected-item id for a photo. */
   itemId: string;
@@ -132,7 +141,8 @@ export interface RelayAsk {
 }
 /** The answer to the member. `reason` is safe to say to the sender as it is. */
 export interface RelayOutcome {
-  itemId: string; decision: "sent" | "held" | "refused"; reason: string; replayed?: boolean;
+  /** "unnamed": the member has more than one live match and did not name one; nothing was decided or sent. */
+  itemId: string; decision: "sent" | "held" | "refused" | "unnamed"; reason: string; replayed?: boolean;
   /** True only when `rendered` went to the send path now ("sent"); false when it waits for quiet hours or was not sent. */
   delivered?: boolean;
 }
@@ -154,6 +164,8 @@ export interface RelayCallOptions {
 export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean }
 
 const NOTICE = {
+  whichMatch: "You have more than one match. Tell me which one this is for and I'll pass it on.",
+  holdExpired: "I couldn't check your last message to your match in time, so I didn't pass it on. You can send it again.",
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
   swapAlready: "I already asked them; I'll share your number if they want to swap too.",
@@ -178,17 +190,27 @@ export class RelayDesk {
     this.s = { threads: x.threads ?? [], log: x.log ?? [], held: x.held ?? [], swaps: x.swaps ?? [] };
   }
 
-  /** The member's open match (newest first), if any; `matchId` narrows it to that one match. */
-  matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
-    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
-      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
+  /** The member's live matches (two people, both said yes, not closed), newest first. */
+  liveMatches(from: MemberId): RelayMatch[] {
+    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)))
+      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1));
+  }
+
+  /** The match a request goes to: the named live match, or the only one; never a guess between two. */
+  matchFor(from: MemberId, matchId?: string): RelayTargetResult {
+    const live = this.liveMatches(from), named = matchId === undefined ? undefined : live.find(m => m.id === matchId);
+    // spec/relayDecision.md, "A relay names its match when the member has more than one live match"
+    const choice = relayTarget(live.length, matchId !== undefined, named !== undefined);
+    const match = choice === "RelayToNamedMatch" ? named : choice === "RelayToOnlyMatch" ? live[0] : undefined;
+    return match ? { choice, match } : { choice };
   }
 
   /** One member request: decide through the engine, deliver `rendered`, keep the log. Idempotent on `itemId`. */
   async request(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
-    const match = this.matchFor(ask.from, ask.matchId);
+    const { choice, match } = this.matchFor(ask.from, ask.matchId);
+    if (choice === "RelayAskWhichMatch") return { itemId: ask.itemId, decision: "unnamed", reason: NOTICE.whichMatch };
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
     const now = this.host.now();
@@ -349,7 +371,8 @@ export class RelayDesk {
 
   // ------------------------------------------------------------------ staff
   /** Held items, oldest first. Never a minor's words; never a score. */
-  held(): RelayHeld[] { return this.s.held.filter(h => h.status === "held").map(h => ({ ...h, reasons: [...h.reasons] })); }
+  held(): RelayHeldItem[] { return this.s.held.filter(h => h.status === "held").map(h => ({ ...h, reasons: [...h.reasons], deadline: this.deadline(h) })); }
+  private deadline(h: RelayHeld): number { return h.at + this.host.reviewWindowMs; }
 
   /**
    * Staff release a held item. The engine checks it again: anything that would now block (parties,
@@ -397,6 +420,25 @@ export class RelayDesk {
     h.decidedAt = this.host.now();
     if (!result.retainsText) delete h.text;
     return result;
+  }
+
+  /** Held items at their review deadline expire unsent: the text is dropped and the sender gets a notice. */
+  expireHolds(now: number): RelayHoldExpired[] {
+    const out: RelayHoldExpired[] = [];
+    for (const h of this.s.held) {
+      if (h.status !== "held") continue;
+      // spec/relayLifecycle.md, "A held item that staff do not decide by its review deadline expires unsent"
+      const result = stepRelay({ ...storedHold, retainsText: !!h.text }, { type: "expireHold", now, deadline: this.deadline(h) });
+      if (result.phase !== "Expired") continue;
+      h.status = "expired";
+      h.decidedBy = "system:expired";
+      h.decidedAt = now;
+      if (!result.retainsText) delete h.text;
+      const r = this.s.log.find(x => x.itemId === h.itemId);
+      if (r) this.log({ ...r, reasons: [...new Set([...r.reasons, "review:expired"])].sort() });
+      out.push({ itemId: h.itemId, matchId: h.matchId, from: h.from, notice: NOTICE.holdExpired });
+    }
+    return out;
   }
 
   /** The relay log (no bodies, no contact values). */

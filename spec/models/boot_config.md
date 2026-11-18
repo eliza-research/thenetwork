@@ -217,6 +217,10 @@ module boot_config {
       not(d and c.migrateOnBoot and c.mig == "unset"),
       not(d and c.mig == "same"),
       c.proxyLen == 0 or c.proxyLen >= MIN_SECRET_LENGTH,
+      // spec/bootPolicy.md backendBoot (audit OPS29, PER33): deployed, the turn secret and the staff tokens are
+      // required at 32+; the Turnstile site key and the catalog ingest login are required too (folded into
+      // `turnstile` and not modeled separately).
+      not(d) or (c.turnLen >= MIN_SECRET_LENGTH and c.staffTokenLen >= MIN_SECRET_LENGTH),
     }
 
   // The review option each entry passes to the NetworkService constructor (main.ts:51-55,

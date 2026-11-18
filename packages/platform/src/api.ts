@@ -16,6 +16,8 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
+import { signInAfterMove } from "../../core/src/generated/phoneChange.ts";
+import { otpOnlyAppAllowed, otpOnlyPolicyAccepted, otpStartNeedsBrowserCheck } from "../../core/src/generated/otpLimits.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
 import { cloudIdentityTimesValid, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
@@ -37,6 +39,7 @@ import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
 import type { PhotoRelayService } from "./photo-relay.ts";
+import { PHOTO_UPLOAD_PATH, type PhotoUploadLinks } from "./photo-upload-link.ts";
 
 type CloudStatus = "valid" | "invalid" | "unavailable";
 const cloudResponse: Record<CloudStatus, CloudResponse> = { valid: "CloudAccepted", invalid: "CloudDenied", unavailable: "CloudUnavailable" };
@@ -89,6 +92,8 @@ export interface PublicApiOptions extends AccountHooks {
   otpLimits?: Partial<OtpLimits>;
   /** Private member photos (photos.ts): /api/photos/*. Without it those paths answer 404. */
   photos?: PhotoService;
+  /** Single-use photo upload links (photo-upload-link.ts): POST /api/photos/upload, bound by the link, never by a session. */
+  photoLinks?: PhotoUploadLinks;
   /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
   photoRelay?: PhotoRelayService;
   /** Private home-help address for the current approved revision. Use the verified app session only. */
@@ -165,13 +170,12 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const sessionSecret = o.sessionSecret ?? env.PLATFORM_SESSION_SECRET ?? (dev ? DEV_SESSION_SECRET : hashKey);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
   if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
-  // Explicit deployment policy: genuine phone-code proof without a browser challenge.
-  // Unset preserves Turnstile for every app; callers cannot select this policy.
+  // spec/otpLimits.md, "A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies"
   const phoneOtpApps = env.PLATFORM_PHONE_OTP_ONLY_APPS ? env.PLATFORM_PHONE_OTP_ONLY_APPS.split(",").map(app => app.trim()) : [];
-  if (phoneOtpApps.some(app => !["ntwrk", "slop", "friends"].includes(app)) || new Set(phoneOtpApps).size !== phoneOtpApps.length)
-    throw new Error("PLATFORM_PHONE_OTP_ONLY_APPS must list distinct ntwrk, slop or friends app IDs");
-  if (phoneOtpApps.length && o.otp.name !== "blooio") throw new Error("phone-code-only OTP requires Blooio");
   const phoneOtpOnlyApps = new Set(phoneOtpApps);
+  const everyNamedAppAllowed = phoneOtpApps.every(otpOnlyAppAllowed), namesDistinct = phoneOtpOnlyApps.size === phoneOtpApps.length;
+  if (!otpOnlyPolicyAccepted(everyNamedAppAllowed, namesDistinct, phoneOtpApps.length > 0, o.otp.name === "blooio"))
+    throw new Error(everyNamedAppAllowed && namesDistinct ? "phone-code-only OTP requires Blooio" : "PLATFORM_PHONE_OTP_ONLY_APPS must list distinct ntwrk, slop or friends app IDs");
   const proxySecret = o.proxySecret ?? env.PLATFORM_PROXY_SECRET ?? undefined;
   const now = o.now ?? Date.now;
   const localOrigin = (raw: string | undefined) => {
@@ -277,7 +281,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
   // this keeps the cookies safe if the gate is ever widened.
   const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
-  const cloudReturnPath = (path: unknown): path is string => path === "/join" || oauthReturnPath(path);
+  // "/phone" is the one-purpose number-change page (spec/phoneChange.md): it signs in on the current number there.
+  const cloudReturnPath = (path: unknown): path is string => path === "/join" || path === "/phone" || oauthReturnPath(path);
   const startCloudHandoff = async (app: AppId, returnPath: string, prefill?: ReturnType<typeof readJoinPrefill>) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
@@ -425,6 +430,15 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       });
       if (response) { if (authenticated) rotatedCookies(response, authenticated); return response; }
     }
+    if (o.photoLinks && photoPath === PHOTO_UPLOAD_PATH && post) {
+      // The link page on the app's own site posts a multipart batch: a cross-site request is refused.
+      if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
+      const origin = req.headers.get("origin");
+      let originHost: string | undefined;
+      try { originHost = origin ? new URL(origin).host : undefined; } catch { /* not a URL */ }
+      if (origin && appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
+      return o.photoLinks.redeem(req, appId);
+    }
     if (o.photos && (photoPath === "/api/photos" || photoPath.startsWith("/api/photos/"))) {
       // The upload is raw image bytes, not JSON: the same cross-site checks, and an image or JSON type only.
       if (post) {
@@ -479,9 +493,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/auth/cloud/start": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
-          : null;
+          : b.returnPath === "/phone" ? "/phone" : null;
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
-        const handoff=await startCloudHandoff(appId,returnPath,appId === "peon" ? readJoinPrefill(b.prefill) : undefined);
+        const handoff=await startCloudHandoff(appId,returnPath,appId === "peon" && returnPath === "/join" ? readJoinPrefill(b.prefill) : undefined);
         if(!handoff)return json(404,{ok:false,error:"not_found"});
         return json(200,{url:handoff.url,receipt:handoff.receipt},{"set-cookie":handoff.setCookie});
       }
@@ -560,7 +574,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           if (!e164) return json(400, { ok: false, error: "invalid_phone" });
-          if (!phoneOtpOnlyApps.has(appId) && o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
+          if (otpStartNeedsBrowserCheck(phoneOtpOnlyApps.has(appId), !!o.turnstile) && !(await o.turnstile!.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
           // A banned number gets the same answer as any other, and no code is sent (PRD 40.3; the MCP
@@ -734,18 +748,22 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return withSession(async who => { await accounts.stop(app, who); return json(200, { ok: true }); });
 
       case "POST /api/me/phone/start": {
-        // A member changes their own number (PRD F25), step 1: a fresh login on the current number, then a
-        // code to the new one (the OTP limits apply). The answer is the same whether or not the new number is
-        // known: that is checked after the code proves the person holds it.
-        if (cloud) return json(409, { ok: false, error: "cloud_auth_required" });
+        // A member changes their own number (PRD F25), step 1: a fresh sign-in on the current number (a platform
+        // code, or a Cloud phone proof on a Cloud sign-in site), then a platform code to the new one (the OTP
+        // limits apply). The answer is the same whether or not the new number is known: that is checked after
+        // the code proves the person holds it.
+        // spec/phoneChange.md, "The request uses the existing account"
         const t0 = performance.now();
         try {
           return await withSession(async (who, a) => {
             const e164 = normalizePhone(b.phone);
             if (!e164) return json(400, { ok: false, error: "invalid_phone" });
-            if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_CHANGE_MESSAGE });
-            const r = await accounts.startNumberChange(app, who, e164, async () => (await otp.start(app, e164, ip)).ok);
-            if (!r.ok) return json(r.error === "rate_limited" ? 429 : r.error === "review" ? 403 : 400, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
+            const r = await accounts.startNumberChange(app, who, e164, sessions.fresh(a.session), async () => (await otp.start(app, e164, ip)).ok);
+            if (!r.ok) {
+              const status = r.error === "rate_limited" ? 429 : r.error === "review" || r.error === "reauth" ? 403 : 400;
+              const message = r.error === "review" ? REVIEW_MESSAGE : r.error === "reauth" ? REAUTH_CHANGE_MESSAGE : undefined;
+              return json(status, { ok: false, error: r.error, ...(message ? { message } : {}) });
+            }
             return json(200, { ok: true });
           });
         } finally {
@@ -754,9 +772,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
 
       case "POST /api/me/phone/confirm": {
-        // Step 2: the code from the new number. The person moves to it; every session of the old number
-        // ends, and this browser gets a new session on the new number.
-        if (cloud) return json(409, { ok: false, error: "cloud_auth_required" });
+        // Step 2: the code from the new number. The person moves to it and every session of the old number
+        // ends. An OTP site gives this browser a session on the new number; a Cloud sign-in site ends its
+        // Cloud identity, and the person signs in through Cloud with the new number.
         const t0 = performance.now();
         try {
           return await withSession(async who => {
@@ -768,6 +786,12 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
               return json(status, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             }
             log(`[platform] number change confirmed on ${appId}`);
+            // spec/phoneChange.md, "After a move the browser signs in on the new number in its own sign-in mode"
+            if (signInAfterMove(!!cloud) === "CloudSignInAgain") {
+              const response = json(200, { ok: true, phoneMasked: maskPhone(r.e164) }, { "set-cookie": cookie(appId, "", 0) });
+              response.headers.append("set-cookie", identityCookie(appId, "", 0));
+              return response;
+            }
             const { token } = await sessions.create(appId, r.e164, r.personId);
             return json(200, { ok: true, phoneMasked: maskPhone(r.e164) }, { "set-cookie": cookie(appId, token, SESSION_TTL_MS / 1000) });
           });

@@ -10,13 +10,15 @@ export type PhoneChangePhase = "Beginning" | "CheckingStartOwner" | "CheckingCon
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone" | "MoveBanned" | "MoveRequestStale";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
-export type PhoneChangeFailure = "NoFailure" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
+export type PhoneChangeFailure = "NoFailure" | "StaleSignIn" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export interface PhoneChange { phase: PhoneChangePhase; failure: PhoneChangeFailure; codeVerified: boolean; moveAllowed: boolean }
+/** Story: Keep my account when my phone changes / After a move the browser signs in on the new number in its own sign-in mode (spec/phoneChange.md) */
+export type PhoneChangeSignIn = "NewNumberSession" | "CloudSignInAgain";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "requestChallenge"; sameNumber: boolean }
+  | { type: "requestChallenge"; freshSignIn: boolean; sameNumber: boolean }
   | { type: "beginConfirmation" }
   | { type: "checkCurrentPhone"; ownership: CurrentPhone }
   | { type: "checkStartPolicy"; oldNumberAllowed: boolean }
@@ -49,9 +51,15 @@ export function canRequestChallenge(change: PhoneChange): boolean {
 
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
-export function requestChallenge(change: PhoneChange, sameNumber: boolean): PhoneChange {
+export function requestChallenge(change: PhoneChange, freshSignIn: boolean, sameNumber: boolean): PhoneChange {
   //@ ensures (inv(change) && canRequestChallenge(change)) ==> alwaysMoveRequiresProof(\result)
-  return sameNumber ? ({ ...change, phase: "Refused", failure: "SameNumber" } as PhoneChange) : ({ ...change, phase: "CheckingStartOwner" } as PhoneChange);
+  return !freshSignIn ? ({ ...change, phase: "Refused", failure: "StaleSignIn" } as PhoneChange) : (sameNumber ? ({ ...change, phase: "Refused", failure: "SameNumber" } as PhoneChange) : ({ ...change, phase: "CheckingStartOwner" } as PhoneChange));
+}
+
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
+//@ pure
+export function sometimesRefusesStaleSignIn(change: PhoneChange): boolean {
+  return change.failure === "StaleSignIn";
 }
 
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
@@ -91,6 +99,13 @@ export function canCheckStartPolicy(change: PhoneChange): boolean {
 export function checkStartPolicy(change: PhoneChange, oldNumberAllowed: boolean): PhoneChange {
   //@ ensures (inv(change) && canCheckStartPolicy(change)) ==> alwaysMoveRequiresProof(\result)
   return oldNumberAllowed ? ({ ...change, phase: "AwaitingRateLimit" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange);
+}
+
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
+//@ pure
+export function lawStaleSignInCannotStart(change: PhoneChange, sameNumber: boolean): boolean {
+  //@ ensures \result === true
+  return requestChallenge(change, false, sameNumber).phase === "Refused" && requestChallenge(change, false, sameNumber).failure === "StaleSignIn";
 }
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
@@ -274,6 +289,19 @@ export function sometimesRefusesTakenNumber(change: PhoneChange): boolean {
   return change.failure === "NumberInUse";
 }
 
+/** Story: Keep my account when my phone changes / After a move the browser signs in on the new number in its own sign-in mode (spec/phoneChange.md) */
+//@ pure
+export function signInAfterMove(cloudSignIn: boolean): PhoneChangeSignIn {
+  return cloudSignIn ? "CloudSignInAgain" : "NewNumberSession";
+}
+
+/** Story: Keep my account when my phone changes / After a move the browser signs in on the new number in its own sign-in mode (spec/phoneChange.md) */
+//@ pure
+export function lawCloudMoveNeedsCloudProof(cloudSignIn: boolean): boolean {
+  //@ ensures \result === true
+  return cloudSignIn === (signInAfterMove(cloudSignIn) === "CloudSignInAgain");
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PhoneChange, event: Event): boolean {
@@ -296,7 +324,7 @@ export function enabled(current: PhoneChange, event: Event): boolean {
 export function step(current: PhoneChange, event: Event): PhoneChange {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "requestChallenge") return canRequestChallenge(current) ? requestChallenge(current, event.sameNumber) : current;
+  if (event.type === "requestChallenge") return canRequestChallenge(current) ? requestChallenge(current, event.freshSignIn, event.sameNumber) : current;
   if (event.type === "beginConfirmation") return canBeginConfirmation(current) ? beginConfirmation(current) : current;
   if (event.type === "checkCurrentPhone") return canCheckCurrentPhone(current) ? checkCurrentPhone(current, event.ownership) : current;
   if (event.type === "checkStartPolicy") return canCheckStartPolicy(current) ? checkStartPolicy(current, event.oldNumberAllowed) : current;
@@ -324,7 +352,7 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "requestChallenge" && typeof raw.sameNumber === "boolean") return { type: "requestChallenge", sameNumber: raw.sameNumber };
+  if (raw.type === "requestChallenge" && typeof raw.freshSignIn === "boolean" && typeof raw.sameNumber === "boolean") return { type: "requestChallenge", freshSignIn: raw.freshSignIn, sameNumber: raw.sameNumber };
   if (raw.type === "beginConfirmation") return { type: "beginConfirmation" };
   if (raw.type === "checkCurrentPhone" && (raw.ownership === "OwnedPhone" || raw.ownership === "UnavailablePhone" || raw.ownership === "WrongPerson")) return { type: "checkCurrentPhone", ownership: raw.ownership };
   if (raw.type === "checkStartPolicy" && typeof raw.oldNumberAllowed === "boolean") return { type: "checkStartPolicy", oldNumberAllowed: raw.oldNumberAllowed };
@@ -352,7 +380,7 @@ export function parseState(x: unknown): PhoneChange | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Beginning" || raw.phase === "CheckingStartOwner" || raw.phase === "CheckingConfirmOwner" || raw.phase === "CheckingStartPolicy" || raw.phase === "AwaitingRateLimit" || raw.phase === "AwaitingCodeSend" || raw.phase === "AwaitingPendingWrite" || raw.phase === "PendingRecorded" || raw.phase === "AwaitingPendingRead" || raw.phase === "AwaitingVerification" || raw.phase === "AwaitingMovePolicy" || raw.phase === "AwaitingMove" || raw.phase === "Moved" || raw.phase === "Refused") && (raw.failure === "NoFailure" || raw.failure === "SameNumber" || raw.failure === "ReviewNeeded" || raw.failure === "NoPerson" || raw.failure === "RateLimited" || raw.failure === "NoPendingChange" || raw.failure === "InvalidCode" || raw.failure === "NumberInUse") && typeof raw.codeVerified === "boolean" && typeof raw.moveAllowed === "boolean" && Object.keys(raw).length === 4)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Beginning" || raw.phase === "CheckingStartOwner" || raw.phase === "CheckingConfirmOwner" || raw.phase === "CheckingStartPolicy" || raw.phase === "AwaitingRateLimit" || raw.phase === "AwaitingCodeSend" || raw.phase === "AwaitingPendingWrite" || raw.phase === "PendingRecorded" || raw.phase === "AwaitingPendingRead" || raw.phase === "AwaitingVerification" || raw.phase === "AwaitingMovePolicy" || raw.phase === "AwaitingMove" || raw.phase === "Moved" || raw.phase === "Refused") && (raw.failure === "NoFailure" || raw.failure === "StaleSignIn" || raw.failure === "SameNumber" || raw.failure === "ReviewNeeded" || raw.failure === "NoPerson" || raw.failure === "RateLimited" || raw.failure === "NoPendingChange" || raw.failure === "InvalidCode" || raw.failure === "NumberInUse") && typeof raw.codeVerified === "boolean" && typeof raw.moveAllowed === "boolean" && Object.keys(raw).length === 4)) return undefined;
   const parsed: PhoneChange = ({ phase: raw.phase, failure: raw.failure, codeVerified: raw.codeVerified, moveAllowed: raw.moveAllowed });
   return inv(parsed) ? parsed : undefined;
 }

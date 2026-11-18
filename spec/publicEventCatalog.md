@@ -106,3 +106,26 @@ The contact check may allow the current listing's exact official link once, as t
 pure def publicBookedEventLinkAllowed(booked: bool, consenting: bool, exactFinalLine: bool): bool =
   booked and consenting and exactFinalLine
 ```
+
+## Story: Keep the deployed catalog current
+
+> As an operator, I want the deployed backend to refresh the public catalog on its own, so event suggestions do not go stale after the first import.
+
+### The backend scans once a day, at most one process at a time, and waits after a failed attempt
+
+Each scheduled round of the deployed backend starts a scan when no scan has succeeded yet, or the last successful scan is at least one day old, and this process has not attempted a scan in the last hour. The shell holds a database session lock for the whole scan and skips the round when another process holds it, so two processes never scan at the same time. A failed scan keeps the last publication and its timestamp; the next attempt waits for the retry interval. The refresh interval is shorter than the freshness limit, so one missed day does not expire the catalog. Changed: this rule is new; before it the catalog was refreshed only by hand and went stale within two days of the last import.
+
+```quint
+pure val publicEventRefreshMs = 86400000
+pure val publicEventRetryMs = 3600000
+
+pure def publicEventRefreshDue(published: bool, checkedAt: int, attempted: bool, attemptedAt: int, asOf: int): bool =
+  (not(published) or asOf - checkedAt >= publicEventRefreshMs) and (not(attempted) or asOf - attemptedAt >= publicEventRetryMs)
+
+pure def lawRefreshDueBeforeCatalogExpires(checkedAt: int): bool =
+  publicEventRefreshDue(true, checkedAt, false, 0, checkedAt + publicEventRefreshMs) and
+    publicEventCatalogFresh(checkedAt, checkedAt + publicEventRefreshMs)
+
+pure def lawRecentAttemptWaits(published: bool, checkedAt: int, attemptedAt: int): bool =
+  not(publicEventRefreshDue(published, checkedAt, true, attemptedAt, attemptedAt + publicEventRetryMs - 1))
+```

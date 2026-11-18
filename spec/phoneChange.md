@@ -1,8 +1,8 @@
 # Change the phone on my account
 
-A member uses their current app session to request a code for a new number and then confirm the move. The API requires a fresh login to request a code. The OTP service verifies the new number. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record.
+A member whose number changed tells their own agent. The agent sends the app's one-purpose phone-change link, `https://<domain>/phone`, and never asks for the new number or a code. In the browser, the person signs in on the current number: with a platform code on an OTP site, or with a Cloud phone proof on a Cloud sign-in site. That fresh sign-in is the confirmation from the old number of [Story F25](product/stories.md#story-f25--keep-my-account-when-my-number-changes). The person then enters the new number and the platform code that the OTP service sends to it. The OTP service verifies the new number in both sign-in modes, so the agent and Eliza Cloud never see that code. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record.
 
-The shell's store move keeps the person's member IDs and history. In the same transaction, it moves the current native connector grants bound to that person and their current same-app signup drafts. It ends active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. It ends those tokens, removes their private drafts and audits the revocation. The member can reconnect an affected assistant. The store move ends old phone sessions. The shell routes a person-bound member only through their current verified phone. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
+The shell's store move keeps the person's member IDs and history. In the same transaction, it moves the current native connector grants bound to that person and their current same-app signup drafts. It ends active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. It ends those tokens, removes their private drafts and audits the revocation. The member can reconnect an affected assistant. The store move ends old phone sessions, including Cloud sessions, ends messages still queued for the old number, and removes the old number's identity, so the old number gets no more messages. The shell routes a person-bound member only through their current verified phone. The [phone identity](models/phone_identity.md) and [identity lifecycle](models/identity_sagas.md) models keep the storage interleavings. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
 
 ## Story: Keep my account when my phone changes
 
@@ -10,13 +10,13 @@ The shell's store move keeps the person's member IDs and history. In the same tr
 
 ### The request uses the existing account
 
-A new challenge cannot target the current number. Both operations check the current phone, hold and account owner before progressing. The shell checks the account and returns its trusted result.
+A new challenge needs a fresh sign-in on the current number and cannot target the current number. The fresh sign-in is a platform code or a Cloud phone proof from the last ten minutes; both sign-in modes give the same proof of the old number. Both operations check the current phone, hold and account owner before progressing. The shell checks the account and returns its trusted result. Changed: the fresh sign-in check moved from the site route into this rule, and a Cloud phone proof now counts, because Cloud sign-in sites refused every change and left Story F25 with no entry point.
 
 ```quint
 type PhoneChangePhase = Beginning | CheckingStartOwner | CheckingConfirmOwner | CheckingStartPolicy | AwaitingRateLimit | AwaitingCodeSend |
   AwaitingPendingWrite | PendingRecorded | AwaitingPendingRead | AwaitingVerification | AwaitingMovePolicy |
   AwaitingMove | Moved | Refused
-type PhoneChangeFailure = NoFailure | SameNumber | ReviewNeeded | NoPerson | RateLimited | NoPendingChange | InvalidCode | NumberInUse
+type PhoneChangeFailure = NoFailure | StaleSignIn | SameNumber | ReviewNeeded | NoPerson | RateLimited | NoPendingChange | InvalidCode | NumberInUse
 type CurrentPhone = OwnedPhone | UnavailablePhone | WrongPerson
 type MovePolicy = MoveAllowed | MoveBlocked | NumberTaken
 type MoveOutcome = MoveApplied | MoveNumberTaken | MoveMissingPhone | MoveBanned | MoveRequestStale
@@ -26,9 +26,15 @@ pure val initial: PhoneChange = { phase: Beginning, failure: NoFailure, codeVeri
 
 pure def canRequestChallenge(change: PhoneChange): bool = change.phase == Beginning
 
-pure def requestChallenge(change: PhoneChange, sameNumber: bool): PhoneChange =
-  if (sameNumber) { ...change, phase: Refused, failure: SameNumber }
+pure def requestChallenge(change: PhoneChange, freshSignIn: bool, sameNumber: bool): PhoneChange =
+  if (not(freshSignIn)) { ...change, phase: Refused, failure: StaleSignIn }
+  else if (sameNumber) { ...change, phase: Refused, failure: SameNumber }
   else { ...change, phase: CheckingStartOwner }
+
+pure def lawStaleSignInCannotStart(change: PhoneChange, sameNumber: bool): bool =
+  requestChallenge(change, false, sameNumber).phase == Refused and requestChallenge(change, false, sameNumber).failure == StaleSignIn
+
+pure def sometimesRefusesStaleSignIn(change: PhoneChange): bool = change.failure == StaleSignIn
 
 pure def canBeginConfirmation(change: PhoneChange): bool = change.phase == Beginning
 
@@ -143,4 +149,18 @@ pure def sometimesPendingRecorded(change: PhoneChange): bool = change.phase == P
 pure def sometimesMoved(change: PhoneChange): bool = change.phase == Moved
 pure def sometimesRefusesCode(change: PhoneChange): bool = change.failure == InvalidCode
 pure def sometimesRefusesTakenNumber(change: PhoneChange): bool = change.failure == NumberInUse
+```
+
+### After a move the browser signs in on the new number in its own sign-in mode
+
+On an OTP site, the browser that confirmed the move gets a new session on the new number, because the platform code just proved that number. On a Cloud sign-in site, the browser gets no platform session and its Cloud identity ends: the Cloud phone proof names the old number, and a site session there must carry a Cloud proof of its own number. The person signs in again through Cloud with the new number and reaches the same person. Changed: this rule is new, because Cloud sign-in sites now accept a change and must not keep a session whose Cloud proof names the released number.
+
+```quint
+type PhoneChangeSignIn = NewNumberSession | CloudSignInAgain
+
+pure def signInAfterMove(cloudSignIn: bool): PhoneChangeSignIn =
+  if (cloudSignIn) CloudSignInAgain else NewNumberSession
+
+pure def lawCloudMoveNeedsCloudProof(cloudSignIn: bool): bool =
+  cloudSignIn iff signInAfterMove(cloudSignIn) == CloudSignInAgain
 ```

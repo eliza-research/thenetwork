@@ -354,7 +354,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 A named app or domain selects that app. A no-keyword text join starts at The Network and asks what the person seeks. Keep the invite boundary on app-bound Network signup. Check consent version and approved profile before submitting, then read back the app and the profile. Join mode, matching activation and send approval are separate states. A different app cannot see that the person already has another membership.
 
-Models: [generated site enrollment](../siteEnrollment.md), [agent-assisted signup draft](../mcpSignupDraft.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
+Models: [generated site enrollment](../siteEnrollment.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
 
 ## Story F31 — Add my adult dating photos privately
 
@@ -588,7 +588,7 @@ Acceptance:
 - The site's signup flow checks the enrollment fields, home region and current consent. The person confirms those details match the approved draft and separately authorizes the connector. After the app-bound grant becomes active, the agent submits the approved profile once through MCP.
 - The agent reports "saved" only after the service confirms the approved profile submission and the same connector confirms an eligible membership. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
 
-See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.md) and [signup conversation](../agentSignup.md).
+See the [browser phone confirmation and connector handoff](../oauthBrowserAuthorization.md) and [signup conversation](../agentSignup.md).
 
 ## Story F46 — Use my app's connector from my agent
 

@@ -3,7 +3,7 @@
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
 import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
+import { canMatchInApp, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
@@ -70,10 +70,6 @@ export interface PlatformHooks {
   grantOwner(phoneKey: string): Promise<{ personId: string | null; held: boolean }>;
   /** True when the grant's phone or person is banned now. Read at every use of a connector credential. */
   grantIsBanned(phoneKey: string, personId: string | null): Promise<boolean>;
-  /** Internal canonical phone-age guard. No age is exposed to the agent. Missing support disables drafts. */
-  withSignupAgePolicy?<T>(phoneKey: string, app: McpAppId, fn: (allowed: boolean) => Promise<T>): Promise<T>;
-  /** Wire the one temporary-draft cleanup consumer to canonical age recording, including null-person phones. */
-  setSignupAgeCleanup?(fn: (phoneKey: string, app: McpAppId) => Promise<void>): void;
   /** The person's own state in one app. */
   status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
   /** Fields the active member saved in this app. The connector applies its output gate before disclosure. */
@@ -151,13 +147,6 @@ function cookieValue(header: string | null, name: string): string | undefined {
  * accounts: api.accounts, sessions: api.sessions, app: id => apps[id] }).
  */
 export function platformHooks(p: PlatformParts): PlatformHooks {
-  let draftCleanup: ((phoneKey: string, app: McpAppId) => Promise<void>) | undefined;
-  const cleanAge = async (key: string, age: number) => {
-    for (const id of ["ntwrk", "friends"] as const) {
-      const app = p.app(id);
-      if (app && !canJoinApp(age, app)) await draftCleanup?.(key, id);
-    }
-  };
   const cookieName = p.cookieName ?? (() => "__Host-sid");
   const siteCookie = (id: McpAppId, token: string) =>
     `${cookieName(id)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${p.sessionMaxAge ?? 30 * 24 * 3600}${p.secureCookie === false ? "" : "; Secure"}`;
@@ -167,16 +156,6 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     cloudGrantAuthority: p.cloudGrantAuthority,
     validateCloudGrant: p.validateCloudGrant,
     normalizePhone,
-    setSignupAgeCleanup(fn) { draftCleanup = fn; p.store.setAgeFloorCleanup(cleanAge); },
-    withSignupAgePolicy(key, id, fn) {
-      return p.store.withPhoneAgeGuard(key, async () => {
-        const owner = await p.accounts.byPhoneHash(key);
-        const age = lowestAge(await p.store.ageFloor(key), owner?.person.lowestAge);
-        const app = p.app(id);
-        if (age !== undefined) await cleanAge(key, age);
-        return fn(!!app && (age === undefined || canJoinApp(age, app)));
-      });
-    },
     async startOtp(id, e164, ip) {
       if(p.cloudAuthorityRequired?.(id))return {ok:false,error:"unavailable"};
       const app = p.app(id);

@@ -101,6 +101,55 @@ pure def lawAtomicMemberReplyNeedsExactKind(expected: str, actual: str, count: i
   atomicMemberReplyMatches(expected, actual, count, directReply) implies (expected == actual and count == 1 and directReply)
 ```
 
+### A stored ordinary reply goes out only while the number stays admitted
+
+Before the service answers a handled turn, the first time or on a replay, it checks the turn's app again. If the turn holds a reply that is not a compliance text and the number is now opted out of that app, held, or banned, the service refuses the answer as a final `turn_context_changed`. A compliance confirmation and a turn without an ordinary reply still replay. Changed on 2026-11-17 (audit SHA36): before, a replay after a later STOP or leave returned the stored ordinary replies; the turn consent model refuses that.
+
+```quint
+pure def storedReplyAdmitted(ordinaryReply: bool, optedOut: bool, held: bool, banned: bool): bool =
+  not(ordinaryReply) or not(optedOut or held or banned)
+
+pure def lawOptedOutNumberGetsNoOrdinaryReply(held: bool, banned: bool): bool =
+  not(storedReplyAdmitted(true, true, held, banned))
+
+pure def lawComplianceAlwaysReplays(optedOut: bool, held: bool, banned: bool): bool =
+  storedReplyAdmitted(false, optedOut, held, banned)
+```
+
+### A direct reply in a turn is collected only when consent allows it
+
+A fixed direct text to the sender of a signed turn is collected only if it is a compliance text or the number is not opted out of the routed app. The service drops any other direct text, as the send queue refuses it on a live line. Added on 2026-11-17 (audit SHA36): a turn after STOP must not collect an ordinary reply that the replay check then refuses with the stop hint.
+
+```quint
+pure def directReplyCollectable(compliance: bool, optedOut: bool): bool = compliance or not(optedOut)
+
+pure def lawNoDirectOrdinaryReplyAfterOptOut(compliance: bool): bool =
+  directReplyCollectable(compliance, true) implies compliance
+```
+
+### A replayed open turn answers with the current context
+
+A replay of an open turn answers open again with the member's current context, not the stored one. It does so only while the number is admitted to the app, the active membership is still the same member, and the context is available. Otherwise the replay is a final `turn_context_changed`. Changed on 2026-11-17 (audit SHA37): before, any change to the context between the first answer and the retry gave a final 409 and the member's message got no answer.
+
+```quint
+pure def openReplayAnswersCurrent(admitted: bool, sameMember: bool, contextAvailable: bool): bool =
+  admitted and sameMember and contextAvailable
+
+pure def lawOpenReplayNeedsAdmission(sameMember: bool, contextAvailable: bool): bool =
+  not(openReplayAnswersCurrent(false, sameMember, contextAvailable))
+```
+
+### Every collected reply passes the line's leak guard
+
+Every reply that a turn collects for the gateway passes the line queue's leak guard and thread check, and joins the line's thread history, whatever channel sends the runtime's other messages. A dry-run backend uses a line queue that never sends. A reply with any leak reason is not collected. Added on 2026-11-17 (audit SHA42): before, a dry-run backend skipped the guard and the history for the replies that the gateway still delivered.
+
+```quint
+pure def collectedReplyMayLeave(leakReasons: int): bool = leakReasons == 0
+
+pure def lawLeakingReplyIsNotCollected(leakReasons: int): bool =
+  leakReasons > 0 implies not(collectedReplyMayLeave(leakReasons))
+```
+
 ### A completed signed row is later scrubbed and then removed
 
 The retention job removes the completed signed row's response and identifying data before it removes the tombstone. Keep the tombstone for the configured purge window plus thirty days.

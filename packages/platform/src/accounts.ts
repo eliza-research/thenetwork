@@ -42,8 +42,9 @@ export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
 export const NUMBER_CHANGE_MS = phoneChangeLifetimeMs;
 /** Number changes a person may start in a day (each sends a code). */
 export const NUMBER_CHANGES_PER_DAY = phoneChangesPerDay;
-export type NumberChangeError = "same_number" | "review" | "no_person" | "rate_limited" | "no_pending_change" | "invalid_code" | "number_in_use";
+export type NumberChangeError = "reauth" | "same_number" | "review" | "no_person" | "rate_limited" | "no_pending_change" | "invalid_code" | "number_in_use";
 const NUMBER_CHANGE_ERRORS: Record<Exclude<PhoneChangeFailure, "NoFailure">, NumberChangeError> = {
+  StaleSignIn: "reauth",
   SameNumber: "same_number",
   ReviewNeeded: "review",
   NoPerson: "no_person",
@@ -283,14 +284,15 @@ export class Accounts {
   }
 
   /**
-   * Step 1 of a member's own number change: the caller checked that the login is fresh (a code to the
-   * current number in the last minutes: PRD F25 "confirmation from the existing number"). `sendCode`
-   * sends a code to the new number through the OTP service and its limits. The answer never says whether
-   * the new number is known or banned: that is checked at step 2, after the person proved they hold it.
+   * Step 1 of a member's own number change. `freshSignIn` says whether the caller's sign-in on the current
+   * number (a platform code or a Cloud phone proof) is fresh: the confirmation from the existing number.
+   * `sendCode` sends a code to the new number through the OTP service and its limits. The answer never says
+   * whether the new number is known or banned: that is checked at step 2, after the person proved they hold it.
    */
-  async startNumberChange(app: AppInfo, who: Who, newE164: string, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
+  // spec/phoneChange.md, "The request uses the existing account"
+  async startNumberChange(app: AppInfo, who: Who, newE164: string, freshSignIn: boolean, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
     const at = this.now();
-    const request = stepPhoneChange(phoneChangeInitial, { type: "requestChallenge", sameNumber: newE164 === who.e164 });
+    const request = stepPhoneChange(phoneChangeInitial, { type: "requestChallenge", freshSignIn, sameNumber: newE164 === who.e164 });
     if (request.phase !== "CheckingStartOwner") return numberChangeRefused(request.failure);
     const { ownership, person } = await this.currentPhoneForChange(who, at);
     const current = stepPhoneChange(request, { type: "checkCurrentPhone", ownership });

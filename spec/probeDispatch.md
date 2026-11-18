@@ -157,3 +157,37 @@ pure def lawPairClosesWithoutAlternate(remaining: int): bool =
 pure def lawGroupBelowThreeCloses(remaining: int): bool =
   (remaining < 3) implies noAlternateRoute(true, remaining) == CloseWithoutAlternate
 ```
+
+### A replacement asks again every member who agreed to the earlier arrangement
+
+A yes answers one probe about one arrangement. When an alternate replaces a participant, each member who stays and agreed after a probe goes back to the queue: their yes no longer counts, and they get a new probe in their turn. Nobody is introduced while such a member has not answered the new probe, so every current participant agreed after the last change of the roster. A prior request that the Network used without a probe stays in effect, because no probe described the other person. Changed in this revision: before, a yes carried over to the replacement, who then learned the member's first name (audit OPP18); this broke the product rule that an explicit yes applies only to the action it answered.
+
+```quint
+pure def canVoidProbeAcceptance(participant: ParticipantProbe, heardEarlierArrangement: bool): bool =
+  participant.phase == Available and heardEarlierArrangement
+pure def voidProbeAcceptance(participant: ParticipantProbe, heardEarlierArrangement: bool): ParticipantProbe =
+  { phase: Queued }
+
+pure def probeRevealAllowed(everyoneAvailable: bool, anyoneAskedAgain: bool): bool =
+  everyoneAvailable and not(anyoneAskedAgain)
+
+pure def lawNoRevealWhileAYesIsVoid(everyoneAvailable: bool): bool =
+  not(probeRevealAllowed(everyoneAvailable, true))
+```
+
+### A reviewer can read each first probe of the open revision
+
+Staff who can read the review queue can read, for one review revision, the words of the first probe that each participant would get if their turn opened at that time, and the generic text that the leak guard sends instead when the first text fails it. The Network chooses time options when the probe goes out, so the offered times can change; in a plan, a later member gets only the times that the earlier members picked. The read is refused after the revision changes or at the review deadline. Added in this revision: before, a reviewer approved the reasons and the plan details but could not read the words that members get (audit OPP20 and CRI13).
+
+```quint
+import reviewDeadline as ReviewWindow from "./reviewDeadline"
+
+pure def reviewProbePreviewCurrent(pending: bool, seenRevision: int, currentRevision: int, currentTime: int, deadline: int): bool =
+  pending and ReviewWindow::reviewRevisionCurrent(seenRevision, currentRevision) and not(ReviewWindow::reviewLate(currentTime, deadline))
+
+pure def lawProbePreviewRefusesAnOlderRevision(currentTime: int, deadline: int, revision: int): bool =
+  not(reviewProbePreviewCurrent(true, revision, revision + 1, currentTime, deadline))
+
+pure def lawProbePreviewClosesAtTheDeadline(revision: int, deadline: int): bool =
+  not(reviewProbePreviewCurrent(true, revision, revision, deadline, deadline))
+```

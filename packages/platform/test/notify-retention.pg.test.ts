@@ -159,7 +159,7 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     });
     if (!holder.ok) throw new Error(`Fixture join refused: ${holder.error}`);
     const original = { e164: oldPhone, personId: holder.membership.personId };
-    expect(await accounts.startNumberChange(app, original, movedPhone, async () => true)).toEqual({ ok: true });
+    expect(await accounts.startNumberChange(app, original, movedPhone, true, async () => true)).toEqual({ ok: true });
 
     let entered!: () => void, resume!: () => void;
     const forgetting = new Promise<void>(resolve => { entered = resolve; });

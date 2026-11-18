@@ -430,6 +430,43 @@ describe("abuse limits", () => {
     expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(429);
   });
 
+  // spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling"
+  test("people behind one assistant address keep their own MCP and token budgets", async () => {
+    const env = setup({ limits: { mcpPerIpMinute: 2, mcpPerGrantMinute: 3, tokenPerGrantMinute: 2 } });
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    await addMember(env, PHONE_B, [{ app: "peon", state: "active" }]);
+    const a = await connect(env, PEON, PHONE_A);
+    const b = await connect(env, PEON, PHONE_B);
+    const status = (token: string) => call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token });
+    for (let i = 0; i < 3; i++) expect((await status(a.token.access_token)).res.status).toBe(200);
+    expect((await status(a.token.access_token)).res.status).toBe(429);
+    for (let i = 0; i < 3; i++) expect((await status(b.token.access_token)).body!.result.structuredContent).toMatchObject({ app: "peon", status: "active" });
+    // A request without a verified token counts against the address bucket only.
+    for (let i = 0; i < 2; i++) expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(200);
+    expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(429);
+    const refresh = (c: typeof a, refreshToken: string) =>
+      tokenRequest(env, PEON, { grant_type: "refresh_token", refresh_token: refreshToken, client_id: c.client.client_id });
+    // A new minute: each grant has two token requests.
+    env.clock.t = Math.ceil(env.clock.t / 60_000) * 60_000;
+    let aRefresh = a.token.refresh_token;
+    for (let i = 0; i < 2; i++) {
+      const refreshed = await refresh(a, aRefresh);
+      expect(refreshed.res.status).toBe(200);
+      aRefresh = refreshed.body.refresh_token;
+    }
+    expect((await refresh(a, aRefresh)).res.status).toBe(429);
+    expect((await refresh(b, b.token.refresh_token)).res.status).toBe(200);
+  });
+
+  test("assistant client registrations from one address have their own hourly limit", async () => {
+    const env = setup({ limits: { registerPerIpHour: 1, registerAssistantPerIpHour: 3 } });
+    const claude = { redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] };
+    for (let i = 0; i < 3; i++) expect((await register(env, PEON, claude)).res.status).toBe(201);
+    expect((await register(env, PEON, claude)).res.status).toBe(429);
+    expect((await register(env, PEON)).res.status).toBe(201);
+    expect((await register(env, PEON)).res.status).toBe(429);
+  });
+
   test("the code page says the same for any number (no enumeration)", async () => {
     const env = setup();
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);

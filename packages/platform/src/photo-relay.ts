@@ -167,6 +167,13 @@ export class PhotoRelayService {
     if (!(await this.current(saved))) return { itemId: saved.id, state: saved.expiresAt <= this.now() ? "expired" : saved.state, expiresAt: saved.expiresAt };
     return { itemId: saved.id, state: saved.state, expiresAt: saved.expiresAt };
   }
+  /** The current notice for one of the sender's current threads, as select() renders it (no private profile facts). */
+  async noticeFor(app: AppId, senderPersonId: string, threadId: string): Promise<{ version: string; policyNotice: string; notice: string } | undefined> {
+    if (!this.enabled) return;
+    const thread = (await this.o.threads(app, senderPersonId)).find(t => t.id === threadId);
+    if (!thread || !this.o.policy!.notice.includes("{{recipient}}")) return;
+    return { version: this.o.policy!.version, policyNotice: this.o.policy!.notice, notice: this.o.policy!.notice.replaceAll("{{recipient}}", thread.label) };
+  }
   async revoke(app: AppId, personId: string, id: string): Promise<boolean> {
     return this.o.store.locked(id, async (r, save) => {
       if (!r) return false;

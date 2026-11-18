@@ -81,3 +81,40 @@ pure def photoFetchAllowed(photo: PhotoDelivery, deadline: int, at: int): bool =
   photo.phase == PhotoApproved and photo.boundAction and photo.actionKey != "" and photo.boundIntent and photo.intentKey != "" and
     photo.hasDeadline and deadline == photo.deliveryUntil and deadline <= photo.expiresAt and photoDeliveryStillLive(photo, deadline, at)
 ```
+
+## Story: Choose the photo to relay in the conversation
+
+> As a matched adult Slop member, I want to pick one of my own photos by text and agree to its notice, so that the choice goes to review without a website.
+
+### A photo request delivers an approved choice, lists the photos, or records the named photo
+
+The relay endpoint reads the member's own message for the current match. An approved, unclaimed item for this match is delivered first. Otherwise, when selected-photo relay is configured, a request without a number lists the member's photos by number with the current notice, and the shell stores that list for this match. A request that names a number records that one offered photo as one pending item for review, which is the member's consent for that item only. The number counts only within fifteen minutes of the list and under the same notice. A member without photos is told how to add them. Added after the audit (OPP22): before this rule no member surface could choose a photo, so photo relay could never start.
+
+```quint
+type PhotoRelayEntry = DeliverApprovedPhoto | OfferPhotoChoices | RecordPhotoChoice | AskForPhotosFirst | PhotoRelayOff | PhotoChoiceUnknown
+
+pure val photoRelayOfferTtlMs: int = 900000
+
+pure def photoRelayOfferLive(offeredAt: int, at: int, sameNotice: bool): bool =
+  sameNotice and at >= offeredAt and at - offeredAt < photoRelayOfferTtlMs
+
+pure def photoRelayEntryFor(relayOn: bool, approvedReady: bool, photoCount: int, choice: int, offerLive: bool, offerSize: int): PhotoRelayEntry =
+  if (approvedReady) DeliverApprovedPhoto
+  else if (not(relayOn)) PhotoRelayOff
+  else if (choice == 0 and photoCount > 0) OfferPhotoChoices
+  else if (choice == 0) AskForPhotosFirst
+  else if (offerLive and choice >= 1 and choice <= offerSize) RecordPhotoChoice
+  else PhotoChoiceUnknown
+
+pure def lawChoiceNeedsLiveOffer(relayOn: bool, approvedReady: bool, photoCount: int, choice: int, offerSize: int): bool =
+  photoRelayEntryFor(relayOn, approvedReady, photoCount, choice, false, offerSize) != RecordPhotoChoice
+
+pure def lawChoiceStaysInsideTheList(relayOn: bool, approvedReady: bool, photoCount: int, choice: int, offerLive: bool, offerSize: int): bool =
+  photoRelayEntryFor(relayOn, approvedReady, photoCount, choice, offerLive, offerSize) == RecordPhotoChoice implies (choice >= 1 and choice <= offerSize)
+
+pure def lawNothingChosenWhenRelayIsOff(photoCount: int, choice: int, offerLive: bool, offerSize: int): bool =
+  photoRelayEntryFor(false, false, photoCount, choice, offerLive, offerSize) == PhotoRelayOff
+
+pure def lawStaleListIsNotLive(offeredAt: int, sameNotice: bool): bool =
+  not(photoRelayOfferLive(offeredAt, offeredAt + photoRelayOfferTtlMs, sameNotice))
+```

@@ -24,7 +24,7 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
       expect(tool.outputSchema.type).toBe("object");
       validators.set(tool.name, ajv.compile(tool.outputSchema));
     }
-    expect([...validators.keys()].sort()).toEqual(["app_info", "check_status", "get_updates", "prepare_signup", "read_profile", "start_signup", "submit_profile"]);
+    expect([...validators.keys()].sort()).toEqual(["app_info", "check_status", "get_updates", "read_profile", "start_signup", "submit_profile"]);
     const invoke = async (name: string, args: Record<string, unknown> = {}, token?: string) => {
       const response = await call(env, url, name, args, { token });
       expect(response.res.status).toBe(200);
@@ -55,12 +55,8 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
     expect((await invoke("check_status", {}, token)).status).toBe("not_joined");
     expect((await invoke("submit_profile", { about: "I enjoy climbing and board games." }, token)).submitted).toBe(false);
     expect((await invoke("get_updates", {}, token)).updates).toEqual([]);
-    expect((await invoke("prepare_signup", { firstName: "Ari", homeCity: "sf" }, token)).prepared).toBe(true);
     // Schema errors must not be hidden by a generic string/object contract.
-    expect(validators.get("prepare_signup")!({ prepared: "true", app, url: "https://example.test/join", next_step: "Review it." })).toBe(false);
-    const repeated = await call(env, url, "prepare_signup", { firstName: "Ari" }, { token });
-    expect(repeated.body!.result.isError).toBe(true);
-    expect(repeated.body!.result.structuredContent).toBeUndefined();
+    expect(validators.get("check_status")!({ app, status: "joined", next_step: "Review it.", manage_url: "mailto:help@ntwrk.party" })).toBe(false);
 
     const otherApp = app === "friends" ? "ntwrk" : "friends";
     const person = await addMember(env, PHONE_A, [{ app, state: "active" }, { app: otherApp, state: "active" }]);

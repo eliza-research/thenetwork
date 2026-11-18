@@ -134,7 +134,8 @@ create table if not exists oauth.rate_limits (
   count integer not null
 );
 
--- App/verified-phone bound draft; no bearer handoff URL. Grant deletion erases it.
+-- Retired: the connector no longer saves signup drafts (spec/connectorTools.md). The table stays only
+-- while the platform's number change still names it; the delete below erases rows saved before.
 create table if not exists oauth.signup_drafts (
   grant_id text primary key references oauth.grants(id) on delete cascade,
   app_id text not null check (app_id in ('ntwrk','friends')),
@@ -143,6 +144,7 @@ create table if not exists oauth.signup_drafts (
   expires_at timestamptz not null,
   consumed_at timestamptz
 );
+delete from oauth.signup_drafts;
 
 -- A private at-most-once connector intake claim. The digest is keyed outside this database.
 create table if not exists oauth.profile_submissions (

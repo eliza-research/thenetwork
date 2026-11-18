@@ -114,3 +114,22 @@ pure def stepVerificationRequiresConsume(before: ChallengeFlow, via: str, after:
 
 pure def sometimesVerifies(flow: ChallengeFlow): bool = flow.phase == Verified
 ```
+
+### A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies
+
+Added: the deployment option `PLATFORM_PHONE_OTP_ONLY_APPS` had no rule (audit SIG47). The option names apps whose code start on the site API does not need the browser check, so an assistant can start a code for the person. Only The Network, slop.date and friends.help may be named, each once. The option needs the Blooio sender, because the person then proves the number by receiving the code on the shared line. A start for an app that the option does not name needs the browser check whenever the check is configured. The option never changes the code send limits above: the address, phone hour, minimum gap, phone day and global limits apply to every start. The option never affects the connector authorization pages, which always use the browser check when it is configured.
+
+```quint
+pure def otpOnlyAppAllowed(appId: str): bool = appId == "ntwrk" or appId == "slop" or appId == "friends"
+
+pure def otpOnlyPolicyAccepted(everyNamedAppAllowed: bool, namesDistinct: bool, anyNamed: bool, blooioSender: bool): bool =
+  everyNamedAppAllowed and namesDistinct and (not(anyNamed) or blooioSender)
+
+pure def otpStartNeedsBrowserCheck(appNamed: bool, checkConfigured: bool): bool = checkConfigured and not(appNamed)
+
+pure def lawUnnamedAppKeepsBrowserCheck(checkConfigured: bool): bool =
+  otpStartNeedsBrowserCheck(false, checkConfigured) == checkConfigured
+
+pure def lawNamedAppNeedsBlooio(everyNamedAppAllowed: bool, namesDistinct: bool): bool =
+  not(otpOnlyPolicyAccepted(everyNamedAppAllowed, namesDistinct, true, false))
+```

@@ -5,6 +5,8 @@
 export type PhotoDeliveryPhase = "PhotoWaiting" | "PhotoApproved";
 /** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 export interface PhotoDelivery { phase: PhotoDeliveryPhase; expiresAt: number; boundAction: boolean; actionKey: string; boundIntent: boolean; intentKey: string; hasDeadline: boolean; deliveryUntil: number }
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+export type PhotoRelayEntry = "DeliverApprovedPhoto" | "OfferPhotoChoices" | "RecordPhotoChoice" | "AskForPhotosFirst" | "PhotoRelayOff" | "PhotoChoiceUnknown";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -14,6 +16,8 @@ export type Event =
 
 /** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 export const providerFetchTtlMs: number = 60000;
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+export const photoRelayOfferTtlMs: number = 900000;
 /** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 export const initial: PhotoDelivery = { phase: "PhotoWaiting", expiresAt: 0, boundAction: false, actionKey: "", boundIntent: false, intentKey: "", hasDeadline: false, deliveryUntil: 0 };
 
@@ -114,6 +118,46 @@ export function photoDeliveryStillLive(photo: PhotoDelivery, deadline: number, a
 //@ pure
 export function photoFetchAllowed(photo: PhotoDelivery, deadline: number, at: number): boolean {
   return photo.phase === "PhotoApproved" && photo.boundAction && photo.actionKey !== "" && photo.boundIntent && photo.intentKey !== "" && photo.hasDeadline && deadline === photo.deliveryUntil && deadline <= photo.expiresAt && photoDeliveryStillLive(photo, deadline, at);
+}
+
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+//@ pure
+export function photoRelayOfferLive(offeredAt: number, at: number, sameNotice: boolean): boolean {
+  return sameNotice && at >= offeredAt && exact_photoRelayItem(at - offeredAt) < photoRelayOfferTtlMs;
+}
+
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+//@ pure
+export function photoRelayEntryFor(relayOn: boolean, approvedReady: boolean, photoCount: number, choice: number, offerLive: boolean, offerSize: number): PhotoRelayEntry {
+  return approvedReady ? "DeliverApprovedPhoto" : (!relayOn ? "PhotoRelayOff" : (choice === 0 && photoCount > 0 ? "OfferPhotoChoices" : (choice === 0 ? "AskForPhotosFirst" : (offerLive && choice >= 1 && choice <= offerSize ? "RecordPhotoChoice" : "PhotoChoiceUnknown"))));
+}
+
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+//@ pure
+export function lawStaleListIsNotLive(offeredAt: number, sameNotice: boolean): boolean {
+  //@ ensures \result === true
+  return !photoRelayOfferLive(offeredAt, exact_photoRelayItem(offeredAt + photoRelayOfferTtlMs), sameNotice);
+}
+
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+//@ pure
+export function lawChoiceNeedsLiveOffer(relayOn: boolean, approvedReady: boolean, photoCount: number, choice: number, offerSize: number): boolean {
+  //@ ensures \result === true
+  return photoRelayEntryFor(relayOn, approvedReady, photoCount, choice, false, offerSize) !== "RecordPhotoChoice";
+}
+
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+//@ pure
+export function lawChoiceStaysInsideTheList(relayOn: boolean, approvedReady: boolean, photoCount: number, choice: number, offerLive: boolean, offerSize: number): boolean {
+  //@ ensures \result === true
+  return !(photoRelayEntryFor(relayOn, approvedReady, photoCount, choice, offerLive, offerSize) === "RecordPhotoChoice") || (choice >= 1 && choice <= offerSize);
+}
+
+/** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
+//@ pure
+export function lawNothingChosenWhenRelayIsOff(photoCount: number, choice: number, offerLive: boolean, offerSize: number): boolean {
+  //@ ensures \result === true
+  return photoRelayEntryFor(false, false, photoCount, choice, offerLive, offerSize) === "PhotoRelayOff";
 }
 
 /** Do the rules allow this event in this state? */

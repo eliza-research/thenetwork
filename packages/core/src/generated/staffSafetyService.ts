@@ -1,5 +1,6 @@
 // GENERATED from spec/staffSafetyService.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { quietHoursOffHour as participationControls_quietHoursOffHour, participationControlAllowed as participationControls_participationControlAllowed, participationCategoryAllowed as participationControls_participationCategoryAllowed, changeParticipationCategory as participationControls_changeParticipationCategory, controlRomanceOptIn as participationControls_controlRomanceOptIn, participationControlState as participationControls_participationControlState, controlQuietHoursValid as participationControls_controlQuietHoursValid, quietHoursEmpty as participationControls_quietHoursEmpty, lawQuietHoursOffIsEmpty as participationControls_lawQuietHoursOffIsEmpty, lawNonDatingCategoryLeavesDatingPermission as participationControls_lawNonDatingCategoryLeavesDatingPermission, quietHoursCommandComplete as participationControls_quietHoursCommandComplete, lawMissingEndpointNeedsClarification as participationControls_lawMissingEndpointNeedsClarification } from "./participationControls.ts";
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets" | "HoldDidNotApply" | "BanNeedsCrossApp" | "BanNoPerson" | "ReadingBanPhones" | "BanNoPhone" | "ReadingExistingBan" | "BanAlreadyExists" | "ApplyingPhoneBan" | "ApplyingPersonBan" | "ResumingBanProjection" | "PerformingAuditedAction" | "RecordingAuditResult";
@@ -7,6 +8,10 @@ export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets
 export interface ServiceSafetyFlow { phase: ServiceSafetyPhase; phoneOnly: boolean }
 /** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 export type StaffClearSummary = "ClearRefused" | "ClearSucceeded" | "ClearNoSignal";
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+export type AgentSignalRoute = "SignalOpensSafetyCase" | "SignalPausesApp" | "SignalKeptAsContext";
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+export type AgentSignalPhase = "SignalWaiting" | "SignalReviewed" | "SignalDismissed";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -298,6 +303,71 @@ export function staffBanSnapshotStatus(accountStatus: string, banned: boolean): 
 export function lawBannedEnrollmentCannotCommit(liveOwner: boolean, verifiedBinding: boolean): boolean {
   //@ ensures \result === true
   return !staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true);
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalRoute(kind: string): AgentSignalRoute {
+  return kind === "safety_concern" ? "SignalOpensSafetyCase" : (kind === "opt_out" ? "SignalPausesApp" : "SignalKeptAsContext");
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalWaitsForStaff(kind: string): boolean {
+  return agentSignalRoute(kind) === "SignalOpensSafetyCase";
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function agentOptOutParticipation(kind: string, saved: string): string {
+  return agentSignalRoute(kind) === "SignalPausesApp" ? participationControls_participationControlState(true) : saved;
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function lawAgentSafetyConcernReachesStaff(kind: string): boolean {
+  //@ ensures \result === true
+  return !(kind === "safety_concern") || agentSignalWaitsForStaff(kind);
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function lawAgentOptOutPausesOnlyMatching(saved: string): boolean {
+  //@ ensures \result === true
+  return agentOptOutParticipation("opt_out", saved) === "paused" && !agentSignalWaitsForStaff("opt_out");
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function lawOtherSignalsLeaveParticipation(kind: string, saved: string): boolean {
+  //@ ensures \result === true
+  return !(kind !== "opt_out") || agentOptOutParticipation(kind, saved) === saved;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalDecisionAllowed(safetyRole: boolean, phase: AgentSignalPhase): boolean {
+  return safetyRole && phase === "SignalWaiting";
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalAfterDecision(phase: AgentSignalPhase, safetyRole: boolean, dismiss: boolean): AgentSignalPhase {
+  return agentSignalDecisionAllowed(safetyRole, phase) ? (dismiss ? "SignalDismissed" : "SignalReviewed") : phase;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawDecidedAgentSignalStaysDecided(phase: AgentSignalPhase, safetyRole: boolean, dismiss: boolean): boolean {
+  //@ ensures \result === true
+  return !(phase !== "SignalWaiting") || agentSignalAfterDecision(phase, safetyRole, dismiss) === phase;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawOnlySafetyStaffDecideAgentSignals(phase: AgentSignalPhase, dismiss: boolean): boolean {
+  //@ ensures \result === true
+  return agentSignalAfterDecision(phase, false, dismiss) === phase;
 }
 
 /** Do the rules allow this event in this state? */

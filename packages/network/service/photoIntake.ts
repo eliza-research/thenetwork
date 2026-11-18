@@ -13,7 +13,11 @@
 //     "no" in the day after the ask is an answer to something else (a probe, a date ask, another app on
 //     the shared line) and goes on to the Network unchanged. The consent is stored on the slop
 //     membership (profile.photoConsent), so leaving slop.date clears it.
-//  4. With consent: each attachment (at most PHOTO_MAX_PER_MESSAGE) is fetched with a byte cap and goes
+//  4. No attachment arrives through the Eliza gateway turn, so the member asks for a link instead:
+//     ADD PHOTOS (or YES PHOTOS to the consent ask) gets one app-bound, single-use link that works for
+//     15 minutes (spec/photoUploadLink.md; platform photo-upload-link.ts). The link page posts the
+//     photos to /api/photos/upload, which checks the same rules again.
+//  5. With consent: each attachment (at most PHOTO_MAX_PER_MESSAGE) is fetched with a byte cap and goes
 //     through PhotoService.upload, which checks everything again (type on the bytes, size, count),
 //     strips metadata, stores it privately and rates the member (adults only).
 import type { Accounts } from "../../platform/src/accounts.ts";
@@ -21,6 +25,7 @@ import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { photoMaxPerMessage } from "../../core/src/generated/photoPolicy.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
+import type { PhotoUploadLinks, UploadLinkIssue } from "../../platform/src/photo-upload-link.ts";
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
 
@@ -33,14 +38,21 @@ const LIVE = new Set(["active", "paused", "onboarding"]);
 
 /** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
-  ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree, then send the photo again. Reply NO PHOTOS and I keep none.`,
-  agreed: "Thanks. Send your photos any time. To request a copy or deletion, email help@ntwrk.party.",
+  ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree and I will text you a private link to add them. Reply NO PHOTOS and I keep none.`,
+  link: (url: string) => `Here is your private link to add up to 4 photos. It works once, for 15 minutes: ${url} To request a copy or deletion, email help@ntwrk.party.`,
+  agreed: "Thanks. To request a copy or deletion, email help@ntwrk.party.",
+  linkLimit: "You asked for several photo links today. Ask again tomorrow.",
   declined: "OK. I will not keep your photos.",
   stored: (n: number) => (n === 1 ? "Got it. I saved your photo privately." : `Got it. I saved ${n} photos privately.`),
   notAdult: "I can't keep photos for you here.",
   badPhoto: "I could not use that photo. Send a JPEG, PNG or WebP photo of up to 8 MB.",
   tooMany: "You have the most photos I can keep. Email help@ntwrk.party to request deletion before sending more.",
 } as const;
+
+/** The explicit request for a photo upload link: "ADD PHOTOS" (also "add a photo", "upload photos"). */
+export function photoAddRequest(text: string): boolean {
+  return /^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
+}
 
 /** The explicit answer to the photo consent ask: "YES PHOTOS" or "NO PHOTOS" (a bare yes or no is never taken). */
 export function photoConsentReply(text: string): "yes" | "no" | undefined {
@@ -57,6 +69,8 @@ export interface PhotoIntakeDeps {
   people: PeopleStore;
   accounts: Accounts;
   photos: PhotoService;
+  /** The single-use upload links (spec/photoUploadLink.md). The service passes them; the simulation's in-memory stores have none, so ADD PHOTOS is not handled there. */
+  links?: Pick<PhotoUploadLinks, "issue">;
   /** The keyed phone hash (pending texts and rate limits). */
   phoneKey: (e164: string) => string;
   now: () => number;
@@ -123,7 +137,8 @@ export class PhotoIntake {
       const refused = who ? await this.d.photos.mayTake(who.person.id, PHOTO_APP) : "not_member";
       if (who && !refused) {
         await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
-        await this.d.reply(e164, PHOTO_TEXT.agreed, `sys:${ref}`);
+        const link = await this.d.links?.issue(who.person.id, PHOTO_APP, "text");
+        await this.d.reply(e164, link?.ok ? `Thanks. ${PHOTO_TEXT.link(link.url)}` : PHOTO_TEXT.agreed, `sys:${ref}`);
       } else if (refused === "adults_only" || refused === "not_verified") {
         // Not swallowed in silence: the same plain answer a photo gets (once a day).
         await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
@@ -132,6 +147,33 @@ export class PhotoIntake {
       await this.d.reply(e164, PHOTO_TEXT.declined, `sys:${ref}`);
     }
     return true;
+  }
+
+  /**
+   * ADD PHOTOS on slop: a link for a consenting adult member, the consent ask first otherwise. True when
+   * it was this request; false otherwise (a non-member's message goes on as a normal message).
+   */
+  async addRequest(e164: string, text: string, ref: string, app: AppId = PHOTO_APP): Promise<boolean> {
+    if (app !== PHOTO_APP || !this.d.links || !photoAddRequest(text)) return false;
+    const who = await this.member(e164);
+    if (!who) return false;
+    const refused = await this.d.photos.mayTake(who.person.id, PHOTO_APP);
+    if (refused) {
+      if (refused !== "banned") await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
+      return true;
+    }
+    if (who.m.profile.photoConsent !== PHOTO_CONSENT.version) {
+      await this.d.people.putPending({ phoneHash: this.d.phoneKey(e164), kind: "photo_consent", app: PHOTO_APP, name: null, age: null, at: this.d.now() });
+      await this.d.reply(e164, PHOTO_TEXT.ask, `sys:${ref}`);
+      return true;
+    }
+    await this.d.reply(e164, this.linkText(await this.d.links.issue(who.person.id, PHOTO_APP, "text")), `sys:${ref}`);
+    return true;
+  }
+
+  private linkText(link: UploadLinkIssue): string {
+    if (link.ok) return PHOTO_TEXT.link(link.url);
+    return link.reason === "daily_limit" ? PHOTO_TEXT.linkLimit : PHOTO_TEXT.notAdult;
   }
 
   /**

@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
-export type RelayPhase = "AwaitingVerdict" | "Blocked" | "RateLimited" | "Held" | "ReadyToSend" | "Released" | "Rejected" | "Sent" | "Deferred" | "SendRefused";
+export type RelayPhase = "AwaitingVerdict" | "Blocked" | "RateLimited" | "Held" | "ReadyToSend" | "Released" | "Rejected" | "Expired" | "Sent" | "Deferred" | "SendRefused";
 /** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export type DeliveryResult = "Delivered" | "Queued" | "Refused";
 /** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
@@ -14,7 +14,8 @@ export interface RelayLifecycle { phase: RelayPhase; staffReviewed: boolean; ret
 export type Event =
   | { type: "recordVerdict"; verdict: RelayVerdict; rateOnly: boolean; hasText: boolean; ageSignal: boolean }
   | { type: "recordDelivery"; delivery: DeliveryResult; policyPermits: boolean }
-  | { type: "reviewHold"; released: boolean };
+  | { type: "reviewHold"; released: boolean }
+  | { type: "expireHold"; now: number; deadline: number };
 
 /** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export const initial: RelayLifecycle = { phase: "AwaitingVerdict", staffReviewed: false, retainsText: false };
@@ -38,6 +39,7 @@ export function canRecordVerdict(relay: RelayLifecycle): boolean {
 export function recordVerdict(relay: RelayLifecycle, verdict: RelayVerdict, rateOnly: boolean, hasText: boolean, ageSignal: boolean): RelayLifecycle {
   //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
   //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> stepReviewRemainsRecorded(relay, \result)
+  //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> stepExpiredItemStaysUnsent(relay, \result)
   return verdict === "Block" ? ({ ...relay, phase: "Blocked" } as RelayLifecycle) : (verdict === "Pass" ? ({ ...relay, phase: "ReadyToSend" } as RelayLifecycle) : (rateOnly ? ({ ...relay, phase: "RateLimited" } as RelayLifecycle) : ({ ...relay, phase: "Held", retainsText: hasText && !ageSignal } as RelayLifecycle)));
 }
 
@@ -58,6 +60,7 @@ export function canRecordDelivery(relay: RelayLifecycle, policyPermits: boolean)
 export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult, policyPermits: boolean): RelayLifecycle {
   //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> alwaysOnlyHeldItemRetainsText(\result)
   //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> stepReviewRemainsRecorded(relay, \result)
+  //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> stepExpiredItemStaysUnsent(relay, \result)
   return { ...relay, phase: delivery === "Delivered" ? "Sent" : (delivery === "Queued" ? "Deferred" : "SendRefused") };
 }
 
@@ -78,6 +81,7 @@ export function canReviewHold(relay: RelayLifecycle): boolean {
 export function reviewHold(relay: RelayLifecycle, released: boolean): RelayLifecycle {
   //@ ensures (inv(relay) && canReviewHold(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
   //@ ensures (inv(relay) && canReviewHold(relay)) ==> stepReviewRemainsRecorded(relay, \result)
+  //@ ensures (inv(relay) && canReviewHold(relay)) ==> stepExpiredItemStaysUnsent(relay, \result)
   return { phase: released ? "Released" : "Rejected", staffReviewed: true, retainsText: false };
 }
 
@@ -99,12 +103,40 @@ export function sometimesReviewRejects(relay: RelayLifecycle): boolean {
   return relay.phase === "Rejected";
 }
 
+/** Story: Close a held item that staff do not decide in time / A held item that staff do not decide by its review deadline expires unsent (spec/relayLifecycle.md) */
+//@ pure
+export function canExpireHold(relay: RelayLifecycle, now: number, deadline: number): boolean {
+  return relay.phase === "Held" && now >= deadline;
+}
+
+/** Story: Close a held item that staff do not decide in time / A held item that staff do not decide by its review deadline expires unsent (spec/relayLifecycle.md) */
+//@ pure
+export function expireHold(relay: RelayLifecycle, now: number, deadline: number): RelayLifecycle {
+  //@ ensures (inv(relay) && canExpireHold(relay, now, deadline)) ==> alwaysOnlyHeldItemRetainsText(\result)
+  //@ ensures (inv(relay) && canExpireHold(relay, now, deadline)) ==> stepReviewRemainsRecorded(relay, \result)
+  //@ ensures (inv(relay) && canExpireHold(relay, now, deadline)) ==> stepExpiredItemStaysUnsent(relay, \result)
+  return { ...relay, phase: "Expired", retainsText: false };
+}
+
+/** Story: Close a held item that staff do not decide in time / A held item that staff do not decide by its review deadline expires unsent (spec/relayLifecycle.md) */
+//@ pure
+export function stepExpiredItemStaysUnsent(before: RelayLifecycle, after: RelayLifecycle): boolean {
+  return !(before.phase === "Expired") || after.phase === "Expired";
+}
+
+/** Story: Close a held item that staff do not decide in time / A held item that staff do not decide by its review deadline expires unsent (spec/relayLifecycle.md) */
+//@ pure
+export function sometimesHoldExpires(relay: RelayLifecycle): boolean {
+  return relay.phase === "Expired";
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: RelayLifecycle, event: Event): boolean {
   if (event.type === "recordVerdict") return canRecordVerdict(current);
   if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits);
   if (event.type === "reviewHold") return canReviewHold(current);
+  if (event.type === "expireHold") return canExpireHold(current, event.now, event.deadline);
   return false;
 }
 
@@ -116,6 +148,7 @@ export function step(current: RelayLifecycle, event: Event): RelayLifecycle {
   if (event.type === "recordVerdict") return canRecordVerdict(current) ? recordVerdict(current, event.verdict, event.rateOnly, event.hasText, event.ageSignal) : current;
   if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits) ? recordDelivery(current, event.delivery, event.policyPermits) : current;
   if (event.type === "reviewHold") return canReviewHold(current) ? reviewHold(current, event.released) : current;
+  if (event.type === "expireHold") return canExpireHold(current, event.now, event.deadline) ? expireHold(current, event.now, event.deadline) : current;
   return current;
 }
 
@@ -136,6 +169,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recordVerdict" && (raw.verdict === "Pass" || raw.verdict === "Hold" || raw.verdict === "Block") && typeof raw.rateOnly === "boolean" && typeof raw.hasText === "boolean" && typeof raw.ageSignal === "boolean") return { type: "recordVerdict", verdict: raw.verdict, rateOnly: raw.rateOnly, hasText: raw.hasText, ageSignal: raw.ageSignal };
   if (raw.type === "recordDelivery" && (raw.delivery === "Delivered" || raw.delivery === "Queued" || raw.delivery === "Refused") && typeof raw.policyPermits === "boolean") return { type: "recordDelivery", delivery: raw.delivery, policyPermits: raw.policyPermits };
   if (raw.type === "reviewHold" && typeof raw.released === "boolean") return { type: "reviewHold", released: raw.released };
+  if (raw.type === "expireHold" && Number.isSafeInteger(raw.now) && Number.isSafeInteger(raw.deadline)) return { type: "expireHold", now: raw.now, deadline: raw.deadline };
   return undefined;
 }
 
@@ -153,7 +187,7 @@ export function parseState(x: unknown): RelayLifecycle | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AwaitingVerdict" || raw.phase === "Blocked" || raw.phase === "RateLimited" || raw.phase === "Held" || raw.phase === "ReadyToSend" || raw.phase === "Released" || raw.phase === "Rejected" || raw.phase === "Sent" || raw.phase === "Deferred" || raw.phase === "SendRefused") && typeof raw.staffReviewed === "boolean" && typeof raw.retainsText === "boolean" && Object.keys(raw).length === 3)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AwaitingVerdict" || raw.phase === "Blocked" || raw.phase === "RateLimited" || raw.phase === "Held" || raw.phase === "ReadyToSend" || raw.phase === "Released" || raw.phase === "Rejected" || raw.phase === "Expired" || raw.phase === "Sent" || raw.phase === "Deferred" || raw.phase === "SendRefused") && typeof raw.staffReviewed === "boolean" && typeof raw.retainsText === "boolean" && Object.keys(raw).length === 3)) return undefined;
   const parsed: RelayLifecycle = ({ phase: raw.phase, staffReviewed: raw.staffReviewed, retainsText: raw.retainsText });
   return inv(parsed) ? parsed : undefined;
 }

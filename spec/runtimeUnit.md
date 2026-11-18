@@ -49,6 +49,40 @@ pure def stepSaveFollowsAction(before: RuntimeUnit, via: str, after: RuntimeUnit
 pure def sometimesCanSave(unit: RuntimeUnit): bool = unit.phase == StateSaved
 ```
 
+### The engine runs on a snapshot outside the store lock
+
+A tick that reaches its engine run under the lock does not compute there. It records the engine request from the state that it loaded, ends that unit without a save, and releases the lock. The engine run, with its model judge, then computes without the lock, so inbound turns and staff actions do not wait for it. A second unit waits for the lock, loads the newest state, ticks again, and uses the computed result in place of the engine call. While a computation of this store is in flight, a new tick does not start. A tick computes at most twice; when its commit still asks for a different run, the tick saves nothing and the next tick starts again. Changed (audit OPS23): the engine and its model judge ran under the lock, so a signed turn waited behind the daily run past the 8 second turn limit.
+
+```quint
+pure val maxEngineAttempts: int = 2
+
+pure def tickMayStartBesideEngine(engineInFlight: bool): bool = not(engineInFlight)
+
+pure def engineAttemptAllowed(attempt: int): bool = attempt >= 0 and attempt < maxEngineAttempts
+
+pure def lawComputingTickSkips(engineInFlight: bool): bool = engineInFlight implies not(tickMayStartBesideEngine(engineInFlight))
+
+pure def lawEngineAttemptsBounded(attempt: int): bool = engineAttemptAllowed(attempt) implies attempt < maxEngineAttempts
+```
+
+### A prepared engine result commits only for members whose evidence did not change
+
+The commit uses the computed result only for the same run: the same run key (the kind of run and its New York day), the same engine configuration, and the same evidence that names no member. Otherwise the tick computes again. A proposal, an engine question, or a standing row of the result commits only when every member that it names has the same engine evidence in the commit's input as in the input that was computed. The commit then applies every eligibility gate of the tick to the newest state (opt-out, blocks, age, holds, bans), and the delivery queue checks consent and bans again at send time. Changed (audit OPS23): new with the lock-free engine run, so that a member who stopped, was banned, or changed during the run is not contacted from the old snapshot.
+
+```quint
+pure def preparedRunUsable(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool): bool =
+  sameKey and sameConfig and sameSharedEvidence
+
+pure def preparedItemCommits(runUsable: bool, membersUnchanged: bool): bool = runUsable and membersUnchanged
+
+pure def lawChangedMemberNeverCommits(runUsable: bool, membersUnchanged: bool): bool =
+  not(membersUnchanged) implies not(preparedItemCommits(runUsable, membersUnchanged))
+
+pure def lawStaleRunNeverCommits(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool, membersUnchanged: bool): bool =
+  not(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence))
+    implies not(preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), membersUnchanged))
+```
+
 ### Runtime follow-up depends on the adapter and whether the tick ran
 
 The registry can disable matching in loaded state. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.

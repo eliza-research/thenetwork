@@ -164,3 +164,91 @@ pure def sometimesErasesAccount(privacy: PrivacyRequest): bool =
 pure def sometimesExportsMembership(privacy: PrivacyRequest): bool =
   privacy.operation == ExportApp and privacy.phase == CompletePrivacyRequest and privacy.includeMembership
 ```
+
+## Story: Staff carry out an export or erasure request sent to support
+
+> As a member who writes to help@ntwrk.party, I want staff to send me my data or erase my account, and nobody else's, after I prove that I hold the number.
+
+[Story F24](product/stories.md#story-f24--export-or-delete-my-data) sends formal export and erasure requests to the support address. The staff API serves them on the staff port. The shell authenticates the staff member, writes an audit row before each step and a result row after it, sends the possession code through the phone verification service, and keeps the request record. The record holds the keyed phone hash, never the number.
+
+### Only a global admin with a stated reason opens or confirms a support request
+
+New rule: before this change no staff route served a support request. A support request reaches every app of a person, so only an admin grant for all apps admits it, and the staff member states a reason of 5 to 500 characters at each step. Every other role, an admin of one app included, is refused.
+
+```quint
+pure val privacySupportReasonMin: int = 5
+pure val privacySupportReasonMax: int = 500
+pure val reasonLengthValues = Set(0, privacySupportReasonMin - 1, privacySupportReasonMin, privacySupportReasonMax, privacySupportReasonMax + 1)
+pure val globalRolesValues = Set(List(), List("admin"), List("reviewer", "safety"))
+
+pure def privacySupportAllowed(globalRoles: List[str], reasonLength: int): bool =
+  globalRoles.includes("admin") and reasonLength >= privacySupportReasonMin and reasonLength <= privacySupportReasonMax
+
+pure def lawSupportNeedsGlobalAdmin(globalRoles: List[str], reasonLength: int): bool =
+  privacySupportAllowed(globalRoles, reasonLength) implies globalRoles.includes("admin")
+```
+
+### A support export covers one app or every app, and an erasure covers every app
+
+New rule: it fixes the scope that staff can ask for. An export names one app or every app, and each app in scope uses the member export of "Read my own app data", so a support export contains what the member export contains and nothing more. An erasure always covers every app.
+
+```quint
+type PrivacySupportOperation = SupportExport | SupportErase
+type PrivacySupportScope = SupportOneApp | SupportEveryApp
+
+pure def privacySupportScopeAllowed(operation: PrivacySupportOperation, scope: PrivacySupportScope): bool =
+  operation == SupportExport or scope == SupportEveryApp
+
+pure def privacySupportExportApps(scope: PrivacySupportScope, app: str, apps: List[str]): List[str] =
+  if (scope == SupportEveryApp) apps else apps.select(a => a == app)
+
+pure def lawOneAppExportStaysInItsApp(app: str, apps: List[str]): bool =
+  privacySupportExportApps(SupportOneApp, app, apps).every(a => a == app)
+
+pure def lawEraseCoversEveryApp(scope: PrivacySupportScope): bool =
+  privacySupportScopeAllowed(SupportErase, scope) implies scope == SupportEveryApp
+```
+
+### Staff act only on the confirmed person after a fresh code from the number
+
+New rule: it makes a wrong target impossible to reach with one mistyped call. The first step records the request for one phone and one operation, sends a code to that phone, and answers with the person ID and the masked number. The confirming step names the same request, phone and operation, echoes the person ID, and gives the code that the person read back. The target checks come first, so a refused echo does not use the code. A request is open for 30 minutes. A request that already completed reports that it completed and never acts again.
+
+```quint
+pure val privacySupportWindowMs: int = 1800000
+
+type PrivacySupportDecision = SupportProceeds | SupportAlreadyDone | SupportUnavailable | SupportTargetChanged | SupportCodeRefused
+
+pure def privacySupportOpen(elapsedMs: int): bool = elapsedMs >= 0 and elapsedMs < privacySupportWindowMs
+
+pure def privacySupportDecision(sameRequest: bool, completed: bool, elapsedMs: int, echoedPerson: bool,
+    ownerCurrent: bool, codeVerified: bool): PrivacySupportDecision =
+  if (not(sameRequest)) SupportUnavailable
+  else if (completed) SupportAlreadyDone
+  else if (not(privacySupportOpen(elapsedMs))) SupportUnavailable
+  else if (not(echoedPerson) or not(ownerCurrent)) SupportTargetChanged
+  else if (not(codeVerified)) SupportCodeRefused
+  else SupportProceeds
+
+pure val elapsedMsValues = Set(-1, 0, privacySupportWindowMs - 1, privacySupportWindowMs)
+
+pure def lawSupportProceedsOnlyForTheConfirmedHolder(sameRequest: bool, completed: bool, elapsedMs: int,
+    echoedPerson: bool, ownerCurrent: bool, codeVerified: bool): bool =
+  privacySupportDecision(sameRequest, completed, elapsedMs, echoedPerson, ownerCurrent, codeVerified) == SupportProceeds implies
+    (sameRequest and not(completed) and privacySupportOpen(elapsedMs) and echoedPerson and ownerCurrent and codeVerified)
+
+pure def lawCompletedSupportRequestNeverActsAgain(elapsedMs: int, echoedPerson: bool, ownerCurrent: bool, codeVerified: bool): bool =
+  privacySupportDecision(true, true, elapsedMs, echoedPerson, ownerCurrent, codeVerified) == SupportAlreadyDone
+```
+
+### A support request runs the member's own export or account erasure
+
+New rule: the operator path has no erasure or export of its own. A confirmed erasure runs "Erase my account" for the current owner of the phone: each live membership's forget hook (Network rows, photos and that app's connector grants), grants and connector requests in every app, sessions, shares, pending texts, consent and the phone binding. It keeps the tombstone, the suppression, the lowest age, bans and safety records. A phone with no person erases only its phone data, as the member path does. A confirmed export runs "Read my own app data" for each app in scope.
+
+```quint
+pure def privacySupportOperation(operation: PrivacySupportOperation): PrivacyOperation =
+  if (operation == SupportErase) DeleteAccount else ExportApp
+
+pure def lawSupportUsesMemberOperation(operation: PrivacySupportOperation): bool =
+  beginPrivacyRequest(initial, privacySupportOperation(operation)).phase ==
+    (if (operation == SupportErase) AwaitingAccountOwner else AwaitingAppExport)
+```

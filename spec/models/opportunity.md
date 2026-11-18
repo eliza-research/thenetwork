@@ -10,7 +10,7 @@ Check review and deadlines, participant answers, name disclosure, STOP, cancella
 
 Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch](../probeDispatch.md), [review deadline rule](../reviewDeadline.md), and [meeting confirmation and attendance settlement](../meetingSettlement.md). The Network shell keeps the roster, persisted statuses, channel effects, and attendance records. The [repeat encounter rules](../repeatEncounter.md) cover a new review after two private responses to the same completed meeting.
 
-The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action. Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
+The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
 
 The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
 
@@ -104,7 +104,7 @@ module opportunity {
     parts: Set[str], alts: Set[str], first: str, requester: str,
     status: str -> str,
     review: Review,
-    contacted: Set[str], sentAt: str -> int, turnAt: str -> int, timeRetry: Set[str],
+    contacted: Set[str], sentAt: str -> int, turnAt: str -> int, timeRetry: Set[str], askedAgain: Set[str],
     meetingAt: int, bookedTold: Set[str], bookedAt: str -> int, confirmed: Set[str], reminded: Set[str],
     feedbackSent: bool, finalized: bool, post: str -> str, feedbackFrom: Set[str],
     outcomeRec: str,
@@ -148,7 +148,7 @@ module opportunity {
     parts: parts, alts: alts, first: first, requester: requester,
     status: strMap("out"),
     review: { decision: "", deadline: 0, decidedAt: 0, invalidated: false },
-    contacted: Set(), sentAt: zeroMap(-1), turnAt: zeroMap(-1), timeRetry: Set(),
+    contacted: Set(), sentAt: zeroMap(-1), turnAt: zeroMap(-1), timeRetry: Set(), askedAgain: Set(),
     meetingAt: -1, bookedTold: Set(), bookedAt: zeroMap(-1), confirmed: Set(), reminded: Set(),
     feedbackSent: false, finalized: false, post: strMap(""), feedbackFrom: Set(),
     outcomeRec: "",
@@ -345,9 +345,13 @@ module opportunity {
       val cands = ORDER.select(a => x.alts.contains(a) and eligible(s, a, o))
       if (cands.length() > 0) {
         val alt = cands[0]
+        // spec/probeDispatch.md, "A replacement asks again every member who agreed to the earlier arrangement":
+        // a member who said yes after a probe goes back to the queue and gets a new probe in their turn.
+        val heard = stay.filter(p => x.status.get(p) == "available" and x.contacted.contains(p))
         val s1 = putO(s, o, { ...x, alts: Set(), parts: stay.union(Set(alt)),
                               first: if (x.first == out) alt else x.first,
-                              status: x.status.set(out, "out").set(alt, "queued") })
+                              status: heard.fold(x.status.set(out, "out").set(alt, "queued"), (st, p) => st.set(p, "queued")),
+                              contacted: x.contacted.exclude(heard), askedAgain: x.askedAgain.union(heard) })
         advanceTurns(s1, o)
       } else push(putO(s, o, { ...x, alts: Set() }), [J("close", o, "", "no one available")])
     }
@@ -433,7 +437,8 @@ module opportunity {
   /** advanceProbes (N:2129), a job: the turn order, then the reveal once every participant said yes. */
   pure def advanceProbes(s0: S, o: str, env: Env): S = {
     val s = advanceTurns(s0, o)
-    if (op(s, o).stage == "probing" and op(s, o).parts.forall(p => stat(s, o, p) == "available")) reveal(s, o, env) else s
+    if (op(s, o).stage == "probing" and op(s, o).parts.forall(p => stat(s, o, p) == "available")
+        and op(s, o).parts.intersect(op(s, o).askedAgain) == Set()) reveal(s, o, env) else s
   }
 
   // ---------------------------------------------------------------- dropMember (N:2564), the hub
@@ -504,7 +509,7 @@ module opportunity {
     else {
       val retry = x.timeRetry.contains(m)
       if (yes) {
-        val x1 = { ...x, status: x.status.set(m, "available"), accepted: x.accepted.set(m, intent) }
+        val x1 = { ...x, status: x.status.set(m, "available"), accepted: x.accepted.set(m, intent), askedAgain: x.askedAgain.exclude(Set(m)) }
         if (nonePicked and not(retry)) {
           // "Yes, but none of those": other times, once (a reply; the times hook sets awaiting probe).
           val s1 = putO(s, o, { ...x1, timeRetry: x1.timeRetry.union(Set(m)), status: x1.status.set(m, "probing"), sentAt: x1.sentAt.set(m, s.now) })
@@ -512,7 +517,7 @@ module opportunity {
           putM(s2, m, { ...mm(s2, m), aw: { kind: "probe", opp: o, at: s2.now, clarified: false } })
         } else push(collect(putO(s, o, x1), m, "reply", o, false), [J("probes", o, "", "")])
       } else {
-        val s1 = putO(s, o, { ...x, status: x.status.set(m, "unavailable"), saidNo: x.saidNo.union(Set(m)) })
+        val s1 = putO(s, o, { ...x, status: x.status.set(m, "unavailable"), saidNo: x.saidNo.union(Set(m)), askedAgain: x.askedAgain.exclude(Set(m)) })
         push(collect(s1, m, "reply", o, false), [J("replace", o, m, ""), J("probes", o, "", "")])
       }
     }
@@ -1288,6 +1293,18 @@ module opportunity {
       .then(stop("b", ALL_OPEN)).then(settled)
       .then(start("b")).then(settled)
       .expect(op(s, "o1").parts == Set("a", "c") and mm(s, "b").aw.kind == "none" and slotOwnerAlive and safety)
+
+  // Audit OPP18 (probe-replacement-consent.integration.test.ts): a says yes, c says no and b replaces c.
+  // a's yes was about c, so a is asked again before b is probed; the names go out only after both new yeses.
+  run replacementAsksAgainTest =
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "c", ALL_OPEN)).then(settled).then(answer("c", "no", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").parts == Set("a", "b") and stat(s, "o2", "a") == "probing" and op(s, "o2").askedAgain == Set("a")
+              and stat(s, "o2", "b") == "queued" and op(s, "o2").revealSent == Set() and safety)
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "b", ALL_OPEN)).then(settled).then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").stage == "scheduled" and op(s, "o2").revealSent == Set("a", "b") and namesAfterAllYes and safety)
 
   // Review 2026-11-17 (minor-replaced-booked.integration.test.ts): a was asked about o2, said no and was replaced;
   // b and c booked. Then a states an age under the join age: the decline is a minor signal, so the booking

@@ -3,6 +3,8 @@
 
 /** Story: Keep unsafe items from reaching a match / A blocking reason takes precedence over a hold (spec/relayDecision.md) */
 export type RelayVerdict = "Pass" | "Hold" | "Block";
+/** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */
+export type RelayTargetChoice = "RelayToNoMatch" | "RelayAskWhichMatch" | "RelayToNamedMatch" | "RelayToOnlyMatch" | "RelayNamedNotLive";
 
 
 /** Story: Share only the item I approved / Consent cannot come from the future or outlive the item window (spec/relayDecision.md) */
@@ -29,6 +31,26 @@ export function relayVerdict(hasBlock: boolean, hasReason: boolean): RelayVerdic
 export function lawARelayPassHasNoReason(hasBlock: boolean, hasReason: boolean): boolean {
   //@ ensures \result === true
   return !(relayVerdict(hasBlock, hasReason) === "Pass") || (!hasBlock && !hasReason);
+}
+
+/** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */
+//@ pure
+export function relayTarget(liveMatches: number, named: boolean, namedLive: boolean): RelayTargetChoice {
+  return named ? (namedLive ? "RelayToNamedMatch" : "RelayNamedNotLive") : (liveMatches === 1 ? "RelayToOnlyMatch" : (liveMatches > 1 ? "RelayAskWhichMatch" : "RelayToNoMatch"));
+}
+
+/** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */
+//@ pure
+export function lawNeverGuessBetweenMatches(liveMatches: number, namedLive: boolean): boolean {
+  //@ ensures \result === true
+  return !(liveMatches > 1) || relayTarget(liveMatches, false, namedLive) === "RelayAskWhichMatch";
+}
+
+/** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */
+//@ pure
+export function lawNamedTargetIsLive(liveMatches: number, named: boolean, namedLive: boolean): boolean {
+  //@ ensures \result === true
+  return !(relayTarget(liveMatches, named, namedLive) === "RelayToNamedMatch") || (named && namedLive);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

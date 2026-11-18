@@ -8,10 +8,10 @@ The Network relay desk runs this state machine for each item it handles. The cla
 
 ### A first decision can block, hold, or admit an item
 
-A block ends the item. A hold waits for staff unless the only reason is a rate limit. A pass makes the item ready for the send path. An age signal prevents the held desk from keeping the member's words.
+A block ends the item. A hold waits for staff unless the only reason is a rate limit. A pass makes the item ready for the send path. An age signal prevents the held desk from keeping the member's words. Changed: the phases now include Expired, for a held item that staff did not decide by its review deadline, because a held item had no end other than a staff decision (audit OPP21).
 
 ```quint
-type RelayPhase = AwaitingVerdict | Blocked | RateLimited | Held | ReadyToSend | Released | Rejected | Sent | Deferred | SendRefused
+type RelayPhase = AwaitingVerdict | Blocked | RateLimited | Held | ReadyToSend | Released | Rejected | Expired | Sent | Deferred | SendRefused
 type DeliveryResult = Delivered | Queued | Refused
 type RelayVerdict = Pass | Hold | Block
 type RelayLifecycle = { phase: RelayPhase, staffReviewed: bool, retainsText: bool }
@@ -65,4 +65,25 @@ pure def stepReviewRemainsRecorded(before: RelayLifecycle, after: RelayLifecycle
 
 pure def sometimesReviewReleases(relay: RelayLifecycle): bool = relay.phase == Released
 pure def sometimesReviewRejects(relay: RelayLifecycle): bool = relay.phase == Rejected
+```
+
+## Story: Close a held item that staff do not decide in time
+
+> As a member, I want my held message to end at the review deadline instead of reaching my match days later, and I want to know that it did not go.
+
+### A held item that staff do not decide by its review deadline expires unsent
+
+The review deadline of a held item is the time it was held plus the network's review window, the same window that closes an unreviewed proposal. The deadline is exclusive: at the deadline the item expires, its text is cleared, and it can never be released or sent. The desk tells the sender that the item did not go and records a review expiry, which the operations alerts count as a missed review SLA. Before the deadline, a held item that waited longer than its app's review SLA raises the review SLA alert of the operations timing rules. New rule: a held item had no expiry and no alert (audit OPP21).
+
+```quint
+pure def canExpireHold(relay: RelayLifecycle, now: int, deadline: int): bool =
+  relay.phase == Held and now >= deadline
+
+pure def expireHold(relay: RelayLifecycle, now: int, deadline: int): RelayLifecycle =
+  { ...relay, phase: Expired, retainsText: false }
+
+pure def stepExpiredItemStaysUnsent(before: RelayLifecycle, after: RelayLifecycle): bool =
+  before.phase == Expired implies after.phase == Expired
+
+pure def sometimesHoldExpires(relay: RelayLifecycle): bool = relay.phase == Expired
 ```

@@ -55,9 +55,10 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | Web login codes. The backend won't boot without them. | Twilio console |
 | `CLOUDFLARE_AI_TOKEN` | Clef: photo ratings and relay scam checks | Cloudflare → API Tokens → custom token, Account → **Workers AI: Read** |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Photo storage | R2 → Manage API tokens → **Object Read & Write**, scoped to the photo bucket |
-| `BLOOIO_WEBHOOK_SECRET` | Signed inbound, if the service receives any Blooio calls | Blooio dashboard |
+| `BLOOIO_WEBHOOK_SECRET` | Not needed: with `NETWORK_CHANNEL=eliza_cloud` the backend does not serve `/webhooks/blooio` and ignores this value (the Eliza gateway owns the carrier webhook and checks its signature) | Leave unset on the backend |
+| `NETWORK_PUBLIC_EVENTS_DATABASE_URL` | The public event catalog's ingest login. The backend does not boot without it in staging or production; each tick round refreshes the NYC Parks catalog as this login once a day (docs/deploy.md 2.3) | The platform owner creates the login (`network_events`, member of `network_public_event_ingest`) and seals the URL |
 | `SURPLUS_API_KEY` | gpt-6-luna for any service-side model calls | Surplus |
-| `SERVICE_TURN_SECRET` | Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay`, and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
+| `SERVICE_TURN_SECRET` | Required: the backend does not boot in staging or production without it (32+ characters). Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay`, and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
 
 **GitHub → eliza-research/thenetwork → Settings → Environments → production → Secrets:**
 - `CLOUDFLARE_API_TOKEN`: an account-owned token for the shawmakesmagic account with **Account → Cloudflare Pages: Edit** only, and a 90-day TTL. The founder can run `gh secret set CLOUDFLARE_API_TOKEN -R eliza-research/thenetwork --env production` and paste it.
@@ -137,7 +138,9 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 | Cloud API | `NETWORK_RELAY_ENABLED` | `1` registers the RELAY action (upstream #34661). Unset or `0` (the default): relay is off and the agent offers no relay. **[FOUNDER]** sets it only after the service's `/internal/relay` is deployed |
 | Cloud API (Workers secret) | `NETWORK_SERVICE_URL`, `SERVICE_TURN_SECRET` | same values. Without them the Cloud ignores the gateway's turn context and its own invite gate applies |
 | Cloud API (existing) | `GATEWAY_INTERNAL_SECRET`, `ELIZA_APP_WEBHOOK_GATEWAY_URL`, binding `SHARED_RUNTIME_CONVERSATIONS` | already set for reminders. `/api/internal/network/deliver` uses them |
-| Service (Railway) | `SERVICE_TURN_SECRET`, and the Cloud origin for `/api/internal/network/deliver` | platform owner names the variable |
+| Service (Railway) | `SERVICE_TURN_SECRET` | the same value; required, the backend does not boot without it |
+| Service (Railway) | `NETWORK_CLOUD_DELIVERY_ORIGIN` | the Cloud API origin that serves `/api/internal/network/deliver`; required before Cloud sends are live |
+| Service (Railway) | `NETWORK_CHANNEL` | `eliza_cloud`: the gateway owns the carrier and the backend stops serving `/webhooks/blooio` (404 `webhook_not_served`). It does not make sends live (docs/deploy.md section 6) |
 
 **Prerequisites, all of which must be true before go-live:**
 
@@ -190,7 +193,9 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 - [ ] Postgres backups on; one restore tested.
 - [x] Four sites serving 200 on their domains; ntwrk.party on Pages; `deploy/smoke.ts` passes.
 - [x] CI green on `main`; `production` environment approval works.
-- [ ] Blooio webhook points only at the Eliza gateway; STOP handled once, HELP answered.
+- [ ] Blooio webhook points only at the Eliza gateway; STOP handled once, HELP answered. The backend has `NETWORK_CHANNEL=eliza_cloud`, its boot log says `"inbound":"eliza gateway"`, and `POST https://api.ntwrk.party/webhooks/blooio` gives 404 `webhook_not_served`.
+- [ ] The founder has read the live-send table in docs/deploy.md section 6 and knows its two current facts: `NTWRK_LIVE_APPROVED` is the global approval (slop live also makes ntwrk's queued sends live), and replies to signed turns are sent by the gateway for every app, with no `<APP>_LIVE_APPROVED` gate (so friends and peon answer on the shared line once the gateway takes over). Both are open founder decisions (audit PER34, SHA41). The boot log's `live sends` line matches the intended table.
+- [ ] The staff API is reachable from the console (`NETWORK_SERVICE_URL` on the private network; reviews and safety work). The Cloudflare backend Worker stays inactive: it has no staff route and refuses activation.
 - [ ] Banned number refused on site join, OTP, inbound and eliza.app.
 - [ ] Minors: join allowed, never matched, never rated, never relayed (sims plus one live check with a test number).
 - [ ] Clef ratings on; scores never visible (check the console, probes, reveals and relay output).

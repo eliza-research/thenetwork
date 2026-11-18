@@ -1,6 +1,7 @@
 // GENERATED from spec/probeDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, recurrenceAllowed as opportunityLifecycle_recurrenceAllowed, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, initial as opportunityLifecycle_initial, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, closesForMinor as opportunityLifecycle_closesForMinor, bookedGroupCanContinue as opportunityLifecycle_bookedGroupCanContinue, canStartProbing as opportunityLifecycle_canStartProbing, minorCloseTellsAcceptor as opportunityLifecycle_minorCloseTellsAcceptor, startProbing as opportunityLifecycle_startProbing, lawNoRecurrenceThatAMinorKnows as opportunityLifecycle_lawNoRecurrenceThatAMinorKnows, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, canReroll as opportunityLifecycle_canReroll, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, reroll as opportunityLifecycle_reroll, lawPairLeftFromGroupNeedsFreshConsent as opportunityLifecycle_lawPairLeftFromGroupNeedsFreshConsent, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorOnTheRosterClosesABookedOpportunity as opportunityLifecycle_lawMinorOnTheRosterClosesABookedOpportunity, lawAMinorNeverLeavesABookedGroupRunning as opportunityLifecycle_lawAMinorNeverLeavesABookedGroupRunning, lawOtherDropsKeepTheGroupRule as opportunityLifecycle_lawOtherDropsKeepTheGroupRule, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, lawMinorCloseNeverTellsTheMinor as opportunityLifecycle_lawMinorCloseNeverTellsTheMinor, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected } from "./opportunityLifecycle.ts";
+import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 export type ProbePhase = "Queued" | "AwaitingReply" | "Available" | "Unavailable" | "OutsideProbe";
@@ -22,7 +23,8 @@ export type Event =
   | { type: "markUnavailable" }
   | { type: "recordReply"; agreed: boolean }
   | { type: "offerOtherTimes"; hasFreshTimes: boolean }
-  | { type: "expireProbe"; expired: boolean; timeQuestion: boolean };
+  | { type: "expireProbe"; expired: boolean; timeQuestion: boolean }
+  | { type: "voidProbeAcceptance"; heardEarlierArrangement: boolean };
 
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
 export const questionHoldMs: number = exact_probeDispatch(24 * 3600000);
@@ -290,6 +292,52 @@ export function lawGroupBelowThreeCloses(remaining: number): boolean {
   return !(remaining < 3) || noAlternateRoute(true, remaining) === "CloseWithoutAlternate";
 }
 
+/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who agreed to the earlier arrangement (spec/probeDispatch.md) */
+//@ pure
+export function probeRevealAllowed(everyoneAvailable: boolean, anyoneAskedAgain: boolean): boolean {
+  return everyoneAvailable && !anyoneAskedAgain;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who agreed to the earlier arrangement (spec/probeDispatch.md) */
+//@ pure
+export function canVoidProbeAcceptance(participant: ParticipantProbe, heardEarlierArrangement: boolean): boolean {
+  return participant.phase === "Available" && heardEarlierArrangement;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who agreed to the earlier arrangement (spec/probeDispatch.md) */
+//@ pure
+export function voidProbeAcceptance(participant: ParticipantProbe, heardEarlierArrangement: boolean): ParticipantProbe {
+  //@ ensures (inv(participant) && canVoidProbeAcceptance(participant, heardEarlierArrangement)) ==> stepUnavailableNeverReopens(participant, \result)
+  return { phase: "Queued" };
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement asks again every member who agreed to the earlier arrangement (spec/probeDispatch.md) */
+//@ pure
+export function lawNoRevealWhileAYesIsVoid(everyoneAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return !probeRevealAllowed(everyoneAvailable, true);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reviewer can read each first probe of the open revision (spec/probeDispatch.md) */
+//@ pure
+export function reviewProbePreviewCurrent(pending: boolean, seenRevision: number, currentRevision: number, currentTime: number, deadline: number): boolean {
+  return pending && reviewDeadline_reviewRevisionCurrent(seenRevision, currentRevision) && !reviewDeadline_reviewLate(currentTime, deadline);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reviewer can read each first probe of the open revision (spec/probeDispatch.md) */
+//@ pure
+export function lawProbePreviewRefusesAnOlderRevision(currentTime: number, deadline: number, revision: number): boolean {
+  //@ ensures \result === true
+  return !reviewProbePreviewCurrent(true, revision, exact_probeDispatch(revision + 1), currentTime, deadline);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reviewer can read each first probe of the open revision (spec/probeDispatch.md) */
+//@ pure
+export function lawProbePreviewClosesAtTheDeadline(revision: number, deadline: number): boolean {
+  //@ ensures \result === true
+  return !reviewProbePreviewCurrent(true, revision, revision, deadline, deadline);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ParticipantProbe, event: Event): boolean {
@@ -299,6 +347,7 @@ export function enabled(current: ParticipantProbe, event: Event): boolean {
   if (event.type === "recordReply") return canRecordReply(current);
   if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes);
   if (event.type === "expireProbe") return canExpireProbe(current, event.expired);
+  if (event.type === "voidProbeAcceptance") return canVoidProbeAcceptance(current, event.heardEarlierArrangement);
   return false;
 }
 
@@ -313,6 +362,7 @@ export function step(current: ParticipantProbe, event: Event): ParticipantProbe 
   if (event.type === "recordReply") return canRecordReply(current) ? recordReply(current, event.agreed) : current;
   if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes) ? offerOtherTimes(current, event.hasFreshTimes) : current;
   if (event.type === "expireProbe") return canExpireProbe(current, event.expired) ? expireProbe(current, event.expired, event.timeQuestion) : current;
+  if (event.type === "voidProbeAcceptance") return canVoidProbeAcceptance(current, event.heardEarlierArrangement) ? voidProbeAcceptance(current, event.heardEarlierArrangement) : current;
   return current;
 }
 
@@ -336,6 +386,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recordReply" && typeof raw.agreed === "boolean") return { type: "recordReply", agreed: raw.agreed };
   if (raw.type === "offerOtherTimes" && typeof raw.hasFreshTimes === "boolean") return { type: "offerOtherTimes", hasFreshTimes: raw.hasFreshTimes };
   if (raw.type === "expireProbe" && typeof raw.expired === "boolean" && typeof raw.timeQuestion === "boolean") return { type: "expireProbe", expired: raw.expired, timeQuestion: raw.timeQuestion };
+  if (raw.type === "voidProbeAcceptance" && typeof raw.heardEarlierArrangement === "boolean") return { type: "voidProbeAcceptance", heardEarlierArrangement: raw.heardEarlierArrangement };
   return undefined;
 }
 

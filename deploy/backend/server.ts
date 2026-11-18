@@ -7,10 +7,11 @@ import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 // 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
 // 3. Starts every network in platform.networks, the public port (PORT) and the private staff port (STAFF_PORT).
 // 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
-// Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
-// app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval).
+// Queued sends are dry-run unless NETWORK_CHANNEL=blooio or eliza_cloud, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1,
+// and each app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval). Replies to signed turns
+// are sent by the Eliza gateway and no backend flag gates them. The "live sends" log line prints the table.
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
+import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, liveSendTable, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
 
 // Structured, redacted logs from the first line: the rest is imported after console is captured.
 const log = jsonLogger(undefined, { svc: "backend" });
@@ -21,10 +22,11 @@ const { BlooioAdapter: ProviderAdapter } = await import("../../packages/blooio/s
 const { resolveSenderLine } = await import("../../packages/blooio/src/line.ts");
 const { migrate } = await import("../../packages/observatory/db/migrate.ts");
 const { CloudChannelAdapter } = await import("../../packages/network/service/cloud-channel.ts");
-const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
+const { BlooioAdapter, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
 const { createOps, lineMetrics, PgAlertStore, runtimeProbe } = await import("./ops.ts");
+const { createPublicEventRefresh } = await import("./public-events.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
 const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
 
@@ -94,8 +96,11 @@ async function main() {
   svc.publicApi.accounts.onPhoneChanged(async () => {
     for (const rt of svc.runtimes.values()) await rt.identities().catch(e => log.warn("identities refresh failed", { network: rt.id, error: (e as Error).message }));
   });
+  // The live-send table (docs/deploy.md section 6): queued sends per app, and replies to signed turns, which the gateway sends.
+  const liveSends = liveSendTable(process.env, c.channel, liveSendAllowed);
+  log.info("live sends", { inbound: c.blooioWebhook ? "backend webhook" : "eliza gateway", table: liveSends.map(r => `${r.app}: queued ${r.queued}, turn replies ${r.turnReplies}`) });
   for (const rt of svc.runtimes.values()) {
-    const sends = c.channel !== "dry-run" ? (liveSendAllowed(process.env, rt.app.id) ? "live" : `refused (${liveFlag(rt.app.id)} is off)`) : "dry-run";
+    const sends = liveSends.find(r => r.app === rt.app.id)?.queued ?? "dry-run";
     log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
   }
 
@@ -103,10 +108,15 @@ async function main() {
   // schema is applied here. Off (404 mcp_not_enabled) without TURNSTILE_SITE_KEY outside dev.
   const mcp = await createServiceMcp(svc, { databaseUrl: c.databaseUrl, proxySecret: c.proxySecret, log: s => log.info(s), migrate: !c.deployed });
   log.info("mcp", { enabled: !!mcp });
+  // loadConfig required the Turnstile keys and the database, so a deployed MCP server is on; refuse rather than serve a dead signup path.
+  if (c.deployed && !mcp) throw new Error("refusing to start: the MCP server is off, so the agent signup connector would answer 404");
 
   const pool = new SQL({ url: c.databaseUrl, max: 1, idleTimeout: 30, connection: { application_name: "network-backend-health" } });
   // Monitoring and alerts (ops.ts; docs/deploy.md section 7): its own small pool, so a slow webhook never holds a service connection.
   const opsPool = new SQL({ url: c.databaseUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-ops" } });
+  // The public event catalog refresh (spec/publicEventCatalog.md): the ingest login, one connection for the lease and one for the scan.
+  const eventsPool = c.publicEventsUrl ? new SQL({ url: c.publicEventsUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-public-events" } }) : undefined;
+  const refreshEvents = eventsPool && createPublicEventRefresh({ sql: eventsPool, clock });
   const ops = createOps({
     config: c.ops, probes: () => [...svc.runtimes.values()].map(runtimeProbe), line: () => lineMetrics(opsPool), cost: svc.cost,
     store: new PgAlertStore(opsPool), now: () => clock.now(), log,
@@ -117,6 +127,7 @@ async function main() {
     mcp: mcp && (req => mcp.fetch(req)),
     ping: async () => { await pool`select 1`; return true; },
     ops,
+    ...(refreshEvents ? { publicEvents: async () => { const r = await refreshEvents(); if (r.kind === "scanned") log.info("public events", r); } } : {}),
   });
 
   const servers: { stop(force?: boolean): unknown }[] = [];
@@ -134,7 +145,7 @@ async function main() {
     log.info("shutdown", { signal });
     const { clean } = await backend.shutdown(servers);
     const end = clean ? undefined : { timeout: 0 };
-    await Promise.allSettled([pool.end(end), opsPool.end(end)]);
+    await Promise.allSettled([pool.end(end), opsPool.end(end), eventsPool?.end(end)]);
     process.exit(clean ? 0 : 1);
   };
   process.on("SIGTERM", () => void stop("SIGTERM"));

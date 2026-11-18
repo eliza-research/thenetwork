@@ -44,7 +44,7 @@ pure def checkMember(context: SharedContext, memberAndModeExist: bool): SharedCo
 
 ### Check the public labels and each confirmed shareable fact
 
-The first name and home city must pass the normal output check. A fact must belong to the member, be shareable, be confirmed, contain no sensitive information, and be current. Check the fact's text before including it. Withhold the entire context when more than fifty facts remain or one exceeds three hundred UTF-16 code units.
+The first name and home city must pass the normal output check. A fact must belong to the member, be shareable, be confirmed, contain no sensitive information, and be current. Check the fact's text before including it. Leave out a fact longer than three hundred UTF-16 code units and never truncate a fact. Of the facts that remain, keep the fifty newest (by observation time, then valid-from time, then ID). The facet check withholds the context only if the kept facts still break a limit. Changed on 2026-11-17 (audit SHA40): before, more than fifty facts or one long fact withheld the whole context, and a member with many job postings got no answer on the shared line.
 
 ```quint
 pure val contextFacetLimit: int = 50
@@ -56,6 +56,12 @@ pure def checkLabels(context: SharedContext, labelsSafe: bool): SharedContext =
 
 pure def contextFacetEligible(own: bool, shareable: bool, confirmed: bool, sensitive: bool, withinValidity: bool): bool =
   own and shareable and confirmed and not(sensitive) and withinValidity
+
+pure def contextFacetKept(rank: int, textSize: int): bool =
+  rank >= 0 and rank < contextFacetLimit and textSize <= contextFacetSizeLimit
+
+pure def lawKeptFactsFitTheLimits(rank: int, textSize: int): bool =
+  contextFacetKept(rank, textSize) implies (rank < contextFacetLimit and textSize <= contextFacetSizeLimit)
 
 pure def canCheckFacets(context: SharedContext): bool = context.phase == CheckingFacets
 pure def checkFacets(context: SharedContext, facetCount: int, oversized: bool): SharedContext =
@@ -75,4 +81,38 @@ Use single-player context if the member is away from the city for this matching 
 pure def contextSinglePlayer(present: bool, ageEligible: bool): bool = not(present and ageEligible)
 
 pure def lawIneligibleAgeIsSinglePlayer(present: bool): bool = contextSinglePlayer(present, false)
+```
+
+### Active items list only the member's live matches with a safe summary
+
+An active item is one live match of the member: a two-person match in which both members said yes and that is not closed. Offer it only while the member is eligible to be matched by their lowest known age, and only when its summary passes the output check. The summary names only the other member's first name, which both members learn after the mutual yes. Offer at most twenty items, newest first. With no item to offer, the context has no list. New rule: the context never offered active items, so a relay could not name its match (audit SHA38).
+
+```quint
+pure val contextActiveItemLimit: int = 20
+
+pure def contextMatchItemShown(liveMatch: bool, ageEligible: bool, summarySafe: bool): bool =
+  liveMatch and ageEligible and summarySafe
+
+pure def contextActiveItemCount(shownMatches: int): int =
+  if (shownMatches < 0) 0 else if (shownMatches > contextActiveItemLimit) contextActiveItemLimit else shownMatches
+
+pure def lawActiveItemsAtMostTwenty(shownMatches: int): bool =
+  contextActiveItemCount(shownMatches) >= 0 and contextActiveItemCount(shownMatches) <= contextActiveItemLimit
+
+pure def lawIneligibleAgeGetsNoActiveItem(liveMatch: bool, summarySafe: bool): bool =
+  not(contextMatchItemShown(liveMatch, false, summarySafe))
+```
+
+### A member whose context is unavailable still gets an answer
+
+When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The shared line never stays silent for a member. Added on 2026-11-17 (audit SHA40): before, the turn answered handled with no reply and the gateway called no model.
+
+```quint
+type OpenTurnAnswer = AnswerOpen | AnswerUnavailable
+
+pure def openTurnAnswer(contextAvailable: bool): OpenTurnAnswer =
+  if (contextAvailable) AnswerOpen else AnswerUnavailable
+
+pure def lawUnavailableContextStillAnswers(contextAvailable: bool): bool =
+  (openTurnAnswer(contextAvailable) == AnswerUnavailable) == not(contextAvailable)
 ```

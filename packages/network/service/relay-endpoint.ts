@@ -11,10 +11,12 @@
 // /internal/set-state: the app and the member come from that turn, never from model output. `text` must be
 // that turn's own inbound message (network.messages "in:<channel>:<messageId>"), never model wording; the
 // service reads the request from it (engine parseRelayRequest: a text, "send them my number", a photo, or
-// nothing to relay). `itemId` may only narrow the match to an active item the turn's context offered.
+// nothing to relay). `itemId` names one live match that the turn's context offered as an active item. A
+// member with more than one live match must name it: without `itemId` the answer is decision "none" with a
+// notice that asks which match, and nothing is classified or sent (spec/relayDecision.md).
 //
 // The ConsentNetwork's relay desk (packages/network/src/relay.ts) is the one owner of the decision: it
-// picks the member's current mutual match (the model never names anyone), asks the engine relay policy
+// picks the named live match or the member's only one (the model names only an offered item id), asks the engine relay policy
 // (`relayItemAsync` with the Clef classifier when CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are set;
 // rules only otherwise), holds for staff, swaps numbers only after both members asked, and sends only the
 // engine's `rendered` text, through the outbound queue ("relay:<item>", Cloud deliver kind "relay"). The
@@ -30,7 +32,7 @@
 import { createHash } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Clock, MemberId } from "@thenetwork/core";
-import { RELAY_PATH, type RelaySendResponse } from "../../core/src/svc/contract.ts";
+import { RELAY_PATH, RELAY_PHOTO_RESOLVE_PATH, type RelaySendResponse } from "../../core/src/svc/contract.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
@@ -42,13 +44,16 @@ import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/re
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
+import type { PhotoChoiceResult } from "./photoIntakeRelayChoice.ts";
 import { isProduction } from "../../platform/src/env.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
-export { RELAY_PATH };
+export { RELAY_PATH, RELAY_PHOTO_RESOLVE_PATH };
 /** A relay request is small: Cloud caps the text at 2000 characters. */
 export const RELAY_MAX_BODY_BYTES = 16 * 1024;
+/** A photo resolve carries one approved descriptor (service.ts resolveRelayPhoto reads at most this). */
+export const RELAY_PHOTO_RESOLVE_MAX_BODY_BYTES = 16 * 1024;
 const MAX_TEXT = 2000;
 const KEYS = ["channel", "messageId", "app", "memberId", "itemId", "text"];
 
@@ -66,6 +71,8 @@ export interface RelayEndpointDeps {
   routePolicy?: NetworkRoutePolicy;
   accounts: Accounts;
   photos?: PhotoRelayService;
+  /** The conversation step that lists the member's photos or records the named one (photoIntakeRelayChoice.ts). */
+  choosePhoto?: (input: { app: AppId; personId: string; threadId: string; text: string; requestId: string }) => Promise<PhotoChoiceResult>;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
   /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
@@ -116,6 +123,8 @@ interface StoredRelay { decision: RelaySendResponse["decision"]; notice: string;
 
 /** The desk's outcome on the Cloud wire. */
 function stored(outcome: RelayOutcome): StoredRelay {
+  // spec/relayDecision.md, "A relay names its match when the member has more than one live match"
+  if (outcome.decision === "unnamed") return { decision: "none", notice: outcome.reason };
   if (outcome.decision === "sent") return { decision: "pass", notice: outcome.reason, outboundId: `relay:${outcome.itemId}` };
   return { decision: outcome.decision === "held" ? "hold" : "block", notice: outcome.reason };
 }
@@ -229,8 +238,10 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
         const photo = request.kind === "photo" && match ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
-        if (request.kind === "photo" && !photo) {
-          const r: StoredRelay = {decision:"block",notice:NOTICE.photo};
+        if (request.kind === "photo" && match && !photo) {
+          // spec/photoRelayItem.md, "A photo request delivers an approved choice, lists the photos, or records the named photo"
+          const chosen = d.choosePhoto ? await d.choosePhoto({ app, personId: who.person.id, threadId: match.id, text, requestId: key }) : undefined;
+          const r: StoredRelay = chosen ? { decision: chosen.decision, notice: chosen.notice } : {decision:"block",notice:NOTICE.photo};
           rt.unit.completeAction = async tx => {await lock(tx);await complete(tx,r);};
           return r;
         }

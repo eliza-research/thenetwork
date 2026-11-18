@@ -9,6 +9,7 @@
 
 import { ADULT_AGE, MIN_MEMBER_AGE } from "../../core/src/policy.ts";
 import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
+import { lookingForApps, type LookingForMention, type LookingForReading } from "../../core/src/generated/lineRouting.ts";
 export { APP_IDS, isAppId, type AppId };
 
 export type JoinMode = "invite" | "open" | "waitlist";
@@ -105,22 +106,28 @@ export function keywordApp(text: string, apps: Record<AppId, Pick<AppInfo, "id" 
 }
 
 /**
- * What a person who joined The Network with no keyword says they are looking for, as app ids
- * (founder decision 2: friends, dating, work). A negated word ("not dating") does not count.
+ * How an answer to The Network's "what are you looking for?" mentions friends, dating and work
+ * (founder decision 2). A negated word ("not dating") is a refusal; the decision is lookingForApps.
  */
-export function lookingFor(text: string): AppId[] {
+export function lookingForReading(text: string): LookingForReading {
   // "I work at a bank" describes the person, not what they want.
   const t = ` ${text.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/[^\p{L}' ]+/gu, " ").replace(/\s+/g, " ")} `
     .replace(/ (i|i'm|im|i am) (work|working|worked|date|dating|dated) /g, " ");
-  const neg = "(?:not|no|never|don't want|dont want|without)(?: \\S+){0,2} ";
-  const want = (words: string) => new RegExp(` (${words}) `).test(t) && !new RegExp(` ${neg}(${words}) `).test(t);
-  const out: AppId[] = [];
-  if (want("friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew")) out.push("friends");
-  if (want("dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date")) out.push("slop");
-  if (want("work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?")) out.push("peon");
-  if (/ (all|all of (them|it|these)|everything|all three) /.test(t)) for (const a of ["friends", "slop", "peon"] as const) if (!out.includes(a)) out.push(a);
-  return out;
+  // A refusal reaches at most two words ahead and stops at a conjunction ("not dating, just friends").
+  const neg = "(?:not|no|never|don't want|dont want|without|except)(?: (?!(?:just|only|but|and|or|so|also) )\\S+){0,2} ";
+  const mention = (words: string): LookingForMention =>
+    new RegExp(` ${neg}(${words}) `).test(t) ? "MentionRefused" : new RegExp(` (${words}) `).test(t) ? "MentionWanted" : "MentionAbsent";
+  return {
+    friends: mention("friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew"),
+    dating: mention("dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date"),
+    work: mention("work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?"),
+    everything: / (all|all of (them|it|these)|everything|all three) /.test(t),
+  };
 }
+
+/** The apps an answer to "what are you looking for?" asks for. */
+// spec/lineRouting.md, "A refused app is never enrolled, even with "all of them""
+export const lookingFor = (text: string): AppId[] => lookingForApps(lookingForReading(text)).filter(isAppId);
 
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */
 export const networkId = (app: AppId, city: string) => `${app}:${city}`;

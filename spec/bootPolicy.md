@@ -67,17 +67,19 @@ pure def networkBoot(facts: NetworkBootFacts): NetworkBoot = {
 
 ### The combined backend entry checks its own database, provider and secret configuration
 
-The combined backend needs a database in every environment. Staging and production also need proxy configuration, a Turnstile secret, a hash key, and a leak-label key. A supplied proxy secret must meet the character limit in every environment. The deployed hash key has the same character limit. The leak-label key limit is in UTF-8 bytes. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL.
+The combined backend needs a database in every environment. Staging and production also need proxy configuration, a Turnstile secret and a Turnstile site key, a hash key, a leak-label key, the Eliza turn secret, at least one staff token, and the public event catalog's ingest login. A supplied proxy secret must meet the character limit in every environment. The deployed hash key, turn secret and every staff token have the same character limit. The leak-label key limit is in UTF-8 bytes. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL. Changed: a deployed backend now also refuses to start without the Turnstile site key, the turn secret or a strong staff token, because without them the agent signup connector, the shared line and every staff review answered errors while health stayed green; it also needs the ingest login, because the scheduled catalog refresh runs as that login.
 
 ```quint
 type BackendBootFacts = {
   environment: Environment, database: bool, migrate: bool, migrationUrl: bool, sameLoginUrl: bool,
-  turnstile: bool, proxyLength: int, hashLength: int, leakKeyBytes: int
+  turnstile: bool, turnstileSite: bool, proxyLength: int, hashLength: int, leakKeyBytes: int,
+  turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int, publicEventsLogin: bool
 }
 
 type BackendBoot = {
-  deployed: bool, databaseMissing: bool, turnstileMissing: bool, proxyMissing: bool, hashMissing: bool,
-  proxyShort: bool, hashShort: bool, leakKeyShort: bool, migrationMissing: bool, sharedLogin: bool
+  deployed: bool, databaseMissing: bool, turnstileMissing: bool, turnstileSiteMissing: bool, proxyMissing: bool, hashMissing: bool,
+  proxyShort: bool, hashShort: bool, leakKeyShort: bool, migrationMissing: bool, sharedLogin: bool,
+  turnSecretShort: bool, staffTokensMissing: bool, staffTokenShort: bool, publicEventsLoginMissing: bool
 }
 
 pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
@@ -85,15 +87,56 @@ pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
   {
     deployed: deployed, databaseMissing: not(facts.database),
     turnstileMissing: deployed and not(facts.turnstile),
+    turnstileSiteMissing: deployed and not(facts.turnstileSite),
     proxyMissing: deployed and facts.proxyLength == 0,
     hashMissing: deployed and facts.hashLength == 0,
     proxyShort: facts.proxyLength > 0 and facts.proxyLength < minimumSecretLength,
     hashShort: deployed and facts.hashLength < minimumSecretLength,
     leakKeyShort: deployed and facts.leakKeyBytes < minimumSecretLength,
     migrationMissing: deployed and facts.migrate and not(facts.migrationUrl),
-    sharedLogin: deployed and facts.sameLoginUrl
+    sharedLogin: deployed and facts.sameLoginUrl,
+    turnSecretShort: deployed and facts.turnSecretLength < minimumSecretLength,
+    staffTokensMissing: deployed and facts.staffTokenCount == 0,
+    staffTokenShort: deployed and facts.staffTokenCount > 0 and facts.shortestStaffTokenLength < minimumSecretLength,
+    publicEventsLoginMissing: deployed and not(facts.publicEventsLogin)
   }
 }
+
+pure def backendBootRefused(boot: BackendBoot): bool =
+  boot.databaseMissing or boot.turnstileMissing or boot.turnstileSiteMissing or boot.proxyMissing or boot.hashMissing or
+    boot.proxyShort or boot.hashShort or boot.leakKeyShort or boot.migrationMissing or boot.sharedLogin or
+    boot.turnSecretShort or boot.staffTokensMissing or boot.staffTokenShort or boot.publicEventsLoginMissing
+
+pure val turnSecretLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
+pure val shortestStaffTokenLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
+pure val staffTokenCountValues = Set(0, 1, 2)
+
+pure def lawDeployedBackendServesSignupLineAndStaff(environment: Environment, turnstileSite: bool, turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int): bool =
+  val facts = {
+    environment: environment, database: true, migrate: false, migrationUrl: true, sameLoginUrl: false,
+    turnstile: true, turnstileSite: turnstileSite, proxyLength: minimumSecretLength, hashLength: minimumSecretLength,
+    leakKeyBytes: minimumSecretLength, turnSecretLength: turnSecretLength, staffTokenCount: staffTokenCount,
+    shortestStaffTokenLength: shortestStaffTokenLength, publicEventsLogin: true
+  }
+  (deployedEnvironment(environment) and not(backendBootRefused(backendBoot(facts)))) implies
+    (turnstileSite and turnSecretLength >= minimumSecretLength and
+      staffTokenCount > 0 and shortestStaffTokenLength >= minimumSecretLength)
+```
+
+### Exactly one system answers the carrier's inbound messages
+
+With `NETWORK_CHANNEL=eliza_cloud` the Eliza gateway owns the carrier webhook and calls the signed turn route. The backend then does not serve its own Blooio webhook route on either listener, whatever secret is set. Any other channel setting keeps the backend's Blooio webhook as the inbound owner. Changed: before this rule the legacy webhook stayed open beside the gateway, so one text could get two answers.
+
+```quint
+type CarrierInboundOwner = ElizaGateway | BackendWebhook
+
+pure def carrierInboundOwner(channelSetting: str): CarrierInboundOwner =
+  if (channelSetting == "eliza_cloud") ElizaGateway else BackendWebhook
+
+pure def backendWebhookServed(channelSetting: str): bool = carrierInboundOwner(channelSetting) == BackendWebhook
+
+pure def lawGatewayClosesBackendWebhook(channelSetting: str): bool =
+  carrierInboundOwner(channelSetting) == ElizaGateway implies not(backendWebhookServed(channelSetting))
 ```
 
 ### A deployed service login must be a restricted database role

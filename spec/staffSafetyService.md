@@ -194,3 +194,56 @@ pure def staffBanSnapshotStatus(accountStatus: str, banned: bool): str =
 pure def lawBannedEnrollmentCannotCommit(liveOwner: bool, verifiedBinding: bool): bool =
   not(staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true))
 ```
+
+## Story: Route an agent signal to an accountable decision
+
+> As a member who tells the shared agent about a safety problem, or that I want no more introductions, I want that signal to reach a person or to take effect, and never to wait unread.
+
+### An agent signal goes to the decision that owns it
+
+The shared agent sends a signal only inside the member's own open turn, and the service checks that turn and the member's active membership first. A safety concern opens or joins that member's safety case with the reason code `agent_safety_concern` and no evidence text, and it waits for safety staff. An opt-out pauses matching in that app only, with the same setting that the member's "pause matching" command writes. It does not change carrier consent: only STOP on the shared line does that, and the signal response has no consent fence for the gateway. A travel signal stays private context. Changed on 2026-11-17 (audit COV05): before this rule the service stored safety concerns and opt-outs as proposals that no person decided and that changed nothing.
+
+```quint
+import participationControls as Controls from "./participationControls"
+
+type AgentSignalRoute = SignalOpensSafetyCase | SignalPausesApp | SignalKeptAsContext
+
+pure def agentSignalRoute(kind: str): AgentSignalRoute =
+  if (kind == "safety_concern") SignalOpensSafetyCase
+  else if (kind == "opt_out") SignalPausesApp
+  else SignalKeptAsContext
+
+pure def agentSignalWaitsForStaff(kind: str): bool = agentSignalRoute(kind) == SignalOpensSafetyCase
+
+pure def agentOptOutParticipation(kind: str, saved: str): str =
+  if (agentSignalRoute(kind) == SignalPausesApp) Controls::participationControlState(true) else saved
+
+pure def lawAgentSafetyConcernReachesStaff(kind: str): bool =
+  kind == "safety_concern" implies agentSignalWaitsForStaff(kind)
+
+pure def lawAgentOptOutPausesOnlyMatching(saved: str): bool =
+  agentOptOutParticipation("opt_out", saved) == "paused" and not(agentSignalWaitsForStaff("opt_out"))
+
+pure def lawOtherSignalsLeaveParticipation(kind: str, saved: str): bool =
+  kind != "opt_out" implies agentOptOutParticipation(kind, saved) == saved
+```
+
+### Safety staff decide a waiting agent signal once
+
+A signal that waits for staff is listed for reviewer and safety staff in that app. Only a safety staff member in that app can decide it, with a reason, and the service writes the request audit before the decision. The decision marks the signal reviewed or dismissed. A decided signal keeps its decision. The member's safety case stays open until staff use the existing hold, lift or close actions. The operations alert counts only waiting signals. Changed on 2026-11-17 (audit COV05): before this rule no staff action resolved a signal, so its alert could not clear.
+
+```quint
+type AgentSignalPhase = SignalWaiting | SignalReviewed | SignalDismissed
+
+pure def agentSignalDecisionAllowed(safetyRole: bool, phase: AgentSignalPhase): bool =
+  safetyRole and phase == SignalWaiting
+
+pure def agentSignalAfterDecision(phase: AgentSignalPhase, safetyRole: bool, dismiss: bool): AgentSignalPhase =
+  if (agentSignalDecisionAllowed(safetyRole, phase)) { if (dismiss) SignalDismissed else SignalReviewed } else phase
+
+pure def lawDecidedAgentSignalStaysDecided(phase: AgentSignalPhase, safetyRole: bool, dismiss: bool): bool =
+  phase != SignalWaiting implies agentSignalAfterDecision(phase, safetyRole, dismiss) == phase
+
+pure def lawOnlySafetyStaffDecideAgentSignals(phase: AgentSignalPhase, dismiss: bool): bool =
+  agentSignalAfterDecision(phase, false, dismiss) == phase
+```

@@ -115,6 +115,8 @@ export function copyFor(b: CopyBrand) {
   /** The same ideas with no offer to find company: for minors, members who cannot be matched, and while matching is off. */
   plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
+  /** A late answer to an expired probe (spec/probeReply.md): it ended, and nothing about the member was shared. */
+  probeEnded: "That invitation has closed, so I didn't share anything about you. I'll keep an eye out for another.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
   dayOfCheckIn: (when: string, venue: string) => `Still good for ${when} at ${venue}? Tell me if you're running late or can't make it.`,
   /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */

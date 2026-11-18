@@ -2,7 +2,11 @@
 
 The Cloudflare backend migration uses [deploy/cloudflare](../deploy/cloudflare/README.md).
 It preserves PostgreSQL and keeps the replacement inactive until the old backend is drained.
-The Railway steps below describe the current deployment and rollback path.
+The Cloudflare Worker routes only the public port (8790). The staff API (`STAFF_PORT`, review,
+safety, leak review, holds) is served only inside the container and nothing routes to it, so the
+Worker refuses `BACKEND_ENABLED=true` (503 `staff_api_unreachable`) until a private staff route
+exists. Without that route every proposal would expire unreviewed. The Railway steps below are the
+deployment and rollback path.
 
 This is how The Network goes online. Read it with [runbook-platform.md](runbook-platform.md) (local dev) and [runbook-real.md](runbook-real.md) (the real network and its gates). The coordinator deploys. Nobody turns on live sends from this document: section 6 keeps them off.
 
@@ -28,7 +32,7 @@ The backend process has two listeners:
 
 | Listener | Bind | Paths |
 |---|---|---|
-| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates`, `/internal/relay` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
+| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked; 404 `webhook_not_served` on both ports with `NETWORK_CHANNEL=eliza_cloud`), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates`, `/internal/relay` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; a deployed backend does not start without it), `/healthz` |
 | Staff, `STAFF_PORT` (4848) | `::` when deployed (Railway's private network may be IPv6 only); `127.0.0.1` otherwise | The staff API: `/health`, `/review`, `/safety/*`, `/matching`, `/holds`, `/invite`, `/apps/<app>/...`. Never on the public port. |
 
 How a site request reaches the backend:
@@ -119,16 +123,21 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `LEAK_LABEL_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the leak guard's log labels (core-6), so a stored label cannot be matched against guessed values. `loadConfig` refuses to start staging or production without it. Dev and the simulations stay unkeyed. |
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
-| `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
+| `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | Required: `loadConfig` refuses to start staging or production without it (spec/bootPolicy.md). The MCP sign-in page (`/oauth/authorize` on each site) shows the widget; it is the agent signup path of every SKILL.md. `server.ts` also refuses to start a deployed backend whose MCP server is off. The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
 | `MCP_CUSTOM_CHATGPT_SLOP` | no | unset or `off` | Default off. `on` requires founder approval for the private real-account pilot at `https://slop.date/mcp`. Keep the public OpenAI plugin exclusion. |
 | `MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS` | **yes** (private account list) | unset while off | With the approved pilot on, list existing adult person IDs, separated by commas. Never log or publish them. An empty list or literal `*` entry fails startup. Entries match exact person IDs. Normal staging/production authentication checks still apply. |
 | `MCP_PRIVATE_OPENAI_APPS` | no | unset | Development-only fictional pilot. Never set it in staging or production, or combine it with the real-account pilot. |
 | `OTP_PROVIDER` | no | `twilio` | Required when deployed. Reviewed alternative: explicit `blooio` with existing `BLOOIO_API_KEY` and exact `BLOOIO_FROM`; no automatic fallback. |
+| `PLATFORM_PHONE_OTP_ONLY_APPS` | no | unset | Comma-separated `ntwrk`, `slop` or `friends`, each once. A named app's `/api/auth/otp/start` skips the Turnstile check so an assistant can start the code. Needs `OTP_PROVIDER=blooio`. Every code send limit still applies; the connector authorization pages keep Turnstile. Rule: spec/otpLimits.md. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | **yes** (all three) | Twilio Verify | Codes only. These send verification codes, not network messages. |
-| `NETWORK_SERVICE_TOKENS` | **yes** | `admin@*:<t>,reviewer@slop:<t>,...` | Staff tokens. Without them every staff route answers 401. |
+| `NETWORK_SERVICE_TOKENS` | **yes** | `admin@*:<t>,reviewer@slop:<t>,...`, each token 32+ random characters | Staff tokens (review, safety, leak review, holds). Required: staging and production refuse to start without at least one token, or with a token shorter than 32 characters. In production every entry names its app (`role@app` or `role@*`). |
 | `NETWORK_SERVICE_CONSOLE_TOKEN` | **yes** | One of the tokens above | Only if the observatory console runs |
-| `BLOOIO_WEBHOOK_SECRET` | **yes** | From Blooio | Without it `/webhooks/blooio` answers 503 |
-| `<APP>_BLOOIO_WEBHOOK_SECRET` | **yes** | Per-app lines only | Not needed with one shared line |
+| `SERVICE_TURN_SECRET` | **yes** | 32+ random characters; the same value on the Eliza gateway and the Cloud API (docs/go-live-handoff.md section 7) | Required: staging and production refuse to start without it. It signs `/internal/*` (the Eliza gateway's turns) and the backend's calls to `/api/internal/network/deliver`. It must differ from every staff token. |
+| `NETWORK_CHANNEL` | no | `eliza_cloud` once the Eliza gateway owns the shared line (production); unset before that | The inbound owner. With `eliza_cloud` the gateway owns the carrier webhook and the backend does **not** serve `/webhooks/blooio` on either port (404 `webhook_not_served`; spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"). It does not make any send live: queued sends stay dry-run until the live flags in section 6 are set. `blooio` (the legacy direct path) is not used in production. |
+| `NETWORK_CLOUD_DELIVERY_ORIGIN` | no | The Eliza Cloud API origin, for example `https://www.elizacloud.ai` | Where the backend posts `/api/internal/network/deliver`. Required (with `SERVICE_TURN_SECRET` and `BLOOIO_FROM`) once Cloud sends are live; `loadConfig` refuses live Cloud sends without it. |
+| `NETWORK_PUBLIC_EVENTS_DATABASE_URL` | **yes** | `postgres://network_events:<password>@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}` | Required: staging and production refuse to start without it. The public event catalog's ingest login: create it once as the owner with `create role network_events login password '<24+ random>' nosuperuser nobypassrls; grant network_public_event_ingest to network_events; grant connect on database <db> to network_events;`. Each tick round refreshes the NYC Parks catalog as this login when the last scan is a day old (one process at a time, one retry an hour after a failure; spec/publicEventCatalog.md). The log line `public events` reports each scan; a failure logs `public_events tick failed`. |
+| `BLOOIO_WEBHOOK_SECRET` | **yes** | Not needed with `NETWORK_CHANNEL=eliza_cloud` (the gateway checks Blooio's signature) | Only for the legacy direct path, where the backend owns `/webhooks/blooio`; without it that route answers 503. With `NETWORK_CHANNEL=eliza_cloud` a value is ignored and the boot log warns. |
+| `<APP>_BLOOIO_WEBHOOK_SECRET` | **yes** | Per-app lines only | Not needed with one shared line, and ignored with `NETWORK_CHANNEL=eliza_cloud` |
 | `PLATFORM_STOP_SCOPE` | no | leave unset | PRD 40.3: on the shared line STOP stops every app anyway |
 | `STOP_HELP_OWNER`, `STOP_HELP_GATEWAY_SECRET` | no | retired; ignored with a log line | The service answers STOP, HELP and START inside the signed turn (packages/network/service/README.md, "The Eliza seam"). Remove them from Railway when convenient. |
 | `BLOOIO_LINE_DAILY_CAP`, `BLOOIO_LINE_NEW_CHATS_PER_DAY` | no | leave unset (200 and 20) until prototype P3 measures the line | The persisted queue's per-line caps on agent-started texts and new conversations in a rolling day. |
@@ -145,7 +154,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token and the account id. Without them nothing is rated (`off_env`). | Never set in CI or `pnpm run sim`. Each rater try is a `photo_rating` row in the cost ledger (7.3). |
 | `CLEF_MODEL` | no | `clef` | `clef-flash` is cheaper. A refused weights file logs `photo rater` with `status: refused_weights`. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
-| `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
+| `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6 has the table of which flag makes which send live. |
 | `ALERT_WEBHOOK_URL` | **yes** | A Slack incoming webhook (or any HTTPS endpoint that takes a JSON POST) | Section 7.2. Unset: alerts are log lines only, and the boot log warns. |
 | `ALERT_WEBHOOK_FORMAT` | no | `slack` for a Slack webhook, else leave unset (`json`) | `slack` sends `{ text }` only |
 | `OPS_METRICS_TOKEN` | **yes** | 32+ random characters | `GET /ops/metrics` with `Authorization: Bearer <token>`. Unset: the route answers 404. |
@@ -381,14 +390,27 @@ An independent preview proves that environment only. It does not prove productio
 3. `PLATFORM_PROXY_SECRET` set in each Pages project. Deploy slop.date first (decision 4), then ntwrk.party, peon.biz and friends.help (3.1 or `deploy-sites.yml`). Each answers on `<project>.pages.dev` at once.
 4. Run the checks in 3.3 on every host.
 5. The observatory console behind Access (2.6), the uptime monitor and the alert webhook (7), and the backup job with one restore drill (8).
-6. DNS: slop.date and friends.help (Eliza Labs Cloudflare account) point at their `pages.dev` names; ntwrk.party and peon.biz move to Pages custom domains (3). The MCP server is on once `TURNSTILE_SITE_KEY` is set on the backend.
+6. DNS: slop.date and friends.help (Eliza Labs Cloudflare account) point at their `pages.dev` names; ntwrk.party and peon.biz move to Pages custom domains (3). The MCP server is on from the first deploy: the backend does not start without `TURNSTILE_SITE_KEY`.
 
 ## 6. Go-live checklist (live sends stay off)
 
 Do every item on each deploy to production until the founder turns sends on in writing.
 
-- [ ] `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED` and every `<APP>_LIVE_APPROVED` are **unset** on the backend service, in every Railway environment. Railway shows the variables; check them, do not assume.
-- [ ] The boot log shows `"channel":"dry-run"` and `"sends":"dry-run"` for every network. With only some of the flags set, the log warns `sends stay dry-run`; treat that warning as a failed check.
+- [ ] `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED` and every `<APP>_LIVE_APPROVED` are **unset** on the backend service, in every Railway environment. `NETWORK_CHANNEL` is unset, or `eliza_cloud` once the Eliza gateway owns the line. Railway shows the variables; check them, do not assume.
+- [ ] The boot log shows `"channel":"dry-run"`, the `live sends` line shows `queued dry-run` for all four apps, and `"sends":"dry-run"` for every network. `NETWORK_CHANNEL=eliza_cloud` alone logs `NETWORK_CHANNEL=eliza_cloud without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run`; that is expected. With some of the live flags set, the same warning is a failed check.
+- [ ] The `live sends` line says `"inbound":"eliza gateway"` when the gateway owns the line, and `curl -X POST https://api.ntwrk.party/webhooks/blooio` gives 404 `webhook_not_served`. Exactly one system answers the carrier.
+- [ ] The boot log has no `refusing to start` line and no `TURNSTILE_SITE_KEY`, `SERVICE_TURN_SECRET`, `NETWORK_SERVICE_TOKENS` or `NETWORK_PUBLIC_EVENTS_DATABASE_URL` error; it shows `"msg":"mcp","enabled":true`. Within a day of the first boot it shows one `public events` line, and `select checked_at from network.public_event_imports` is under a day old.
+
+**Which flag makes which send live (current behavior; audit PER34 and SHA41 are open founder decisions).** "Queued sends" are every text the backend sends through its channel adapter: proposals and probes, relayed messages, notices, reminders, digests, re-engagement, and replies on the legacy Blooio webhook. "Turn replies" are the replies the backend returns in a handled `/internal/turn` response (onboarding, joining, STOP, HELP, leave, SHARE, command answers); the Eliza gateway sends them, and no backend flag gates them. `backend.ts` `liveSendTable` computes this table, `server.ts` logs it at boot as the `live sends` line, and `deploy/backend/backend.test.ts` ("the live-send table") pins it, so a change to it fails a test.
+
+| App | Queued sends are live when all of these are set | Turn replies on the shared line |
+|---|---|---|
+| ntwrk | `NETWORK_CHANNEL` (`eliza_cloud` or `blooio`), `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` | Sent by the gateway whenever the gateway routes the person to ntwrk; no backend flag |
+| slop | the ntwrk row, and `SLOP_LIVE_APPROVED=1` | The same; `SLOP_LIVE_APPROVED` does not gate them |
+| friends | the ntwrk row, and `FRIENDS_LIVE_APPROVED=1` | The same; `FRIENDS_LIVE_APPROVED` does not gate them |
+| peon | the ntwrk row, and `PEON_LIVE_APPROVED=1` | The same; `PEON_LIVE_APPROVED` does not gate them |
+
+Two consequences to know before any flag is set. (1) `NTWRK_LIVE_APPROVED` is also the global approval: slop cannot go live without it, and setting it for slop makes ntwrk's queued sends live too (PER34). (2) A person who texts "friends" or "peon" to the shared line gets live onboarding and command replies from that app as soon as the gateway takes over, whatever `<APP>_LIVE_APPROVED` says; only that app's queued sends stay dry-run (SHA41). Changing either is a founder decision; until then operate with this table.
 - [ ] `select status, count(*) from network.messages where direction = 'outbound' group by 1;` shows only `dry_run` (and `refused_*`) rows.
 - [ ] `PLATFORM_ENV=production` and `select value from platform.settings where key = 'environment'` says `production`. The 555-01xx trigger is then on.
 - [ ] `PLATFORM_DB_ENVIRONMENT_INIT` is gone from the variables.
@@ -511,7 +533,7 @@ Two backups, so that one failure does not lose the data:
 A restore never changes a role or a privilege on the source server:
 
 - The drill (the default) runs `pg_restore --no-owner --no-privileges`: no `ALTER OWNER`, `GRANT` or `REVOKE`. The tables belong to the login that ran the restore. Run the drill with the owner login (`postgres` on Railway), because some tables force row-level security.
-- `--keep-privileges` (a real recovery, runbook-real.md 8.3) keeps the owners and grants. They apply to the objects of the new database only.
+- `--keep-privileges` (a real recovery, runbook-real.md 8.3) keeps the owners and grants. They apply to the objects of the new database only. A recovery also needs `--replay` (with `RESTORE_SOURCE_DATABASE_URL`, a login that can read the source database: the erasures, STOPs, leaves and bans after the backup are replayed, docs/runbook-privacy.md section 3) or `--source-lost`.
 - `--roles` runs `roles.sql` (`CREATE ROLE` and `ALTER ROLE` for the whole server). It is refused on the source server, and on any server when the backup does not name its source. Use it only to rebuild an empty replacement server.
 
 ```bash

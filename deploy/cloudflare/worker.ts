@@ -58,24 +58,21 @@ async function stopInactiveBackend(env: Env): Promise<void> {
   await getContainer(env.BACKEND, "backend").stop();
 }
 
+/**
+ * This Worker routes only the public port. The staff API (review, safety, leak review, holds) listens
+ * on STAFF_PORT inside the container, and nothing routes to it, so an active deployment would let every
+ * proposal expire unreviewed (audit OPS28). Activation is refused until a private staff route exists.
+ */
+const STAFF_API_UNREACHABLE = "staff_api_unreachable";
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(_request: Request, env: Env): Promise<Response> {
     // Install and validate configuration before transferring ownership of jobs.
-    if (env.BACKEND_ENABLED !== "true") {
-      await stopInactiveBackend(env);
-      return new Response("Backend deployment inactive", { status: 503 });
-    }
-    // Preserve the signed Pages proxy headers and raw request body. The backend
-    // authenticates public/internal routes; the private staff port is not routed.
-    return getContainer(env.BACKEND, "backend").fetch(request);
+    await stopInactiveBackend(env);
+    return new Response(env.BACKEND_ENABLED === "true" ? STAFF_API_UNREACHABLE : "Backend deployment inactive", { status: 503 });
   },
   async scheduled(_event: unknown, env: Env): Promise<void> {
-    if (env.BACKEND_ENABLED !== "true") {
-      await stopInactiveBackend(env);
-      return;
-    }
-    const response = await getContainer(env.BACKEND, "backend").fetch("http://backend/healthz");
-    if (!response.ok) throw new Error(`Backend readiness failed (${response.status})`);
-    await response.body?.cancel();
+    await stopInactiveBackend(env);
+    if (env.BACKEND_ENABLED === "true") throw new Error(`Backend activation refused: ${STAFF_API_UNREACHABLE} (deploy/cloudflare/README.md)`);
   },
 };

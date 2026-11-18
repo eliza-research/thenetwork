@@ -252,6 +252,38 @@ export function sometimesVerifies(flow: ChallengeFlow): boolean {
   return flow.phase === "Verified";
 }
 
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+//@ pure
+export function otpOnlyAppAllowed(appId: string): boolean {
+  return appId === "ntwrk" || appId === "slop" || appId === "friends";
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+//@ pure
+export function otpOnlyPolicyAccepted(everyNamedAppAllowed: boolean, namesDistinct: boolean, anyNamed: boolean, blooioSender: boolean): boolean {
+  return everyNamedAppAllowed && namesDistinct && (!anyNamed || blooioSender);
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+//@ pure
+export function otpStartNeedsBrowserCheck(appNamed: boolean, checkConfigured: boolean): boolean {
+  return checkConfigured && !appNamed;
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+//@ pure
+export function lawUnnamedAppKeepsBrowserCheck(checkConfigured: boolean): boolean {
+  //@ ensures \result === true
+  return otpStartNeedsBrowserCheck(false, checkConfigured) === checkConfigured;
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+//@ pure
+export function lawNamedAppNeedsBlooio(everyNamedAppAllowed: boolean, namesDistinct: boolean): boolean {
+  //@ ensures \result === true
+  return !otpOnlyPolicyAccepted(everyNamedAppAllowed, namesDistinct, true, false);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ChallengeFlow, event: Event): boolean {
