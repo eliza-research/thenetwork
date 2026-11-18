@@ -82,6 +82,7 @@ if (a.help) {
 }
 
 const seed = Number(a.seed);
+if (a.seed?.trim() === "" || !Number.isFinite(seed)) throw new Error("--seed must be a finite number");
 const mode = a.mode as RunMode;
 if (!["discrete", "accelerated", "realtime"].includes(mode)) throw new Error(`bad --mode ${mode}`);
 
