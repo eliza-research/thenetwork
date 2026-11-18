@@ -404,16 +404,27 @@ export class Projector {
       case "probe_replaced": {
         const o = s.opps.get(d.oppId);
         if (!o) return true;
-        o.participants = o.participants.map(x => (x === d.out ? d.in : x));
-        delete o.status[d.out]; o.status[d.in] = "checking";
+        // A plan backfill adds a seat without an `out`. The snapshot also removes consumed alternates.
+        const p = d.proposal as Proposal | undefined;
+        o.participants = p ? [...p.participants] : d.out
+          ? o.participants.map(x => (x === d.out ? d.in : x))
+          : [...new Set([...o.participants, d.in])];
+        o.alternates = p ? [...(p.alternates ?? [])] : o.alternates.filter(x => x !== d.in);
+        if (d.out) delete o.status[d.out];
+        o.status[d.in] = "checking";
         // The Network rebuilds every reason after a swap; show the new ones.
-        if (d.proposal?.explanations) o.explanations = { ...d.proposal.explanations };
+        if (p?.explanations) o.explanations = { ...p.explanations };
         this.changed(o, r);
         return true;
       }
       case "probe_closed": {
         const o = s.opps.get(d.proposalId);
-        if (o && !isTerminal(o.state)) { this.setState(o, "SKIPPED", String(d.reason ?? "not sent")); this.changed(o, r); }
+        if (!o) return true;
+        const wasOpen = !isTerminal(o.state), hasAlternates = Array.isArray(d.alternates);
+        // Trying the last candidates can exhaust the list without another replacement event.
+        if (hasAlternates) o.alternates = [...d.alternates];
+        if (wasOpen) this.setState(o, "SKIPPED", String(d.reason ?? "not sent"));
+        if (wasOpen || hasAlternates) this.changed(o, r);
         return true;
       }
       case "venue": {
