@@ -17,6 +17,11 @@ test("a skill sought during onboarding is not the seeker's own capability", asyn
     { body: "I'm looking for a mentor who can review my work every week and give honest feedback, ideally a senior product designer.", skill: "design", ask: "I want to meet other founders.", own: false },
     { body: "I'm looking for a guitar teacher who gives weekend lessons in Brooklyn and knows fingerstyle, and who plays guitar.", skill: "guitar", ask: "Help me start a band.", own: false },
     { body: "I'm looking for a drummer for my band that practices every weekend in Brooklyn, and I play bass.", skill: "bass", ask: "Help me start a band.", own: true },
+    { body: "I'm looking for someone I can learn from, a guitarist for weekend lessons.", skill: "guitar", ask: "Help me start a band.", own: false },
+    { body: "I need someone who can help because I struggle, a product designer for my portfolio.", skill: "design", ask: "I want to meet other founders.", own: false },
+    { body: "I need someone who can help me because I struggle with my portfolio, ideally a senior product designer.", skill: "design", ask: "I want to meet other founders.", own: false },
+    { body: "Looking for a co-founder, my work as a product designer.", skill: "design", ask: "I want to meet other founders.", own: true },
+    { body: "Looking for a co-founder, my job as a product designer.", skill: "design", ask: "I want to meet other founders.", own: true },
   ]) {
     const x = new Mini([{ id: "a", name: "Alice Able", age: 30 }, { id: "b", name: "Boris Bell", age: 32 }], { seed, review: "human" });
     await x.onboard("a");
