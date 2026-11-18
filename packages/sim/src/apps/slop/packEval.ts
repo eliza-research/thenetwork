@@ -62,13 +62,13 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
   const groups: Extra["groups"] = {};
   for (const [k, g] of Object.entries(m.fairness.byGroup)) groups[k] = { dates: g.datesPerMemberMonth * g.n * months, memberMonths: g.n * months };
 
-  // Feasible members: at least one other real member inside the stated filters both ways (week 0).
+  // Keep the starting cohort: widening during the run must not change its membership.
   const O = res.world.oracle, real = res.world.personas.filter(isSafe);
   const datesOf = new Map<MemberId, number>();
   for (const f of res.flows) if (f.stage === "date") for (const id of [f.first, f.partner]) datesOf.set(id, (datesOf.get(id) ?? 0) + 1);
   const feasibleGroups: Extra["feasibleGroups"] = {};
   for (const p of real) {
-    if (!real.some(q => O.statedMutual(p, q, 0))) continue;
+    if (!res.world.initiallyFeasible.has(p.id)) continue;
     const g = (feasibleGroups[groupOf(p)] ??= { dates: 0, memberMonths: 0 });
     g.dates += datesOf.get(p.id) ?? 0; g.memberMonths += months;
   }
