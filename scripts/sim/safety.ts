@@ -17,6 +17,8 @@ import { DAY, HOUR, type MemberId } from "../../packages/core/src/index.ts";
 import { makeClefRater } from "../../packages/engine/src/packs/slop/clef.ts";
 import { appearanceFacet } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { DEFAULT_CLEF_WEIGHTS } from "../../packages/engine/src/packs/slop/clefWeights.ts";
+import { DEFAULT_CONFIG } from "../../packages/engine/src/config.ts";
+import { riskTerms } from "../../packages/engine/src/filters.ts";
 import { Accounts } from "../../packages/platform/src/accounts.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { keyedHash } from "../../packages/platform/src/phone.ts";
@@ -118,6 +120,24 @@ function offlineWorld(o: { rater?: boolean } = {}) {
 }
 
 export async function safetyBlock(b: Block): Promise<void> {
+  // ------------------------------------------------------------------ the high-risk text corpus
+  // `riskTerms` is what turns a member's own words into the `high_risk` reason (a hard filter,
+  // 33.1), and no gate covered it: the photos, ban, report and review gates below exercise the
+  // surrounding services instead. These are the spellings of a child's age, the count before the child noun, the two phrasal verbs
+  // with the child between the verb and its particle, and the ordinary speech that must still pass.
+  await b.run("high risk: the child-care corpus reads the age, the count and the phrasal verb however a member writes them; ordinary speech still passes", () => {
+    const flagged = (text: string) => riskTerms(DEFAULT_CONFIG, text).length > 0;
+    for (const age of ["6yo", "6 yo", "6 y/o", "6 y.o.", "6 y.o", "6 y o", "6 yr old", "6 yrs old", "6 y-old", "6 year old", "6 years old", "6-year-old", "six year old"]) {
+      expect(flagged(`watch my ${age} saturday`)).toBe(true);
+    }
+    for (const text of ["pick my kid up", "picking my kid up", "drop my kid off", "dropping my kid off", "pick the kids up", "who can pick my son up", "pick up my kid", "pick them up from school", "pick my 2 kids up", "pick my two kids up", "drop my two kids off", "pick my 3 year old up"]) {
+      expect(flagged(text)).toBe(true);
+    }
+    for (const text of ["parents with young kids", "a 5 year old startup", "dog sitter available", "diet coke please", "mushroom foraging", "joint venture with my team", "pick up the tab", "pick up my dry cleaning", "pick me up at the airport", "pick the package up", "pick up the check please", "drop me off at the airport", "drop the price off the total", "drop off my rent check", "i pick up shifts at the hospital", "drop the subject"]) {
+      expect(flagged(text)).toBe(false);
+    }
+  });
+
   // ------------------------------------------------------------------ photos: adults only
   await b.run("photos: a member aged 13-17 or of unknown age uploads on the site: 0 photo rows, 0 bytes stored, 0 rater calls", async () => {
     const w = offlineWorld();
