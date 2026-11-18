@@ -16,7 +16,8 @@ This repository is a Slop bounty repository with a monthly pool of 1,000 USDC. [
 
 1. Star this repository with your own GitHub account.
 2. Fork this repository to your own GitHub account.
-3. Do all work on a branch in your fork. Open your PR from the fork into `main`.
+3. Do all work on a branch in your fork. Open your PR from the fork into `vibestack`.
+   For a maintainer-requested backport, follow the guide on the target branch.
 
 You can use the GitHub web page, browser automation, computer use or the GitHub CLI:
 
@@ -64,14 +65,16 @@ needs approval. Link the specific story or rule when you propose a change.
 
 ### 3.2 Not accepted
 
-Maintainers close these. They can penalize the contributor under the project contribution policy.
+Maintainers close these. The [evidence policy](#evidence) explains when
+Slop.cash deducts Points.
 
 - UI, visual, style or copy changes (section 9).
 - Refactors for preference, renames, file moves and comment edits with no bug and no measured result.
 - Speculative features, and new features without approved updates to the product specification.
 - Busywork tests: unit tests, smoke tests, coverage-only tests, tests that repeat the implementation. See [docs/tests-policy.md](docs/tests-policy.md).
 - Proof that uses only mocked LLM output.
-- Defensive code, extra validation, null checks or truncation for conditions that cannot occur.
+- Defensive code for impossible conditions or highly unlikely paths without
+  a reachable reproduction and an observed user or operational impact.
 - Placeholder code, TODOs, stubs and dead controls.
 - Claims with no evidence. Vague issues ("improve matching").
 - Duplicates of an open issue or PR. Search first.
@@ -150,7 +153,9 @@ The validation layer is the simulations plus the integration and e2e tests ([doc
 | `bun run plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
 | `bun run sites:build` | The production build of the four sites. | |
 
-CI (`.github/workflows/ci.yml`) runs all of these with no secrets. CI never calls an LLM. So your PR must also show a real-LLM run (section 7.2).
+CI (`.github/workflows/ci.yml`) runs all of these with no secrets or model
+providers. For changes to model-backed behavior, show a real-LLM run
+(section 7.2).
 
 ## 7. Validate the matching algorithm
 
@@ -169,7 +174,9 @@ The ConsentNetwork (`packages/network`) calls the engine once a day. A person re
 
 ### 7.2 Runs with real LLM calls
 
-Real LLM calls are required for evidence. Mocked LLM output is not proof. Set `SURPLUS_API_KEY` (or `OPENAI_API_KEY`) in `.env` first. Each run costs money. Start small.
+For model-backed behavior, run the affected path with a real model. Set
+`SURPLUS_API_KEY` (or `OPENAI_API_KEY`) in `.env` first. Each run costs money.
+Start small.
 
 | What it measures | Command |
 |---|---|
@@ -188,7 +195,7 @@ In the PR, give the provider, the exact model ID, the request settings, the numb
 
 Use this method for every quality change:
 
-1. Pick one score from section 10. Record the baseline on `main` with a fixed command and fixed seeds.
+1. Pick one score from section 10. Record the baseline on the PR target branch with a fixed command and fixed seeds.
 2. Make one change.
 3. Run the same command with the same seeds. Record the result.
 4. Keep the change only if the score improves and every safety gate stays at its value. Canary leaks, invariant violations and minor contacts are always 0.
@@ -218,7 +225,8 @@ bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8
 
 ## 8. Test in real agent clients
 
-Members reach The Network through their own AI agent. So you must test a changed flow in several agent clients. Record each one.
+Members reach The Network through their own AI agent. For a changed agent
+flow, test it in each affected agent client. Record each one.
 
 The integration points:
 
@@ -324,29 +332,35 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 
 ### 12.1 Rules
 
-- Link a reproduced issue or an approved story or rule in the product specification.
+- Link a reproduced issue, approved product story or rule, or maintainer request.
 - Use the code that exists. Remove dead code and merge duplicates. Add a new type, file, package or dependency only when it is necessary, and say why.
 - Explain the cause. Describe at least two other implementations and why yours is better.
 - A bug fix adds one sim gate, scenario, corpus row, or integration or e2e case that fails before the fix. That is enough. Do not add more.
-- Write results to `docs/results/YYYY-MM-DD-<topic>.md` with the date, command, seed, provider, model, request settings and sample size.
+- For measured research or simulation changes, write results to
+  `docs/results/YYYY-MM-DD-<topic>.md` with the date, command, seed, provider,
+  model, request settings and sample size.
 
 ### 12.2 Evidence checklist
 
-Every PR must include each item. Write `N/A: <reason>` only when an item does not apply.
+Use the [evidence policy](#evidence) for the PR body. Include each applicable
+item below.
 
 - [ ] The repository is starred and the PR comes from your fork.
-- [ ] Linked issue or approved story or rule in the product specification.
+- [ ] Linked issue, approved product story or rule, or maintainer request.
 - [ ] The root cause, in plain words.
 - [ ] The fix, and two other implementations you did not use.
 - [ ] The before and after results, with the same command, seeds and data.
-- [ ] Real-LLM evidence: commands and output, provider and exact model ID, number of calls and cost.
-- [ ] Agent clients tested (section 8): client and version, provider, model, result.
-- [ ] Logs or video when a flow is involved.
-- [ ] `bun run sim`, `bun run typecheck`, `bun run test:integration` and `bun run test:e2e` pass. Paste the summary lines.
-- [ ] Spec, generated modules, and related flow model agree. Include Vibespec check results and any open obligations.
+- [ ] For model-backed changes, real-LLM commands and output, provider, exact
+  model ID, number of calls and cost.
+- [ ] For agent flow changes, client and version, provider, model and result
+  for each applicable client (section 8).
+- [ ] For application changes, report `bun run sim`, `bun run typecheck`,
+  `bun run test:integration` and `bun run test:e2e`. Set `REQUIRE_PG=1` for
+  the Postgres-dependent checks. Paste the summary lines.
+- [ ] For spec changes, confirm that the spec, generated modules, and related
+  flow model agree. Include Vibespec check results and any open obligations.
 - [ ] Test steps and the expected result of each step.
 - [ ] Risks and trade-offs.
-- [ ] No UI change, or the broken-flow exception with before and after video (section 9).
 - [ ] No secrets, `.env`, `runs/` or member data in the diff.
 
 ### 12.3 Template
@@ -356,10 +370,10 @@ Every PR must include each item. Write `N/A: <reason>` only when an item does no
 One or two sentences. What changes and why.
 
 ## Type
-Bug fix | Measured improvement | Security | MVP capability
+Bug fix | Measured improvement | Security | MVP capability | Documentation
 
 ## Linked issue or requirement
-#<issue>, spec/<name>.md and rule heading
+Issue, approved specification and rule, or maintainer request.
 
 ## Problem and root cause
 
@@ -370,11 +384,15 @@ Bug fix | Measured improvement | Security | MVP capability
 2. Option B. Why not.
 
 ## Evidence
-| Metric | Before | After | Command and seeds |
-|---|---|---|---|
+- Change types: comma-separated types
+- Test results: commands and observed outcomes or linked results
+- Proof of change: reproduction and before/after results or demonstrated outcome
+- UI video: before and after recordings, for UI changes
+- Runtime logs: redacted service, simulator or agent output, for non-UI changes
+- Benchmarks: reproducible baseline and PR measurements, for performance changes
+- On-device testing: physical device, OS, build, steps and outcome, for hardware changes
 
-Real LLM: provider, model, calls, cost.
-Validation: sim, typecheck, integration and e2e summary lines.
+For model-backed changes, give the provider, model, calls and cost.
 
 ## Agent clients tested
 | Client and version | Provider | Model | Result |
@@ -385,6 +403,49 @@ Validation: sim, typecheck, integration and e2e summary lines.
 
 ## Risks and trade-offs
 ```
+
+## Evidence
+
+Include an `## Evidence` heading in every PR body. Put each field on its own
+line. A Markdown bullet before the field name is optional.
+
+- `Change types:` List every applicable type, separated by commas. Use
+  `docs` alone for documentation-only work. Use `non-ui` for non-visual
+  behavior, `ui` for a user interface, `performance` for a claimed
+  optimization, and `hardware` for device-dependent behavior.
+- `Test results:` Give the exact commands and observed results or link the CI
+  jobs and summarize their outcome. Report failures and skips. For docs-only
+  work, show the applicable Markdown, link, example, or consistency check.
+- `Proof of change:` Show how to reproduce the issue on the target branch
+  and what happened on the PR commit with the same input. For an approved
+  capability, show the user journey and the expected outcome. For docs-only
+  work, show the contradiction or gap and the corrected instruction.
+- `UI video:` For UI fixes, link recordings of the broken and fixed flow.
+  Show the steps in the affected site, connector screen, or staff console.
+  Use synthetic accounts. The broken-flow exception in section 9 applies.
+- `Runtime logs:` For non-UI changes, attach redacted before and after
+  output from the affected simulator, service, or agent client. For HTTP
+  and Postgres changes, exercise the relevant real integration or end-to-end
+  path. For delivery, use local dry-run provider output.
+- `Benchmarks:` For an optimization, name the metric, baseline and PR
+  commits, command, hardware, workload, sample count, and before and after
+  results. Use the same inputs and environment. For matching and simulation
+  changes, report fixed seeds, held-out results, and the blocking safety gates.
+- `On-device testing:` For a hardware-dependent change, report the model,
+  OS, build and exact steps on each affected physical target. For a mobile
+  handoff, use an approved test setup and show the flow on a real phone.
+  Keep phone numbers, login codes, and member data out of public evidence.
+
+Supply an inspectable artifact or substantive inline evidence for each required
+field. A placeholder or a bare claim that it passes is insufficient. Include
+the first three fields for every PR. Include the other fields whenever the
+matching change type applies. For Slop.cash submissions, generate the
+footer and record the opened PR using the published [contributor workflow](https://slop.cash/contribute/SKILL.md).
+
+Maintainers close PRs that fail to prove a useful change or add complexity to
+highly unlikely paths without evidence of reachability and material impact.
+Slop.cash deducts Points from eligible signed submissions when the published
+closure and Points policy applies. Closed submissions earn no reward.
 
 ## 13. Write in ASD-STE100 Simplified Technical English
 
