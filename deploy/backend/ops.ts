@@ -534,6 +534,8 @@ export function createOps(d: OpsDeps) {
       const r = await dispatcher.dispatch(alerts);
       if (r) {
         lastAlerts = { open: r.open, postsLastHour: r.postsLastHour };
+        // A metrics read may have refreshed the cache while dispatch waited on its webhook.
+        if (last) last.metrics.alerts = lastAlerts;
         if (r.notices.length) d.log.info("alerts", { notices: r.notices.length, posted: r.posted, ok: r.ok, held: r.held });
         if (r.posted && !r.ok) d.log.error("alert webhook failed", { notices: r.notices.length });
         if (r.held) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
