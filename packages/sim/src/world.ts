@@ -124,6 +124,7 @@ export class World {
   readonly end: number;
 
   constructor(private opts: WorldOptions) {
+    if (!Number.isFinite(opts.days) || opts.days <= 0) throw new Error("world days must be a positive finite number");
     this.start = opts.start ?? DEFAULT_START;
     this.clock = new SimClock(this.start);
     this.channel = new SimChannel(this.clock, { seed: opts.seed, failureRate: opts.failureRate });
