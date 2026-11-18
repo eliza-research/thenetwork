@@ -320,3 +320,15 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"last Saturday was great","label":"unclear"}
+{"text":"Saturday was great","label":"unclear"}
+{"text":"Thursday was perfect","label":"unclear"}
+{"text":"I was free Saturday","label":"unclear"}
+{"text":"Saturday was great, Sunday works","label":"yes","keys":["c"]}
+{"text":"last Saturday was great, this Saturday works","label":"yes","keys":["b"]}
+{"text":"Thursday was great, Saturday works","label":"yes","keys":["b"]}
+{"text":"last Saturday was great, either works","label":"yes","keys":["a","b","c"]}
+{"text":"Saturday was great, neither works","label":"yes","keys":[]}
+{"text":"yes, last Saturday was great","label":"unclear"}
+{"text":"Saturday was great last week","label":"unclear"}
+{"text":"two days ago Saturday was great","label":"unclear"}

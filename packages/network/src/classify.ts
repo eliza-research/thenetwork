@@ -753,6 +753,15 @@ function clauseAt(t: string, i: number, len: number): string {
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
+/** A past-tense report about a day that already happened ("last Saturday was great", "I was free Saturday", "Saturday was great last week"): the member is not picking the offered slot. "had" is deliberately out — "I had Saturday in mind" is a present pick. The segment here splits on commas too, so a past report in one clause does not swallow a real pick in the next ("Saturday was great, Sunday works"). */
+const PAST_RX = /\b(last\s+(?:sat(?:urday)?|sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?)|was|were|went|came|met|enjoyed|loved|yesterday|last\s+(?:week|month|year)|ago)\b/;
+function pastAt(t: string, i: number, len: number): boolean {
+  let from = 0;
+  for (const m of t.slice(0, i).matchAll(/[.,;!?]|\bbut\b|,/g)) from = m.index! + m[0].length;
+  const rest = t.slice(i + len);
+  const end = rest.search(/[.,;!?]|\bbut\b|,/);
+  return PAST_RX.test(t.slice(from, end < 0 ? t.length : i + len + end));
+}
 
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
@@ -772,9 +781,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
-  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
+  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>(), past = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number) => {
+    if (pastAt(t, i, len)) { for (const k of keys) past.add(k); return; }
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
@@ -821,6 +831,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  // A reply that only reports the past ("yes, last Saturday was great") is not a yes to the offer: ask again.
+  if (past.size && !picked.length) return unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
