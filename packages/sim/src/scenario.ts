@@ -235,6 +235,29 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       }
       case "no_contact": {
         const name = w.personas.find(p => p.id === e.persona)?.name;
+        // Messages name members by first name ("Ana D.", "How did it go with Ana?"),
+        // never by full name, so the full name misses them. Match any form that
+        // identifies this member alone — the bare first name, the first name with
+        // surname initial, or the full name — each only when no other member in
+        // this world shares it: a bare "Milo" could be the teen Milo Reyes or the
+        // adult Milo Haddad, so it names neither. Unicode boundaries retain
+        // non-Latin names and treat combining marks as part of a word.
+        const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const B = "[\\p{L}\\p{M}\\p{N}_]";
+        const parts = name?.trim().split(/\s+/) ?? [];
+        const first = parts[0];
+        const initial = parts[1]?.[0];
+        const firstOf = (id: string) => w.personas.find(p => p.id === id)?.name.trim().split(/\s+/);
+        const sharesFirst = !!first && w.personas.some(p => p.id !== e.persona && firstOf(p.id)?.[0] === first);
+        const sharesInitial = !!first && !!initial && w.personas.some(p => {
+          const t = firstOf(p.id);
+          return p.id !== e.persona && t?.[0] === first && t?.[1]?.[0] === initial;
+        });
+        const alts: string[] = [];
+        if (first && !sharesFirst) alts.push(esc(first));
+        if (first && initial && !sharesInitial) alts.push(`${esc(first)}\\s+${esc(initial)}\\.`);
+        if (name) alts.push(esc(name));
+        const mention = alts.length ? new RegExp(`(?<!${B})(?:${alts.join("|")})(?!${B})`, "u") : undefined;
         const props = recs.filter(r => r.type === "proposal" && r.source !== "scenario"
           && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona)).length;
         const pids = new Set(recs.flatMap(r => (r.type === "proposal" && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona) ? [r.proposal.id] : [])));
@@ -242,7 +265,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         const msgsAbout = msgs.filter(x => x.direction === "outbound" && !x.system && (
           (x.meta?.proposalId && pids.has(x.meta.proposalId)) ||
           (Array.isArray(x.meta?.participants) && (x.meta!.participants as string[]).includes(e.persona)) ||
-          (x.memberId !== e.persona && !!name && x.body.includes(name)))).length;
+          (x.memberId !== e.persona && !!mention && mention.test(x.body)))).length;
         return ok(props + meetings + msgsAbout === 0, `${props} proposals, ${meetings} meetings, ${msgsAbout} messages involving ${e.persona}`);
       }
       case "received": {
