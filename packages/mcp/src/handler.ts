@@ -448,7 +448,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const uris = b?.redirect_uris;
     const valid = Array.isArray(uris) && uris.length >= 1 && uris.length <= 5 && uris.every(redirectUriAllowed);
     // spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling"
-    const assistantRedirect = valid && assistantOf({ redirectUris: uris as string[], surface: "full" }) !== "web";
+    const assistantRedirect = valid && (uris as string[]).every(uri => assistantOf({ redirectUris: [uri], surface: "full" }) !== "web");
     const registerLimit = connectorRegisterLimit(assistantRedirect) === connectorRegisterPerAddressHour ? lim.registerPerIpHour : lim.registerAssistantPerIpHour;
     if (await limited(`reg:${assistantRedirect ? "assistant" : "ip"}:${sha256hex(ipBucket(c.ip))}`, registerLimit, 3_600_000)) return tooMany(3600);
     const bad = (d: string, error = "invalid_client_metadata") => json(400, { error, error_description: d });

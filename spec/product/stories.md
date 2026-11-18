@@ -599,11 +599,11 @@ See the [browser phone confirmation and connector handoff](../oauthBrowserAuthor
 Acceptance:
 
 - The full surface at `https://<site>/mcp` offers each app. The OpenAI surface at `https://<site>/mcp/openai` never lists slop.date, and the slop.date site has no OpenAI surface.
-- `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
+- `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` needs the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
 - `read_profile` needs explicit profile read permission and a current active membership for the same app. It returns only safe saved fields and makes no profile change.
 - `check_status` shows one of six statuses (not joined, invited, onboarding, active, stopped, on hold) for the host app only, with one next step.
-- `submit_profile` sends an approved profile once, and only for an onboarding or active member. For another status it sends nothing and gives the next step. A grant can make at most five profile or draft calls in one day, and a refused call counts.
-- `prepare_signup` shows only on friends.help and ntwrk.party. It saves only an approved first name and an optional home city, at most once per grant. It creates no person, membership or text consent. Those sites have no Join page now, so the person cannot use the draft yet.
+- `submit_profile` sends an approved profile once, and only for an onboarding or active member. For another status it sends nothing and gives the next step. A grant can make at most five profile calls in one day, and a refused call counts.
+- A person who allowed access without joining sees `not_joined` with a next step that works from the agent: connect the app again and choose Finish signup on the connection page (peon.biz: open its join page), or text the app keyword where the app has one.
 - `get_updates` shows the person's unseen updates for the host app and marks them seen. An update reference of another person, or an unknown or expired one, shows nothing and marks nothing.
 - When the phone's owner changed, the next member tool call ends the grant and asks the person to sign in again.
 

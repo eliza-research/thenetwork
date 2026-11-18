@@ -128,7 +128,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS` | **yes** (private account list) | unset while off | With the approved pilot on, list existing adult person IDs, separated by commas. Never log or publish them. An empty list or literal `*` entry fails startup. Entries match exact person IDs. Normal staging/production authentication checks still apply. |
 | `MCP_PRIVATE_OPENAI_APPS` | no | unset | Development-only fictional pilot. Never set it in staging or production, or combine it with the real-account pilot. |
 | `OTP_PROVIDER` | no | `twilio` | Required when deployed. Reviewed alternative: explicit `blooio` with existing `BLOOIO_API_KEY` and exact `BLOOIO_FROM`; no automatic fallback. |
-| `PLATFORM_PHONE_OTP_ONLY_APPS` | no | unset | Comma-separated `ntwrk`, `slop` or `friends`, each once. A named app's `/api/auth/otp/start` skips the Turnstile check so an assistant can start the code. Needs `OTP_PROVIDER=blooio`. Every code send limit still applies; the connector authorization pages keep Turnstile. Rule: spec/otpLimits.md. |
+| `PLATFORM_PHONE_OTP_ONLY_APPS` | no | unset | Comma-separated `ntwrk`, `slop` or `friends`, each once. Open exception that waits for founder approval; leave unset until then. A named app's `/api/auth/otp/start` skips the Turnstile check. Needs `OTP_PROVIDER=blooio`. The per-phone and global send limits still apply; the named app's starts and checks use their own coarse address ceiling (200 starts and 600 checks an hour) in place of the standard 10 and 30. The connector authorization pages keep Turnstile and the standard limits. Rule: spec/otpLimits.md. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | **yes** (all three) | Twilio Verify | Codes only. These send verification codes, not network messages. |
 | `NETWORK_SERVICE_TOKENS` | **yes** | `admin@*:<t>,reviewer@slop:<t>,...`, each token 32+ random characters | Staff tokens (review, safety, leak review, holds). Required: staging and production refuse to start without at least one token, or with a token shorter than 32 characters. In production every entry names its app (`role@app` or `role@*`). |
 | `NETWORK_SERVICE_CONSOLE_TOKEN` | **yes** | One of the tokens above | Only if the observatory console runs |
@@ -455,7 +455,7 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `review_sla:<network>` | bad | A review item is past its deadline, or one expired unsent in 24 h |
 | `safety_minor:<network>` | bad | A minor signal after contact with an adult in 24 h |
 | `safety_report:<network>` | bad (urgent kind) or warn | A member report in 24 h. Urgent kinds: harassment, unsafe, scam, minor. |
-| `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
+| `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up; a safety decision at `POST /signals/:id` clears it. |
 | `precision:<network>` | warn | Shadow precision under 80% over 7 days (person review decisions approved without edits, at least 20 decisions; PRD 32.8). |
 | `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |

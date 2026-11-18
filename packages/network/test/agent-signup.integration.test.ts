@@ -19,7 +19,7 @@ function hiddenField(html: string, name: string): string {
   return value;
 }
 
-// spec/agentPhoneHandoff.md, "Only the browser and the authorized connector complete the handoff"
+// spec/oauthBrowserAuthorization.md, "Optional signup stays inside the verified authorization request"
 test.skipIf(!pgAvailable)("a new member joins in the OAuth browser and submits the approved profile once through MCP", async () => {
   const url = await testDb();
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));

@@ -465,6 +465,11 @@ describe("abuse limits", () => {
     expect((await register(env, PEON, claude)).res.status).toBe(429);
     expect((await register(env, PEON)).res.status).toBe(201);
     expect((await register(env, PEON)).res.status).toBe(429);
+    // One assistant URI beside another host does not earn the assistant limit.
+    const mixed = setup({ limits: { registerPerIpHour: 1, registerAssistantPerIpHour: 3 } });
+    const both = { redirect_uris: ["https://claude.ai/api/mcp/auth_callback", "https://attacker.example/cb"] };
+    expect((await register(mixed, PEON, both)).res.status).toBe(201);
+    expect((await register(mixed, PEON, both)).res.status).toBe(429);
   });
 
   test("the code page says the same for any number (no enumeration)", async () => {

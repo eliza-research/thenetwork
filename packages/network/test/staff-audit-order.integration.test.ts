@@ -18,6 +18,7 @@ const admin = new SQL({ url: `postgres://${process.env.USER ?? "postgres"}@127.0
 const clock = new SimClock(Date.UTC(2026, 10, 17, 16));
 const token = "synthetic-staff-audit-order-token-20261117";
 const phone = "+12125550231";
+const reassigned = "+12125550232";
 const secret = "synthetic-staff-audit-order-turn-secret-2026";
 let sql: SQL, service: NetworkService, auditDown = false, line = "";
 
@@ -26,7 +27,7 @@ const staff = (path: string, b: object) => service.fetch(new Request(`http://127
 }));
 const parked = async () => (await sql`select status from platform.outbound where id='parked-1'`)[0]?.status;
 const turn = async () => (await sql`select status, sender_hash from platform.inbound where id='msg:blooio:stuck-1'`)[0];
-const hold = async () => (await sql`select hold from platform.phone_identities where e164=${phone}`)[0]?.hold;
+const hold = async (e164 = phone) => (await sql`select hold from platform.phone_identities where e164=${e164}`)[0]?.hold;
 const phases = async (action: string) => (await sql`select detail->>'phase' as phase, ok from network.staff_audit where action=${action} order by id`)
   .map(r => `${r.phase}:${r.ok}`);
 
@@ -56,6 +57,9 @@ beforeAll(async () => {
   const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: null }, { firstName: "Ada", age: 33, consent: { sms: true, wording: APPS.friends.consent.text } });
   expect(joined.ok).toBe(true);
   await service.people.setPhoneHold(phone, "recycled_number", clock.now());
+  const old = await service.accounts.join(APPS.friends, { e164: reassigned, personId: null }, { firstName: "Bo", age: 41, consent: { sms: true, wording: APPS.friends.consent.text } });
+  expect(old.ok).toBe(true);
+  await service.people.setPhoneHold(reassigned, "recycled_number", clock.now());
 }, 60_000);
 
 afterAll(async () => {
@@ -71,23 +75,28 @@ test("with the audit sink down, no staff action runs; with it up, each action ha
     await staff("/queue/leak-review/parked-1", { decision: "drop", reason: "a fixture canary, never send" }),
     await staff("/inbound/resolve", { id: "msg:blooio:stuck-1" }),
     await staff("/holds", { phone, decision: "same_owner" }),
+    // new_owner erases the old owner's account: it must never run without its request row.
+    await staff("/holds", { phone: reassigned, decision: "new_owner" }),
   ]) expect(r.ok).toBe(false);
   // Nothing acted: the text is still parked, the turn still holds back its sender, and the number is still on hold.
   expect(await parked()).toBe("parked_leak_review");
   expect(await turn()).toMatchObject({ status: "processing", sender_hash: "fixture-sender" });
   expect(await hold()).toBe("recycled_number");
+  expect(await hold(reassigned)).toBe("recycled_number");
 
   auditDown = false;
   expect(await (await staff("/queue/leak-review/parked-1", { decision: "drop", reason: "a fixture canary, never send" })).json()).toEqual({ ok: true });
   expect(await (await staff("/inbound/resolve", { id: "msg:blooio:stuck-1" })).json()).toEqual({ ok: true });
   expect(await (await staff("/holds", { phone, decision: "same_owner" })).json()).toEqual({ ok: true });
+  expect(await (await staff("/holds", { phone: reassigned, decision: "new_owner" })).json()).toEqual({ ok: true });
   expect(await parked()).toBe("dropped_leak_review");
   expect(await turn()).toMatchObject({ status: "unresolved", sender_hash: null });
   expect(await hold()).toBeNull();
+  expect(await hold(reassigned)).toBeUndefined();
   expect(await phases("leak_drop")).toEqual(["requested:true", "result:true"]);
   expect(await phases("resolve_inbound_turn")).toEqual(["requested:true", "result:true"]);
-  expect((await sql`select detail->>'phase' as phase, ok from network.staff_audit where action='safety' and detail->>'safety'='phone_hold' order by id`)
-    .map(r => `${r.phase}:${r.ok}`)).toEqual(["requested:true", "result:true"]);
+  expect((await sql`select detail->>'decision' as decision, detail->>'phase' as phase, ok from network.staff_audit where action='safety' and detail->>'safety'='phone_hold' order by id`)
+    .map(r => `${r.decision}:${r.phase}:${r.ok}`)).toEqual(["same_owner:requested:true", "same_owner:result:true", "new_owner:requested:true", "new_owner:result:true"]);
   // The leak decision keeps the staff member's reason on both rows.
   expect((await sql`select reason from network.staff_audit where action='leak_drop'`).map(r => r.reason)).toEqual(["a fixture canary, never send", "a fixture canary, never send"]);
 }, 60_000);

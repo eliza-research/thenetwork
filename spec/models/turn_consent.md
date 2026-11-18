@@ -736,14 +736,23 @@ module turn_consent {
     now' = now, sent' = sent, gw' = gw, workers' = workers, banned' = banned, held' = held,
   }
 
-  /** The agent records an opt_out or safety_concern signal on an open turn (service.ts sharedAction signals): status proposed. */
+  /** The agent records a safety_concern signal on an open turn (agent-signals.ts recordAgentSignals): status proposed,
+      and the member's safety case gets the agent_safety_concern event in the same unit. */
   action proposeSignal(m: int): bool = all {
     rows.keys().contains(m), rows.get(m).st == "done", rows.get(m).resp.kind == "open", not(w.signals.keys().contains(m)),
     w' = { ...w, signals: w.signals.put(m, "proposed") },
     now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
   }
 
-  /** Staff read GET /signals and decide with POST /signals (SD-036 fix): the facet status is confirmed or rejected. */
+  /** The agent records an opt_out signal on an open turn (agent-signals.ts recordAgentSignals): it pauses matching in that
+      app at once with the "pause matching" setting, never waits for staff and never changes carrier consent. */
+  action applyOptOutSignal(m: int): bool = all {
+    rows.keys().contains(m), rows.get(m).st == "done", rows.get(m).resp.kind == "open", not(w.signals.keys().contains(m)),
+    w' = { ...w, signals: w.signals.put(m, "applied") },
+    now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
+  }
+
+  /** Safety staff decide with POST /signals/<id> (agent-signals.ts handleAgentSignalReview, SD-036 fix): the facet status is confirmed or rejected. */
   action staffHandle(m: int): bool = all {
     w.signals.keys().contains(m), w.signals.get(m) == "proposed", not(w.staffHandled.contains(m)),
     w' = { ...w, staffHandled: w.staffHandled.union(Set(m)), signals: w.signals.set(m, "decided") },
@@ -799,6 +808,7 @@ module turn_consent {
       staffResolve(m),
       purge,
       proposeSignal(m),
+      applyOptOutSignal(m),
       staffHandle(m),
       contextChange,
       tick(d),

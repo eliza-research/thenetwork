@@ -170,7 +170,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const sessionSecret = o.sessionSecret ?? env.PLATFORM_SESSION_SECRET ?? (dev ? DEV_SESSION_SECRET : hashKey);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
   if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
-  // spec/otpLimits.md, "A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies"
+  // spec/otpLimits.md, "A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling"
   const phoneOtpApps = env.PLATFORM_PHONE_OTP_ONLY_APPS ? env.PLATFORM_PHONE_OTP_ONLY_APPS.split(",").map(app => app.trim()) : [];
   const phoneOtpOnlyApps = new Set(phoneOtpApps);
   const everyNamedAppAllowed = phoneOtpApps.every(otpOnlyAppAllowed), namesDistinct = phoneOtpOnlyApps.size === phoneOtpApps.length;
@@ -580,7 +580,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           // A banned number gets the same answer as any other, and no code is sent (PRD 40.3; the MCP
           // path does the same in startOtp).
           if (await accounts.banned(e164)) return json(200, { ok: true });
-          const r = await otp.start(app, e164, ip);
+          const r = await otp.start(app, e164, ip, phoneOtpOnlyApps.has(appId));
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
         } finally {
@@ -594,7 +594,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           const code = typeof b.code === "string" ? b.code.trim() : "";
-          if (!e164 || !(await otp.verify(appId, e164, code, ip))) return json(400, { ok: false, error: "invalid_code" });
+          if (!e164 || !(await otp.verify(appId, e164, code, ip, phoneOtpOnlyApps.has(appId)))) return json(400, { ok: false, error: "invalid_code" });
           // A code sent before the ban gives no session after it.
           if (await accounts.banned(e164)) return json(400, { ok: false, error: "invalid_code" });
           // A new session at every login (the old cookie on this request is revoked: no fixation).

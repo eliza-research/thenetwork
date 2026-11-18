@@ -19,32 +19,38 @@ Production chooses its view class with [Observatory staff permissions](../staffP
 // console_privacy: what the Observatory gives each staff caller about members and persons.
 //
 // WHAT THIS MODELS
-//   - The view class of one caller for one app (viewClass in packages/observatory/src/shape.ts). The
-//     roles change at any time. The server shapes each delta for the class that the socket has when it
-//     sends (server.ts sets w.cls again on each check).
+//   - The view class of one caller for one app (viewClass in packages/observatory/src/shape.ts, which
+//     calls the generated fullStaffView of spec/staffPermissions.md). The roles change at any time. The
+//     server shapes each delta for the class that the socket has when it sends (server.ts sets w.cls
+//     again on each check). The roles are the ones rolesFor gives after scopedGrants: an engineer grant
+//     is already dropped in real mode, so the model takes the four role flags as given.
 //   - The member and opportunity fields that one delta carries for that class (countsMember, countsOpp),
 //     the hidden truth (shapeState) and the oracle verdict (stripOracle).
-//   - The cross-app person view (packages/observatory/src/people.ts summary, web/apps.tsx): the
+//   - The cross-app person view (packages/observatory/src/people.ts PeopleView.summary, web/apps.tsx): the
 //     membership rows of one person change, the summary is built from them, and a staff member opens
 //     one app's panel with a typed reason.
-//   Each LemmaScript function in packages/observatory/src/privacy-core.ts is a pure def here with the
-//   same name and the same decision. Each server or shell event is an action that calls it.
+//   Compared with the code on vibestack-matching (2026-11-17). The old LemmaScript core privacy-core.ts
+//   is gone. Its decisions are now inline: classOf is shape.ts viewClass (generated fullStaffView);
+//   memberFieldUse/oppFieldUse are shape.ts countsMember/countsOpp; truthShown is shapeState with
+//   server.ts truthFor; oracleShown is shape.ts stripOracle; membershipShown, holdLines and blockOrigin
+//   are people.ts summary (its restricted() helper and origin()); reasonOk is the AppPanel button gate
+//   (reason.trim().length < 5) and server.ts PERSON_REASON_MIN; crossAppShown is the generated
+//   canOpenPerson of spec/consoleNavigation.md. Each pure def here keeps the decision of that code.
 //
 // BOUNDS
 //   One caller, one member, one opportunity, one person. Four apps (slop is private). Reasons of
 //   length 0..7. Each run is at most max-steps events.
 //
 // RUN (from the repository root; quint 0.33.1)
-//   quint typecheck quint/console_privacy.qnt
-//   quint test quint/console_privacy.qnt
-//   quint run quint/console_privacy.qnt --invariant=safety --max-samples=3000 --max-steps=15
+//   corepack pnpm@10.24.0 run quint:check console_privacy
 //   Each witness_<name> must be VIOLATED (the state is reachable).
 //
 // OUTSIDE THE MODEL
 //   - The name pattern in feed lines (a regex: shape.ts namePattern). The feed is not modelled.
 //   - SQL, the read-only login, the audit row and the role check of /api/person (server.ts). The model
 //     takes the caller as one that may open the cross-app view.
-//   - The server's own reason check (server.ts PERSON_REASON_MIN). The model has the browser gate only.
+//   - The server's own reason check (server.ts PERSON_REASON_MIN on /api/person/:id/app). The model has the
+//     browser gate only; both use the same minimum of 5 trimmed characters.
 //   - Key order of the shaped objects. A scratch comparison showed the same JSON as before the change.
 module console_privacy {
 
@@ -57,7 +63,7 @@ module console_privacy {
   // One field as it went out: its key, and whether it carries the real value (not a mask).
   type Sent = { key: str, real: bool }
 
-  // ---------------------------------------------------------------- privacy-core.ts, same names
+  // ---------------------------------------------------------------- decisions (shape.ts, people.ts, apps.tsx)
   pure def classRank(c: ViewClass): int = match c { | Full => 1 | Counts => 0 }
 
   pure def classOf(r: RoleFlags): ViewClass =
@@ -112,7 +118,7 @@ module console_privacy {
 
   pure def reasonOk(len: int): bool = len >= PERSON_REASON_MIN
 
-  // A hold line is well formed: a named app comes from a row that is not private (privacy-core.ts lineOk).
+  // A hold line is well formed: a named app comes from a row that is not private.
   pure def lineOk(rows: List[Row], h: HoldLine): bool =
     (h.row == -1 and h.app == ANY_APP and h.level == "restricted")
       or (0 <= h.row and h.row < rows.length() and not(rows[h.row].hidden) and h.app == rows[h.row].app)
@@ -120,7 +126,7 @@ module console_privacy {
   // The app of a hold or a block line names an app; ANY_APP names none (apps.tsx PersonView).
   pure def namesApp(app: str): bool = app != ANY_APP
 
-  // The cross-app button shows only to a cross-app caller in real mode (apps.tsx CrossAppButton).
+  // The cross-app button shows only to a cross-app caller in real mode (apps.tsx CrossAppButton, generated canOpenPerson).
   pure def crossAppShown(crossApp: bool, real: bool): bool = crossApp and real
 
   // ---------------------------------------------------------------- shell (shape.ts, people.ts, apps.tsx)
@@ -258,7 +264,8 @@ module console_privacy {
   // ================================================================ invariants
   // Rule: admin-console 4.1 (an analyst sees counts and the shape of the network, never a person);
   // audit observatory-5, -6, -18. Code: shape.ts countsMember, countsOpp, shapeDelta.
-  // LemmaScript: memberFieldUse and oppFieldUse, `ensures \result === "keep" <==> classRank(level) <= classRank(cls)`.
+  // Code: countsMember drops age, minor, ageUnknown, trust, occupation, controlled and masks name;
+  // countsOpp drops feedback and masks explanations and objective.
   // A real value never goes to a class below the field's level.
   val noFieldAboveClass: bool = and {
     memberSent.fields.forall(f => f.real implies classRank(memberFieldLevel(f.key)) <= classRank(memberSent.cls)),
@@ -268,38 +275,37 @@ module console_privacy {
   }
 
   // Rule: shape.ts header (hidden truth per person, with the truth lens only); server.ts truthFor.
-  // LemmaScript: truthShown, `ensures \result <==> cls === "full" && lens`.
+  // Code: shapeState deletes truth unless truth is on, and always for the counts class.
   val truthOnlyFullLens: bool = truthSent.sent implies (truthSent.cls == Full and truthSent.lens)
 
   // Rule: shape.ts stripOracle (the oracle is a spoiler until the opportunity is resolved).
-  // LemmaScript: oracleShown, `ensures \result <==> g.lens || oppResolved(g.state) || g.unsafe`.
+  // Code: shape.ts stripOracle and its RESOLVED set.
   val oracleOnlyWhenShown: bool =
     oracleSent.oracle implies (oracleSent.lens or oppResolved(oracleSent.state) or oracleSent.unsafe)
 
   // Rule: PRD 40.3 (dating stays private); people.ts summary; types.ts PersonSummary.privateApps.
-  // LemmaScript: membershipShown, `ensures \result <==> !r.hidden`.
+  // Code: people.ts summary returns no membership row for a private app.
   // A private app never shows in the summary's memberships.
   val privateNotListed: bool = shownApps.indices().forall(i => not(isPrivateApp(privateApps, shownApps[i])))
 
   // Rule: PRD 40.3 and plan 2.4 rule 5 (a hold holds the person everywhere, a private hold as
   // "restricted" on an app not named). Code: people.ts summary, apps.tsx PersonView.
-  // LemmaScript: holdLines, `ensures forall(i, lineOk(rows, \result[i]))`, the one-star clause and the
-  // `exists ... <==> exists hiddenHeld` clause.
+  // Code: people.ts summary, the restricted() helper adds at most one "*" line.
   val hiddenHoldsRestricted: bool = and {
     holds.indices().forall(i => holds[i].app != ANY_APP implies not(isPrivateApp(privateApps, holds[i].app))),
     holds.indices().forall(i => holds[i].app == ANY_APP implies holds[i].level == "restricted"),
     holds.indices().filter(i => holds[i].app == ANY_APP).size() <= 1,
     holds.indices().exists(i => holds[i].app == ANY_APP) iff rows.indices().exists(k => hiddenHeld(rows[k])),
-    // LemmaScript: holdLines, `ensures forall(i, lineOk(rows, \result[i]))`.
+    // Each line is well formed (lineOk).
     holdLines(rows).indices().forall(i => lineOk(rows, holdLines(rows)[i])),
   }
 
   // Rule: types.ts PersonSummary.blocks (a block made in a private app shows its origin as "*").
-  // LemmaScript: blockOrigin, `ensures hidden ==> \result === ANY_APP`.
+  // Code: people.ts summary origin().
   val privateOriginHidden: bool = origins.indices().forall(i => isPrivateApp(privateApps, origins[i].app) implies origins[i].shown == ANY_APP)
 
   // Rule: plan 5 / 2.4 (each app's panel opens only with a typed reason); apps.tsx AppPanel.
-  // LemmaScript: reasonOk, `ensures \result <==> trimmed.length >= PERSON_REASON_MIN`.
+  // Code: apps.tsx AppPanel disables Open below 5 trimmed characters.
   val panelNeedsReason: bool = opened.indices().forall(i => opened[i].reason >= PERSON_REASON_MIN)
 
   val safety: bool = and {

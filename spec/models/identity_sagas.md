@@ -8,7 +8,7 @@ A person needs identity and consent to follow their account through phone change
 
 Check bans, new ownership, STOP, and reconciliation after interrupted account changes. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [phone change spec](../phoneChange.md) generates the account service's challenge and confirmation transitions. The [account privacy spec](../accountPrivacy.md) generates the service decisions for app leave, full-account erasure and an app-scoped export. This saga models storage state, interleavings, consent and related cleanup.
+The [phone change spec](../phoneChange.md) generates the account service's challenge and confirmation transitions. The [account privacy spec](../accountPrivacy.md) generates the service decisions for app leave, full-account erasure and an app-scoped export. This saga models storage state, interleavings, consent and related cleanup. The staff support route for help@ntwrk.party and the privacy replay after a restore call the same `deleteAll`, `leave` and `exportApp` as the member path, so the erase and leave actions of this model also stand for those callers; the support route's admission, target echo and code check are generated from the account privacy spec and are not in this model.
 
 Imported from `quint/identity_sagas.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

@@ -2,9 +2,10 @@
 // that the source database recorded after the backup into the restored database, before the backend serves it.
 // spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored database"
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { replaysErasure, replaysLeave, replaysSourceRow } from "../../packages/core/src/generated/databaseRestore.ts";
+import { replaysErasure, replaysLeave, replaysSourceRow, replaysStop } from "../../packages/core/src/generated/databaseRestore.ts";
+import { resolveConsent, type ConsentState } from "../../packages/platform/src/consent.ts";
 
-export interface PrivacyReplayResult { consentEvents: number; bans: number; suppressions: number; erasures: number; leaves: number }
+export interface PrivacyReplayResult { consentEvents: number; bans: number; suppressions: number; erasures: number; leaves: number; stops: number }
 
 type Row = Record<string, unknown>;
 interface MembershipRow { person_id: string; app_id: string; member_id: string; state: string }
@@ -22,8 +23,9 @@ async function copyMissing(source: SQL, target: SQL, table: "consent_events" | "
 
 /**
  * Read the source database and write the restored one in one transaction. Consent events, bans and suppressions
- * are copied at once (the send path, joins and sign-in read them). Erasures and leaves, and the projection of a
- * copied ban, are queued in platform.privacy_replay for the backend's staff replay route.
+ * are copied at once (the send path, joins and sign-in read them); a copied ban also removes the number's queued
+ * texts and revokes the person's live shares, as the live ban write does. Erasures, leaves, STOPs and the
+ * projection of a copied ban are queued in platform.privacy_replay, which the backend runs when it starts.
  */
 export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; queuedAt: Date }): Promise<PrivacyReplayResult> {
   const source = new SQL({ url: o.sourceUrl, max: 1, connection: { application_name: "network-restore-replay" } });
@@ -40,6 +42,12 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         const known = new Set((await tx`select id::text from platform.people where id = any(${banPeople}::uuid[])` as { id: string }[]).map(r => r.id));
         const bans = await copyMissing(src, tx, "bans", "id", row => ({ ...row, projection_completed_at: null,
           person_id: typeof row.person_id === "string" && known.has(row.person_id) ? row.person_id : null }), row => row.person_id !== null || row.phone_hash !== null);
+        for (const ban of bans) {
+          if (typeof ban.person_id === "string") await tx`update platform.share_grants set revoked_at = ${new Date(String(ban.at))}
+            where person_id = ${ban.person_id}::uuid and revoked_at is null`;
+          await tx`delete from platform.pending_texts where phone_hash = ${typeof ban.phone_hash === "string" ? ban.phone_hash : null}
+            or phone_hash in (select phone_hash from platform.people where id = ${typeof ban.person_id === "string" ? ban.person_id : null}::uuid and phone_hash is not null)`;
+        }
         const suppressions = await copyMissing(src, tx, "suppression", "phone_hash");
 
         const erasedInSource = (await src`select id::text from platform.people where deleted_at is not null` as { id: string }[]).map(r => r.id);
@@ -57,6 +65,25 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
           return replaysLeave(true, !!was, was?.state !== "removed", was?.member_id === m.member_id);
         });
 
+        // spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
+        const stop: MembershipRow[] = [];
+        for (const e164 of new Set(consent.filter(e => e.state === "opted_out").map(e => String(e.e164)))) {
+          const scopes = new Set(consent.filter(e => e.state === "opted_out" && e.e164 === e164).map(e => (e.app_id ?? null) as string | null));
+          const members = await tx<MembershipRow[]>`select m.person_id::text, m.app_id, m.member_id, m.state from platform.phone_identities p
+            join platform.people person on person.id = p.person_id and person.deleted_at is null
+            join platform.memberships m on m.person_id = p.person_id where p.e164 = ${e164} order by m.app_id`;
+          for (const m of members) {
+            const last = await tx<{ app_id: string | null; state: ConsentState; at: Date }[]>`
+              (select app_id, state, at from platform.consent_events where e164 = ${e164} and app_id = ${m.app_id} order by at desc, id desc limit 1)
+              union all
+              (select app_id, state, at from platform.consent_events where e164 = ${e164} and app_id is null order by at desc, id desc limit 1)`;
+            const event = (r: { state: ConsentState; at: Date }) => ({ e164, app: null, state: r.state, source: "restore", at: new Date(r.at).getTime() });
+            const app = last.find(r => r.app_id !== null), global = last.find(r => r.app_id === null);
+            const stillOptedOut = resolveConsent({ ...(app ? { app: event(app) } : {}), ...(global ? { global: event(global) } : {}) }) === "opted_out";
+            if (replaysStop(true, scopes.has(null) || scopes.has(m.app_id), m.state !== "removed" && m.state !== "invited", stillOptedOut)) stop.push(m);
+          }
+        }
+
         const banned = new Set<string>();
         for (const ban of bans) {
           if (typeof ban.person_id === "string") { banned.add(ban.person_id); continue; }
@@ -65,11 +92,12 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         const queue = [
           ...erase.map(person => ({ kind: "erase", person_id: person, app_id: null, member_id: null })),
           ...leave.map(m => ({ kind: "leave", person_id: m.person_id, app_id: m.app_id, member_id: m.member_id })),
+          ...stop.map(m => ({ kind: "stop", person_id: m.person_id, app_id: m.app_id, member_id: m.member_id })),
           ...[...banned].map(person => ({ kind: "ban", person_id: person, app_id: null, member_id: null })),
         ];
         for (const q of queue) await tx`insert into platform.privacy_replay (kind, person_id, app_id, member_id, queued_at)
           values (${q.kind}, ${q.person_id}::uuid, ${q.app_id}, ${q.member_id}, ${o.queuedAt}) on conflict do nothing`;
-        return { consentEvents: consent.length, bans: bans.length, suppressions: suppressions.length, erasures: erase.length, leaves: leave.length };
+        return { consentEvents: consent.length, bans: bans.length, suppressions: suppressions.length, erasures: erase.length, leaves: leave.length, stops: stop.length };
       });
     });
   } finally {

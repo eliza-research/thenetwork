@@ -17,15 +17,17 @@ Imported from `quint/chatjson_loop.qnt` at `30d950e`. See [model index](README.m
 // quint-check: max-steps=12 max-samples=6000
 //
 // chatjson_loop: the "ask, parse, validate, retry" loop of every structured LLM call
-// (tryChatJson in packages/core/src/chatJson.ts; machine "chatjson-loop", core.md section 3.3 of
-// docs/research/state-machines on branch claude/quint-state-machines).
+// (tryChatJson in packages/core/src/chatJson.ts; the generated state machine is spec/chatRetry.md).
 //
 // WHAT THIS MODELS
 //   One call of tryChatJson. Each loop pass is one action (loopPass): beforeAttempt (it can throw),
 //   the gate before the attempt, the awaited client.chat call with its time, the JSON parse and the
-//   validation, and the decision after a failure. The decisions are the pure defs below with the same
-//   names as the LemmaScript core packages/core/src/chatjson-core.ts: hasDeadline, attemptGate,
-//   isFinalCode, afterFailure. The shell (chatJson.ts) calls them and does not decide again.
+//   validation, and the decision after a failure. The decisions are the pure defs below. hasDeadline
+//   and isFinalCode have the same names and bodies as spec/chatRetry.md (generated as
+//   packages/core/src/generated/chatRetry.ts). attemptGate is chatRetry `preflight` with
+//   `deadlineExpired`; afterFailure is chatRetry `rejectReply`. The shell (chatJson.ts tryChatJson)
+//   sends events to the generated `step` and does not decide again.
+//   Compared with chatJson.ts and llm.ts on branch vibestack-matching (2026-11-17): no state drift.
 //   The environment can abort the caller signal and let time pass between two passes (callbacks,
 //   the event loop).
 //
@@ -50,7 +52,10 @@ Imported from `quint/chatjson_loop.qnt` at `30d950e`. See [model index](README.m
 //   - afterAttempt: its errors are ignored and it decides nothing.
 //   - The retries and the fallback inside one client.chat call (llm.ts). They are inside the call
 //     duration here.
-//   - Number edge cases (NaN or fractional attempts). LemmaScript has ideal integers too.
+//   - Number edge cases: NaN, negative or fractional attempts (the shell uses ceil for the limit
+//     and returns the raw value on exhaustion), and attempts = Infinity (chatRetry `unbounded`).
+//   - The `grow` call needs o.grow and a defined maxTokens in the shell; `grown` counts the passes
+//     where the shell would call it.
 //   - LLM_DEADLINE_MS=0 (or a client deadlineMs of 0) means "no client deadline" (llm.ts deadlineFor,
 //     deadlineAt = Infinity). Then a call without a loop deadline is not bounded by time, and
 //     callTimeBounded does not apply. The model uses a client deadline more than 0.
@@ -79,7 +84,7 @@ module chatjson_loop {
   type Result = Pending | Ok(OkR) | Fail(FailR)
   type GateInput = { aborted: bool, hasDeadline: bool, left: int }
 
-  // ---------------------------------------------------------------- the core (chatjson-core.ts)
+  // ---------------------------------------------------------------- the decisions (spec/chatRetry.md)
   pure def hasDeadline(isSet: bool, deadlineMs: int): bool = isSet and deadlineMs > 0
 
   pure def attemptGate(g: GateInput): str =
@@ -116,8 +121,9 @@ module chatjson_loop {
   // ---------------------------------------------------------------- invariants
   // Rule: "attempts: Total attempts. A thrown parse or validation error, or a failed call, uses one"
   // (chatJson.ts ChatJsonOptions.attempts). The loop starts at most `attempts` calls, and a result
-  // never counts more (chatJson.ts:51 loop guard; chatjson-core.ts afterFailure).
-  val retriesBounded = and {
+  // never counts more (chatJson.ts tryChatJson `while (run.phase === "Ready")`; chatRetry
+  // alwaysRetriesBounded, rejectReply).
+  val alwaysRetriesBounded = and {
     started <= max(cfgAttempts, 0),
     match result {
       | Pending => true
@@ -127,8 +133,9 @@ module chatjson_loop {
   }
 
   // Rule: "validate with `parse` (throw to reject)" (chatJson.ts tryChatJson doc). The loop returns a
-  // value only when `parse` returned it in the same attempt (chatJson.ts:66 and 77): the outcome of the
-  // last attempt is "valid", not only a field that the step sets.
+  // value only when `parse` returned it in the same attempt (chatJson.ts tryChatJson `value = parse(...)`,
+  // then the acceptReply event): the outcome of the last attempt is "valid", not only a field that the
+  // step sets. The state form of chatRetry stepOkOnlyAfterValidation.
   val okOnlyAfterValidation = match result {
     | Ok(r) => r.validated and lastOutcome == "valid"
     | _ => true
@@ -136,9 +143,10 @@ module chatjson_loop {
 
   // Rule: "Like tryChatJson, but returns the value or throws the last error" (chatJson.ts chatJson).
   // When the attempts are used up, the result is a failure that is not "stopped", it counts all
-  // attempts, and it carries the last error when at least one attempt ran (chatJson.ts:79).
+  // attempts, and it carries the last error when at least one attempt ran (chatJson.ts tryChatJson
+  // `if (run.phase === "Exhausted")`; chatRetry alwaysExhaustionUsesBudget).
   // A failure never carries a value (the Fail type has none).
-  val exhaustionIsFailure = match result {
+  val alwaysExhaustionUsesBudget = match result {
     | Fail(r) => not(r.stopped) implies (r.attempts == cfgAttempts and started == max(cfgAttempts, 0)
                                          and (started > 0 implies r.errorSet) and r.why == "exhausted")
     | _ => true
@@ -147,25 +155,25 @@ module chatjson_loop {
   // Rule: "Total wall time over all attempts in ms; each attempt gets what is left as its
   // ChatOptions.deadlineMs" (chatJson.ts ChatJsonOptions.deadlineMs) and LLM_DEADLINE_MS (llm.ts:213-215 deadlineFor).
   // With a loop deadline: no call starts at or after it, and every call ends by it
-  // (chatJson.ts:56-58 gate; llm.ts:246-278 per-call deadline).
+  // (chatJson.ts tryChatJson preflight with deadlineExpired; llm.ts:246-278 per-call deadline).
   val deadlineStopsLoop = deadlineAt != NO_DEADLINE implies (not(lateStart) and callEndMax <= deadlineAt)
 
   // Without a loop deadline, each call is bounded by the client deadline, so the loop spends at most
   // attempts x LLM_DEADLINE_MS in calls. With one, a call can get more than the client deadline
-  // (ChatOptions.deadlineMs overrides it), but deadlineStopsLoop bounds the total (core.md 3.3: no caller outside core sets deadlineMs).
+  // (ChatOptions.deadlineMs overrides it), but deadlineStopsLoop bounds the total.
   val callTimeBounded = deadlineAt == NO_DEADLINE implies callTime <= started * CLIENT_DL
 
-  // A final LLMError (aborted, deadline, budget) ends the loop at once (chatJson.ts FINAL codes,
-  // chatjson-core.ts isFinalCode). A stopped failure never counts more attempts than were started.
+  // A final LLMError (aborted, deadline, budget) ends the loop at once (chatRetry isFinalCode and
+  // rejectReply terminal=true). A stopped failure never counts more attempts than were started.
   val stoppedIsHonest = match result {
     | Fail(r) => r.stopped implies r.attempts <= started
     | _ => true
   }
 
   val safety = and {
-    retriesBounded,
+    alwaysRetriesBounded,
     okOnlyAfterValidation,
-    exhaustionIsFailure,
+    alwaysExhaustionUsesBudget,
     deadlineStopsLoop,
     callTimeBounded,
     stoppedIsHonest,
@@ -247,7 +255,8 @@ module chatjson_loop {
                 result' = Fail({ stopped: true, attempts: attempt + 1, errorSet: true, why: code }),
                 attempt' = attempt, grown' = grown,
               } else if (after == "exhausted") all {
-                // grow runs, then break; the shell returns the configured attempts (chatJson.ts:73 and 79).
+                // grow runs, then the loop ends; the shell returns the configured attempts
+                // (chatJson.ts tryChatJson, Exhausted branch).
                 result' = Fail({ stopped: false, attempts: cfgAttempts, errorSet: true, why: "exhausted" }),
                 attempt' = attempt, grown' = grown + 1,
               } else all {

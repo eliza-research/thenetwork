@@ -276,7 +276,7 @@ const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
   GetInvitation: a => `Not joined. ${a.name} is invite-only. With an invitation, ${connectAgain(a)} Enter the invitation on that page. ` +
     `Without one, ask a member who knows you, or the team, for an invitation.`,
   JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : `To finish signup, ${connectAgain(a)}`}${textKeyword(a)}`,
-  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} and finish signup in the app's browser.`}`,
+  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : connectAgain(a)}`,
   ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   AlreadySignedUp: () => "You are signed up.",
   TextStart: () => `Messages are stopped. To start again, text START to the line.`,

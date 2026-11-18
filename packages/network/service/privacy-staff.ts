@@ -8,6 +8,7 @@ import {
   privacySupportAllowed, privacySupportDecision, privacySupportExportApps, privacySupportScopeAllowed,
   type PrivacySupportDecision, type PrivacySupportOperation, type PrivacySupportScope,
 } from "../../core/src/generated/accountPrivacy.ts";
+import { replayItemDone, type ReplayOutcome } from "../../core/src/generated/databaseRestore.ts";
 import { APP_IDS, isAppId, type AppId } from "../../platform/src/apps.ts";
 import { maskPhone, normalizePhone } from "../../platform/src/phone.ts";
 import { globalRolesFor } from "../../observatory/src/staff.ts";
@@ -23,7 +24,7 @@ interface SupportRequestRow {
   id: string; operation: "export" | "erase"; app_id: AppId; scope: "app" | "all"; phone_hash: string;
   person_id: string | null; created_at: Date; completed_at: Date | null; outcome: "exported" | "erased" | null;
 }
-interface ReplayRow { id: string; kind: "erase" | "leave" | "ban"; person_id: string; app_id: AppId | null; member_id: string | null }
+interface ReplayRow { id: string; kind: "erase" | "leave" | "stop" | "ban"; person_id: string; app_id: AppId | null; member_id: string | null }
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
@@ -141,41 +142,85 @@ async function confirmRequest(svc: NetworkService, user: StaffUser, reason: stri
   });
 }
 
-/** Run the erasures, leaves and bans that a restore queued (deploy/backup/privacy-replay.ts), each once. */
+/** Run the erasures, leaves, STOPs and bans that a restore queued (deploy/backup/privacy-replay.ts) on a staff call. */
 async function replay(svc: NetworkService, user: StaffUser, reason: string): Promise<Response> {
   return audited(svc, user, { action: "privacy_replay", targetId: "restore", reason, detail: {} }, async () => {
-    const rows = await svc.sql<ReplayRow[]>`select id::text, kind, person_id::text, app_id, member_id from platform.privacy_replay
-      where replayed_at is null order by case kind when 'erase' then 0 when 'leave' then 1 else 2 end, id`;
-    const items: { kind: ReplayRow["kind"]; outcome: string }[] = [];
-    for (const row of rows) {
-      const outcome = await replayOne(svc, user, row);
-      await svc.sql`update platform.privacy_replay set replayed_at = ${new Date(svc.clock.now())}, outcome = ${outcome}
-        where id = ${row.id}::bigint and replayed_at is null`;
-      items.push({ kind: row.kind, outcome });
-    }
-    return { ok: true, detail: { replayed: items.length }, response: json({ ok: true, items }) };
+    const items = await runPrivacyReplay(svc, user);
+    return { ok: true, detail: { replayed: items.length, open: items.filter(i => !i.done).length }, response: json({ ok: true, items }) };
   });
 }
 
-async function replayOne(svc: NetworkService, user: StaffUser, row: ReplayRow): Promise<string> {
+/** The actor of the replay that the backend runs at start: the operator chose it with `restore.ts --replay`. */
+export const RESTORE_REPLAY_ACTOR: StaffUser = { id: "system:restore-replay", roles: ["admin", "safety"], grants: [{ role: "admin", app: "*" }, { role: "safety", app: "*" }], via: "token" };
+
+/** At start, before the first tick: run the open replay items with an audit row before and after, and log what stays open. */
+export async function replayPrivacyAtStart(svc: NetworkService): Promise<void> {
+  const [open] = await svc.sql<{ n: number }[]>`select count(*)::int as n from platform.privacy_replay where replayed_at is null`;
+  if (!open?.n) return;
+  await audited(svc, RESTORE_REPLAY_ACTOR, { action: "privacy_replay", targetId: "restore", reason: "start after a restore", detail: {} }, async () => {
+    const items = await runPrivacyReplay(svc, RESTORE_REPLAY_ACTOR);
+    const left = items.filter(i => !i.done);
+    if (left.length) svc.log(`[alert] privacy replay: ${left.length} item(s) stay open (${left.map(i => `${i.kind}:${i.outcome}`).join(", ")}); see docs/runbook-privacy.md section 3`);
+    return { ok: left.length === 0, detail: { replayed: items.length, open: left.length }, response: json({ ok: true }) };
+  });
+}
+
+/** A claim lasts this long: a runner that dies frees its items for the next start. */
+const CLAIM_MS = 10 * 60_000;
+const OUTCOMES: Record<ReplayOutcome, string> = {
+  ReplayApplied: "applied", ReplayAlreadyApplied: "already", ReplayTargetHeld: "held", ReplayTargetWithoutPhone: "no_phone", ReplayRefused: "refused",
+};
+
+// spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
+async function runPrivacyReplay(svc: NetworkService, user: StaffUser): Promise<{ kind: ReplayRow["kind"]; outcome: string; done: boolean }[]> {
+  const ids = await svc.sql<{ id: string }[]>`select id::text from platform.privacy_replay where replayed_at is null
+    order by case kind when 'erase' then 0 when 'leave' then 1 when 'stop' then 2 else 3 end, id`;
+  const items: { kind: ReplayRow["kind"]; outcome: string; done: boolean }[] = [];
+  for (const { id } of ids) {
+    const now = svc.clock.now();
+    const [row] = await svc.sql<ReplayRow[]>`update platform.privacy_replay set claimed_until = ${new Date(now + CLAIM_MS)}
+      where id = ${id}::bigint and replayed_at is null and (claimed_until is null or claimed_until <= ${new Date(now)})
+      returning id::text, kind, person_id::text, app_id, member_id`;
+    if (!row) continue;
+    const [result, note] = await replayOne(svc, user, row);
+    const done = replayItemDone(result);
+    const outcome = note ? `${OUTCOMES[result]}:${note}` : OUTCOMES[result];
+    await svc.sql`update platform.privacy_replay set outcome = ${outcome}, claimed_until = null,
+      replayed_at = ${done ? new Date(svc.clock.now()) : null} where id = ${row.id}::bigint`;
+    items.push({ kind: row.kind, outcome, done });
+  }
+  return items;
+}
+
+async function replayOne(svc: NetworkService, user: StaffUser, row: ReplayRow): Promise<[ReplayOutcome, string?]> {
+  const [person] = await svc.sql<{ deleted: boolean }[]>`select deleted_at is not null as deleted from platform.people where id = ${row.person_id}::uuid`;
+  if (!person || person.deleted) return ["ReplayAlreadyApplied"];
+  if (row.kind === "leave" || row.kind === "stop") {
+    const m = await svc.people.getMembership(row.person_id, row.app_id!);
+    const live = !!m && m.memberId === row.member_id && m.state !== "removed" && m.state !== "invited";
+    if (!live) return ["ReplayAlreadyApplied"];
+    // spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
+    if (row.kind === "stop") { await svc.replayStop(svc.apps[row.app_id!], row.person_id); return ["ReplayApplied"]; }
+  }
   const [phone] = await svc.sql<{ e164: string; hold: string | null }[]>`select e164, hold from platform.phone_identities
     where person_id = ${row.person_id}::uuid order by verified_at desc, e164 limit 1`;
   if (row.kind === "erase" || row.kind === "leave") {
-    if (!phone) return "no_phone";
-    if (phone.hold !== null) return "held";
+    if (!phone) return ["ReplayTargetWithoutPhone"];
+    if (phone.hold !== null) return ["ReplayTargetHeld"];
     const who = { e164: phone.e164, personId: row.person_id };
     // spec/databaseRestore.md, "An erasure after the backup is replayed"
-    if (row.kind === "erase") return (await svc.accounts.deleteAll(who)) ? "erased" : "refused";
+    if (row.kind === "erase") return [(await svc.accounts.deleteAll(who)) ? "ReplayApplied" : "ReplayRefused"];
     // spec/databaseRestore.md, "A leave after the backup is replayed"
-    return (await svc.accounts.leave(svc.apps[row.app_id!], who, { expectedMemberId: row.member_id! })) ? "left" : "refused";
+    return [(await svc.accounts.leave(svc.apps[row.app_id!], who, { expectedMemberId: row.member_id! })) ? "ReplayApplied" : "ReplayRefused"];
   }
   const [ban] = await svc.sql<{ scope: "phone" | "person" }[]>`select scope from platform.bans
     where projection_completed_at is null and (person_id = ${row.person_id}::uuid
       or phone_hash in (select phone_hash from platform.people where id = ${row.person_id}::uuid)) order by at, id limit 1`;
-  if (!ban) return "projected";
+  if (!ban) return ["ReplayAlreadyApplied"];
   const member = (await svc.people.memberships(row.person_id)).find(m => m.state !== "removed" && m.state !== "invited");
   const rt = member && await svc.runtimeOfMember(member.app, member.memberId);
-  if (!member || !rt) return "no_member";
+  // No live membership: the copied ban row already refuses the number, and nothing is left to project.
+  if (!member || !rt) return ["ReplayAlreadyApplied", "no_member"];
   const resumed = await svc.ban(user, rt, member.memberId, ban.scope, "privacy replay after a restore");
-  return resumed.ok ? "projected" : `refused:${(resumed as { reason?: string }).reason ?? "unknown"}`;
+  return resumed.ok ? ["ReplayApplied"] : ["ReplayRefused", (resumed as { reason?: string }).reason ?? "unknown"];
 }

@@ -60,19 +60,6 @@ export function confirmedUnderage(age: number): boolean {
   return ageInRange(age) && !joinableAge(age);
 }
 
-/** Story: Take part in adult matching / Project a committed age using its original owner (spec/memberAge.md) */
-//@ pure
-export function recordedAgeFloorApplies(recordedOwner: string, currentOwner: string): boolean {
-  return recordedOwner === currentOwner;
-}
-
-/** Story: Take part in adult matching / Project a committed age using its original owner (spec/memberAge.md) */
-//@ pure
-export function lawPhoneReassignmentEndsAgeProjection(recordedOwner: string, currentOwner: string): boolean {
-  //@ ensures \result === true
-  return !(recordedOwner !== currentOwner) || !recordedAgeFloorApplies(recordedOwner, currentOwner);
-}
-
 /** Story: Take part in adult matching / Resume a confirmed refusal from the durable age (spec/memberAge.md) */
 //@ pure
 export function underageCleanupRequired(age: number, membershipLive: boolean): boolean {

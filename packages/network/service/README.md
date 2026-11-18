@@ -33,7 +33,7 @@ A turn still processing after 2 minutes lost its worker and becomes unresolved. 
 
 A handled turn with no replies (a quiet acknowledgement, an under-13 decline) takes a receipt with empty `replyIds` and `providerMessageIds`. `accountEligible` is false for an unknown age, so Cloud eligibility never runs ahead of the join age check. An accepted receipt may carry `historyRecorded: false` (no Eliza account yet).
 
-Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
+Agent signals go to the decision that owns them ([rule](../../../spec/staffSafetyService.md)). A `safety_concern` opens or joins the member's safety case with the reason code `agent_safety_concern` (no evidence text), waits as a private facet, logs an alert line, and is listed for reviewer or safety staff at `GET /signals` until safety staff decide it. An `opt_out` pauses matching in that app only, with the setting that "pause matching" writes. It does not change carrier consent: STOP and "leave <app>" in the member's own words stay the only consent changes. A `travel` signal stays private context.
 
 **Contract.** The wire contract matches elizaOS/eliza `plugins/plugin-network/src/backend/contract.ts` on `develop` byte for byte. The signing implementation matches the same upstream directory after its runtime-specific introductory comment. `packages/core/test/contract-mirror.test.ts` pins both hashes and `pnpm run check:mirror` compares them with upstream through `gh`. A wire change lands upstream before the local mirror and pins are updated.
 
@@ -172,7 +172,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", revision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. Send the revision the reviewer saw. A changed revision returns `review_stale`. The token identifies the reviewer. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
-| `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
+| `GET /signals` | reviewer, safety | Agent signals waiting for a person: `{ id, memberId, kind, evidence, at, caseId }`, newest first (`caseId`: the member's open safety case, or null) |
+| `POST /signals/:id` | safety | `{ decision: "reviewed" \| "dismissed", reason }` (reason 5+ characters). Audited before the decision; a decided signal answers 409 `already_decided`, an unknown one 404. The safety case stays open until `/safety/hold`, `/safety/lift` or `/safety/close` |
 | `GET /staff/relay/held` | reviewer, safety | Relayed items held for a person, oldest first: `{ id, itemId, app, kind, memberId, from, reasons, createdAt, text? or minor: true }` (the console's HeldText shape; `memberId` is the sender). `text` only while the sender is an adult with no age doubt now (re-checked on every read); never a minor's words, never a score |
 | `POST /staff/relay/:itemId/release` | safety | `{ note }` (or `reason`), 5+ characters, else 409 `reason_required`; it goes in the audit row. The engine checks the item again; anything that would now block stays undelivered (`delivered: false`) |
 | `POST /staff/relay/:itemId/reject` | safety | `{ note }` (or `reason`), 5+ characters. Never delivered; the held text is dropped |
@@ -323,7 +324,12 @@ sends the requester a coarse plan card, then asks the approved helpers after the
 requester's explicit yes. Each signed response names the plan code and revision
 and requires a send receipt for that member's card.
 
-An existing verified `ntwrk.party` app session can use
+A participant sends `HOME HELP ADDRESS <plan code> <revision>` in the signed
+conversation. The reply to a recorded yes names this command. The answer
+carries a link to the private page `https://<domain>/home-help#<plan code>-<revision>`
+and never the address: the requester gets it after the whole approved roster
+agrees, a helper only after the requester saved the address. Every other case
+gets one closed answer. A verified app session on that page can use
 `POST /api/home-help/venue`. Send `action` (`submit`, `reveal` or `revoke`),
 `id` (the plan code) and `revision`. Add `address` for `submit`. Only the
 requester can submit or revoke it. Only current, consenting helpers can retrieve

@@ -327,12 +327,12 @@ pure def stepReadingNeverAddsUnseen(before: Connection, via: str, after: Connect
 
 ### Request limits count each person's grant, and the client address has only a coarse ceiling
 
-Changed: the limits used to count every request by its client address, so all people who use one hosted assistant shared one count and one person's traffic refused another's (audit MCP14). An MCP request with a verified access token counts against its grant. A request without a verified token counts against its address bucket. A token request counts against the grant of the code or refresh token that it presents. Every MCP and token request also counts against a coarse address ceiling, which only stops a flood from one address. A client registration counts against its address bucket, with a higher hourly limit when every redirect address belongs to a known assistant host. The browser authorization pages keep their address limit, because the person's own browser sends them.
+Changed: the limits used to count every request by its client address, so all people who use one hosted assistant shared one count and one person's traffic refused another's (audit MCP14). An MCP request with a verified access token counts against its grant. A request without a verified token reaches only public facts and counts against its address bucket; that limit is 600 a minute, because people behind one hosted assistant share the address before they connect. A token request counts against the grant of the code or refresh token that it presents. Every MCP and token request also counts against a coarse address ceiling, which only stops a flood from one address. A client registration counts against its address bucket, with a higher hourly limit when every redirect address belongs to a known assistant host. The browser authorization pages keep their address limit, because the person's own browser sends them.
 
 ```quint
 type ConnectorLimitKey = AddressLimitKey | GrantLimitKey
 
-pure val connectorAnonymousPerAddressMinute: int = 120
+pure val connectorAnonymousPerAddressMinute: int = 600
 pure val connectorRequestsPerGrantMinute: int = 120
 pure val connectorAddressCeilingMinute: int = 6000
 pure val connectorTokenPerGrantMinute: int = 30

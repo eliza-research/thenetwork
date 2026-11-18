@@ -15,7 +15,7 @@ pure val otpChallengeMaxAttempts: int = 5
 
 ### Code sends have limits shared across apps
 
-The same number can request at most three codes per hour and six per day, with at least thirty seconds between requests. Limit each client address bucket to ten requests per hour and the whole service to five hundred requests per hour. Check address, phone hour and minimum gap, phone day, then global budget. Stop at the first refusal. An hourly refusal waits for its window or the remaining minimum gap. A daily refusal waits for the daily window.
+The same number can request at most three codes per hour and six per day, with at least thirty seconds between requests. Limit each client address bucket to ten requests per hour (a phone-code-only app has its own coarse address ceiling, in the rule below; changed for audit MCP14) and the whole service to five hundred requests per hour. Check address, phone hour and minimum gap, phone day, then global budget. Stop at the first refusal. An hourly refusal waits for its window or the remaining minimum gap. A daily refusal waits for the daily window.
 
 ```quint
 pure val otpSendsPerPhoneHour: int = 3
@@ -54,7 +54,7 @@ pure def readSendGlobal(flow: ChallengeFlow, allowed: bool): ChallengeFlow =
 
 ### Code checks also have limits shared across apps
 
-Allow up to ten code checks per number per hour and thirty per address bucket per hour across all apps. These defaults apply independently of the individual challenge's attempt limit.
+Allow up to ten code checks per number per hour and thirty per address bucket per hour across all apps (a phone-code-only app has its own coarse address ceiling, in the rule below; changed for audit MCP14). These defaults apply independently of the individual challenge's attempt limit.
 
 ```quint
 pure val otpChecksPerPhoneHour: int = 10
@@ -115,11 +115,14 @@ pure def stepVerificationRequiresConsume(before: ChallengeFlow, via: str, after:
 pure def sometimesVerifies(flow: ChallengeFlow): bool = flow.phase == Verified
 ```
 
-### A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies
+### A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling
 
-Added: the deployment option `PLATFORM_PHONE_OTP_ONLY_APPS` had no rule (audit SIG47). The option names apps whose code start on the site API does not need the browser check, so an assistant can start a code for the person. Only The Network, slop.date and friends.help may be named, each once. The option needs the Blooio sender, because the person then proves the number by receiving the code on the shared line. A start for an app that the option does not name needs the browser check whenever the check is configured. The option never changes the code send limits above: the address, phone hour, minimum gap, phone day and global limits apply to every start. The option never affects the connector authorization pages, which always use the browser check when it is configured.
+Added: the deployment option `PLATFORM_PHONE_OTP_ONLY_APPS` had no rule (audit SIG47). Changed: a phone-code-only start or check now counts against its own coarse address ceiling, because the client address of an assistant-driven request is the hosted assistant's shared egress address, and the ten-an-hour address limit made every person behind it share ten starts (audit MCP14). The option is an open exception that waits for the founder's approval: AGENTS.md keeps the code and browser session outside the assistant conversation, and the option would let an assistant start and check the code on the site API. Deployments leave it unset until the founder approves it. The option names apps whose code start on the site API does not need the browser check. Only The Network, slop.date and friends.help may be named, each once. The option needs the Blooio sender, because the person then proves the number by receiving the code on the shared line. A start for an app that the option does not name needs the browser check whenever the check is configured. For a named app the per-person limits are the phone hour, minimum gap and phone day limits, and the service-wide global limit still applies to every start. The address limit of a named app is a separate address bucket with a ceiling of two hundred starts and six hundred code checks an hour, as abuse protection only. A start or check for an app that the option does not name keeps the ten starts and thirty checks an hour of its own address bucket. The option never affects the connector authorization pages, which always use the browser check when it is configured and always use the standard address limits.
 
 ```quint
+pure val otpSendsPerIpHourPhoneCodeOnly: int = 200
+pure val otpChecksPerIpHourPhoneCodeOnly: int = 600
+
 pure def otpOnlyAppAllowed(appId: str): bool = appId == "ntwrk" or appId == "slop" or appId == "friends"
 
 pure def otpOnlyPolicyAccepted(everyNamedAppAllowed: bool, namesDistinct: bool, anyNamed: bool, blooioSender: bool): bool =
@@ -127,9 +130,18 @@ pure def otpOnlyPolicyAccepted(everyNamedAppAllowed: bool, namesDistinct: bool, 
 
 pure def otpStartNeedsBrowserCheck(appNamed: bool, checkConfigured: bool): bool = checkConfigured and not(appNamed)
 
+pure def otpAddressLimit(appNamed: bool, standardLimit: int, phoneCodeOnlyLimit: int): int =
+  if (appNamed) phoneCodeOnlyLimit else standardLimit
+
 pure def lawUnnamedAppKeepsBrowserCheck(checkConfigured: bool): bool =
   otpStartNeedsBrowserCheck(false, checkConfigured) == checkConfigured
 
 pure def lawNamedAppNeedsBlooio(everyNamedAppAllowed: bool, namesDistinct: bool): bool =
   not(otpOnlyPolicyAccepted(everyNamedAppAllowed, namesDistinct, true, false))
+
+pure def lawUnnamedAppKeepsStandardAddressLimit(standardLimit: int, phoneCodeOnlyLimit: int): bool =
+  otpAddressLimit(false, standardLimit, phoneCodeOnlyLimit) == standardLimit
+
+pure def lawNamedAppUsesCoarseAddressCeiling(standardLimit: int, phoneCodeOnlyLimit: int): bool =
+  otpAddressLimit(true, standardLimit, phoneCodeOnlyLimit) == phoneCodeOnlyLimit
 ```

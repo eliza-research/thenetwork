@@ -45,7 +45,7 @@ export type Event =
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 export const profileDailyCap: number = 5;
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
-export const connectorAnonymousPerAddressMinute: number = 120;
+export const connectorAnonymousPerAddressMinute: number = 600;
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
 export const connectorRequestsPerGrantMinute: number = 120;
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */

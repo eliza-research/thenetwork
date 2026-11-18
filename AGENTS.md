@@ -42,7 +42,7 @@ accepted merges and pays after maintainer review. There is no escrow.
 - Change the model and implementation together. Compare their states, guards,
   writes, retries, leases, limits, and invariants. State which seams and proof
   obligations were checked, and which remain open.
-- The [signup handoff](spec/agentPhoneHandoff.md) gives the person one
+- The [connector browser authorization](spec/oauthBrowserAuthorization.md) gives the person one
   app-bound link to verify their phone and authorize profile access. The person
   enters the code on the app's site. Keep the code and browser session outside
   the assistant conversation.

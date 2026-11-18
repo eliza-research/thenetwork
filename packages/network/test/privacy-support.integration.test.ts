@@ -143,7 +143,7 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     expect(exported.body.exports.slop.network).toMatchObject({ member: { name: "Bea" } });
   }, T);
 
-  test("a restore keeps an erasure, a STOP, a leave and a ban made after the backup", async () => {
+  test("a restore keeps an erasure, a STOP, a leave and a ban made after the backup, and the backend replays them at start", async () => {
     await fresh();
     const clock = new SimClock(START);
     const { s } = service(clock);
@@ -151,7 +151,11 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     for (const [phone, name] of [[erasing, "Cy"], [stopping, "Di"], [leaving, "Ed"], [banning, "Flo"]] as const) await joinByText(s, clock, phone, "slop", name);
     await joinByText(s, clock, leaving, "friends", "Ed");
     const erased = (await s.accounts.personFor(erasing))!, left = (await s.accounts.personFor(leaving))!, banned = (await s.accounts.personFor(banning))!;
+    const stopped = (await s.accounts.personFor(stopping))!;
+    const [stopMember] = await sql`select id from network.members where app_id = 'slop' and person_id = ${stopped.id}::uuid` as { id: string }[];
 
+    // A queued text of the banned number in the backup: the restore must not keep it.
+    await sql`insert into platform.pending_texts (phone_hash, kind, app_id, name, at) values (${s.accounts.phoneHash(banning)}, 'share', 'friends', 'Flo', ${new Date(clock.now())})`;
     const dir = await mkdtemp(join(tmpdir(), "privacy-restore-"));
     try {
       await backup({ url: urlOf(DB), outDir: dir, roles: false });
@@ -168,7 +172,8 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       await expect(restore({ serverUrl: ADMIN_URL, db: RESTORED, dir, keepPrivileges: true })).rejects.toThrow(/--replay/);
       const restored = await restore({ serverUrl: ADMIN_URL, db: RESTORED, dir, replayFrom: urlOf(DB) });
       expect(restored.mismatches).toEqual([]);
-      expect(restored.privacy).toMatchObject({ erasures: 1, leaves: 1 });
+      // The leave is an opt-out of friends too: its STOP item finds the membership already left.
+      expect(restored.privacy).toMatchObject({ erasures: 1, leaves: 1, stops: 2 });
       expect(restored.privacy!.bans).toBeGreaterThan(0);
     } finally { await rm(dir, { recursive: true, force: true }); }
 
@@ -179,9 +184,23 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       expect(await back.accounts.optedIn("slop", stopping)).toBe(false);
       expect(await back.people.isSuppressed(back.accounts.phoneHash(erasing))).toBe(true);
       expect(await back.accounts.banned(banning)).toBe(true);
+      expect(await restoredSql`select count(*)::int as n from platform.pending_texts where phone_hash = ${back.accounts.phoneHash(banning)}`).toEqual([{ n: 0 }]);
 
-      const replayed = await staff(back, "adm-tok", "/privacy/replay", { reason: REASON });
-      expect(replayed.body.items).toEqual([{ kind: "erase", outcome: "erased" }, { kind: "leave", outcome: "left" }, { kind: "ban", outcome: "projected" }]);
+      // spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
+      await back.start();
+      expect(await restoredSql`select kind, app_id, outcome, replayed_at is not null as done, claimed_until from platform.privacy_replay
+        order by case kind when 'erase' then 0 when 'leave' then 1 when 'stop' then 2 else 3 end, app_id`).toEqual([
+        { kind: "erase", app_id: null, outcome: "applied", done: true, claimed_until: null },
+        { kind: "leave", app_id: "friends", outcome: "applied", done: true, claimed_until: null },
+        { kind: "stop", app_id: "friends", outcome: "already", done: true, claimed_until: null },
+        { kind: "stop", app_id: "slop", outcome: "applied", done: true, claimed_until: null },
+        { kind: "ban", app_id: null, outcome: "applied", done: true, claimed_until: null },
+      ]);
+      // spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
+      expect(await restoredSql`select opted_out from network.members where app_id = 'slop' and id = ${stopMember!.id}`).toEqual([{ opted_out: true }]);
+      expect(await back.people.getMembership(stopped.id, "slop")).toMatchObject({ state: "paused" });
+      const slop = back.runtimeFor("slop")!;
+      expect(await slop.readState(n => n.eligible(stopMember!.id as never))).toBe(false);
       expect(await back.accounts.personFor(erasing)).toBeUndefined();
       expect(await liveMembers(restoredSql, erased.id)).toEqual([]);
       expect(await liveMembers(restoredSql, left.id)).toEqual([{ app_id: "slop", account_status: "active" }]);
@@ -189,6 +208,23 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       expect(await liveMembers(restoredSql, banned.id)).toEqual([{ app_id: "slop", account_status: "restricted" }]);
       expect(await back.accounts.optedIn("slop", stopping)).toBe(false);
       expect((await staff(back, "adm-tok", "/privacy/replay", { reason: REASON })).body).toEqual({ ok: true, items: [] });
+      const audit = (await back.audit.list({ actions: ["privacy_replay"], limit: 10 })).reverse().map(e => [e.actor, (e.detail as { phase: string }).phase]);
+      expect(audit.slice(0, 2)).toEqual([["system:restore-replay", "requested"], ["system:restore-replay", "result"]]);
+
+      // An item that cannot run yet stays open and runs on a later replay; an item that another runner claims is not run.
+      const held = newPhone(), claimed = newPhone();
+      await joinByText(back, clock, held, "slop", "Gus");
+      await joinByText(back, clock, claimed, "slop", "Hal");
+      const heldPerson = (await back.accounts.personFor(held))!, claimedPerson = (await back.accounts.personFor(claimed))!;
+      await restoredSql`update platform.phone_identities set hold = 'recycled_number' where e164 = ${held}`;
+      await restoredSql`insert into platform.privacy_replay (kind, person_id, queued_at) values ('erase', ${heldPerson.id}::uuid, ${new Date(clock.now())})`;
+      await restoredSql`insert into platform.privacy_replay (kind, person_id, queued_at, claimed_until)
+        values ('erase', ${claimedPerson.id}::uuid, ${new Date(clock.now())}, ${new Date(clock.now() + 60 * MINUTE)})`;
+      expect((await staff(back, "adm-tok", "/privacy/replay", { reason: REASON })).body.items).toEqual([{ kind: "erase", outcome: "held", done: false }]);
+      expect(await back.accounts.personFor(claimed)).toMatchObject({ id: claimedPerson.id });
+      await restoredSql`update platform.phone_identities set hold = null where e164 = ${held}`;
+      expect((await staff(back, "adm-tok", "/privacy/replay", { reason: REASON })).body.items).toEqual([{ kind: "erase", outcome: "applied", done: true }]);
+      expect(await back.accounts.personFor(held)).toBeUndefined();
     } finally { await restoredSql.close(); }
   }, T);
 });

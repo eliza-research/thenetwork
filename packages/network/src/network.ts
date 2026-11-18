@@ -1289,7 +1289,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
       if (this.clarify(m, aw, c)) return;
     }
-    if (!aw && !mcp && m.endedProbe && this.lateProbeAnswer(m, m.endedProbe, msg, body, now)) return;
+    if (!aw && m.endedProbe && this.lateProbeAnswer(m, m.endedProbe, msg, body, now)) return;
     if (this.weeklyOptIn(m, body)) return;
     if (aw?.kind === "crew" && aw.crewId) {
       const yn = this.yesNoOf(body);

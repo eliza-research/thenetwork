@@ -67,8 +67,6 @@ Imported from `quint/join_flow.qnt` at `30d950e`. See [model index](README.md) f
 //
 // OUTSIDE THE MODEL
 //   - The DOM, the messages, the radio groups (shell-only checks before formPasses), Turnstile.
-//   - prefill (the /oauth/signup-draft read). The research report calls it dead in production.
-//     Its account check is the same rerouted event that account_changed sends.
 //   - Cloud mode (a page reload) and resend without Turnstile (no step change).
 //   - The server's own join checks (age, ban, invite). Here they are the "refused" set.
 module join_flow {

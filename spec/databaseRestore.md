@@ -109,7 +109,7 @@ pure def sometimesFinishesAfterReplay(restore: Restore): bool = restore.phase ==
 
 > As a member who erased my account, said STOP, left an app, or was banned after the last backup, I want a restore to keep that change.
 
-The replay source is the source database: the command reads it after the dump is applied and before the backend serves the restored database. The dump is one snapshot, so a source row that the restored database does not have was written after the backup. The shell copies the missing consent events, bans and suppressions at once: the send path, joins and sign-in read them, so no message reaches these people even before the backend runs. It queues each erasure and leave for the backend, which runs the member's own account erasure or app leave through the staff replay route and its hooks. A copied ban starts without its projection receipt, and the replay route resumes the ban projection. If the source database cannot be read, nothing can be replayed: the operator states it and records the lost window.
+The replay source is the source database: the command reads it after the dump is applied and before the backend serves the restored database. The dump is one snapshot, so a source row that the restored database does not have was written after the backup. The shell copies the missing consent events, bans and suppressions at once: the send path, joins and sign-in read them, so no message reaches these people even before the backend runs. It queues each erasure, leave and STOP for the backend, which runs the member's own account erasure, app leave or STOP path and their hooks. A copied ban starts without its projection receipt, and the backend resumes the ban projection; in the same restore transaction the shell removes the banned number's queued texts and revokes the banned person's live shares, as the live ban write does. The backend runs the queue when it starts, before its first tick and before it serves a request; the staff replay route runs the same queue again for the items that could not run. If the source database cannot be read, nothing can be replayed: the operator states it and records the lost window. Changed after review: the STOP replay used to copy only the consent events, so a member who sent STOP after the backup stayed eligible for matching; and the queue used to wait for a staff call.
 
 ### A source row that the restored database lacks is replayed
 
@@ -139,4 +139,33 @@ pure def replaysLeave(restoredLive: bool, sourceHasMembership: bool, sourceLive:
   restoredLive and sourceHasMembership and not(sourceLive and sameMember)
 pure def lawUnchangedMembershipStays(restoredLive: bool): bool = not(replaysLeave(restoredLive, true, true, true))
 pure def lawRemovedMembershipLeavesAgain(sameMember: bool): bool = replaysLeave(true, true, false, sameMember)
+```
+
+### A STOP after the backup is replayed on each membership it still covers
+
+New rule (F24, after review): a copied consent event that is an opt-out, for one app or for every app, reaches each live membership of the number's person in its scope whose consent for that app still resolves to opted out after the copy. The backend runs the member path of a STOP on that membership: the Network's STOP handling, the opted-out flag that matching reads, and the paused membership. It sends no confirmation, because the member had it before the restore. A later START that was copied too keeps the membership, so the replay never undoes a newer opt-in. Before this rule only the consent events were copied, and the member stayed eligible for matching.
+
+```quint
+pure def replaysStop(copiedOptOut: bool, inScope: bool, membershipLive: bool, stillOptedOut: bool): bool =
+  copiedOptOut and inScope and membershipLive and stillOptedOut
+pure def lawLaterStartIsKept(copiedOptOut: bool, inScope: bool, membershipLive: bool): bool =
+  not(replaysStop(copiedOptOut, inScope, membershipLive, false))
+pure def lawStoppedMembershipStops(membershipLive: bool): bool = membershipLive implies replaysStop(true, true, membershipLive, true)
+pure def lawStopOutsideScopeStays(stillOptedOut: bool): bool = not(replaysStop(true, false, true, stillOptedOut))
+```
+
+### The backend runs the queued replay at start, and each item by one runner until it holds
+
+New rule (F24, after review): a runner takes an item only when it is not done and no other runner holds an unexpired claim on it. An item is done when its change was applied or was already in place. An item that cannot run yet (the phone is on hold, the person has no phone, or the account path refused it) stays open: the start logs an alert, and each later start or staff replay retries it. Before this rule the queue ran only on a staff call, two calls could run one item twice, and a skipped item was marked done for good.
+
+```quint
+type ReplayOutcome = ReplayApplied | ReplayAlreadyApplied | ReplayTargetHeld | ReplayTargetWithoutPhone | ReplayRefused
+
+pure def replayClaims(done: bool, claimedByOther: bool): bool = not(done) and not(claimedByOther)
+pure def replayItemDone(result: ReplayOutcome): bool = result == ReplayApplied or result == ReplayAlreadyApplied
+
+pure def lawOneRunnerPerItem(done: bool): bool = not(replayClaims(done, true))
+pure def lawDoneItemRunsOnce(claimedByOther: bool): bool = not(replayClaims(true, claimedByOther))
+pure def lawSkippedItemStaysOpen(result: ReplayOutcome): bool =
+  (result == ReplayTargetHeld or result == ReplayTargetWithoutPhone or result == ReplayRefused) implies not(replayItemDone(result))
 ```

@@ -10,9 +10,8 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
-The connector no longer writes signup drafts: `prepare_signup` and the browser draft routes were removed
-(audit MCP16 and SIG46), so no action creates a draft. The draft state stays only for the platform's
-number change, which still moves rows of the old table until the platform removes it.
+The connector no longer writes signup drafts: `prepare_signup`, the browser draft routes and the
+`oauth.signup_drafts` table were removed (audit MCP16 and SIG46), so the model keeps no draft state.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -31,7 +30,7 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 // with the code on 2026-11-09).
 //
 // Machines in this model: oauth-auth-request, oauth-grant, oauth-code, oauth-token-family,
-// cloud-grant-authority (as an oracle), mcp-request-gate, grant-owner-binding, signup-draft,
+// cloud-grant-authority (as an oracle), mcp-request-gate, grant-owner-binding,
 // output-leak-gate, inbox-read-seen, assistant-surface-signal, submit-profile-intake,
 // oauth-client-lifecycle, oauth-forget-revoke, oauth-phone-move, oauth-sweep-retention.
 // Not in this model: openai-surface-gate (a boolean config table; no app here is slop), skill-signup
@@ -56,10 +55,8 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //    statements. The OAuth erasure transaction deletes pending requests before committed grants.
 //    This ordering serializes deletion with the approval row lock, which the model abstracts.
 //  - The leak gate (leaks.ts) is an oracle: each inbox item has a nondeterministic `leaky` flag.
-//  - A signup draft has no clock here: its 10-minute expiry (T:288, P:232-233 scrubs it) only removes
-//    data, and no invariant needs it.
-//  - The platform number change records revocations in its own transaction. This move updates grants,
-//    tokens and drafts without running the assistant-link hook. The model retains its existing ban handling.
+//  - The platform number change records revocations in its own transaction. This move updates grants
+//    and tokens without running the assistant-link hook. The model retains its existing ban handling.
 module oauth_mcp {
 
   // ---------------------------------------------------------------- constants
@@ -86,14 +83,13 @@ module oauth_mcp {
   type Code = { st: str, expired: bool }
   type Tok = { g: int, kind: str, origin: str, rotated: bool, revoked: bool, expired: bool }
   type Client = { exists: bool, old: bool }
-  type Draft = { exists: bool, phone: str, scrubbed: bool }
   type Quota = { count: int, accepted: int }
   type Item = { live: bool, person: str, app: str, kind: str, seen: bool, oppOpen: bool, leaky: bool }
   type Effect = { kind: str, person: str, grant: int, ok: bool, status: str, items: Set[int] }
 
   type OAuth = {
     reqs: int -> Req, grants: int -> Grant, codes: int -> Code, toks: int -> Tok, nextTok: int,
-    clients: str -> Client, drafts: int -> Draft, quota: int -> Quota,
+    clients: str -> Client, quota: int -> Quota,
   }
   type Platform = {
     owner: str -> str, banned: Set[str], holdNum: Set[str], netHeld: Set[(str, str)], minor: Set[str],
@@ -160,12 +156,11 @@ module oauth_mcp {
   }
 
   // ---------------------------------------------------------------- helpers (writes)
-  /** P:147-155 revokeGrant: grant, its tokens and its draft payload in one transaction. */
+  /** P:147-155 revokeGrant: grant and its tokens in one transaction. */
   def revokeOa(o: OAuth, g: int): OAuth = {
     ...o,
     grants: o.grants.setBy(g, x => if (x.st == "live") { ...x, st: "revoked" } else x),
     toks: o.toks.keys().mapBy(t => { val k = o.toks.get(t); if (k.g == g) { ...k, revoked: true } else k }),
-    drafts: o.drafts.setBy(g, d => { ...d, scrubbed: true }),
   }
   /**
    * H:182-192 revokeGrant then linked(grant, false). SD-186 (c) fix: for each grant in `gs` that this
@@ -204,7 +199,6 @@ module oauth_mcp {
       toks: Map(),
       nextTok: 1,
       clients: CLIENTS.mapBy(c => { exists: true, old: false }),
-      drafts: REQS.mapBy(g => { exists: false, phone: "", scrubbed: false }),
       quota: REQS.mapBy(g => { count: 0, accepted: 0 }),
     },
     pf' = {
@@ -614,7 +608,7 @@ module oauth_mcp {
   /**
    * P:232-244 sweep (on every OAuth request and every service tick, at most once a minute; modelled as
    * any time). Expired codes and tokens go; revoked or expired grants go (after 30 days, abstracted)
-   * with their codes, tokens and drafts. SD-390 fix (P:241-243): a day-old client goes only when no
+   * with their codes and tokens. SD-390 fix (P:241-243): a day-old client goes only when no
    * grant row is left and it never got a consent_granted audit row.
    */
   /** P:241-243: the client has a consent_granted audit row (audit rows are never swept). */
@@ -631,7 +625,6 @@ module oauth_mcp {
         codes: oa.codes.keys().mapBy(g => { val c = oa.codes.get(g); if (c.expired or deadG.contains(g)) { ...c, st: if (c.st == "none") "none" else "deleted" } else c }),
         toks: oa.toks.keys().filter(t => not(oa.toks.get(t).expired) and not(deadG.contains(oa.toks.get(t).g))).mapBy(t => oa.toks.get(t)),
         grants: grants2,
-        drafts: oa.drafts.keys().mapBy(g => if (deadG.contains(g)) { ...oa.drafts.get(g), exists: false } else oa.drafts.get(g)),
         clients: oa.clients.keys().mapBy(c => { val x = oa.clients.get(c); if (x.exists and x.old and not(rowG.exists(g => grants2.get(g).client == c)) and not(everConsented(c))) { ...x, exists: false } else x }),
       },
       pc' = { ...pc, refr: pc.refr.keys().filter(t => oa.toks.keys().contains(t) and not(oa.toks.get(t).expired) and not(deadG.contains(oa.toks.get(t).g))).mapBy(t => pc.refr.get(t)) },
@@ -704,14 +697,13 @@ module oauth_mcp {
   /**
    * H:994-1008 revokeAllFor(e164, app, {forget}): revoke and audit each live, unexpired grant
    * (grantsFor), then forgetPhone (P:246-255): delete the sign-in requests, then every grant row of
-   * the number and app (with its codes, tokens and drafts).
+   * the number and app (with its codes and tokens).
    */
   def revokeAllForgetOa(o: OAuth, ns: Set[str], a: str): OAuth = {
     ...o,
     grants: o.grants.keys().mapBy(g => { val x = o.grants.get(g); if ((x.st == "live" or x.st == "revoked") and ns.contains(x.phone) and x.app == a) { ...x, st: "deleted" } else x }),
     toks: o.toks.keys().filter(t => { val x = o.grants.get(o.toks.get(t).g); not(ns.contains(x.phone) and x.app == a) }).mapBy(t => o.toks.get(t)),
     reqs: o.reqs.keys().mapBy(r => { val q = o.reqs.get(r); if (q.live and ns.contains(q.phone) and clientApp(q.client) == a) { ...q, live: false } else q }),
-    drafts: o.drafts.keys().mapBy(g => { val x = o.grants.get(g); if (ns.contains(x.phone) and x.app == a) { ...o.drafts.get(g), exists: false } else o.drafts.get(g) }),
   }
   /** The grants that revokeAllFor revokes (and audits) before the delete: live and unexpired (grantsFor). */
   def forgetGhost(o: OAuth, ns: Set[str], apps: Set[str]): Set[int] =
@@ -792,8 +784,7 @@ module oauth_mcp {
 
   /**
    * packages/platform/src/pg-store.ts movePhoneGrants: a current grant with the same person and
-   * native authority moves with its draft. A current Cloud or unowned grant is revoked and audited.
-   * A draft has no separate clock in this model. Its actual expiry is also checked before moving it.
+   * native authority moves. A current Cloud or unowned grant is revoked and audited.
    */
   action movePhone(p: str, src: str, dst: str): bool = all {
     src != dst, pf.owner.get(src) == p, p != NONE, pf.owner.get(dst) == NONE,
@@ -804,13 +795,7 @@ module oauth_mcp {
     val ended = retiring.fold(oa, (state, g) => revokeOa(state, g))
     all {
       oa' = { ...ended,
-        grants: ended.grants.keys().mapBy(g => { val x = ended.grants.get(g); if (movable.contains(g)) { ...x, phone: dst } else x }),
-        drafts: ended.drafts.keys().mapBy(g => {
-          val d = ended.drafts.get(g)
-          if (retiring.contains(g)) { exists: false, phone: "", scrubbed: true }
-          else if (movable.contains(g) and d.exists and not(d.scrubbed) and d.phone == src) { ...d, phone: dst }
-          else d
-        }) },
+        grants: ended.grants.keys().mapBy(g => { val x = ended.grants.get(g); if (movable.contains(g)) { ...x, phone: dst } else x }) },
       // Ghost: a forget recorded for an earlier owner of dst does not cover the person who moves in.
       pf' = { ...pf, owner: pf.owner.set(src, NONE).set(dst, p), forgotten: pf.forgotten.filter(k => k._1 != dst) },
       gh' = { ...gh, audits: gh.audits.union(retiring.map(g => ("revoked", g))), revokedEver: gh.revokedEver.union(retiring),
@@ -999,16 +984,11 @@ module oauth_mcp {
   val numberChangeWorks = gh.last.kind == "movePhone" implies (
     pf.owner.get(gh.last.status) == NONE and REQS.forall(g => not(liveG(oa, g) and oa.grants.get(g).phone == gh.last.status)))
 
-  /** SD-384. P:61-79: a draft is claimed by its grant's phone key; a live draft keys the same phone as its grant. */
-  val draftFollowsGrant = REQS.forall(g =>
-    (oa.drafts.get(g).exists and not(oa.drafts.get(g).scrubbed) and oa.grants.get(g).st == "live")
-      implies oa.drafts.get(g).phone == oa.grants.get(g).phone)
-
   val safety = and {
     noBannedUse, replayIsTrue, codeOnce, oneRefreshHead, revokedTerminal, servedOnLiveOwnGrant,
     activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, noIntroToMinor, noStaleUpdate,
     everyRevocationAudited, oneOutcome, grantHasCodeAndAudit, requestRetention, clientKeptOnceGranted,
-    quotaCountsAccepted, draftFollowsGrant, numberChangeWorks,
+    quotaCountsAccepted, numberChangeWorks,
   }
 
   /** The invariants that the code kept before the fixes (no register defect). */

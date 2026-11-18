@@ -9,6 +9,8 @@ export type RestoreReason = "NoneYet" | "InvalidTarget" | "UnknownManifest" | "O
 export interface Restore { phase: RestorePhase; reason: RestoreReason; runRoles: boolean; keepPrivileges: boolean; countsAgree: boolean; replayPrivacy: boolean; privacyReplayed: boolean }
 /** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 export interface ManifestFacts { sourceKnown: boolean; sameServer: boolean; ownDatabase: boolean; rolesRequested: boolean; encrypted: boolean; dumpPresent: boolean; keepPrivileges: boolean; replaySource: boolean; sourceLost: boolean }
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
+export type ReplayOutcome = "ReplayApplied" | "ReplayAlreadyApplied" | "ReplayTargetHeld" | "ReplayTargetWithoutPhone" | "ReplayRefused";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -233,6 +235,66 @@ export function lawUnchangedMembershipStays(restoredLive: boolean): boolean {
 export function lawRemovedMembershipLeavesAgain(sameMember: boolean): boolean {
   //@ ensures \result === true
   return replaysLeave(true, true, false, sameMember);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / A STOP after the backup is replayed on each membership it still covers (spec/databaseRestore.md) */
+//@ pure
+export function replaysStop(copiedOptOut: boolean, inScope: boolean, membershipLive: boolean, stillOptedOut: boolean): boolean {
+  return copiedOptOut && inScope && membershipLive && stillOptedOut;
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / A STOP after the backup is replayed on each membership it still covers (spec/databaseRestore.md) */
+//@ pure
+export function lawLaterStartIsKept(copiedOptOut: boolean, inScope: boolean, membershipLive: boolean): boolean {
+  //@ ensures \result === true
+  return !replaysStop(copiedOptOut, inScope, membershipLive, false);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / A STOP after the backup is replayed on each membership it still covers (spec/databaseRestore.md) */
+//@ pure
+export function lawStoppedMembershipStops(membershipLive: boolean): boolean {
+  //@ ensures \result === true
+  return !membershipLive || replaysStop(true, true, membershipLive, true);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / A STOP after the backup is replayed on each membership it still covers (spec/databaseRestore.md) */
+//@ pure
+export function lawStopOutsideScopeStays(stillOptedOut: boolean): boolean {
+  //@ ensures \result === true
+  return !replaysStop(true, false, true, stillOptedOut);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
+//@ pure
+export function replayClaims(done: boolean, claimedByOther: boolean): boolean {
+  return !done && !claimedByOther;
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
+//@ pure
+export function replayItemDone(result: ReplayOutcome): boolean {
+  return result === "ReplayApplied" || result === "ReplayAlreadyApplied";
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
+//@ pure
+export function lawOneRunnerPerItem(done: boolean): boolean {
+  //@ ensures \result === true
+  return !replayClaims(done, true);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
+//@ pure
+export function lawDoneItemRunsOnce(claimedByOther: boolean): boolean {
+  //@ ensures \result === true
+  return !replayClaims(true, claimedByOther);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
+//@ pure
+export function lawSkippedItemStaysOpen(result: ReplayOutcome): boolean {
+  //@ ensures \result === true
+  return !(result === "ReplayTargetHeld" || result === "ReplayTargetWithoutPhone" || result === "ReplayRefused") || !replayItemDone(result);
 }
 
 /** Do the rules allow this event in this state? */

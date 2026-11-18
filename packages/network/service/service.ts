@@ -104,10 +104,11 @@ import { calendarSchedulingBridgeFromEnv, type CalendarSchedulingBridge } from "
 import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHelpDraft, type BoundedHomeHelpCommand } from "./bounded-home-help-intake.ts";
 import { boundedHomeHelpSenderCurrent, createBoundedHomeHelpAuthority } from "./bounded-home-help-authority.ts";
 import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit } from "./bounded-home-help-staff.ts";
-import { handlePrivacyStaff } from "./privacy-staff.ts";
+import { handlePrivacyStaff, replayPrivacyAtStart } from "./privacy-staff.ts";
 import { BOUNDED_HOME_HELP_CONSENT_CLARIFICATION, boundedHomeHelpConsentCard, boundedHomeHelpConsentCommand,
   boundedHomeHelpConsentReply, homeHelpPlanCode, homeHelpPlanId, type BoundedHomeHelpConsentCommand } from "./bounded-home-help-consent-command.ts";
 import { queueReviewedHomeHelp, reconcileHomeHelpDelivery, stageApprovedHomeHelp } from "./bounded-home-help-delivery.ts";
+import { homeHelpAddressReply } from "./bounded-home-help-address.ts";
 import { BoundedHomeHelp } from "../src/bounded-help.ts";
 import { BoundedHomeHelpConsent, type HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
 import { BoundedHomeHelpVenue } from "../src/bounded-home-help-venue.ts";
@@ -824,6 +825,8 @@ export class NetworkService implements RuntimeHost {
     if (declared && envRow && envRow.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow.value}: fix one of them`);
     const injected = this.relayClassifier;
     this.relayHookFor = injected ? () => injected : relayClassifierFromEnv(this.env, this.log, this.cost);
+    // spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
+    await replayPrivacyAtStart(this);
     for (const rt of this.runtimes.values()) await rt.start();
   }
 
@@ -1496,6 +1499,9 @@ export class NetworkService implements RuntimeHost {
    * "paused" (GET /api/me shows it; START on the app's line makes it active again), and the Network
    * drops the member from open opportunities.
    */
+  /** spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers": the member path of a STOP, with no consent event and no reply. */
+  async replayStop(app: AppInfo, personId: string) { await this.stopped(app, personId, "app"); }
+
   private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }) {
     const ms = (await this.people.memberships(personId)).filter(m => m.state !== "removed" && m.state !== "invited" && (scope === "global" || m.app === app.id));
     for (const m of ms) {
@@ -2520,10 +2526,16 @@ export class NetworkService implements RuntimeHost {
     }
     const key: HomeHelpConsentKey = { app: rt.app.id, id: command.id, revision: command.revision };
     const store = this.homeHelpConsent();
+    if (command.kind === "address") {
+      const origin = stagingSiteOrigins(this.env)[rt.app.id] ?? `https://${rt.app.domain}`;
+      const reply = await homeHelpAddressReply(tx, store, key, actor.memberId, origin, this.clock.now());
+      rt.collectedMemberReply(actor.memberId, responseId, reply.body, "bounded_home_help", reply.link ? [reply.link] : []);
+      return;
+    }
     await reconcileHomeHelpDelivery(tx, store, key.app, actor.memberId, key);
     const result = await store.respond(tx, { ...key, actor, decision: command.decision, receivedAt });
     if (result) rt.unit.atomicReply = "bounded_home_help";
-    rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result), "bounded_home_help");
+    rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result, key), "bounded_home_help");
   }
 
   /** Apply the saved age to matching, photos, and memberships owned by the same person. */

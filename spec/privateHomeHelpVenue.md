@@ -71,3 +71,40 @@ pure def lawHomeHelpVenueRevocationRequiresCurrentOwner(owner: bool, currentRevi
   not(mayRevokeHomeHelpVenue(false, currentRevision, now, expiresAt))
   and not(mayRevokeHomeHelpVenue(owner, false, now, expiresAt))
 ```
+
+### The conversation points each participant to the private page
+
+A participant sends `HOME HELP ADDRESS <plan ID> <revision>` in their own
+signed conversation. The reply never contains the address. It gives the
+requester the private page link when the requester may store the address, and
+says whether an address is already saved. It gives a helper the private page
+link only when a saved address exists and the helper may read it. Every other
+case, including a person outside the roster, a missing yes, a changed roster,
+a revoked address and expiry, gets the same closed answer. The reply to a
+recorded yes names this command. The requester learns only that the whole
+roster agreed, which the private page needs, and never who answered or how.
+Changed on 2026-11-17 (audit CRI12): before this rule no message told a
+participant that the address step existed, so a reviewed plan could not reach
+the private page.
+
+```quint
+type HomeHelpAddressStep = AddressStepClosed | RequesterAddsAddress | RequesterAddressSaved | HelperReadsAddress
+
+pure def homeHelpAddressStep(requester: bool, helper: bool, unanimousCurrentConsent: bool, addressStored: bool, now: int, expiresAt: int): HomeHelpAddressStep =
+  if (requester and mayStoreHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt))
+    (if (addressStored) RequesterAddressSaved else RequesterAddsAddress)
+  else if (helper and addressStored and mayReadHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt)) HelperReadsAddress
+  else AddressStepClosed
+
+pure def lawHomeHelpAddressStepNeedsConsent(requester: bool, helper: bool, addressStored: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(requester, helper, false, addressStored, now, expiresAt) == AddressStepClosed
+
+pure def lawHomeHelpAddressStepNeedsParticipant(unanimousCurrentConsent: bool, addressStored: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(false, false, unanimousCurrentConsent, addressStored, now, expiresAt) == AddressStepClosed
+
+pure def lawHelperWaitsForStoredAddress(unanimousCurrentConsent: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(false, true, unanimousCurrentConsent, false, now, expiresAt) == AddressStepClosed
+
+pure def lawExpiredHomeHelpAddressStepIsClosed(requester: bool, helper: bool, unanimousCurrentConsent: bool, addressStored: bool, expiresAt: int): bool =
+  homeHelpAddressStep(requester, helper, unanimousCurrentConsent, addressStored, expiresAt, expiresAt) == AddressStepClosed
+```

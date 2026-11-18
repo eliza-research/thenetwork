@@ -41,6 +41,10 @@ export const otpSendsGlobalHour: number = 500;
 export const otpChecksPerPhoneHour: number = 10;
 /** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
 export const otpChecksPerIpHour: number = 30;
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
+export const otpSendsPerIpHourPhoneCodeOnly: number = 200;
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
+export const otpChecksPerIpHourPhoneCodeOnly: number = 600;
 /** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md) */
 export const otpLifetimeMs: number = exact_otpLimits(exact_otpLimits(10 * 60) * 1000);
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
@@ -252,36 +256,56 @@ export function sometimesVerifies(flow: ChallengeFlow): boolean {
   return flow.phase === "Verified";
 }
 
-/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
 //@ pure
 export function otpOnlyAppAllowed(appId: string): boolean {
   return appId === "ntwrk" || appId === "slop" || appId === "friends";
 }
 
-/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
 //@ pure
 export function otpOnlyPolicyAccepted(everyNamedAppAllowed: boolean, namesDistinct: boolean, anyNamed: boolean, blooioSender: boolean): boolean {
   return everyNamedAppAllowed && namesDistinct && (!anyNamed || blooioSender);
 }
 
-/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
 //@ pure
 export function otpStartNeedsBrowserCheck(appNamed: boolean, checkConfigured: boolean): boolean {
   return checkConfigured && !appNamed;
 }
 
-/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
+//@ pure
+export function otpAddressLimit(appNamed: boolean, standardLimit: number, phoneCodeOnlyLimit: number): number {
+  return appNamed ? phoneCodeOnlyLimit : standardLimit;
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
 //@ pure
 export function lawUnnamedAppKeepsBrowserCheck(checkConfigured: boolean): boolean {
   //@ ensures \result === true
   return otpStartNeedsBrowserCheck(false, checkConfigured) === checkConfigured;
 }
 
-/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, and every send limit still applies (spec/otpLimits.md) */
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
 //@ pure
 export function lawNamedAppNeedsBlooio(everyNamedAppAllowed: boolean, namesDistinct: boolean): boolean {
   //@ ensures \result === true
   return !otpOnlyPolicyAccepted(everyNamedAppAllowed, namesDistinct, true, false);
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
+//@ pure
+export function lawUnnamedAppKeepsStandardAddressLimit(standardLimit: number, phoneCodeOnlyLimit: number): boolean {
+  //@ ensures \result === true
+  return otpAddressLimit(false, standardLimit, phoneCodeOnlyLimit) === standardLimit;
+}
+
+/** Story: Prove ownership of my phone / A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling (spec/otpLimits.md) */
+//@ pure
+export function lawNamedAppUsesCoarseAddressCeiling(standardLimit: number, phoneCodeOnlyLimit: number): boolean {
+  //@ ensures \result === true
+  return otpAddressLimit(true, standardLimit, phoneCodeOnlyLimit) === phoneCodeOnlyLimit;
 }
 
 /** Do the rules allow this event in this state? */

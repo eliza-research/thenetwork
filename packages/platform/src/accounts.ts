@@ -373,7 +373,7 @@ export class Accounts {
     try {
       await this.store.noteAgeFloor(this.phoneHash(e164), lowestAge(age, current?.lowestAge)!, this.now());
     } finally {
-      // A temporary-data cleanup failure must not prevent the existing person-level safety update.
+      // A failed floor write must not prevent the person-level safety update.
       if (person) {
         const after = await this.store.noteAge(person.id, age);
         // A prior hook may have failed after noteAge committed. Reconcile on retry, even if the
@@ -385,13 +385,9 @@ export class Accounts {
 
   /** Project a durable chat observation. The write's owner survives a change of phone number. */
   async projectRecordedAge(recorded: RecordedMemberAge): Promise<void> {
-    try {
-      await this.store.cleanupRecordedAgeFloor(recorded);
-    } finally {
-      const person = recorded.personId ? await this.store.getPerson(recorded.personId) : undefined;
-      if (person?.deletedAt === null && validAge(person.lowestAge)) {
-        await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
-      }
+    const person = recorded.personId ? await this.store.getPerson(recorded.personId) : undefined;
+    if (person?.deletedAt === null && validAge(person.lowestAge)) {
+      await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
     }
   }
 

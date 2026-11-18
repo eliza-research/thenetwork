@@ -50,8 +50,8 @@ The member must prove that they hold the number. Staff never act on an email alo
 A backup is one snapshot. Erasures, STOPs, leaves and bans made after it are in the source database only. `deploy/backup/restore.ts` replays them when it can read the source database.
 
 1. Set `RESTORE_SOURCE_DATABASE_URL` to a login that can read the source database (the damaged one). Run the restore of runbook-real.md 8.3 step 2 with `--keep-privileges --replay`. A recovery without `--replay` or `--source-lost` is refused.
-2. The command copies the missing consent events, bans and suppressions into the restored database at once, and queues each erasure, leave and ban projection in `platform.privacy_replay`. The log line `restore checked` shows `privacyReplay` with the counts.
-3. Start the backend on the restored database (runbook-real.md 8.3 step 5). Before you open public traffic, run the replay:
+2. The command copies the missing consent events, bans and suppressions into the restored database at once. For each copied ban it also deletes the banned number's queued texts and revokes the banned person's live shares. It queues each erasure, leave, STOP and ban projection in `platform.privacy_replay`. The log line `restore checked` shows `privacyReplay` with the counts.
+3. Start the backend on the restored database (runbook-real.md 8.3 step 5). The backend runs the queue when it starts, before its first tick and before it serves a request. The audit log shows `privacy_replay` rows with the actor `system:restore-replay`. Each item gets an outcome: `applied`, `already` (the change was already in place; `already:no_member` for a ban with no live membership, where the ban row already refuses the number), or `held`, `no_phone` and `refused:<reason>`. These last three stay open. The backend logs `[alert] privacy replay: N item(s) stay open`. Fix the cause (for example, decide the hold with `/holds`), then run the open items again:
 
    ```bash
    curl -sS -X POST http://backend.railway.internal:4848/privacy/replay \
@@ -59,7 +59,7 @@ A backup is one snapshot. Erasures, STOPs, leaves and bans made after it are in 
      -d '{"reason":"restore 2026-11-17 replay"}'
    ```
 
-   Each item shows its outcome: `erased`, `left`, `projected`, `no_member` (a ban with no live membership: the ban row already refuses the number), or `held`, `no_phone` and `refused:<reason>`, which staff check by hand. A second call runs nothing again.
+   Each runner claims an item before it runs it, so two calls never run one item twice. A completed item never runs again. To see what stays open: `select kind, person_id, app_id, outcome from platform.privacy_replay where replayed_at is null`.
 4. If the source database cannot be read at all, run the restore with `--keep-privileges --source-lost`. Nothing after the backup can be replayed: write down the backup time, and treat every erasure email of that window again with section 2.
 
-What the replay does not carry forward: anything else written after the backup (messages, new members, ages stated after the backup), and outbound texts that the backup holds as pending. Runbook-real.md 8.3 step 6 covers the lost window.
+What the replay does not carry forward: anything else written after the backup (messages, new members, ages stated after the backup). It also does not remove outbound texts that the backup holds as pending. Runbook-real.md 8.3 step 6 covers the lost window.

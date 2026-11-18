@@ -8,7 +8,7 @@ import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneE
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import type { AppId } from "./apps.ts";
 import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
-import { LONG_RATE_WINDOWS, reconcileRecordedAgeFloor } from "./store.ts";
+import { LONG_RATE_WINDOWS } from "./store.ts";
 import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RecordedMemberAge, Session, ShareGrant, StaffBanProjection } from "./store.ts";
 
 type Row = Record<string, any>;
@@ -104,25 +104,8 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select lowest_age from platform.age_floor where phone_hash = ${phoneHash}`;
     return r ? (r.lowest_age as number) : undefined;
   }
-  private ageTail: Promise<unknown> = Promise.resolve();
-  private ageCleanup?: (phoneHash: string, age: number) => Promise<void>;
-  setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>) { this.ageCleanup = fn; }
-  withPhoneAgeGuard<T>(phoneHash: string, fn: () => Promise<T>): Promise<T> {
-    // Separate from withLock's join queue: no recursive lockTail wait. Waiters reserve no connection.
-    // Normal pools have four connections: join lock + age lock + ordinary queries fit without a nested reservation queue.
-    const run = this.ageTail.then(() => this.advisory(`phone-age:${phoneHash}`, fn), () => this.advisory(`phone-age:${phoneHash}`, fn));
-    this.ageTail = run.catch(() => {});
-    return run;
-  }
   async noteAgeFloor(phoneHash: string, age: number, at: number) {
-    return this.withPhoneAgeGuard(phoneHash, async () => {
-      const lowest = await upsertAgeFloor(this.sql, phoneHash, age, at);
-      await this.ageCleanup?.(phoneHash, lowest);
-      return lowest;
-    });
-  }
-  cleanupRecordedAgeFloor(recorded: RecordedMemberAge) {
-    return reconcileRecordedAgeFloor(this, recorded, this.ageCleanup);
+    return upsertAgeFloor(this.sql, phoneHash, age, at);
   }
   async clearAgeFloor(phoneHash: string) {
     await this.sql`delete from platform.age_floor where phone_hash = ${phoneHash}`;
@@ -604,16 +587,9 @@ export class PgPeopleStore implements PeopleStore {
         returning id,client_id,app_id
       ), tokens as (
         update oauth.tokens set revoked_at=${at} where grant_id in (select id from ended) and revoked_at is null
-      ), drafts as (
-        delete from oauth.signup_drafts where grant_id in (select id from ended)
       ) insert into oauth.audit (at,kind,client_id,grant_id,app_id,detail)
         select ${at},'consent_revoked',client_id,id,app_id,'phone changed' from ended`;
-    await tx`with moved as (
-        update oauth.grants set phone_key=${move.newHash}
-        where person_id=${move.personId} and phone_key=${move.oldHash} and revoked_at is null and expires_at>${at} and not ${cloudBound}
-        returning id,app_id
-      ) update oauth.signup_drafts draft set phone_key=${move.newHash} from moved
-        where draft.grant_id=moved.id and draft.app_id=moved.app_id and draft.phone_key=${move.oldHash}
-          and draft.consumed_at is null and draft.expires_at>${at}`;
+    await tx`update oauth.grants set phone_key=${move.newHash}
+        where person_id=${move.personId} and phone_key=${move.oldHash} and revoked_at is null and expires_at>${at} and not ${cloudBound}`;
   }
 }

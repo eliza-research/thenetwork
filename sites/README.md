@@ -138,8 +138,3 @@ All four projects are in the ntwrk.party Cloudflare account (its id is `CLOUDFLA
 the environment or the CI variable). Each answers on `<project>.pages.dev`, which the backend accepts as that app's host; slop.date
 and friends.help DNS (another account) point there. Details: [docs/deploy.md](../docs/deploy.md).
 
-### Authenticated Join drafts
-
-The connector tool `prepare_signup` saves a Join draft on ntwrk.party and friends.help only
-(spec/connectorTools.md). These two sites have no Join page now, so no page claims a draft. The rest
-of this section describes the claim rules for a Join page on those sites. Network and Friends may claim an approved assistant draft after normal phone sign-in through a same-origin `POST /oauth/signup-draft` (the existing signed OAuth router). Only first name and home city fill existing editable controls. The draft is optional and recoverable until completion or expiry; missing, expired or revoked drafts leave the ordinary form usable. Human edits win over delayed responses. An opaque marker returned by the normal authenticated account API binds form state to the account; authentication transitions clear prior values and reject old in-flight responses. No browser storage caches these facts across accounts. Updated forms also send their reviewed account marker with Join; the server rejects a changed account before any age, person, membership or consent write. The page clears the old fields and loads the current account for review without another phone code. Older clients may omit the marker; it never authorizes a request. Age and the app text-consent checkbox remain for the person. No personal fields or credentials are carried in a URL. Slop and Peon do not use this path.

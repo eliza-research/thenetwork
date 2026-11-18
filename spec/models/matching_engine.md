@@ -499,8 +499,11 @@ module matching_engine {
   pure def endSeat(s: Seat): Seat = if (s.stage == "review" or s.stage == "probing" or s.stage == "candYes") { ...s, stage: "closed" } else s
 
   // A "yes" to the read-back. `src` "sms" is the manager's own text; "mcp" is a profile from the member's
-  // assistant. Fixed (7c08084, SD-042): network.ts:793 runs postingTurn only for the member's own text,
-  // so an "mcp" yes leaves the draft and the postings as they are.
+  // assistant. Fixed (7c08084, SD-042; again for PER31): the member turn in network.ts sends "mcp" text to
+  // learnAssistantProfile before postingTurn (spec/postingPolicy.md "Only the member's own text in the
+  // thread issues a command"), so an "mcp" yes leaves the draft and the postings as they are, and an
+  // "mcp" text never starts or closes a draft (mgrDraftNew, mgrDraftUpdate and mgrDraftClose model only
+  // the manager's own text).
   // The manager's yes: postingFromDraft (jobs.ts:189-201, transitions.ts:567 postingAction) on the stored posting, then applyPosting, then
   // savePosting in the unit's transaction. Fixed (ce667b2, SD-114): a stored posting that is not active
   // is final (jobs.ts:194: no posting, the draft is dropped). Fixed (dc84661, SD-327): closedReason

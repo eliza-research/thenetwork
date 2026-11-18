@@ -37,7 +37,7 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     return (await res.json()) as { outcome: string; replies?: string[] };
   };
   const tokenIn = (replies: string[] = []) => /\/photos\/add#([A-Za-z0-9_-]{43})/.exec(replies.join(" "))?.[1];
-  const upload = (token: string, photos: Uint8Array[], o: { app?: "slop" | "ntwrk"; browser?: Browser; consent?: boolean } = {}) => {
+  const upload = (token: string, photos: Uint8Array<ArrayBuffer>[], o: { app?: "slop" | "ntwrk"; browser?: Browser; consent?: boolean } = {}) => {
     const form = new FormData();
     for (const p of photos) form.append("photo", new Blob([p], { type: "image/png" }), "photo.png");
     return st.site(o.app ?? "slop", "/api/photos/upload", { browser: o.browser, method: "POST", body: form,

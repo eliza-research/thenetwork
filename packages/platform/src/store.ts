@@ -2,7 +2,7 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
-import { confirmedUnderage, recordedAgeFloorApplies } from "../../core/src/generated/memberAge.ts";
+import { confirmedUnderage } from "../../core/src/generated/memberAge.ts";
 import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -90,19 +90,6 @@ export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
 export interface RecordedMemberAge { personId: string | null; phoneHash: string }
 
-export async function reconcileRecordedAgeFloor(
-  store: Pick<PeopleStore, "ageFloor" | "findPhoneByHash" | "withPhoneAgeGuard">,
-  { personId, phoneHash }: RecordedMemberAge,
-  cleanup?: (phoneHash: string, age: number) => Promise<void>,
-): Promise<void> {
-  if (!cleanup) return;
-  await store.withPhoneAgeGuard(phoneHash, async () => {
-    const age = await store.ageFloor(phoneHash);
-    const owner = await store.findPhoneByHash(phoneHash);
-    if (age !== undefined && recordedAgeFloorApplies(personId ?? "", owner?.personId ?? "")) await cleanup(phoneHash, age);
-  });
-}
-
 export interface PeopleStore {
   findPhone(e164: string): Promise<PhoneIdentity | undefined>;
   /** The phone of the live person with this keyed phone hash (people.phone_hash), if any: lets a holder of only the hash (OAuth grants) find the person. */
@@ -121,12 +108,6 @@ export interface PeopleStore {
   ageFloor(phoneHash: string): Promise<number | undefined>;
   noteAgeFloor(phoneHash: string, age: number, at: number): Promise<number>;
   clearAgeFloor(phoneHash: string): Promise<void>;
-  /** Independent keyed-phone guard for age recording and temporary facts. Its callback must not acquire withLock. */
-  withPhoneAgeGuard<T>(phoneHash: string, fn: () => Promise<T>): Promise<T>;
-  /** One canonical temporary-data cleanup consumer; awaited before an age recording returns. */
-  setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>): void;
-  /** Reconcile temporary phone facts from a committed age while the binding still matches. */
-  cleanupRecordedAgeFloor(recorded: RecordedMemberAge): Promise<void>;
   /** Record a stated or recorded age: the person keeps the lowest one. Returns the new lowest age. */
   noteAge(personId: string, age: number): Promise<number>;
 
@@ -261,26 +242,11 @@ export class MemoryPeopleStore implements PeopleStore {
   async setPhoneHold(e164: string, hold: PhoneHold | null) { const ph = this.phones.get(e164); if (ph) ph.hold = hold; }
   async heldPhones() { return [...this.phones.values()].filter(p => p.hold !== null).map(p => ({ ...p })); }
   async ageFloor(phoneHash: string) { return this.ageFloors.get(phoneHash)?.age; }
-  private readonly ageLocks = new Map<string, Promise<unknown>>();
-  private ageCleanup?: (phoneHash: string, age: number) => Promise<void>;
-  setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>) { this.ageCleanup = fn; }
-  async withPhoneAgeGuard<T>(phoneHash: string, fn: () => Promise<T>): Promise<T> {
-    const previous = this.ageLocks.get(phoneHash) ?? Promise.resolve();
-    const run = previous.then(fn, fn), tail = run.catch(() => {});
-    this.ageLocks.set(phoneHash, tail);
-    try { return await run; } finally { if (this.ageLocks.get(phoneHash) === tail) this.ageLocks.delete(phoneHash); }
-  }
   async noteAgeFloor(phoneHash: string, age: number, at: number) {
-    return this.withPhoneAgeGuard(phoneHash, async () => {
-      const cur = this.ageFloors.get(phoneHash);
-      const lowest = cur ? Math.min(cur.age, age) : age;
-      this.ageFloors.set(phoneHash, { age: lowest, at: cur && cur.age <= age ? cur.at : at });
-      await this.ageCleanup?.(phoneHash, lowest);
-      return lowest;
-    });
-  }
-  cleanupRecordedAgeFloor(recorded: RecordedMemberAge) {
-    return reconcileRecordedAgeFloor(this, recorded, this.ageCleanup);
+    const cur = this.ageFloors.get(phoneHash);
+    const lowest = cur ? Math.min(cur.age, age) : age;
+    this.ageFloors.set(phoneHash, { age: lowest, at: cur && cur.age <= age ? cur.at : at });
+    return lowest;
   }
   async clearAgeFloor(phoneHash: string) { this.ageFloors.delete(phoneHash); }
   async noteAge(personId: string, age: number) {

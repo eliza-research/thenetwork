@@ -295,4 +295,33 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     expect(JSON.stringify(rows)).not.toContain("synthetic-key");
     expect(JSON.stringify(rows)).not.toContain("+1212");
   });
+
+  test("a phone-code-only app counts one assistant address against a coarse ceiling and keeps every per-person limit", async () => {
+    mode = "queued";
+    now = Date.UTC(2026, 10, 2);
+    const api = createPublicApi({
+      // A longer send timeout than provider(): this case makes many sends on a shared machine.
+      store, otp: new BlooioOtpProvider(ENV, { baseUrl: `http://127.0.0.1:${server.port}/v4`, timeoutMs: 5000 }),
+      env: { PLATFORM_ENV: "production", PLATFORM_PHONE_OTP_ONLY_APPS: "friends" }, hashKey: KEY, sessionSecret: KEY,
+      turnstile: { verify: async () => true }, now: () => now, ipOf: () => "198.51.100.77", minStartMs: 0, minVerifyMs: 0, log: line => logs.push(line),
+    });
+    const call = async (host: string, path: string, body: unknown) =>
+      (await api.fetch(new Request(`https://${host}${path}`, { method: "POST", headers: { host, "content-type": "application/json" }, body: JSON.stringify(body) })))!;
+    const people = Array.from({ length: 32 }, (_, i) => `+1415555${String(2000 + i)}`);
+    // Every person behind one assistant egress address starts and checks a code: more than the
+    // standard ten starts and thirty checks an hour of one address bucket.
+    for (const p of people) {
+      expect((await call("friends.help", "/api/auth/otp/start", { phone: p })).status).toBe(200);
+      const verified = await call("friends.help", "/api/auth/otp/verify", { phone: p, code: requests.at(-1)!.code });
+      expect(verified.status).toBe(200);
+    }
+    // The per-person limits still apply on the named app.
+    expect((await call("friends.help", "/api/auth/otp/start", { phone: people[0] })).status).toBe(429);
+    // An app the option does not name keeps the standard address limit for the same address.
+    const others = Array.from({ length: 11 }, (_, i) => `+1415555${String(3000 + i)}`);
+    const statuses: number[] = [];
+    for (const p of others) statuses.push((await call("slop.date", "/api/auth/otp/start", { phone: p, turnstileToken: "ok" })).status);
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(200));
+    expect(statuses[10]).toBe(429);
+  });
 });

@@ -51,7 +51,7 @@ pure def lawMatchingNeedsAdultAge(age: int): bool =
 
 ### Commit a stated age before projecting it across apps
 
-Commit the age to the verified person's record and phone age floor in the same transaction as the conversation that read it. An under-age statement that leads to staff review keeps the app's minimum join age. A confirmed refusal keeps the stated age. Another app uses the lower age even when later cleanup fails.
+Commit the age to the verified person's record and phone age floor in the same transaction as the conversation that read it. An under-age statement that leads to staff review keeps the app's minimum join age. A confirmed refusal keeps the stated age. Another app uses the lower age even when later cleanup fails. Project the committed age across apps for the person that the write transaction identified, so a later change of phone number does not move the projection to another person. Moving a number carries its floor to the new binding. Projection never writes either age. Changed: this rule now holds the projection sentences of the removed rule "Project a committed age using its original owner"; that rule's phone-scoped cleanup had no consumer after the signup draft store was removed (audit MCP16 review), so its decision `recordedAgeFloorApplies` is gone with it.
 
 ```quint
 pure def recordedChatAge(age: int, appMinimum: int, declined: bool): int =
@@ -61,18 +61,6 @@ pure def confirmedUnderage(age: int): bool = ageInRange(age) and not(joinableAge
 
 pure def lawDeclineKeepsStatedAge(age: int, appMinimum: int): bool =
   recordedChatAge(age, appMinimum, true) == age
-```
-
-### Project a committed age using its original owner
-
-Use the person identified by the write transaction for cross-app cleanup. For phone-scoped signup cleanup, read the current stored floor and check ownership again under the phone age guard. Skip this cleanup when the phone now belongs to another person. A legacy member's observation applies to an unbound number. Moving a number carries its floor to the new binding. Projection never writes either age.
-
-```quint
-pure def recordedAgeFloorApplies(recordedOwner: str, currentOwner: str): bool =
-  recordedOwner == currentOwner
-
-pure def lawPhoneReassignmentEndsAgeProjection(recordedOwner: str, currentOwner: str): bool =
-  (recordedOwner != currentOwner) implies not(recordedAgeFloorApplies(recordedOwner, currentOwner))
 ```
 
 ### Resume a confirmed refusal from the durable age
