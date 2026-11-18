@@ -65,7 +65,7 @@ export function scoreboard(opps: Iterable<ObsOpportunity>, extra: Record<string,
 export interface MissionContext {
   now: number; start: number;
   community: (id: MemberId) => string | undefined;
-  newcomer: (id: MemberId) => boolean;
+  newcomer: (id: MemberId, at: number) => boolean;
   scores: ScoreLine[];
 }
 
@@ -79,7 +79,7 @@ export const MISSIONS: MissionDef[] = [
   { id: "bridge_builder", title: "Bridge builder", description: "Bring together people from different communities, and they both enjoy it (60%+).",
     check: (p, ctx) => { const ok = p.some(o => isHeld(o) && new Set(Object.keys(o.enjoyment).map(ctx.community)).size >= 2 && Object.values(o.enjoyment).every(e => e >= 0.6)); return { done: ok, progress: ok ? "1/1" : "0/1" }; } },
   { id: "welcome_wagon", title: "Welcome wagon", description: "A newcomer (joined in the last 30 days) has a meeting you arranged.",
-    check: (p, ctx) => { const ok = p.some(o => isHeld(o) && Object.keys(o.enjoyment).some(ctx.newcomer)); return { done: ok, progress: ok ? "1/1" : "0/1" }; } },
+    check: (p, ctx) => { const ok = p.some(o => isHeld(o) && Object.keys(o.enjoyment).some(id => ctx.newcomer(id, o.meetingAt ?? o.updatedAt))); return { done: ok, progress: ok ? "1/1" : "0/1" }; } },
   { id: "dinner_party", title: "Dinner party", description: "A group of 3 or more you put together actually meets.",
     check: p => { const ok = p.some(o => isHeld(o) && Object.keys(o.enjoyment).length >= 3); return { done: ok, progress: ok ? "1/1" : "0/1" }; } },
   { id: "do_no_harm", title: "Do no harm", description: "Play 7 sim days and make at least 3 proposals with no unsafe ones.",
