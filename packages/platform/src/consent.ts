@@ -61,10 +61,10 @@ const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
 const START_WORDS = new Set<string>(KEYWORDS.start);
 const HELP_WORDS = new Set<string>(KEYWORDS.help);
 const SPANISH_STOP_WORDS = new Set<string>(KEYWORDS.stopEs);
-// STOP (or STOP ALL) with only courtesy or urgency words around it, in any order: "PLS STOP NOW", "STOP RN",
-// "STOP ALL PLS". Only STOP: "cancel please" may mean a date, and "stop it" or "stop by" are not here.
+// STOP, QUIT or END with only courtesy or urgency words around it, in any order: "PLS STOP NOW", "QUIT NOW",
+// "END ASAP", "STOP RN". Only these three: "cancel please" may mean a date, and "stop it" or "stop by" are not here.
 const STOP_TAIL = `(?:${KEYWORDS.stopTail.join("|")})`;
-const STOP_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP(?:(?: ${STOP_TAIL})* STOP)*(?: ${STOP_TAIL})*$`);
+const STOP_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*(?:STOP|QUIT|END)(?:(?: ${STOP_TAIL})* (?:STOP|QUIT|END))*(?: ${STOP_TAIL})*$`);
 const STOP_ALL_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP ?ALL(?:(?: ${STOP_TAIL})* STOP ?ALL)*(?: ${STOP_TAIL})*$`);
 const REPEATED_SPANISH_STOP = new RegExp(`^(${KEYWORDS.stopEs.join("|")})(?: \\1)+$`);
 
