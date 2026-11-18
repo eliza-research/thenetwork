@@ -81,6 +81,11 @@ if (a.help) {
   process.exit(0);
 }
 
+const judgeCount = a.judge === undefined ? undefined : Number(a.judge);
+if (judgeCount !== undefined && (!Number.isSafeInteger(judgeCount) || judgeCount <= 0)) {
+  throw new Error("--judge must be a positive safe integer");
+}
+
 const seed = Number(a.seed);
 const mode = a.mode as RunMode;
 if (!["discrete", "accelerated", "realtime"].includes(mode)) throw new Error(`bad --mode ${mode}`);
@@ -135,7 +140,7 @@ else {
   console.log(`\nsim events=${res.events} wall=${res.wallMs}ms${agent ? ` llmCalls=${(agent as LLMPersonaAgent).calls} llmFailures=${(agent as LLMPersonaAgent).failures}` : ""}`);
   if (res.dir) console.log(`run log: ${res.dir}`);
 }
-if (a.judge) await judgeRun(res.records, Number(a.judge));
+if (judgeCount !== undefined) await judgeRun(res.records, judgeCount);
 
 /**
  * LLM judges over a deterministic, evenly spaced sample of every delivered Network message (not only
