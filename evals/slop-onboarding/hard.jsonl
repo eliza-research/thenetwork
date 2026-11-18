@@ -162,3 +162,6 @@
 {"text":"Within 50 miles, I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC. My distance limit is 50 miles.","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"]}}}
+{"text":"id go up to twenty-five miles for a date","expect":{"distance":{"mode":"radius","miles":25}}}
+{"text":"one hundred miles is my limit","expect":{"distance":{"mode":"radius","miles":100}}}
+{"text":"a hundred miles works for me","expect":{"distance":{"mode":"radius","miles":100}}}
