@@ -311,7 +311,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (now === null || (status !== "active" && status !== "onboarding")) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: NEXT[status](a) } };
       const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
-      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: NEXT.not_joined(a) } };
+      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: NEXT[status](a) } };
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
     }
     case "get_updates": {

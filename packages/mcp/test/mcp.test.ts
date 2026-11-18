@@ -252,4 +252,16 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     expect((await call(env, PEON_MCP, "submit_profile", { about }, { token: d.token.access_token })).res.status).toBe(429);
     expect(n).toBe(5);
   });
+
+  test("an active member whose profile is refused keeps the active status, not not_joined", async () => {
+    // The platform reports the member as active (the ban is on the number, not the membership state),
+    // but submitProfile refuses it with "not_member" (NetworkService.submitProfile bans by number).
+    // The agent must see the member's real status, like a stopped or held member above, not a join link.
+    const env = setup({ submitProfile: async () => "not_member" });
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const c = await connect(env, "peon.biz", PHONE_A);
+    const r = await call(env, PEON_MCP, "submit_profile", { about: "Looking for a backend role, Brooklyn, weekday mornings." }, { token: c.token.access_token });
+    expect(r.body!.result.structuredContent).toMatchObject({ app: "peon", submitted: false, status: "active" });
+    expect(r.body!.result.structuredContent.next_step).toMatch(/signed up/i);
+  });
 });
