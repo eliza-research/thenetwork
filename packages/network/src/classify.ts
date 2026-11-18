@@ -474,6 +474,9 @@ const SKILL_LEX: Record<string, RegExp> = {
 const FIRST_PERSON = /\b(i|i'm|im|i've|ive|i am|my|me)\b/;
 const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/;
 
+/** Area-name matching text: lower case, hyphens and periods as spaces, one space between words. */
+const normAreaText = (s: string) => normText(s).replace(/[-–—]/g, " ").replace(/\./g, "").replace(/\s+/g, " ").trim();
+
 /** Aliases people use for the neighborhoods the Network knows (geo.ts names are canonical). */
 const AREA_ALIASES: [RegExp, string][] = [
   [/\b(les|lower east side)\b/, "Lower East Side"], [/\b(uws|upper west side|upper west)\b/, "Upper West Side"], [/\b(ues|upper east side|upper east)\b/, "Upper East Side"],
@@ -509,7 +512,7 @@ export interface Profile {
 
 /** The neighborhood a text names as the sender's place, or { unknown } when it names a place the Network does not know. */
 export function areaOf(text: string): { area?: string; unknown?: boolean } {
-  const t = normText(text).replace(/\bst\.\s*/g, "st ");
+  const t = normAreaText(text);
   for (const s of sentencesOf(t)) {
     // The first neighborhood named as home in the sentence ("between Greenpoint and Williamsburg": Greenpoint).
     let best: { at: number; name: string } | undefined;
@@ -525,6 +528,26 @@ export function areaOf(text: string): { area?: string; unknown?: boolean } {
   // "I live in Brooklyn" or "based in Jersey City": a place, but not one neighborhood we know.
   if (HOME_CTX.test(t) && /\b(?:live|living|based|i'?m|im|i am|stay|from)\s+(?:mostly\s+)?(?:in|around|near|out of|over in|up in|out in|down in|by)\s+(?:the\s+)?[A-Z][\w'.-]+/.test(text)) return { unknown: true };
   return {};
+}
+
+/** The neighborhood a request names ("Any plans in Wburg / the Slope / Long-Island-City?"), by alias or canonical name. Unlike areaOf this reads a request, not a home: no home-context guards. */
+export function namedArea(text: string): string | undefined {
+  const t = normAreaText(text);
+  let best: { at: number; name: string } | undefined;
+  for (const [rx, name] of AREA_ALIASES) {
+    const m = rx.exec(t);
+    if (!m || !AREA_NAMES.has(name)) continue;
+    if (!best || m.index < best.at) best = { at: m.index, name };
+  }
+  if (best) return best.name;
+  // Canonical names the aliases miss, on the same normalized text.
+  let canon: { at: number; name: string } | undefined;
+  for (const n of NEIGHBORHOODS) {
+    const at = t.indexOf(normAreaText(n.name));
+    if (at < 0) continue;
+    if (!canon || at < canon.at) canon = { at, name: n.name };
+  }
+  return canon?.name;
 }
 
 /** Facet tags a member reveals when answering onboarding questions or asking for something. Never guesses. */

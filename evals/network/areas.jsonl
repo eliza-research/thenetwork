@@ -209,3 +209,12 @@
 {"text":"I'm visiting the East Village next week","area":null}
 {"text":"I live in the East Village","area":"East Village"}
 {"text":"I'm in the Upper West Side, I work in Midtown","area":"Upper West Side"}
+{"text":"I live in Wburg","area":"Williamsburg"}
+{"text":"I live in the Slope","area":"Park Slope"}
+{"text":"I live in LES","area":"Lower East Side"}
+{"text":"I live in LIC","area":"Long Island City"}
+{"text":"I live in FIDI","area":"Financial District"}
+{"text":"I live in Long  Island  City","area":"Long Island City"}
+{"text":"I live in Long-Island-City","area":"Long Island City"}
+{"text":"I live in St George","area":"St. George"}
+{"text":"I live in Bed Stuy","area":"Bed-Stuy"}
