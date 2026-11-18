@@ -27,10 +27,10 @@ export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[
   const overall = new Map<string, number>();
   for (const m of adults) { const a = parseAppearance(m.tags); if (a) overall.set(m.id, a.overall); }
   const quintile = ratingQuintiles(overall);
-  // Reached: past review (probed, scheduled, done, or closed after review). Held: done, meeting in the past.
+  // Proposals use their creation time; dates use their meeting time, including older proposals.
   const recent = opps.filter(o => o.createdAt >= from && o.createdAt <= now);
   const reached = recent.filter(o => o.stage !== "review" && !(o.stage === "closed" && (o.closedFrom ?? "review") === "review"));
-  const held = recent.filter(o => o.stage === "done" && o.meetingAt !== undefined && o.meetingAt <= now);
+  const held = opps.filter(o => o.stage === "done" && o.meetingAt !== undefined && o.meetingAt >= from && o.meetingAt <= now);
   const pairDates = new Map<string, number>();
   for (const o of held) if (o.participants.length === 2) { const k = [...o.participants].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }
   return adults.map(m => ({
