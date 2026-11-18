@@ -1882,7 +1882,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("request", { requestId: req.id, memberId: m.id, kind: "plans", category: "events" });
     const known = this.knownProfiles().get(m.id);
     const tags = [...c.tags, ...(known ? [...known.interests] : [])].slice(0, 4);
-    const named = NEIGHBORHOODS.find(n => c.text?.includes(n.name))?.name;
+    const requestText = c.text?.toLowerCase();
+    const named = NEIGHBORHOODS.find(n => requestText?.includes(n.name.toLowerCase()))?.name;
     // New ideas on a repeat ask: venues suggested in the last week are left out (nothing new: no list).
     const venues = nearbyVenues(named ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
     // The "see if anyone else is up" offer only where it can be kept: never to a minor, a member who
