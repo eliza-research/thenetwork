@@ -83,6 +83,9 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const byKind: Record<string, number> = {};
   for (const m of meetups) byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
   const booked = flows.reduce((s, f) => s + f.booked.length, 0), attended = flows.reduce((s, f) => s + f.attended.length, 0);
+  // Additional split tables share one proposal and its probes; retain them in meetup/seat metrics.
+  const proposals = flows.filter(f => f.splitFrom === undefined);
+  const probedProposals = proposals.filter(f => f.probed > 0);
   const realE = held.flatMap(m => m.attendees.filter(id => realIds.has(id)).map(id => m.enjoy[id]!));
 
   // Repeat: did >= 2 (or >= 3) of this meetup's attendees meet again together within 30 days? Base:
@@ -175,8 +178,8 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
 
   return {
     matcher: res.matcher, seed: world.seed, weeks: world.weeks, members: world.personas.length, real: real.length,
-    proposals: flows.length, probes: flows.reduce((s, f) => s + f.probed, 0), probeYesRate: div(flows.reduce((s, f) => s + f.yes, 0), flows.reduce((s, f) => s + f.probed, 0)),
-    quorumRate: div(flows.filter(f => f.going.length > 0 && f.stage !== "no_quorum").length, flows.filter(f => f.probed > 0).length), capDrops: flows.reduce((s, f) => s + f.capDrops, 0),
+    proposals: proposals.length, probes: flows.reduce((s, f) => s + f.probed, 0), probeYesRate: div(flows.reduce((s, f) => s + f.yes, 0), flows.reduce((s, f) => s + f.probed, 0)),
+    quorumRate: div(probedProposals.filter(f => f.going.length > 0 && f.stage !== "no_quorum").length, probedProposals.length), capDrops: flows.reduce((s, f) => s + f.capDrops, 0),
     meetups: held.length, meetupsByKind: byKind, attendance: div(attended, booked), meanGroupSize: div(held.reduce((s, m) => s + m.attendees.length, 0), held.length),
     goodRate: div(held.filter(m => m.good).length, held.length), meanEnjoy: div(realE.reduce((s, x) => s + x, 0), realE.length),
     repeatRate: div(rep, base), repeatGroupRate: div(repG, base), repeatRateWithHandoff: div(repH, base),
