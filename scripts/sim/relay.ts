@@ -29,6 +29,8 @@ import { scoreArm, type ArmRow, reasonCategories } from "../../packages/engine/s
 import type { ClefFetch } from "../../packages/engine/src/packs/slop/clef.ts";
 import { baseCtx, textItem as text, cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
 import { RelayDesk, withdrawsSwap, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
+import { DAY, type MemberId } from "../../packages/core/src/index.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { newPhotoId } from "../../packages/platform/src/photos.ts";
 import { isOpaquePhotoId } from "../../packages/engine/src/relay.ts";
 import { slopRelayAdversarial, type AdversarialResult } from "../../packages/sim/src/apps/slop/adversarial.ts";
@@ -466,7 +468,8 @@ async function deskGates(b: Block): Promise<void> {
     for (const t of ["actually don't send my number", "cancel the number swap", "never mind about my number"]) expect(withdrawsSwap(t)).toBe(true);
     for (const t of ["send them my number", "my number is in my profile", "don't be late"]) expect(withdrawsSwap(t)).toBe(false);
     // A yes, or a message that only mentions the number, never takes the request back.
-    for (const t of ["I dont mind, send them my number", "don't wait, send them my number", "send them my number, I don't care", "yes send my number, stop asking", "lol never had to wait this long for someone to want my number", "no worries, send my number", "no problem, send them my number", "send my number, no rush", "I don't mind sharing my number", "never had someone ask to swap numbers before"]) expect([t, withdrawsSwap(t)]).toEqual([t, false]);
+    for (const t of ["I dont mind, send them my number", "don't wait, send them my number", "send them my number, I don't care", "yes send my number, stop asking", "lol never had to wait this long for someone to want my number", "no worries, send my number", "no problem, send them my number", "send my number, no rush", "I don't mind sharing my number", "never had someone ask to swap numbers before",
+      "don't hesitate, send my number", "don't hesitate to send my number", "don't delay, send my number", "don't hold back, send my number", "no need to wait, send my number", "no need to hesitate, send my number"]) expect([t, withdrawsSwap(t)]).toEqual([t, false]);
     // A withdrawal in any wording still withdraws (a swap left pending after a no would share the number).
     for (const t of ["I'd rather not share my number", "please don't give them my number", "changed my mind about my number", "scratch the swap", "stop sharing my number", "hold off for now, my number can wait", "cancel, I'll keep my number",
       "I don't want to swap numbers anymore", "actually I don't want to swap numbers", "I changed my mind about sharing my number", "never mind, I'd rather keep my number", "cancel that, keep my number", "I don't want you to send my number", "I don't want them to have my number",
@@ -475,6 +478,53 @@ async function deskGates(b: Block): Promise<void> {
     h.t += 60_000;
     expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");
     expect(h.sent.some(x => x.contact)).toBe(false);
+  });
+
+  await b.run("relay desk: a go-ahead to swap numbers never cancels the pending swap", async () => {
+    // The member's own go-ahead through the real inbound path (network.ts onInbound reads
+    // withdrawsSwap and cancels the pending swap): the swap must survive it, so the other
+    // member's own request can still complete the exchange. A yes never takes the request back
+    // (docs/results/2026-11-14-number-swap-withdrawal.md).
+    const phones: Record<MemberId, string> = { a: "+12125550147", b: "+12125550148" };
+    const contactOf = (id: MemberId) => phones[id];
+    const swapsOf = (x: Mini) => x.net.exportState().relay?.swaps ?? [];
+    const pending = async () => {
+      const x = new Mini([
+        { id: "a", name: "Sam Stone", age: 30, interests: ["hiking"] },
+        { id: "b", name: "Riley Reed", age: 32, interests: ["hiking"] },
+      ], { seed: 1, review: "auto" });
+      await x.onboard("a", "b");
+      const now = x.clock.now();
+      const st = x.net.exportState();
+      st.opps.push({
+        id: "m1", origin: "engine", kind: "intro", category: "hobby", objective: "a hike", detail: "",
+        participants: ["a", "b"], alternates: [], primed: [], status: [["a", "yes"], ["b", "yes"]],
+        explanations: {}, stage: "scheduled", deadline: now + DAY, createdAt: now, score: 0.5,
+        components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
+        generator: "fixture", exploration: false, sameDay: false, contacted: ["a", "b"], reminded: [], tags: [], replacements: 0, feedbackFrom: [], meetingAt: now + DAY,
+      } as any);
+      x.net.importState(st);
+      const first = await x.net.relayRequest({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+      expect(first.decision).toBe("held");
+      expect(swapsOf(x).length).toBe(1);
+      return x;
+    };
+    for (const t of ["don't hesitate, send my number", "don't hesitate to send my number", "don't delay, send my number",
+      "don't hold back, send my number", "no need to wait, send my number", "no need to hesitate, send my number"]) {
+      const x = await pending();
+      await x.say("a", t);
+      expect([t, swapsOf(x).length]).toEqual([t, 1]);
+      expect(x.log("relay_swap_withdrawn")).toEqual([]);
+    }
+    // A real withdrawal still cancels the pending swap.
+    const x = await pending();
+    await x.say("a", "don't send my number");
+    expect(swapsOf(x).length).toBe(0);
+    expect(x.log("relay_swap_withdrawn").length).toBe(1);
+    // And after a go-ahead the swap still completes when the other member asks.
+    const y = await pending();
+    await y.say("a", "don't hesitate, send my number");
+    expect((await y.net.relayRequest({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("sent");
   });
 
   await b.run("relay desk: a number swap never goes one way: a refused first share stops the second, and neither is logged as shared", async () => {

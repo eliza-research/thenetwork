@@ -100,11 +100,12 @@ export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to
 
 /**
  * A negation that is not a no to the swap ("I don't mind, send them my number", "don't wait",
- * "stop asking", "never had to wait this long"). Blanked before withdrawsSwap reads the message, so
- * any other negation or cancel word in it still withdraws: the reader errs toward withdrawing, because
- * a swap left pending after a no would share the number.
+ * "don't hesitate", "don't delay", "no need to wait", "stop asking", "never had to wait this long").
+ * Blanked before withdrawsSwap reads the message, so any other negation or cancel word in it still
+ * withdraws: the reader errs toward withdrawing, because a swap left pending after a no would share
+ * the number.
  */
-const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
+const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b/g;
 /**
  * "Don't send my number", "cancel the number swap", "no, not my number": the member takes back a
  * pending swap request. A negation, a cancel word or "keep" together with their number.
