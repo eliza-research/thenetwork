@@ -73,6 +73,8 @@ export class Store {
   touchMember(id: MemberId) { if (this.members.has(id)) this.dirtyMembers.add(id); }
   member(id: MemberId) { return this.members.get(id); }
 
+  upsertEdge(e: ObsEdge) { this.edges.set(e.id, e); this.dirtyEdges.add(e.id); }
+
   /** Add or strengthen an edge. Returns true if it is new. */
   addEdge(e: Omit<ObsEdge, "id">): boolean {
     const id = edgeId(e.type, e.from, e.to);
