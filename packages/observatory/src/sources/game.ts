@@ -264,6 +264,7 @@ export class GameSource implements DataSource {
     }
     if (r.type === "persona" && !this.store.member(r.persona.id)) this.addSpawned(r.persona.id);
     this.projector.apply(r);
+    this.healthHour = -1; // Recorded actions can change requests and alerts while sim time is paused.
   }
 
   /** A member who joined mid-run (an invited friend): add them to the view and the graph. */
@@ -315,8 +316,8 @@ export class GameSource implements DataSource {
   }
 
   /**
-   * Health alerts, the scorecard and growth, at most once per sim hour and every 2 s of wall time
-   * while playing (the scorecard is a pass over every message).
+   * Health alerts, the scorecard and growth, after recorded changes or each new sim hour. Streamed
+   * updates remain limited to every 2 s of wall time (the scorecard is a pass over every message).
    */
   private updateHealth(live = false) {
     if (!this.world) return;
