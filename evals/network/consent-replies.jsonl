@@ -320,3 +320,18 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"second works","label":"yes","keys":["b"]}
+{"text":"first works","label":"yes","keys":["a"]}
+{"text":"third works","label":"yes","keys":["c"]}
+{"text":"1st works","label":"yes","keys":["a"]}
+{"text":"2nd works","label":"yes","keys":["b"]}
+{"text":"3rd works","label":"yes","keys":["c"]}
+{"text":"middle works","label":"yes","keys":["b"]}
+{"text":"earlier works","label":"yes","keys":["a"]}
+{"text":"last works","label":"yes","keys":["c"]}
+{"text":"the last works","label":"yes","keys":["c"]}
+{"text":"latest works","label":"yes","keys":["c"]}
+{"text":"last and first work","label":"yes","keys":["a","c"]}
+{"text":"first and last work","label":"yes","keys":["a","c"]}
+{"text":"second, last work","label":"yes","keys":["b","c"]}
+{"text":"last works, first doesn't","label":"yes","keys":["c"]}
