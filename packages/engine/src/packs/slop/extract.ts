@@ -165,6 +165,9 @@ const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: bool
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`(?<!\\b(?:my|our|his|her|their|a|an|the)\\s+)\\b(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },
+  // "I'm a 17 year old girl": article only after first-person lead; trailing self-descriptors only
+  // so "girl"/"trans girl" are consumed (KIN_AFTER won't false-negative) while "scotch"/"dog" stay exposed.
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}(?:\\s+(?:(?:${ADJ_LITE})\\s+)*(?:${G_WOMAN}|${G_MAN}|${G_NB}|person|human|teen|teenager|student))?\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)), strict: true },
   { rx: /\b(?:my age is|age\s*[:=-]|age is)\s*(\d{1,2})\b|(?:^|[,.(]\s*)age\s+(\d{1,2})\b/, age: m => Number(m[1] ?? m[2]), strict: true },
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})\\b${AGE_END}`), age: m => wordNum(m[1]!), strict: true },
   { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
