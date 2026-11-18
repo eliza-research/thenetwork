@@ -739,6 +739,13 @@ const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
+/** An additive word after a named time inherits the affirmation from an earlier clause
+ * ("2 hours works, Saturday 11am too" = Saturday 11am works too). A degree "too"
+ * ("too early", "too late") inherits nothing, so it is excluded. */
+const ADDITIVE = /\b(?:too(?!\s+(?:early|late|soon|much|many|far|long|short|big|small|hard|easy|expensive|cheap|busy|tired)\b)|as well|also)\b/;
+/** The same additive word right after a comma ("Saturday 11am, too"): the comma ends the
+ * clause, so the word sits in the next clause. */
+const ADDITIVE_AFTER_COMMA = /^\s*,\s*(?:too(?!\s+(?:early|late|soon|much|many|far|long|short|big|small|hard|easy|expensive|cheap|busy|tired)\b)|as well|also)\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
@@ -772,32 +779,39 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
-  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
+  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>(), named = new Set<string>(), namedAdditive = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
-  const mark = (keys: string[], i: number, len: number) => {
+  const mark = (keys: string[], i: number, len: number, namesOption = false) => {
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
+      if (namesOption) named.add(k);
       const cl = clauseAt(t, i, len);
+      // The clause ends at the next boundary; an additive word right after a comma
+      // ("Saturday 11am, too") belongs to the same pick.
+      const rest = t.slice(i + len);
+      const endRel = rest.search(/[.,;!?\n]|\bbut\b/);
+      const afterCl = endRel < 0 ? "" : t.slice(i + len + endRel);
+      if (namesOption && (ADDITIVE.test(cl) || ADDITIVE_AFTER_COMMA.test(afterCl))) namedAdditive.add(k);
       if (onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
-  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
-  for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
+  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length, true);
+  for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length, true);
   const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
-  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); named.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
-    [ord("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
-    [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
-    [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
+    [ord("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min|days?|weeks?|hrs?|secs?))/g, 0],
+    [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?|days?|weeks?|hrs?|secs?))/g, 1],
+    [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?|days?|weeks?|hrs?|secs?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
-  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length, true);
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length, true);
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -814,6 +828,22 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  // A duration names no offered slot, with or without an "in|within" prefix,
+  // and with a "from now|today" suffix ("a week from now works").
+  // "2 hours works" is a bare duration (a meeting length, or a relative time with
+  // no reference time to bind it to); "in 2 hours works" is a relative duration
+  // with no clock to bind it to. Either way it is not a clear yes to any offered
+  // time, so ask again. A firm pick of an offered day, letter, or ordinal named
+  // in the same reply ("Saturday works, and 2 hours too") still books that time;
+  // a bare clock time next to it ("7pm works, 2 hours too") does not save it.
+  // An additive pick in a later clause ("2 hours works, Saturday 11am too", or
+  // "in 2 hours works, Saturday 11am too") also books: "too" inherits the
+  // affirmation from the earlier clause. A degree "too" ("too early") or a bare
+  // mention ("Saturday I'm at a wedding") does not.
+  const bareDuration = [...t.matchAll(/\b(?:(in|within)\s+)?((?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?|(?:a\s+)?couple(?:\s+of)?)\s+(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?))\b/g)].some(m => !m[1]);
+  const relativeDuration = /\b(?:in|within)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?)\s*)?(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?)\b/.test(t);
+  const fromNowDuration = /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?)\s+(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?))\s+from\s+(?:now|today)\b/.test(t);
+  if ((bareDuration || relativeDuration || fromNowDuration) && ![...named].some(k => strong.has(k) || (c.answer === "yes" && namedAdditive.has(k)))) return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

@@ -320,3 +320,60 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"2 hours works","label":"unclear","keys":[]}
+{"text":"30 minutes works","label":"unclear","keys":[]}
+{"text":"an hour works","label":"unclear","keys":[]}
+{"text":"45 mins works","label":"unclear","keys":[]}
+{"text":"two hours works","label":"unclear","keys":[]}
+{"text":"half an hour works","label":"unclear","keys":[]}
+{"text":"a few hours works","label":"unclear","keys":[]}
+{"text":"a week works","label":"unclear","keys":[]}
+{"text":"yes, 2 hours works","label":"unclear","keys":[]}
+{"text":"2 hours works for me","label":"unclear","keys":[]}
+{"text":"a couple of hours works","label":"unclear","keys":[]}
+{"text":"one hour works","label":"unclear","keys":[]}
+{"text":"I can do 2 hours","label":"unclear","keys":[]}
+{"text":"2 hrs works","label":"unclear","keys":[]}
+{"text":"2 days works","label":"unclear","keys":[]}
+{"text":"2 seconds works","label":"unclear","keys":[]}
+{"text":"1 day works","label":"unclear","keys":[]}
+{"text":"1 hr works","label":"unclear","keys":[]}
+{"text":"3 days works","label":"unclear","keys":[]}
+{"text":"1 week works","label":"unclear","keys":[]}
+{"text":"Saturday works, and 2 hours too","label":"yes","keys":["b"]}
+{"text":"2 hours works, Saturday 11am too","label":"yes","keys":["b"]}
+{"text":"2 hours works, and Saturday too","label":"yes","keys":["b"]}
+{"text":"2 hours works, Saturday 11am, Sunday 2pm too","label":"yes","keys":["b","c"]}
+{"text":"2 hours works, Saturday 11am as well","label":"yes","keys":["b"]}
+{"text":"2 hours works, also Saturday 11am","label":"yes","keys":["b"]}
+{"text":"2 hours works, the second one too","label":"yes","keys":["b"]}
+{"text":"2 hours works, option b too","label":"yes","keys":["b"]}
+{"text":"in 2 hours works, Saturday 11am too","label":"yes","keys":["b"]}
+{"text":"2 hours works, Saturday 11am is too early","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday 11am is too late","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday I'm at a wedding","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday 11am","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday 11am, too","label":"yes","keys":["b"]}
+{"text":"in 2 hours works","label":"unclear"}
+{"text":"in an hour works","label":"unclear"}
+{"text":"in 30 minutes works","label":"unclear"}
+{"text":"can do in 2 hours","label":"unclear"}
+{"text":"in 2 days works","label":"unclear"}
+{"text":"in a week works","label":"unclear"}
+{"text":"yes, in 2 hours","label":"unclear"}
+{"text":"in half an hour works","label":"unclear"}
+{"text":"in two hours works","label":"unclear"}
+{"text":"within 2 hours works","label":"unclear"}
+{"text":"Saturday works, and in 2 hours too","label":"yes","keys":["b"]}
+{"text":"a week from now works","label":"unclear"}
+{"text":"2 hours from now works","label":"unclear"}
+{"text":"3 days from now works","label":"unclear"}
+{"text":"an hour from now works","label":"unclear"}
+{"text":"a day from now works","label":"unclear"}
+{"text":"30 minutes from now works","label":"unclear"}
+{"text":"a few days from now works","label":"unclear"}
+{"text":"half an hour from now works","label":"unclear"}
+{"text":"a week from today works","label":"unclear"}
+{"text":"2 days from today works","label":"unclear"}
+{"text":"in a week from now works","label":"unclear"}
+{"text":"Saturday works, a week from now too","label":"yes","keys":["b"]}
