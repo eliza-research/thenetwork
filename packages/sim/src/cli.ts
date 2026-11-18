@@ -115,9 +115,10 @@ if (a.scenario) {
 }
 
 const n = Number(a.personas), days = Number(a.days);
+const shareOption = (value: string | undefined) => value === undefined ? undefined : value.trim() === "" ? NaN : Number(value);
 const genOpts = {
-  n, seed, adversarialRate: a["adversarial-rate"] ? Number(a["adversarial-rate"]) : undefined,
-  minorShare: a["minor-share"] !== undefined ? Number(a["minor-share"]) : undefined, joinSpreadDays: Math.min(7, days),
+  n, seed, adversarialRate: shareOption(a["adversarial-rate"]),
+  minorShare: shareOption(a["minor-share"]), joinSpreadDays: Math.min(7, days),
   ...(a.richness ? { richness: true } : {}),
 };
 const personas = a["llm-personas"] && llm ? await generateLLMPersonas({ ...genOpts, llm }) : generatePersonas(genOpts);

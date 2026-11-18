@@ -88,6 +88,10 @@ const STYLE_BY_ARCH: Partial<Record<Archetype, WritingStyle[]>> = {
 const otherCity = (c: City): City => (c === "sf" ? "nyc" : "sf");
 
 export function generatePersonas(opts: GeneratorOptions): Persona[] {
+  for (const key of ["adversarialRate", "minorShare", "disclosureRate"] as const) {
+    const value = opts[key];
+    if (value !== undefined && (!Number.isFinite(value) || value < 0 || value > 1)) throw new Error(`${key} must be a finite number between 0 and 1`);
+  }
   const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const n = opts.n;
   const prefix = opts.idPrefix ?? "m";
