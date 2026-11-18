@@ -519,9 +519,9 @@ function mergeDistance(previous: Distance | undefined, next: Distance): Distance
   return next;
 }
 
-// "5 miles", "2.5 mi" and spelled "two miles", "twenty-five miles": the same unit and context checks apply.
-const DISTANCE_RX = new RegExp(`(?<![\\d.$])(\\d{1,3}(?:\\.\\d+)?|\\b(?:${NUM_WORD_RX}|one|two|three|four|five|six|seven|eight|nine)\\b)\\s*(?:(?:-|to|or)\\s*(\\d{1,3}))?\\s*(?:ish\\s*)?(mi\\b|mis\\b|miles?\\b|mile\\b|mls\\b|miels\\b|km\\b|kms\\b|kilomet(?:er|re)s?\\b|k\\b(?=\\s*(?:radius|max|away|tops)))`);
-const distanceNum = (w: string) => (/^\d/.test(w) ? Number(w) : wordNum(w));
+// "5 miles", "2.5 mi" and spelled "two miles", "twenty-five miles", "a hundred miles": the same unit and context checks apply.
+const DISTANCE_RX = new RegExp(`(?<![\\d.$])(\\d{1,3}(?:\\.\\d+)?|\\b(?:(?:one|a) hundred|${NUM_WORD_RX}|one|two|three|four|five|six|seven|eight|nine)\\b)\\s*(?:(?:-|to|or)\\s*(\\d{1,3}))?\\s*(?:ish\\s*)?(mi\\b|mis\\b|miles?\\b|mile\\b|mls\\b|miels\\b|km\\b|kms\\b|kilomet(?:er|re)s?\\b|k\\b(?=\\s*(?:radius|max|away|tops)))`);
+const distanceNum = (w: string) => (/^\d/.test(w) ? Number(w) : / hundred$/.test(w) ? 100 : wordNum(w));
 
 function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance> | undefined {
   let best: Cand<Distance> | undefined;
