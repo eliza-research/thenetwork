@@ -67,7 +67,7 @@ const RX = {
   sexual: /\b(send|sending|share|text|dm) (me )?(some |your |a )?(nudes?|nude (pics?|photos?|selfies?)|naked (pics?|photos?|selfies?)|dick pics?|pics of your (body|tits|boobs|ass))\b|\b(wanna|want to|let me) see (you )?naked\b/i,
   invite: /\b[Mm]y (?:friend|buddy|pal|coworker|roommate|cousin) ([A-Z][a-z]+)\b/,
   inviteIntent: /\b(invite|bring|add|sign \w+ up|sign up|refer|include|loop in)\b|\bwould (love|like|enjoy|be into) (this|it|that|joining)\b|\b(wants?|wanted) (to join|in)\b|\bhas been (wanting|looking)\b|\bshould (join|be here|get an invite)\b|\blooking for something like this\b/i,
-  cancel: /\b(can'?t make it|have to bail|can'?t come|need to cancel|something came up)\b/i,
+  cancel: /(?<!\b(?:no|not|not\s+to|not\s+going\s+to|not\s+gonna|don'?t|dont|do\s+not|didn'?t|did\s+not|won'?t|wont|wouldn'?t|wouldnt|never|no\s+need\s+to|let'?s\s+not)\s+)\b(?:need|have|got|want|'d\s+like|would\s+like)\s+to\s+cancel\b|(?<!\b(?:no|not|not\s+to|not\s+going\s+to|not\s+gonna|don'?t|dont|do\s+not|didn'?t|did\s+not|won'?t|wont|wouldn'?t|wouldnt|never|no\s+need\s+to|let'?s\s+not|i'?ll|will)\s+)\b(?:(?:please\s+|can\s+we\s+|could\s+we\s+)?cancel\s+(?:our|the|this|that)?\s*(?:date|meeting|plan|meetup|dinner|coffee|lunch|tonight|today|tomorrow|tmrw)|please\s+cancel)\b(?!\s+(?:so|to)\s+(?:i|we)\s+can\s+make\b)|\bcall(?:ing)?\s+(?:off\s+(?:the|our|this)?\s*(?:date|meeting|plan|meetup|dinner)|(?:it|this|that|the\s+(?:date|meeting|plan|meetup)|our\s+(?:date|meeting|plan|meetup))\s+off)\b|\b(?:can'?t|cannot|won'?t|not\s+gonna|not\s+going\s+to|unable\s+to|not\s+able\s+to)\s+(?:be\s+able\s+to\s+)?(?:make\s+it|come|attend|make\s+(?:it\s+)?(?:today|tonight|tomorrow|tmrw|this|that|\w+day))\b(?!\s*,\s*(?:how|what)\s+about\b)(?![^.?!]{0,40}\b(?:how\s+about|what\s+about|can\s+we\s+(?:do|reschedule)|instead)\b)|\bhave\s+to\s+bail\b|\bsomething\s+came\s+up\b/i,
   block: /^\s*(?:please\s+)?block\s+(?!(?:back|on|out|off|of|time|my|the|this|that|it|in|for|a)\b)(.+)$/i,
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
@@ -618,7 +618,7 @@ export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedge
 export interface Consent { answer: YesNo; why: ConsentWhy }
 
 /** A time word right after a refusal makes it a refusal of that time, not of the offer ("can't do Thursday"). */
-const TIME_AHEAD = /^\s*(?:(?:do|make|on|at|for|the|that|this|until|till|before|after)\s+)*(?:(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?s?\b|first\b|second\b|third\b|last one\b|1st\b|2nd\b|3rd\b|option\b|\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|mornings?\b|afternoons?\b|evenings?\b|nights?\b|weekends?\b|weekdays?\b|[abc]\b(?!\s+\w{3,}))/;
+const TIME_AHEAD = /^\s*(?:(?:do|make|on|at|for|the|that|this|until|till|before|after|all|of|whole|next|coming|every|each)\s+)*(?:(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?s?\b|first\b|second\b|third\b|last one\b|1st\b|2nd\b|3rd\b|option\b|\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|mornings?\b|afternoons?\b|evenings?\b|nights?\b|weekends?\b|weekdays?\b|[abc]\b(?!\s+\w{3,}))/;
 /** "No" as a refusal: alone, before punctuation, or before these words. "No heavy networking" is not a refusal. */
 const NO_NEXT = "thanks|thank|thx|ty|sorry|i|i'm|im|i'd|i've|i'll|way|can|cannot|can't|cant|not|nope|lol|lmao|haha|unfortunately|wait|actually|really|man|dude|for|to that|to this|this|that|sunday|monday|tuesday|wednesday|thursday|friday|saturday|we|you|it|just|nah|sir|ma'am|go|chance|interest|deal";
 const REFUSAL_RX: RegExp[] = [
@@ -628,21 +628,24 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:i'?ll|i will|gonna|going to|i'?m going to|i'?m gonna|i have to|i'?ve got to|i gotta|will have to|i'?d|i would|i think i'?ll)\s+(?:have to\s+)?(?:pass|skip|sit (?:this|that|it) out|decline|sit this one out)\b/,
   /\b(?:hard |gonna |i )?pass\b(?!\s+(?:the|it|along|by|me|on (?:the|my)|through))/,
   /\bno time\b(?! pressure)/,
-  /\bnot (?:interested|down|for me|this (?:time|week|weekend|one)|right now|now|today|tonight|really|up for (?:it|that|this)|feeling it|my (?:thing|scene|vibe|cup of tea)|a fan|happening|gonna happen|going to happen|keen|into (?:it|that|this)|a good (?:time|week|fit)|available|possible|able to|the right time|at the moment|anytime soon|in the mood)\b/,
+  /\bnot (?:interested|down|for me|this (?:time|week|weekend|one)|right now|now|today|tonight|really|up for (?:it|that|this)|feeling it|my (?:thing|scene|vibe|cup of tea)|a fan|happening|gonna happen|going to happen|keen|into (?:it|that|this)|a good (?:time|week|fit)|available|possible|able to|the right time|at the moment|anytime soon|in the mood|going(?! to\b| late\b| anywhere\b)|coming(?! late\b| in late\b| anywhere\b)|anymore|any more)\b/,
+  // "Never mind" ends its clause to be a no ("ok never mind"); "never mind what I said, yes" and "nvm I can make it" are not.
+  /\bin no mood\b|\b(?:never ?mind|nvm)\W*$|(?<!(?:don'?t|do not|not|no need to|never)\s+)\bcancel(?:l?ed|ling)?\b/,
   /\b(?:absolutely|definitely|certainly|probably|def|totally|hell|of course|surely|really|actually|sadly|unfortunately) not\b/,
   /\b(?:i'?d |i would )?rather not\b/,
   /\b(?:don'?t|do not) think (?:i can|i could|i'?ll make it|i'?ll be able)\b/,
   /\b(?:don'?t|do not|doesn'?t) (?:think so|want to|wanna|feel like it|really want|have (?:time|the time|room|the bandwidth)|need)\b/,
   /\b(?:i'?m|im|i am) (?:not|no longer) (?:in|down|up for (?:it|that)|interested|free|available|keen|able|looking)\b/,
   /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
-  /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
+  /\bcount me out\b|\b(?:have|need|got|gotta|going) to call (?:it|this|that|things) off\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
+  /\b(?:not|no longer) (?:comfortable|ok|okay|cool) (?:with )?(?:meeting|going|coming|the (?:date|plan|meetup))\b/,
   /(?<!not )\btoo (?:busy|swamped|slammed|far|tired)\b/,
   /\b(?:maybe|perhaps|some|next) (?:other |another )?time\b(?!s)|^\s*(?:another|other) time\s*$/,
   /👎|🙅|❌/,
 ];
-/** "Can't", "won't" and "busy" refuse the offer unless a time follows (then they refuse that time). "Can't wait" is a yes. */
-const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to|couldn'?t|won'?t)\b|(?:^\s*|\b(?:i'?m|im|i am|pretty|really|so|super|too|very|been|kinda)\s+)(?:busy|slammed|swamped|booked up)\b/g;
+/** "Can't", "won't", "busy" and "away" refuse the offer unless a time follows (then they refuse that time). "Can't wait" is a yes. */
+const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to|couldn'?t|won'?t)\b|(?:^\s*|\b(?:i'?m|im|i am|pretty|really|so|super|too|very|been|kinda)\s+)(?:busy|slammed|swamped|booked up)\b|\b(?:i'?m|im|i am|i'?ll be|i will be) (?:away|out of town|traveling|travelling)\b|\b(?:i'?m|im|i am) out\b(?! of town)/g;
 /** "Busy now, ask me later": a deferral, not a refusal of the offer. */
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
@@ -652,12 +655,15 @@ const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
 const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b/;
 const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
-/** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
-const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
+/** "No problem", "no worries", "no rush", "no plans", "no doubt", "we don't need to cancel": not refusals. */
+const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b|\b(?:no need|(?:don'?t|do not|doesn'?t|does not) need) to (?:cancel|call (?:it|this|that) off)\b/g;
+
+/** Double negations that keep the plan: "no, I'm not cancelling", "I'm not not coming". */
+const DOUBLE_NEG = /\bno\W+(?=(?:i'?m|im|i am|we'?re|we are)\s+not\s+(?:cancel|calling (?:it|this|that) off))|\bnot not\b|\b(?:i'?m|im|i am|we'?re|we are) not (?:cancel(?:l?ing)?|calling (?:it|this|that) off)\b/g;
 
 /** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
 export function consentOf(body: string): Consent {
-  const t = normText(body).replace(HARMLESS_NO, " ");
+  const t = normText(body).replace(HARMLESS_NO, " ").replace(DOUBLE_NEG, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
   let refusalAt = Infinity, affirmAt = Infinity, cond = false, hedge = false, counter = false, question = false;
   for (const s of sentencesOf(t)) {
@@ -730,11 +736,13 @@ const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|wh
 const ALL_WEAK = /\b(either|both)\b/;
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
- * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
+ * Thursday", "away Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
  */
-const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
+const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|away|out of town|(?:i'?m|im|i am) out|travel(?:l)?ing|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
 const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
+/** A plan refusal scoped to one named day, not a refusal of the whole offer ("ok I'm not coming Saturday"). */
+const PLAN_REFUSAL_AT_DAY = /^(?:(?:ok(?:ay)?|sure|sorry)\b[\s,;.!-]*)?(?:(?:i'?m|im|i am)\s+)?(?:can'?t do|cannot do|away|out|not (?:going|coming)|not)\s+(?:on\s+)?(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?(?:\s+(?:morning|afternoon|evening|night|at\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?))?[\s.!]*$/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -811,6 +819,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const picked = all.filter(k => pos.has(k));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
+  // A reply scoped only to some offered times accepts the remaining named options. A plan-level no
+  // ("No. Saturday I'm at a wedding") still wins, as does a refusal of every offered option.
+  if (neg.size && open.length && PLAN_REFUSAL_AT_DAY.test(t)) return { answer: "yes", keys: open, why: c.why };
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;

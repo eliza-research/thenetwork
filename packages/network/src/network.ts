@@ -823,9 +823,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "booked") {
       // The booked plan: silence is a yes; "can't" or "no" cancels it (the other member is told, without the reason).
       const o = this.opps.get(aw.oppId!);
-      const yn = this.yesNoOf(body);
-      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
-      if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
+      // What they say about their number ("I don't want to share my number yet") is about the number
+      // swap (withdrawn above), not the plan: only the rest of the message answers the booked plan.
+      // The LLM reader read the whole message, number talk included, so it does not answer the rest.
+      // A rest the rules cannot read that still negates ("Let's not meet. I", "I'm not coming") keeps the
+      // whole message's no: in doubt the date is called off, never kept against a no. So does a number
+      // clause that also names the plan ("I don't want to share my number or meet you").
+      const plan = withoutNumberTalk(body);
+      const whole = this.yesNoOf(body);
+      const rest = plan === body ? whole : plan ? consentOf(plan).answer : "unclear";
+      const yn = rest === "unclear" && whole === "no" && (NEGATES.test(plan) || (!plan && namesPlan(body))) ? "no" : rest;
+      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (yn === "no" || (c.kind === "cancel" && this.cancelMatchesOpp(body, o)))) { m.awaiting = undefined; return this.handleDrop(m, o); }
+      // An ack ("cool", "ok") does not confirm a message that also asks to move, asks a question or hedges.
+      const planWhy = consentOf(plan || body).why;
+      if (yn === "yes" || (c.kind === "ack" && planWhy !== "counter" && planWhy !== "hedged" && planWhy !== "conditional")) { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
@@ -841,7 +852,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     if (c.kind === "cancel") {
       const o = [...this.opps.values()].find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
-      if (o) return this.handleDrop(m, o);
+      if (o && this.cancelMatchesOpp(body, o)) return this.handleDrop(m, o);
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
     if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
@@ -2599,6 +2610,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     const outdoorsy = o.category === "hobby" || o.category === "events" || o.tags.some(t => ["running", "hiking", "cycling", "tennis", "climbing", "photography"].includes(t));
     const from = now + 20 * HOUR;
     return outdoorsy ? nextAt(from, 11, wd => wd === "Sat" || wd === "Sun") : nextAt(from, 19, wd => !["Fri", "Sat", "Sun"].includes(wd));
+  }
+
+  /** A cancel that names a weekday ("can't make Sunday") applies only to a meeting on that day. */
+  private cancelMatchesOpp(body: string, o: Opp): boolean {
+    const day = /\b(?:can'?t|cannot|won'?t|not\s+gonna|not\s+going\s+to|unable\s+to|not\s+able\s+to)\s+(?:be\s+able\s+to\s+)?make\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.exec(body)?.[1];
+    if (!day || !o.meetingAt) return true;
+    return day.toLowerCase().startsWith(["mon", "tue", "wed", "thu", "fri", "sat", "sun"][localParts(o.meetingAt, NY).weekday]!);
   }
 
   /**
@@ -5110,6 +5128,20 @@ export interface NetworkState {
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
 type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string };
+/** A message without its clauses about the member's number or a number swap ("No. Also don't share my number" -> "No."). */
+const NUMBER_TALK = /\b(?:my (?:phone )?number|my digits|my cell|(?:number|numbers) swap|swap(?:ping)? numbers)\b/i;
+function withoutNumberTalk(body: string): string {
+  return body.split(/(?<=[.!?;,])\s+|\s+(?:and|but|also|so)\s+/i).filter(p => !NUMBER_TALK.test(p)).join(" ").trim();
+}
+/** A negation or cancel word left in the rest of a booked reply. */
+const NEGATES = /\b(?:no|not|never|nope|nah|cancel\w*|dont|cant|wont|didnt)\b|\w+n['’]t\b/i;
+/** The plan named in a number clause ("...or meet you", "...because I'm not coming"), not in a time clause ("until we meet up"). */
+const PLAN_WORD = /\b(?:meet|coming|come|make it|be there|show up|attend|go out|the date|this date|cancel)\b/i;
+const PLAN_TIME = /\b(?:before|until|after|when|till|by the time|once|if|unless)\b[^.!?;]{0,24}$/i;
+function namesPlan(body: string): boolean {
+  const m = PLAN_WORD.exec(body);
+  return !!m && !PLAN_TIME.test(body.slice(Math.max(0, m.index - 40), m.index));
+}
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
 type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
 

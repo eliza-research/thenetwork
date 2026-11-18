@@ -1,0 +1,36 @@
+{"group": "okref", "want": "drop", "text": "ok, not going"}
+{"group": "okref", "want": "drop", "text": "ok cancel"}
+{"group": "okref", "want": "drop", "text": "ok I am not coming"}
+{"group": "okref", "want": "drop", "text": "ok, I am not going"}
+{"group": "okref", "want": "drop", "text": "sure, I'm not coming anymore"}
+{"group": "modal", "want": "drop", "text": "I have to cancel"}
+{"group": "modal", "want": "drop", "text": "I need to cancel, sorry"}
+{"group": "modal", "want": "drop", "text": "please cancel our date"}
+{"group": "modal", "want": "drop", "text": "won't be able to make it"}
+{"group": "modal", "want": "drop", "text": "unable to attend"}
+{"group": "modal", "want": "drop", "text": "have to call it off"}
+{"group": "comfort", "want": "drop", "text": "I'm not comfortable meeting"}
+{"group": "comfort", "want": "drop", "text": "honestly I'm not ok with meeting anymore"}
+{"group": "b181", "want": "drop", "text": "Don't give out my number - I'm not coming"}
+{"group": "b181", "want": "drop", "text": "Please don't share my number, I'm not comfortable meeting"}
+{"group": "b181", "want": "drop", "text": "I'm not sharing my number and not coming"}
+{"group": "mixed", "want": "drop", "text": "ok but I can't make it"}
+{"group": "mixed", "want": "drop", "text": "sounds good. wait, actually I can't make it"}
+{"group": "mixed", "want": "drop", "text": "yes. actually no, cancel it"}
+{"group": "mixed", "want": "drop", "text": "no need to wait for me, I'm not coming"}
+{"group": "dneg", "want": "stay", "text": "no need to cancel, see you there"}
+{"group": "dneg", "want": "keep", "text": "we don't need to cancel"}
+{"group": "dneg", "want": "stay", "text": "I don't need to cancel, see you then"}
+{"group": "dneg", "want": "keep", "text": "don't cancel, I'm still coming"}
+{"group": "dneg", "want": "keep", "text": "no, I'm not cancelling"}
+{"group": "dneg", "want": "keep", "text": "I'm not not coming lol"}
+{"group": "num", "want": "keep", "text": "I don't want to share my number yet"}
+{"group": "num", "want": "keep", "text": "I'd rather not share my number before we meet"}
+{"group": "num", "want": "confirm", "text": "yes! but don't share my number yet"}
+{"group": "hedge308", "want": "keep", "text": "cool, can we move it to Friday instead?"}
+{"group": "hedge308", "want": "keep", "text": "ok wait, is it at 7 or 8?"}
+{"group": "hedge308", "want": "keep", "text": "sounds good, might be 5 min late"}
+{"group": "hedge308", "want": "keep", "text": "ok but can we do 8 instead"}
+{"group": "plain", "want": "confirm", "text": "ok thanks!"}
+{"group": "plain", "want": "confirm", "text": "perfect, can't wait!"}
+{"group": "plain", "want": "confirm", "text": "yes, see you there"}
