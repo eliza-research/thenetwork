@@ -347,7 +347,10 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
         const acceptable: Flow[] = [];
         for (const f of batch) if (acceptableOf(f)) acceptable.push(f); else decline(f);
         acceptable.sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1));
-        for (const f of acceptable) if (co.adversary === "scam" || slots > 0) schedule(f);
+        for (const f of acceptable) {
+          if (held(jid)) break;
+          if (co.adversary === "scam" || slots > 0) schedule(f);
+        }
         continue;
       }
       // Iteration 2: a recruiter-hours budget per job per week pays for reading (readHours each) and
@@ -356,7 +359,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       // screen (claims on paper, so over-claimers and fakes float up), until the read cap, the hours
       // or the interview slots run out. What is not read waits, and expires after EXPIRE_WEEKS.
       let hours = S.hoursBase + S.hoursPerUrgency * j.urgency;
-      const canInterview = () => co.adversary === "scam" || (slots > 0 && hours >= S.interviewHours);
+      const canInterview = () => !held(jid) && (co.adversary === "scam" || (slots > 0 && hours >= S.interviewHours));
       const invite = (f: Flow) => { if (co.adversary !== "scam") { hours -= S.interviewHours; recruiterHours += S.interviewHours; } schedule(f); };
       for (const f of pending.filter(x => !x.expired && x.onFile).sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1))) if (canInterview()) invite(f);
       const ats = u01(seed, "ats", co.id) < S.atsShare;
