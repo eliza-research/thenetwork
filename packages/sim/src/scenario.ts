@@ -184,8 +184,10 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       }
       case "meeting_held": {
         const need = e.min ?? e.personas.length;
-        const hit = recs.find(r => r.type === "outcome" && e.personas.filter(id => r.attendance[id]?.showed).length >= need);
-        return ok(!!hit, hit ? `meeting ${(hit as any).meetingId}` : `no meeting with >= ${need} of them attending`);
+        // A held meeting needs two attendees, even when the expectation names only one of them.
+        const hit = recs.find(r => r.type === "outcome" && Object.values(r.attendance).filter(a => a.showed).length >= 2
+          && e.personas.filter(id => r.attendance[id]?.showed).length >= need);
+        return ok(!!hit, hit ? `meeting ${(hit as any).meetingId}` : `no held meeting with >= ${need} of them attending`);
       }
       case "flake_notice": {
         const hit = recs.find(r => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice);
