@@ -12,6 +12,9 @@
 {"text":"please stop texting me","match":"likely"}
 {"text":"Stop messaging me","match":"likely"}
 {"text":"don't text me again","match":"likely"}
+{"text":"quit texting me","match":"likely"}
+{"text":"cease messaging me","match":"likely"}
+{"text":"I quit my job today","match":"none"}
 {"text":"take me off this list","match":"likely"}
 {"text":"remove me","match":"likely"}
 {"text":"no more texts please","match":"likely"}
