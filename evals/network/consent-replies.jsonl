@@ -320,3 +320,20 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"tomorrow works","label":"unclear"}
+{"text":"tomorrow works for me","label":"unclear"}
+{"text":"today works","label":"unclear"}
+{"text":"tonight works","label":"unclear"}
+{"text":"tomorrow evening works","label":"unclear"}
+{"text":"tomorrow 7pm works","label":"unclear"}
+{"text":"Saturday works, and tomorrow works too","label":"yes","keys":["b"]}
+{"text":"Thursday 7pm works, tomorrow evening works","label":"yes","keys":["a"]}
+{"text":"tmr works","label":"unclear"}
+{"text":"tmr works for me","label":"unclear"}
+{"text":"tmr morning works","label":"unclear"}
+{"text":"tmr evening works","label":"unclear"}
+{"text":"tmr 7pm works","label":"unclear"}
+{"text":"tmr 11am works","label":"unclear"}
+{"text":"tmr 2pm works","label":"unclear"}
+{"text":"Saturday works, and tmr works too","label":"yes","keys":["b"]}
+{"text":"Thursday 7pm works, tmr evening works","label":"yes","keys":["a"]}
