@@ -153,14 +153,23 @@ export class World {
   private buildNameIndex() {
     this.nameIndex = [];
     const firstCount = new Map<string, number>();
-    for (const p of this.personas.values()) { const f = p.name.split(" ")[0]!; firstCount.set(f, (firstCount.get(f) ?? 0) + 1); }
+    const initialCount = new Map<string, number>();
+    for (const p of this.personas.values()) {
+      const [first, last] = p.name.split(" ");
+      firstCount.set(first!, (firstCount.get(first!) ?? 0) + 1);
+      if (last) {
+        const initial = `${first} ${last[0]}.`;
+        initialCount.set(initial, (initialCount.get(initial) ?? 0) + 1);
+      }
+    }
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     for (const p of this.personas.values()) {
       const [first, last] = p.name.split(" ");
       const pats = [esc(p.name)];
-      if (last) pats.push(`${esc(first!)} ${esc(last[0]!)}\\.`);
+      if (last && initialCount.get(`${first} ${last[0]}.`) === 1) pats.push(`${esc(first!)} ${esc(last[0]!)}\\.`);
       if (firstCount.get(first!) === 1) pats.push(esc(first!));
-      this.nameIndex.push({ re: new RegExp(`\\b(${pats.join("|")})\\b`), id: p.id });
+      // Initials end in punctuation, so a word boundary would reject a following space or end of text.
+      this.nameIndex.push({ re: new RegExp(`\\b(${pats.join("|")})(?!\\w)`), id: p.id });
     }
   }
 
