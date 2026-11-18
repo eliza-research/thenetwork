@@ -16,6 +16,8 @@ export type DeviceKind = "NotDetected" | "Phone" | "MacDesktop" | "OtherDesktop"
 export interface Landing { mounted: boolean; device: DeviceKind; copy: CopyState; status: StatusLine; messages: MessagesState; messageCopied: boolean; agentFollowed: boolean; lastAgent: AgentId; statusAgent: AgentId }
 /** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
 export type TileKind = "OpensWithPrompt" | "OpensForPaste" | "OpensInstalledApp" | "CopyOnly";
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+export type AgentSurface = "FullConnectorSurface" | "OpenAiConnectorSurface";
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export type LandingItem = "BrandMarkItem" | "HeadlineItem" | "PromptItem" | "CopyButtonItem" | "AgentRowItem" | "MessagesItem" | "StatusItem" | "PrivacyLinkItem" | "TermsLinkItem" | "SignInItem" | "SettingsItem" | "DashboardItem" | "SafetyNoticeItem" | "ComplianceItem" | "ExplainerItem";
 
@@ -51,10 +53,10 @@ export const openTileLabelLead: string = "Open in ";
 export const copyTileLabelLead: string = "Copy the prompt for ";
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
 export const promptVersionQuery: string = "?version=";
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-export const copyByHandText: string = "Copy the prompt, then paste it into your agent.";
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
 export const promptTail: string = " and follow it.";
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+export const copyByHandText: string = "Copy the prompt, then paste it into your agent.";
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingItems: LandingItem[] = ["BrandMarkItem", "HeadlineItem", "PromptItem", "CopyButtonItem", "AgentRowItem", "MessagesItem", "StatusItem", "PrivacyLinkItem", "TermsLinkItem"];
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
@@ -248,6 +250,45 @@ export function lawOnlyCopyOnlyTilesHaveNoLink(agent: AgentId): boolean {
   return (tileKindFor(agent) === "CopyOnly") === (agentLinkTemplate(agent) === "");
 }
 
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function agentConnectorSurface(agent: AgentId): AgentSurface {
+  return agent === "ChatGpt" ? "OpenAiConnectorSurface" : "FullConnectorSurface";
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function surfaceServesApp(surface: AgentSurface, app: brandIdentity_AppKey): boolean {
+  return (surface === "FullConnectorSurface" || surface === "OpenAiConnectorSurface") && (app === "Ntwrk" || app === "Slop" || app === "Peon" || app === "Friends");
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function landingAgentOffered(app: brandIdentity_AppKey, agent: AgentId): boolean {
+  return surfaceServesApp(agentConnectorSurface(agent), app);
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function lawRefusedAgentIsNeverOffered(app: brandIdentity_AppKey, agent: AgentId): boolean {
+  //@ ensures \result === true
+  return !(!surfaceServesApp(agentConnectorSurface(agent), app)) || !landingAgentOffered(app, agent);
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function lawEveryPageOffersChatGpt(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return landingAgentOffered(app, "ChatGpt");
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function lawOnlyChatGptCanBeRefused(app: brandIdentity_AppKey, agent: AgentId): boolean {
+  //@ ensures \result === true
+  return !(agent !== "ChatGpt") || landingAgentOffered(app, agent);
+}
+
 /** Story: Open my agent from its tile / A desktop-only tile is hidden on a phone, and a copy-only tile needs the page script (spec/landingEntry.md) */
 //@ pure
 export function desktopOnlyAgent(agent: AgentId): boolean {
@@ -265,6 +306,12 @@ export function tileShown(agent: AgentId, mounted: boolean, device: DeviceKind):
 export function lawCopyOnlyTileNeedsScript(agent: AgentId, device: DeviceKind): boolean {
   //@ ensures \result === true
   return !(tileKindFor(agent) === "CopyOnly") || !tileShown(agent, false, device);
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function sometimesAgentOpening(s: Landing): boolean {
+  return s.agentFollowed && s.status === "AgentOpening";
 }
 
 /** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
@@ -295,12 +342,6 @@ export function sometimesAgentWithoutScript(s: Landing): boolean {
 //@ pure
 export function agentToastText(agent: AgentId): string {
   return agent === "ChatGpt" ? "Opening ChatGPT. The prompt is copied too." : (agent === "Claude" ? "Opening Claude. The prompt is copied too." : (agent === "Grok" ? "Opening Grok. The prompt is copied too." : (agent === "Muse" ? "Copied. Paste it into Muse." : (agent === "Gemini" ? "Copied. Paste it into Gemini." : (agent === "Perplexity" ? "Opening Perplexity. The prompt is copied too." : (agent === "Cursor" ? "Opening Cursor. The prompt is copied too." : (agent === "OpenClaw" ? "Copied. If OpenClaw did not open, send it the prompt." : "Copied. If Hermes did not open, send it the prompt.")))))));
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function sometimesAgentOpening(s: Landing): boolean {
-  return s.agentFollowed && s.status === "AgentOpening";
 }
 
 /** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */

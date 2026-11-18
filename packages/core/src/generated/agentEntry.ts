@@ -2,9 +2,9 @@
 //@ backend dafny
 import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 export type McpEndpoint = "NoEndpoint" | "SiteEndpoint" | "OpenAiEndpoint";
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 export type Plugin = "ClaudePlugin" | "OpenAiPlugin";
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export type EntryKind = "NoEntry" | "FromSite" | "FromClaudePlugin" | "FromOpenAiPlugin" | "FromSkillCatalog" | "FromUpdateLink";
@@ -33,6 +33,10 @@ export const noSkill: string = "";
 export const updatePromptLead: string = "Ask The Network for update ";
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const updateHandoffPrefix: string = "/t/";
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+export const openAiManifestApp: brandIdentity_AppKey = "Ntwrk";
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+export const endpointHost: brandIdentity_AppKey = "Ntwrk";
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const linkedAssistants: LinkedAssistant[] = ["ChatGptAssistant", "ClaudeAssistant", "GrokAssistant"];
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
@@ -44,30 +48,69 @@ export function inv(current: Entry): boolean {
   return alwaysStartHasNoEntry(current) && alwaysSkillOnlyAfterResolution(current) && alwaysSkillMatchesApp(current) && alwaysOpenAiPluginNeverReachesSlop(current) && alwaysSitePromptStartsSignup(current) && alwaysUpdatesOnlyFromReference(current);
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function appOpenAiEndpointPath(app: brandIdentity_AppKey): string {
+  return app === "Ntwrk" ? "/mcp/openai" : (app === "Slop" ? "/mcp/slop/openai" : (app === "Peon" ? "/mcp/peon/openai" : "/mcp/friends/openai"));
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 //@ pure
 export function pluginListsSkill(plugin: Plugin, app: brandIdentity_AppKey): boolean {
   return plugin === "ClaudePlugin" || app !== "Slop";
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 //@ pure
 export function pluginEndpoint(plugin: Plugin, app: brandIdentity_AppKey): McpEndpoint {
   return plugin === "ClaudePlugin" ? "SiteEndpoint" : (app === "Slop" ? "NoEndpoint" : "OpenAiEndpoint");
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function appEndpointPath(app: brandIdentity_AppKey): string {
+  return app === "Ntwrk" ? "/mcp" : (app === "Slop" ? "/mcp/slop" : (app === "Peon" ? "/mcp/peon" : "/mcp/friends"));
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function endpointPath(endpoint: McpEndpoint, app: brandIdentity_AppKey): string {
+  return endpoint === "SiteEndpoint" ? appEndpointPath(app) : (endpoint === "OpenAiEndpoint" ? appOpenAiEndpointPath(app) : "");
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function lawEveryAppHasItsOwnPath(app: brandIdentity_AppKey, other: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return !(app !== other) || (appEndpointPath(app) !== appEndpointPath(other) && appOpenAiEndpointPath(app) !== appOpenAiEndpointPath(other));
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function lawOpenAiManifestServerIsAListedApp(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return !(app === openAiManifestApp) || (pluginListsSkill("OpenAiPlugin", app) && pluginEndpoint("OpenAiPlugin", app) === "OpenAiEndpoint");
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 //@ pure
 export function lawClaudePluginListsEverySkill(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return pluginListsSkill("ClaudePlugin", app) && pluginEndpoint("ClaudePlugin", app) === "SiteEndpoint";
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 //@ pure
 export function lawOpenAiPluginOmitsSlop(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return pluginListsSkill("OpenAiPlugin", app) === (app !== "Slop") && (pluginEndpoint("OpenAiPlugin", app) === "NoEndpoint") === (app === "Slop");
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function lawEveryListedSkillHasAnEndpoint(plugin: Plugin, app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return pluginListsSkill(plugin, app) === (endpointPath(pluginEndpoint(plugin, app), app) !== "");
 }
 
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */

@@ -653,7 +653,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         for (const app of ["ntwrk", "friends"] as const) expect((await rpc(pilot, app, "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
-        expect(JSON.stringify(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })))).not.toMatch(/slop|dating/i);
+        // Founder decision 2026-11-18 (spec/connectorTools.md, "Each surface offers every app"): the OpenAI surface offers slop,
+        // and ChatGPT reaches slop at the ntwrk.party endpoint of slop; this slop.date token is not valid there.
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })).apps.map((a: { id: string }) => a.id)).toContain("slop");
+        expect((await (await pilot.site("ntwrk", "/.well-known/oauth-protected-resource/mcp/slop/openai")).json()).resource).toBe(`${pilot.sites.ntwrk.origin}/mcp/slop/openai`);
+        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         const client = (await pilot.mcp.store.getClient(c.client.client_id))!;
         const cimd = { ...client, id: "https://chatgpt.com/oauth/client.json", kind: "cimd" as const, redirectUris: ["https://client.example/callback"] };
         await pilot.mcp.store.putClient(cimd);
@@ -793,8 +797,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect(pilot.url).not.toBe(st.url);
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list")).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
+        // The OpenAI surface offers slop (spec/connectorTools.md, "Each surface offers every app"); slop.date's own site still has none.
         const publicApps = toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
-        expect(JSON.stringify(publicApps)).not.toMatch(/slop|dating/i);
+        expect(publicApps.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
         const phone = newPhone();
         const browser = new Browser();
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
@@ -1000,10 +1005,12 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(tm.age).toBe(15);
     }, T);
 
-    test("the OpenAI surface hides slop: app_info lists no slop, and slop.date answers 404 at /mcp/openai", async () => {
+    test("the OpenAI surface offers slop at ntwrk.party, and slop.date answers 404 at its own /mcp/openai", async () => {
+      // Founder decision 2026-11-18 (spec/connectorTools.md, "Each surface offers every app").
       const list = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
-      expect(list.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "peon", "friends"]);
-      expect(JSON.stringify(list)).not.toMatch(/slop|dating/i);
+      expect(list.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
+      const hub = toolData(await rpc(st, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: { app: "slop" } }));
+      expect(hub.id).toBe("slop");
       const full = toolData(await rpc(st, "ntwrk", "/mcp", "tools/call", { name: "app_info", arguments: {} }));
       expect(full.apps.map((a: { id: string }) => a.id)).toContain("slop");
       expect((await rpc(st, "slop", "/mcp/openai", "tools/list")).res.status).toBe(404);

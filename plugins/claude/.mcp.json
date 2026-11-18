@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "the-network": { "type": "http", "url": "https://ntwrk.party/mcp" },
-    "slop-date": { "type": "http", "url": "https://slop.date/mcp" },
-    "peon-biz": { "type": "http", "url": "https://peon.biz/mcp" },
-    "friends-help": { "type": "http", "url": "https://friends.help/mcp" }
+    "slop-date": { "type": "http", "url": "https://ntwrk.party/mcp/slop" },
+    "peon-biz": { "type": "http", "url": "https://ntwrk.party/mcp/peon" },
+    "friends-help": { "type": "http", "url": "https://ntwrk.party/mcp/friends" }
   }
 }

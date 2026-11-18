@@ -6,13 +6,14 @@ This package is the MCP server (Model Context Protocol) for the four apps, and t
 
 ## 1. What it serves
 
-Each site's Pages router forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend. So each site is its own issuer and its own MCP resource.
+Each site's Pages router forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend. So each site is its own issuer. ntwrk.party serves the connector of every app, each app at its own path: `https://ntwrk.party/mcp` for The Network and `https://ntwrk.party/mcp/<app>` for slop, peon and friends. The skills name these endpoints. The path is the OAuth resource, so it fixes the app of the authorization request, the grant and each token. Each other site serves only its own app at `/mcp`.
 
 | Path (on each site, for example `https://slop.date`) | What it does |
 |---|---|
 | `POST /mcp` | The MCP endpoint (Streamable HTTP). A client registered on this site is bound to this site's app. |
-| `POST /mcp/openai` | The same server for the public OpenAI plugin. It hides slop. slop.date answers 404 here. |
-| `GET /.well-known/oauth-protected-resource[/mcp[/openai]]` | RFC 9728 metadata. |
+| `POST /mcp/openai` | The same server on the OpenAI surface (ChatGPT, Codex). It offers every app. slop.date answers 404 here; ChatGPT reaches slop at `https://ntwrk.party/mcp/slop/openai`. |
+| `POST /mcp/<app>[/openai]` | ntwrk.party only: the endpoint of another app (`slop`, `peon` or `friends`). Other sites answer 404. |
+| `GET /.well-known/oauth-protected-resource/mcp[/<app>][/openai]` | RFC 9728 metadata of each endpoint. |
 | `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata. The issuer is the site origin. |
 | `POST /oauth/register` | RFC 7591 dynamic client registration. |
 | `GET /oauth/authorize`, `POST /oauth/authorize/{phone,code,signup,consent,cancel}` | Phone verification, optional app enrollment, explicit connector approval and cancellation. |
@@ -46,9 +47,9 @@ Draft reads/writes and canonical phone-age recording share an independent keyed-
 - **OAuth.** PKCE S256 only. Redirect URIs are https, or http on a loopback host only; no fragment, no wildcard. An unknown client or redirect URI gets an error page, never a redirect. Every redirect carries `iss` (RFC 9207). Access tokens last 15 minutes. Refresh tokens rotate; a reused refresh token or code ends the whole grant. A grant lasts at most 90 days.
 - **Storage.** Tokens, codes and client secrets are stored as sha256 hashes only. A grant keeps the platform's keyed hash of the number (`phone_key`, HMAC with PLATFORM_HASH_KEY), never the number; check_status finds the person through `platform.people.phone_hash`. A sign-in request keeps the number only while it is open (at most 10 minutes, then swept). Leaving an app or deleting everything deletes that app's grants; revoked and expired grants are deleted after 30 days, and registered clients that never got a grant after a day.
 - **A grant made before the number had a person** never follows a person made later (who may be a new owner of the number): it answers `invalid_grant`, and the person connects again.
-- **One app per client.** A token is valid only at the resource it was issued for (RFC 8707). A peon token is refused at slop.date and at `/mcp/openai`.
+- **One app per client.** A token is valid only at the resource it was issued for (RFC 8707). A token is for the app of its path: a peon token is refused at slop.date, at `https://ntwrk.party/mcp/slop` and at `/mcp/openai`.
 - **New owner.** If the phone now belongs to another person than when access was granted, the grant is revoked.
-- **OpenAI surface.** `/mcp/openai`, and every client whose redirect URI is on chatgpt.com or openai.com, never lists or offers slop. Such a client cannot register on slop.date.
+- **OpenAI surface.** `/mcp/openai` serves every client whose redirect URI is on chatgpt.com or openai.com. It offers every app, slop included. slop.date's own site has no OpenAI surface, so such a client cannot register there; it uses `https://ntwrk.party/mcp/slop/openai`.
 - **Abuse.** Rate limits per IP for registration, authorize, token and MCP calls, and per grant for authenticated tools. The platform OTP limits apply to the sign-in. The "text me a code" answer is the same for every number and takes at least 700 ms.
 - **Audit.** `oauth.audit` keeps one row for each registration, consent, denial, code, token, refresh, revocation and replay. It never holds a token, a code, a secret or a phone number.
 

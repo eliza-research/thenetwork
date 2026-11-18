@@ -1,14 +1,14 @@
 ---
 name: peon-biz
-description: Explains peon.biz, a hiring service by text message that introduces people looking for work to teams that are hiring, and helps a person sign themselves up. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
+description: Explains peon.biz, a hiring service by text message that introduces people looking for work to teams that are hiring, and helps a person sign themselves up in this conversation, with their own phone confirmation on the peon.biz page. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Never signs up anyone other than the person, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
 license: Proprietary. Terms at https://peon.biz/terms
-compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP server at https://ntwrk.party/mcp/openai (OAuth sign-in by the person).
+compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP endpoint at https://ntwrk.party/mcp/peon (OAuth sign-in by the person).
 metadata:
   app: peon
   site: https://peon.biz
-  mcp: "https://ntwrk.party/mcp/openai"
+  mcp: "https://ntwrk.party/mcp/peon"
   operator: Eliza Research Corporation
-  version: "1.1.3"
+  version: "1.2.0"
 ---
 
 # peon.biz
@@ -20,7 +20,7 @@ peon.biz introduces people looking for work to teams that are hiring, by text me
 open to join today. Introductions have not started yet. Software only suggests possible fits.
 A person on the team reviews every introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
-peon.biz's text line is +18087881821. Its MCP server is at https://ntwrk.party/mcp/openai.
+peon.biz's text line is +18087881821. Its MCP endpoint is https://ntwrk.party/mcp/peon.
 
 ## What the person is signing up for
 
@@ -39,7 +39,7 @@ peon.biz's text line is +18087881821. Its MCP server is at https://ntwrk.party/m
 
 ## Phone or computer
 
-The steps differ by device. If you cannot tell which the person is on, ask once. <!-- agentSignup: chooseTransport -->
+The steps differ by device. If you cannot tell which the person is on, ask once. <!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->
 
 - **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
   settings. Do step 1. Show the exact prepared text with `join peon` on the first line and the draft
@@ -47,12 +47,16 @@ The steps differ by device. If you cannot tell which the person is on, ask once.
   example `My name is Ari. I am 29 years old.` Once they approve, give them one link starting with
   `sms:+18087881821?&body=` followed by the entire prepared text URL-encoded (the start is
   `join%20peon%0A`). Tell them that the text is ready for them to send themselves.
-- **On a computer.** Do steps 1, 2 and 3. If the client cannot add the connector, show the approved
-  text and use the same Messages handoff from their own phone.
+- **On a computer.** If this app's connector tools (`check_status` and `submit_profile`) are not
+  available here, say “Connect peon.biz” and give this app's own connector endpoint, https://ntwrk.party/mcp/peon
+  (in ChatGPT, https://ntwrk.party/mcp/peon/openai). Ask the person to add it as a connector in this
+  client's connector or integration settings, then come back to this conversation. Give this setup
+  step one time only. Then do steps 1, 2 and 3. If the client cannot add the connector, or the
+  person does not add it, show the approved text and use the same Messages handoff from their own phone.
 
 You never send a text for the person, and you never see their number.
 
-## How a person joins (they do it, not you)
+## How a person joins
 
 The person signs up through you, in this conversation:
 
@@ -69,12 +73,13 @@ The person signs up through you, in this conversation:
    their own number and code, review their first name and age, and agree to the texts. You
    never see the number or the code.
 3. Ask the person to return to this same agent conversation when they finish on the site. <!-- agentSignup ConnectorHandoff: checkSiteStatus submitProfile confirmProfile -->
-   If this app's MCP tools are not available, they must add https://ntwrk.party/mcp/openai in their client's connector settings.
-   In ChatGPT, add https://peon.biz/mcp/openai instead; /mcp does not authorize ChatGPT clients.
+   If this app's MCP tools are not available, they must add https://ntwrk.party/mcp/peon in their client's connector settings.
+   In ChatGPT, add https://ntwrk.party/mcp/peon/openai instead; the path without /openai does not authorize ChatGPT clients.
    Reading this file does not install a connector or authorize access. If the client cannot add it,
    use the text link in "Phone or computer"; do not claim success and never send the profile yourself.
-   The person confirms their phone on our page. Access connects automatically. A code is skipped only when that browser
-   has a current session for this app. Call `check_status` first and confirm its app is peon. If the
+   The person confirms their phone on our page. When the connector first asks for access, they sign in
+   on the ntwrk.party page in their own browser and choose **Allow** there. The Network serves the
+   connector of every app at ntwrk.party. A session from the peon.biz page does not apply there, so that page can ask for a new code. Call `check_status` first and confirm its app is peon. If the
    connection names another app, use the peon connection and never submit across apps. If the status
    is `not_joined` or `invited`, ask the person to finish on the page.
    If it is `stopped` or `on_hold`, stop and explain the result. Only an `onboarding` or `active`
@@ -101,7 +106,7 @@ The person verifies their own phone on our page. You never type a number or a co
 
 ## What you must never do
 
-- Never sign anyone up, apply to roles, or message employers or candidates.
+- Never sign up anyone other than the person, apply to roles, or message employers or candidates.
 - Never ask for, receive or type a verification code or a phone number.
 - Never describe other members, and never promise an introduction or a job.
 - Never collect or pass on race, religion, health, immigration status, salary history, Social

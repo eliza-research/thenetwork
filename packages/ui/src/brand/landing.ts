@@ -5,10 +5,12 @@ import {
   type AgentId,
   type StatusLine,
   agentLinkTemplate,
+  agentOrder,
   agentToastText,
   copyByHandText,
   joinKeyword,
   joinMessagePrefix,
+  landingAgentOffered,
   messagesFallbackTemplate,
   promptCarriesVersion,
   promptHost,
@@ -62,6 +64,14 @@ export function landingLinks(app: AppKey, { skillVersion, textLine, siteHost = "
     textLine,
     messagesHref: `sms:${textLine}?body=${encodeURIComponent(joinMessage)}`,
   };
+}
+
+/**
+ * The agents of one app's agent row, in the fixed order, without an agent that the app's connector refuses (none today: ChatGPT reaches every app).
+ * spec/landingEntry.md, "The agent row never shows an agent that the app's connector refuses"
+ */
+export function landingAgents(app: AppKey): AgentId[] {
+  return agentOrder.filter((agent) => landingAgentOffered(app, agent));
 }
 
 /** The link of an agent tile, with `{q}` and `{skill}` filled in; none for a copy-only tile. */

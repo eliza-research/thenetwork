@@ -1,5 +1,5 @@
 // spec/authorizationPages.md, "The consent page names the client as its claim and lists every scope"
-import { type AuthView, chromeFor, consentParts, offersFor, offersSignupConfirmation, showsSignupConfirmation } from "../../../core/src/generated/authorizationPages.ts";
+import { type AuthView, chromeFor, consentParts, consentPrimaryAction, offersFor, offersSignupConfirmation, showsSignupConfirmation } from "../../../core/src/generated/authorizationPages.ts";
 import { Alert } from "./Alert.tsx";
 import type { AuthShellProps } from "./AuthShell.tsx";
 import { AuthShell } from "./AuthShell.tsx";
@@ -28,12 +28,16 @@ export type ConsentViewProps = Omit<AuthShellProps, "title" | "chrome" | "childr
 
 /**
  * The consent page of a connector: the assistant's name as its own claim, the return host, what it can do, "Allow" and "Don't allow".
+ * When the server offers signup (no person in this app yet), "Finish signup" comes first as the main action.
  * @model spec/authorizationPages.md
  */
 export function ConsentView({ view = "ConsentView", rid, clientName, redirectHost, scopes, canSignup = false, signupSaved = false, signupApproval, ...props }: ConsentViewProps) {
   const parts = consentParts(view, clientName !== null);
   const offers = offersFor(view);
   const client = parts.client === "ProvidedName" && clientName !== null ? clientName : "An unnamed assistant";
+  // spec/authorizationPages.md, "A new person sees Finish signup as the main action on the consent page"
+  const primary = consentPrimaryAction(view, canSignup);
+  const approvePrimary = primary === "PrimaryAllow" || primary === "PrimaryTryAgain";
   return (
     <AuthShell title="Allow this assistant?" chrome={chromeFor(view)} {...props}>
       {showsSignupConfirmation(view, signupSaved) ? <Alert variant="ok">Signup confirmed.</Alert> : null}
@@ -53,11 +57,18 @@ export function ConsentView({ view = "ConsentView", rid, clientName, redirectHos
           <ScopeList scopes={scopes} />
         </Card>
       ) : null}
+      {/* When signup is offered it is always the first action (lawNewPersonSeesFinishSignupFirst). */}
+      {offersSignupConfirmation(view, canSignup) ? (
+        <form method="post" action="/oauth/authorize/signup">
+          <input type="hidden" name="rid" value={rid} />
+          <Button type="submit" variant={primary === "PrimaryFinishSignup" ? "primary" : "outline"} size="lg" name="decision" value="open">Finish signup</Button>
+        </form>
+      ) : null}
       <form method="post" action="/oauth/authorize/consent" className="flex flex-wrap gap-3">
         <input type="hidden" name="rid" value={rid} />
         {signupApproval ? <input type="hidden" name="signupApproval" value={signupApproval} /> : null}
         {offers.allow || offers.retryAllow ? (
-          <Button type="submit" size="lg" name="decision" value="approve">
+          <Button type="submit" variant={approvePrimary ? "primary" : "outline"} size="lg" name="decision" value="approve">
             {offers.retryAllow ? "Try again" : "Allow"}
           </Button>
         ) : null}
@@ -67,12 +78,6 @@ export function ConsentView({ view = "ConsentView", rid, clientName, redirectHos
           </Button>
         ) : null}
       </form>
-      {offersSignupConfirmation(view, canSignup) ? (
-        <form method="post" action="/oauth/authorize/signup">
-          <input type="hidden" name="rid" value={rid} />
-          <Button type="submit" variant="outline" size="lg" name="decision" value="open">Finish signup</Button>
-        </form>
-      ) : null}
     </AuthShell>
   );
 }

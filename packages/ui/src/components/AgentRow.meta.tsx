@@ -1,13 +1,26 @@
 import { expect, fn, within } from "storybook/test";
-import { ntwrkBrand } from "../../../core/src/generated/brandIdentity.ts";
+import { ntwrkBrand, slopBrand } from "../../../core/src/generated/brandIdentity.ts";
 import { landingLinks } from "../brand/landing.ts";
 import type { ComponentMeta } from "../lib/meta.ts";
 import type { AgentRowProps } from "./AgentRow.tsx";
 
 export const meta: ComponentMeta<AgentRowProps> = {
-  args: { links: landingLinks(ntwrkBrand.app, { skillVersion: "1.0.0", textLine: "+15555550100" }), mounted: true, device: "MacDesktop", onChoose: fn() },
-  examples: { Phone: { device: "Phone" }, "Without script": { mounted: false, device: "NotDetected" } },
+  args: { app: ntwrkBrand.app, links: landingLinks(ntwrkBrand.app, { skillVersion: "1.0.0", textLine: "+15555550100" }), mounted: true, device: "MacDesktop", onChoose: fn() },
+  examples: {
+    Phone: { device: "Phone" },
+    "Without script": { mounted: false, device: "NotDetected" },
+    Slop: { app: slopBrand.app, links: landingLinks(slopBrand.app, { skillVersion: "1.0.0", textLine: "+15555550100" }) },
+  },
   play: {
+    Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      await expect(within(canvasElement).getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
+    },
+    // spec/landingEntry.md, "The agent row never shows an agent that the app's connector refuses": the OpenAI surface serves slop.date too.
+    Slop: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      const row = within(canvasElement);
+      await expect(row.getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
+      await expect(row.getByRole("link", { name: "Open in Claude" })).toBeTruthy();
+    },
     Phone: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       await expect(within(canvasElement).queryByRole("link", { name: "Open in Cursor" })).toBeNull();
     },

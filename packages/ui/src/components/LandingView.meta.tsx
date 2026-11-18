@@ -23,6 +23,9 @@ export const meta: ComponentMeta<LandingViewProps> = {
       const view = within(canvasElement);
       await expect(view.getAllByRole("heading")).toHaveLength(1);
       await expect(view.getByRole("button", { name: "Copy" })).toBeTruthy();
+      // The OpenAI connector surface serves slop.date, so its row keeps the ChatGPT tile (spec/landingEntry.md).
+      await expect(view.getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
+      await expect(view.getByRole("link", { name: "Open in Claude" })).toBeTruthy();
     },
   },
 };

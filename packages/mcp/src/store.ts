@@ -8,7 +8,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
-import { defaultScopes, scopeName, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
+import { defaultScopes, scopeName, scopes as connectorScopes, signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
@@ -168,6 +168,8 @@ export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token |
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
+/** The authorization request that asks to show a draft on its signup form (spec/authorizationPages.md). */
+export interface SignupPrefillAsk { clientId: string; app: McpAppId; phoneKey: string; personId: string | null; ageAllowed: boolean }
 
 export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
 
@@ -179,6 +181,9 @@ export interface OAuthStore {
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
   claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
   discardSignupDrafts(phoneKey: string, app: McpAppId, at: number): Promise<void>;
+  /** Use the one live draft of this request's client, app, phone and person, at most once; it is scrubbed when used
+   * (spec/authorizationPages.md, "The signup form shows the draft that the person approved in the agent"). */
+  useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
   /** Store observed acceptance, or release a claim only after intake explicitly refused it. */
@@ -276,6 +281,20 @@ export class MemoryOAuthStore implements OAuthStore {
   }
   async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
     for (const d of this.signupDrafts.values()) if (d.phoneKey === phoneKey && d.app === app) { d.fields = { firstName: "" }; d.consumedAt = at; }
+  }
+  async useSignupPrefill(ask: SignupPrefillAsk, at: number) {
+    const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
+    const drafts = [...this.signupDrafts.values()].filter(d => {
+      const g = this.grants.get(d.grantId);
+      return !!g && signupDraftGrantAllowed(g.personId === ask.personId && g.app === d.app && g.phoneKey === d.phoneKey, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
+        && signupPrefillAllowed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: d.consumedAt !== null, expiresAt: d.expiresAt }, request);
+    });
+    if (!signupDraftUnique(drafts.length)) return undefined;
+    const d = drafts[0]!, fields = structuredClone(d.fields);
+    const g = this.grants.get(d.grantId)!;
+    if (!markSignupPrefillUsed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: false, expiresAt: d.expiresAt }, request).used) return undefined;
+    d.fields = { firstName: "" }; d.consumedAt = at;
+    return fields;
   }
 
   async claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim> {

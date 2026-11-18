@@ -20,7 +20,7 @@ import { outputLeaks } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
-/** The generated name of each tool (spec/connectorTools.md, "Each surface lists only the apps it may offer"). */
+/** The generated name of each tool (spec/connectorTools.md, "Each surface offers every app"). */
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
   read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
@@ -246,7 +246,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   if (a.app === undefined) return name === "start_signup" ? { ok: false, message: "Say which app: " + enumIds.join(", ") + "." } : { ok: true };
   if (typeof a.app !== "string") return { ok: false, message: "app must be a string." };
   if (name === "check_status" || name === "read_profile") {
-    if (a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only. To check another app, connect to that app's own site.` };
+    if (a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only. To check another app, connect that app's own endpoint.` };
   } else if (!enumIds.includes(a.app)) return { ok: false, message: NOT_AVAILABLE };
   return { ok: true, app: a.app };
 }
@@ -260,7 +260,7 @@ function invitationGuidance(a: McpApp): string {
     `Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
-function publicInfo(a: McpApp, surface: Surface) {
+function publicInfo(a: McpApp) {
   return {
     id: a.id, name: a.name, site: a.links.site, what: a.what,
     powered_by: "All of these apps are powered by The Network (https://ntwrk.party).",
@@ -271,7 +271,7 @@ function publicInfo(a: McpApp, surface: Surface) {
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
         ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
           ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
-        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps. ${skillSignup(a)}`,
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (friends, dating or work) and adds the right apps. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: a.adultsOnly,
@@ -354,8 +354,8 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
   if (!chk.ok) return { kind: "error", message: chk.message };
   switch (name) {
     case "app_info": {
-      if (chk.app) return { kind: "ok", data: publicInfo(c.apps[chk.app as McpAppId], c.surface) };
-      return { kind: "ok", data: { apps: appsOn(c.apps, c.surface).map(a => publicInfo(a, c.surface)) } };
+      if (chk.app) return { kind: "ok", data: publicInfo(c.apps[chk.app as McpAppId]) };
+      return { kind: "ok", data: { apps: appsOn(c.apps, c.surface).map(a => publicInfo(a)) } };
     }
     case "start_signup": {
       const a = c.apps[chk.app as McpAppId];

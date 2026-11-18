@@ -7,7 +7,7 @@ metadata:
   app: friends
   site: https://friends.help
   operator: Eliza Research Corporation
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # friends.help
@@ -18,7 +18,8 @@ only for an explanation, explain without starting signup.
 ## Talk like a person
 
 Keep replies short, usually one to three sentences. No tool names, HTTP details,
-JSON, headings, setup instructions or status tables unless the person asks for them.
+JSON, headings, setup instructions or status tables unless the person asks for them
+or a step below needs them.
 Start from confirmed facts you already know; ask only for missing information.
 Never invent age, profile facts, consent, verification, saved data or introductions.
 A draft is not saved until the site confirms it. A saved profile is not a match.
@@ -30,11 +31,17 @@ phone number.
 
 ## Join with your agent and browser
 
-1. Check that this client can run the native OAuth flow for this app's connector. <!-- agentSignup: chooseTransport -->
-   Its endpoint is `https://friends.help/mcp` or `https://friends.help/mcp/openai` for a supported OpenAI client.
-   If the required connector cannot be used, say “Signup isn't supported in this
-   agent yet.” Stop before asking for a profile. Reading this file does not give
-   you tools or access. Use the client's supported authorization flow.
+1. Check that this app's connector tools (`check_status` and `submit_profile`) are <!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->
+   available in this conversation. If they are not, say “Connect friends.help” and give
+   this app's own connector endpoint, `https://ntwrk.party/mcp/friends`
+   (in ChatGPT, `https://ntwrk.party/mcp/friends/openai`). The Network serves every app; this
+   path is for friends.help only. Ask the person to add it as a connector in this
+   client's connector or integration settings, then come back to this conversation.
+   Give this setup step one time only. When the tools are available, continue with
+   step 2. Reading this file does not give you tools or access.
+   Only if this client cannot add a remote connector at all, or the person cannot
+   add it, say “Signup isn't supported in this agent yet.” Stop before asking for a
+   profile. Use the client's supported authorization flow.
 2. Read the public app facts at `https://friends.help/api/app` without credentials. <!-- agentSignup: readAppFacts -->
    Confirm `id` is `friends`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
    and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
@@ -58,8 +65,9 @@ phone number.
    start a phone check, or ask for a phone number, verification code, token or
    browser cookie. The person handles all credentials in their own browser.
 6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
-   session. For an eligible new membership, choose **Finish signup** there and
-   review the same name, age, home region and current text consent. Joining is
+   session. For an eligible new membership, choose **Finish signup** there,
+   check or enter the same first name and home region, enter the same age and
+   tick the current text consent. Joining is
    open. A forwarded invitation is optional.
    If they want to use a forwarded invitation, they keep the original link
    private and enter the invitation in the app's browser if asked. Do not copy

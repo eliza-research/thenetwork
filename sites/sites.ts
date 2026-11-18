@@ -8,7 +8,6 @@ import { dirname, join, relative } from "node:path";
 import { build as buildWorker, formatMessages } from "esbuild";
 import { parse as parseYaml } from "yaml";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
-import { RESPONSE_STYLE } from "./skill-responses.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 import { siteApp } from "../apps/site/prerender.ts";
@@ -112,8 +111,7 @@ export function walk(dir: string): string[] {
 export function skillText(name: string, env: Record<string, string | undefined> = process.env, dir = SKILLS_DIR): string {
   const s = SITES.find((x) => x.skill === name);
   if (!s) throw new Error(`no site for skill ${name}`);
-  const source = readFileSync(join(dir, name, "SKILL.md"), "utf8").replaceAll("{{RESPONSE_STYLE}}", RESPONSE_STYLE.trim());
-  return fill(source, env, s.domain).replaceAll("\r\n", "\n");
+  return fill(readFileSync(join(dir, name, "SKILL.md"), "utf8"), env, s.domain).replaceAll("\r\n", "\n");
 }
 
 /** The frontmatter description of a SKILL.md (one line, no YAML block scalars in our files). */
@@ -161,6 +159,9 @@ function successfulEvent(s: Site, event: string, transport: Transport): SignupEv
   const kind = skillKindFor(s.key);
   const inviteOnly = brandFor(s.key).joinMode === "InviteOnly";
   switch (event) {
+    // A fresh agent has no connector tools: it tells the person to add this app's endpoint, then continues.
+    case "checkConnectorSetup": return { type: "checkConnectorSetup", clientCanAdd: true };
+    case "resumeAfterConnector": return { type: "resumeAfterConnector" };
     case "chooseTransport": return { type: "chooseTransport", skillKind: kind,
       connectorTools: transportFor(kind, true) === transport };
     case "readAppFacts": return { type: "readAppFacts", appMatches: true, inviteMode: inviteOnly };
@@ -201,6 +202,19 @@ export function signupStepProblems(s: Site, text: string): string[] {
     const want = endReportFor(transport);
     const got = reportFor(state.phase);
     if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${transport} steps end in phase ${state.phase} (${got}), not at ${want}`);
+  }
+  // A client without the connector tools stops only after the connector setup step (spec/agentSignup.md:13).
+  if (!problems.length && transportFor(skillKindFor(s.key), false) === "NoTransport") {
+    let state: AgentSignup = signupStart;
+    for (const m of markers.filter(x => x.transport === null)) {
+      const event = successfulEvent(s, m.event, "NoTransport");
+      if (!event || !signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (NoTransport)`); break; }
+      state = signupStep(state, event);
+      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (NoTransport)`); break; }
+      if (reportFor(state.phase) !== "ReportWorking") break;
+    }
+    const want = endReportFor("NoTransport");
+    if (!problems.length && reportFor(state.phase) !== want) problems.push(`${s.skill}/SKILL.md: without connector tools the steps end in phase ${state.phase}, not at ${want}`);
   }
   return problems;
 }

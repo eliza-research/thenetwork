@@ -90,7 +90,9 @@ export function consentPage(app: McpApp, rid: string, clientName: string | null,
   return respond(app, "Allow access", view, { formTargets: [redirectOrigin], status: o.unavailable ? 503 : 200 });
 }
 
-export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error">;
+export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "prefill">;
+/** The fields that the signup form shows filled in: never a phone, a code, an age or consent. */
+export type SignupPrefill = NonNullable<AuthSignupViewProps["prefill"]>;
 
 /** The verified browser's transient form for confirming the app's signup. */
 export function signupPage(app: McpApp, rid: string, options: SignupPageOptions) {

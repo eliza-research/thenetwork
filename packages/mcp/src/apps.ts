@@ -3,13 +3,13 @@
 // (packages/platform/src/apps.ts) when it has the app, so the server and the sites cannot drift.
 import { APPS as PLATFORM_APPS, PAGES_PROJECT, SUPPORT_EMAIL } from "@thenetwork/platform";
 import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, type AppId as McpAppId } from "../../core/src/types.ts";
-import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appOffered } from "../../core/src/generated/connectorTools.ts";
+import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appOffered, hostBindsApp } from "../../core/src/generated/connectorTools.ts";
 
 export { MCP_APP_IDS, isMcpAppId, type McpAppId };
 
 /**
- * Which client surface a request comes from. "openai" is the public OpenAI (ChatGPT, Codex) plugin:
- * OpenAI requires plugins that suit people aged 13-17, so slop (dating) is hidden there.
+ * Which client surface a request comes from. "openai" serves ChatGPT and Codex clients. It offers every app,
+ * slop included (spec/connectorTools.md, "Each surface offers every app").
  */
 export type Surface = "full" | "openai";
 
@@ -32,7 +32,7 @@ export interface McpApp {
   /** Rules that apply to adults only, in plain words. */
   adultsOnly: string[];
   links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; support: string };
-  /** False: never listed or offered on the OpenAI surface (spec/connectorTools.md:9). */
+  /** False: not listed or offered on the OpenAI surface (the registry can disable an app there; spec/connectorTools.md). */
   openai: boolean;
 }
 
@@ -84,3 +84,26 @@ export function defaultHostMap(apps: Record<McpAppId, McpApp>): Record<string, M
 /** Local dev: the site ports 5101-5104 in the order the sites use (scripts/sites-dev.ts). */
 export const devHostMap = (): Record<string, McpAppId> =>
   Object.fromEntries(MCP_APP_IDS.flatMap((a, i) => [[`localhost:${5101 + i}`, a], [`127.0.0.1:${5101 + i}`, a]]));
+
+/**
+ * The MCP path of one app on one host (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path"):
+ * /mcp for the host's own app, /mcp/<app> for another app on the ntwrk.party host, and /openai added for the OpenAI
+ * surface. Undefined when the host does not serve the app.
+ */
+export function mcpPath(host: McpAppId, app: McpAppId, surface: Surface): string | undefined {
+  if (!hostBindsApp(connectorApp[host], connectorApp[app])) return undefined;
+  return `${app === host ? "/mcp" : `/mcp/${app}`}${surface === "openai" ? "/openai" : ""}`;
+}
+
+/** The app and surface of an MCP path on a host (the inverse of mcpPath), or undefined for a path that the host does not serve. */
+export function appAtPath(host: McpAppId, path: string): { app: McpAppId; surface: Surface } | undefined {
+  const m = /^\/mcp(?:\/([a-z]+))?(\/openai)?$/.exec(path);
+  if (!m) return undefined;
+  const surface: Surface = m[2] ? "openai" : "full";
+  if (m[1] === undefined) return { app: host, surface };
+  // "/mcp/openai" is the host's own app on the OpenAI surface, never an app named "openai".
+  if (m[1] === "openai" && !m[2]) return { app: host, surface: "openai" };
+  const app = m[1];
+  if (!isMcpAppId(app) || app === host) return undefined;
+  return mcpPath(host, app, surface) === path ? { app, surface } : undefined;
+}

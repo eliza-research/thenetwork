@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { type AccentTokens, type AppKey, accentTokens, appKeys, brandFor } from "../core/src/generated/brandIdentity.ts"
 import { type BrandId, brandIds } from "./src/brands.ts"
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -52,6 +53,34 @@ function keySetIssues(): string[] {
   })
 }
 
+/** The brand directory of each app of the brand record. It is the same map as `brandIdFor` in packages/ui/src/brand/landing.ts. */
+const brandOfApp: Record<AppKey, BrandId> = { Ntwrk: "network", Slop: "slop", Peon: "peon", Friends: "friends" }
+
+/** The token of each accent value. The site writes the accent as the browser `theme-color` (apps/site/src/entry-server.tsx). */
+const accentToken: Record<keyof AccentTokens, [scheme: "light" | "dark", name: "primary" | "primary-foreground"]> = {
+  light: ["light", "primary"],
+  lightInk: ["light", "primary-foreground"],
+  dark: ["dark", "primary"],
+  darkInk: ["dark", "primary-foreground"],
+}
+
+/**
+ * spec/brandIdentity.md, "Each accent has one color for light mode and one for dark mode": the accent of each app
+ * (`accentTokens(brandFor(app).accent)`) has the values of the `primary` and `primary-foreground` tokens of its brand.
+ */
+function accentIssues(): string[] {
+  return appKeys.flatMap((app) => {
+    const brand = brandOfApp[app]
+    const color = (JSON.parse(read(join(brandDir(brand), "tokens.json"))) as { color: Record<"light" | "dark", Record<string, string>> }).color
+    const accent = accentTokens(brandFor(app).accent)
+    return (Object.keys(accentToken) as (keyof AccentTokens)[]).flatMap((key) => {
+      const [scheme, name] = accentToken[key]
+      const token = color[scheme][name]
+      return token === accent[key] ? [] : [`${brand}: color.${scheme}.${name} is ${token}, but accentTokens(${brandFor(app).accent}).${key} is ${accent[key]} (spec/brandIdentity.md)`]
+    })
+  })
+}
+
 /** The declarations of one top-level rule of a generated tokens.css. */
 function declarations(css: string, selector: string, brand: BrandId): string[] {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -98,7 +127,7 @@ function themeCss(): string {
 }
 
 function build(): string[] {
-  const issues = [...directoryIssues(), ...keySetIssues()]
+  const issues = [...directoryIssues(), ...keySetIssues(), ...accentIssues()]
   if (issues.length) return issues
   const failed = brandIds.flatMap((brand) => runCli(brand, "build"))
   if (failed.length) return failed
@@ -111,7 +140,7 @@ function build(): string[] {
 function check(): string[] {
   const issues = directoryIssues()
   if (issues.length) return issues
-  return [...keySetIssues(), ...brandIds.flatMap((brand) => runCli(brand, "check"))]
+  return [...keySetIssues(), ...accentIssues(), ...brandIds.flatMap((brand) => runCli(brand, "check"))]
 }
 
 const [command = "build"] = process.argv.slice(2)

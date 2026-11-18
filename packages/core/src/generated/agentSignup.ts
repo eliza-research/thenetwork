@@ -3,15 +3,17 @@
 import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+export type SignupPhase = "CheckingCapability" | "AwaitingConnector" | "Unsupported" | "ReadingApp" | "WrongApp" | "Drafting" | "BelowJoinAge" | "AwaitingApproval" | "Declined" | "ReadyForHandoff" | "HandedOff" | "CheckingStatus" | "ExistingMember" | "NeedsInvite" | "InvitationUnavailable" | "OnReview" | "MessagesStopped" | "SaveUnconfirmed" | "ReadyToSubmit" | "ConfirmingProfile" | "ProfileNotSent" | "Saved" | "HandedToMessages";
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 export type SkillKind = "NativeConnectorSkill" | "PeonSkill";
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+export type ConnectorSetup = "SetupNotChecked" | "SetupOffered" | "SetupImpossible";
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 export type AgeBand = "AgeNotStated" | "Under13" | "Teen" | "Adult";
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 export type Transport = "TransportUndecided" | "NativeConnectorHandoff" | "ConnectorHandoff" | "MessagesHandoff" | "NoTransport";
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
-export type SignupPhase = "CheckingCapability" | "Unsupported" | "ReadingApp" | "WrongApp" | "Drafting" | "BelowJoinAge" | "AwaitingApproval" | "Declined" | "ReadyForHandoff" | "HandedOff" | "CheckingStatus" | "ExistingMember" | "NeedsInvite" | "InvitationUnavailable" | "OnReview" | "MessagesStopped" | "SaveUnconfirmed" | "ReadyToSubmit" | "ConfirmingProfile" | "ProfileNotSent" | "Saved" | "HandedToMessages";
-/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
-export interface AgentSignup { phase: SignupPhase; transport: Transport; age: AgeBand; inviteOnly: boolean; approved: boolean; minorNotified: boolean; handoffs: number; browserEnrolled: boolean; inviteAccepted: boolean; submits: number }
+export interface AgentSignup { phase: SignupPhase; transport: Transport; connectorSetup: ConnectorSetup; age: AgeBand; inviteOnly: boolean; approved: boolean; minorNotified: boolean; handoffs: number; browserEnrolled: boolean; inviteAccepted: boolean; submits: number }
 /** Story: Join through my agent and confirm my own phone / The person approves the exact draft and current text consent (spec/agentSignup.md) */
 export type Approval = "ApproveExact" | "AskChanges" | "DeclineSignup";
 /** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
@@ -23,6 +25,8 @@ export type SignupReport = "ReportWorking" | "ReportSaved" | "ReportSaveUnconfir
 
 /** One variant per transition in the spec. */
 export type Event =
+  | { type: "checkConnectorSetup"; clientCanAdd: boolean }
+  | { type: "resumeAfterConnector" }
   | { type: "readAppFacts"; appMatches: boolean; inviteMode: boolean }
   | { type: "chooseTransport"; skillKind: SkillKind; connectorTools: boolean }
   | { type: "decideApproval"; decision: Approval }
@@ -34,12 +38,12 @@ export type Event =
   | { type: "confirmProfile"; stillLive: boolean };
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
-export const initial: AgentSignup = { phase: "CheckingCapability", transport: "TransportUndecided", age: "AgeNotStated", inviteOnly: false, approved: false, minorNotified: false, handoffs: 0, browserEnrolled: false, inviteAccepted: false, submits: 0 };
+export const initial: AgentSignup = { phase: "CheckingCapability", transport: "TransportUndecided", connectorSetup: "SetupNotChecked", age: "AgeNotStated", inviteOnly: false, approved: false, minorNotified: false, handoffs: 0, browserEnrolled: false, inviteAccepted: false, submits: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: AgentSignup): boolean {
-  return alwaysTransportFixedAfterChoice(current) && alwaysNoTransportStops(current) && alwaysUnderThirteenStops(current) && alwaysMinorToldMatchingIsAdult(current) && alwaysApprovedProfileHasJoinAge(current) && alwaysNothingSentBeforeApproval(current) && alwaysTextHandoffIsApproved(current) && alwaysNoApprovalBeforeDecision(current) && alwaysNativeEnrollmentKeepsInvitationGate(current) && alwaysOneApprovedNativeHandoff(current) && alwaysBrowserStepFollowsHandoff(current) && alwaysOneAuthorizedSubmission(current) && alwaysSavedNeedsConfirmedSave(current) && alwaysExistingMemberKeepsProfile(current) && alwaysNothingSubmittedBeforeSubmit(current);
+  return alwaysTransportFixedAfterChoice(current) && alwaysAwaitingConnectorWasOffered(current) && alwaysNoConnectorPathFollowsSetupCheck(current) && alwaysNoTransportStops(current) && alwaysUnderThirteenStops(current) && alwaysMinorToldMatchingIsAdult(current) && alwaysApprovedProfileHasJoinAge(current) && alwaysNothingSentBeforeApproval(current) && alwaysTextHandoffIsApproved(current) && alwaysNoApprovalBeforeDecision(current) && alwaysNativeEnrollmentKeepsInvitationGate(current) && alwaysOneApprovedNativeHandoff(current) && alwaysBrowserStepFollowsHandoff(current) && alwaysOneAuthorizedSubmission(current) && alwaysSavedNeedsConfirmedSave(current) && alwaysExistingMemberKeepsProfile(current) && alwaysNothingSubmittedBeforeSubmit(current);
 }
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
@@ -56,14 +60,88 @@ export function transportFor(skillKind: SkillKind, connectorTools: boolean): Tra
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 //@ pure
-export function canChooseTransport(s: AgentSignup): boolean {
-  return s.phase === "CheckingCapability";
+export function canCheckConnectorSetup(s: AgentSignup): boolean {
+  return s.phase === "CheckingCapability" && s.connectorSetup === "SetupNotChecked";
+}
+
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+//@ pure
+export function checkConnectorSetup(s: AgentSignup, clientCanAdd: boolean): AgentSignup {
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysNoTransportStops(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysUnderThirteenStops(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysNothingSentBeforeApproval(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysTextHandoffIsApproved(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysNoApprovalBeforeDecision(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysOneApprovedNativeHandoff(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysOneAuthorizedSubmission(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysExistingMemberKeepsProfile(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> stepSavedFollowsConfirmation(s, "checkConnectorSetup", \result)
+  //@ ensures (inv(s) && canCheckConnectorSetup(s)) ==> stepFinishedStaysFinished(s, "checkConnectorSetup", \result)
+  return clientCanAdd ? ({ ...s, connectorSetup: "SetupOffered", phase: "AwaitingConnector" } as AgentSignup) : ({ ...s, connectorSetup: "SetupImpossible" } as AgentSignup);
+}
+
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+//@ pure
+export function canResumeAfterConnector(s: AgentSignup): boolean {
+  return s.phase === "AwaitingConnector";
+}
+
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+//@ pure
+export function resumeAfterConnector(s: AgentSignup): AgentSignup {
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysNoTransportStops(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysUnderThirteenStops(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysNothingSentBeforeApproval(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysTextHandoffIsApproved(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysNoApprovalBeforeDecision(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysOneApprovedNativeHandoff(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysOneAuthorizedSubmission(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysExistingMemberKeepsProfile(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> stepSavedFollowsConfirmation(s, "resumeAfterConnector", \result)
+  //@ ensures (inv(s) && canResumeAfterConnector(s)) ==> stepFinishedStaysFinished(s, "resumeAfterConnector", \result)
+  return { ...s, phase: "CheckingCapability" };
+}
+
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+//@ pure
+export function canChooseTransport(s: AgentSignup, connectorTools: boolean): boolean {
+  return s.phase === "CheckingCapability" && (connectorTools || s.connectorSetup !== "SetupNotChecked");
 }
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 //@ pure
 export function alwaysTransportFixedAfterChoice(s: AgentSignup): boolean {
-  return (s.phase === "CheckingCapability") === (s.transport === "TransportUndecided");
+  return (s.phase === "CheckingCapability" || s.phase === "AwaitingConnector") === (s.transport === "TransportUndecided");
+}
+
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+//@ pure
+export function alwaysAwaitingConnectorWasOffered(s: AgentSignup): boolean {
+  return !(s.phase === "AwaitingConnector") || s.connectorSetup === "SetupOffered";
+}
+
+/** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
+//@ pure
+export function alwaysNoConnectorPathFollowsSetupCheck(s: AgentSignup): boolean {
+  return !(s.transport === "NoTransport" || s.transport === "MessagesHandoff") || s.connectorSetup !== "SetupNotChecked";
 }
 
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
@@ -76,6 +154,8 @@ export function canReadAppFacts(s: AgentSignup): boolean {
 //@ pure
 export function readAppFacts(s: AgentSignup, appMatches: boolean, inviteMode: boolean): AgentSignup {
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -105,23 +185,25 @@ export function lawNativeSkillRequiresItsConnector(connectorTools: boolean): boo
 /** Story: Join through my agent and confirm my own phone / The selected app determines the available transport (spec/agentSignup.md) */
 //@ pure
 export function chooseTransport(s: AgentSignup, skillKind: SkillKind, connectorTools: boolean): AgentSignup {
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysTransportFixedAfterChoice(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNoTransportStops(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysUnderThirteenStops(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysApprovedProfileHasJoinAge(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNothingSentBeforeApproval(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysTextHandoffIsApproved(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNoApprovalBeforeDecision(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysOneApprovedNativeHandoff(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysBrowserStepFollowsHandoff(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysOneAuthorizedSubmission(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysSavedNeedsConfirmedSave(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysExistingMemberKeepsProfile(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> stepSavedFollowsConfirmation(s, "chooseTransport", \result)
-  //@ ensures (inv(s) && canChooseTransport(s)) ==> stepFinishedStaysFinished(s, "chooseTransport", \result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysNoTransportStops(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysUnderThirteenStops(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysMinorToldMatchingIsAdult(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysApprovedProfileHasJoinAge(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysNothingSentBeforeApproval(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysTextHandoffIsApproved(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysNoApprovalBeforeDecision(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysNativeEnrollmentKeepsInvitationGate(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysOneApprovedNativeHandoff(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysBrowserStepFollowsHandoff(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysOneAuthorizedSubmission(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysSavedNeedsConfirmedSave(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysExistingMemberKeepsProfile(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> alwaysNothingSubmittedBeforeSubmit(\result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> stepSavedFollowsConfirmation(s, "chooseTransport", \result)
+  //@ ensures (inv(s) && canChooseTransport(s, connectorTools)) ==> stepFinishedStaysFinished(s, "chooseTransport", \result)
   const local_0: Transport = transportFor(skillKind, connectorTools);
   return { ...s, transport: local_0, phase: local_0 === "NoTransport" ? "Unsupported" : (local_0 === "NativeConnectorHandoff" ? "ReadingApp" : "Drafting") };
 }
@@ -154,6 +236,8 @@ export function canDecideApproval(s: AgentSignup): boolean {
 //@ pure
 export function decideApproval(s: AgentSignup, decision: Approval): AgentSignup {
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -207,6 +291,8 @@ export function alwaysTextHandoffIsApproved(s: AgentSignup): boolean {
 //@ pure
 export function draftProfile(s: AgentSignup, statedAge: AgeBand): AgentSignup {
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -230,7 +316,19 @@ export function draftProfile(s: AgentSignup, statedAge: AgeBand): AgentSignup {
 /** Story: Join through my agent and confirm my own phone / Nothing is approved before the person decides (spec/agentSignup.md) */
 //@ pure
 export function alwaysNoApprovalBeforeDecision(s: AgentSignup): boolean {
-  return !(s.phase === "CheckingCapability" || s.phase === "ReadingApp" || s.phase === "Drafting" || s.phase === "AwaitingApproval") || !s.approved;
+  return !(s.phase === "CheckingCapability" || s.phase === "AwaitingConnector" || s.phase === "ReadingApp" || s.phase === "Drafting" || s.phase === "AwaitingApproval") || !s.approved;
+}
+
+/** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
+//@ pure
+export function alwaysNativeEnrollmentKeepsInvitationGate(s: AgentSignup): boolean {
+  return !(s.browserEnrolled && s.inviteOnly) || s.inviteAccepted;
+}
+
+/** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
+//@ pure
+export function alwaysOneApprovedNativeHandoff(s: AgentSignup): boolean {
+  return s.handoffs >= 0 && s.handoffs <= 1 && (!(s.handoffs > 0) || (s.approved && s.transport === "NativeConnectorHandoff"));
 }
 
 /** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
@@ -243,6 +341,8 @@ export function canOfferHandoff(s: AgentSignup): boolean {
 //@ pure
 export function offerHandoff(s: AgentSignup, linkAvailable: boolean): AgentSignup {
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canOfferHandoff(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -270,20 +370,10 @@ export function canObserveBrowser(s: AgentSignup, result: BrowserResult): boolea
 
 /** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
 //@ pure
-export function alwaysNativeEnrollmentKeepsInvitationGate(s: AgentSignup): boolean {
-  return !(s.browserEnrolled && s.inviteOnly) || s.inviteAccepted;
-}
-
-/** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
-//@ pure
-export function alwaysOneApprovedNativeHandoff(s: AgentSignup): boolean {
-  return s.handoffs >= 0 && s.handoffs <= 1 && (!(s.handoffs > 0) || (s.approved && s.transport === "NativeConnectorHandoff"));
-}
-
-/** Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access (spec/agentSignup.md) */
-//@ pure
 export function observeBrowser(s: AgentSignup, result: BrowserResult, appWriteGrant: boolean): AgentSignup {
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canObserveBrowser(s, result)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -312,8 +402,16 @@ export function alwaysBrowserStepFollowsHandoff(s: AgentSignup): boolean {
 
 /** Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result (spec/agentSignup.md) */
 //@ pure
+export function canCheckSiteStatus(s: AgentSignup): boolean {
+  return (s.phase === "CheckingStatus" && s.transport === "NativeConnectorHandoff") || (s.phase === "HandedOff" && s.transport === "ConnectorHandoff");
+}
+
+/** Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result (spec/agentSignup.md) */
+//@ pure
 export function checkSiteStatus(s: AgentSignup, siteApp: boolean, siteStatus: SiteStatus): AgentSignup {
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -343,6 +441,8 @@ export function canSubmitProfile(s: AgentSignup): boolean {
 //@ pure
 export function submitProfile(s: AgentSignup, accepted: boolean): AgentSignup {
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -372,6 +472,8 @@ export function canConfirmProfile(s: AgentSignup): boolean {
 //@ pure
 export function confirmProfile(s: AgentSignup, stillLive: boolean): AgentSignup {
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysTransportFixedAfterChoice(\result)
+  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysAwaitingConnectorWasOffered(\result)
+  //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNoConnectorPathFollowsSetupCheck(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysNoTransportStops(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysUnderThirteenStops(\result)
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysMinorToldMatchingIsAdult(\result)
@@ -413,12 +515,6 @@ export function alwaysExistingMemberKeepsProfile(s: AgentSignup): boolean {
 //@ pure
 export function stepSavedFollowsConfirmation(before: AgentSignup, via: string, after: AgentSignup): boolean {
   return !(after.phase === "Saved" && before.phase !== "Saved") || via === "confirmProfile";
-}
-
-/** Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result (spec/agentSignup.md) */
-//@ pure
-export function canCheckSiteStatus(s: AgentSignup): boolean {
-  return (s.phase === "CheckingStatus" && s.transport === "NativeConnectorHandoff") || (s.phase === "HandedOff" && s.transport === "ConnectorHandoff");
 }
 
 /** Story: Join through my agent and confirm my own phone / No profile is sent before the status check allows it (spec/agentSignup.md) */
@@ -513,6 +609,24 @@ export function sometimesUnsupported(s: AgentSignup): boolean {
 
 /** Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report (spec/agentSignup.md) */
 //@ pure
+export function sometimesAwaitingConnector(s: AgentSignup): boolean {
+  return s.phase === "AwaitingConnector";
+}
+
+/** Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report (spec/agentSignup.md) */
+//@ pure
+export function sometimesSavedAfterConnectorSetup(s: AgentSignup): boolean {
+  return s.phase === "Saved" && s.transport === "NativeConnectorHandoff" && s.connectorSetup === "SetupOffered";
+}
+
+/** Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report (spec/agentSignup.md) */
+//@ pure
+export function sometimesUnsupportedWithoutConnectorSupport(s: AgentSignup): boolean {
+  return s.phase === "Unsupported" && s.connectorSetup === "SetupImpossible";
+}
+
+/** Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report (spec/agentSignup.md) */
+//@ pure
 export function sometimesDeclined(s: AgentSignup): boolean {
   return s.phase === "Declined";
 }
@@ -551,8 +665,10 @@ export function stepFinishedStaysFinished(before: AgentSignup, via: string, afte
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: AgentSignup, event: Event): boolean {
+  if (event.type === "checkConnectorSetup") return canCheckConnectorSetup(current);
+  if (event.type === "resumeAfterConnector") return canResumeAfterConnector(current);
   if (event.type === "readAppFacts") return canReadAppFacts(current);
-  if (event.type === "chooseTransport") return canChooseTransport(current);
+  if (event.type === "chooseTransport") return canChooseTransport(current, event.connectorTools);
   if (event.type === "decideApproval") return canDecideApproval(current);
   if (event.type === "draftProfile") return canDraftProfile(current, event.statedAge);
   if (event.type === "offerHandoff") return canOfferHandoff(current);
@@ -568,8 +684,10 @@ export function enabled(current: AgentSignup, event: Event): boolean {
 export function step(current: AgentSignup, event: Event): AgentSignup {
   //@ requires inv(current)
   //@ ensures inv(\result)
+  if (event.type === "checkConnectorSetup") return canCheckConnectorSetup(current) ? checkConnectorSetup(current, event.clientCanAdd) : current;
+  if (event.type === "resumeAfterConnector") return canResumeAfterConnector(current) ? resumeAfterConnector(current) : current;
   if (event.type === "readAppFacts") return canReadAppFacts(current) ? readAppFacts(current, event.appMatches, event.inviteMode) : current;
-  if (event.type === "chooseTransport") return canChooseTransport(current) ? chooseTransport(current, event.skillKind, event.connectorTools) : current;
+  if (event.type === "chooseTransport") return canChooseTransport(current, event.connectorTools) ? chooseTransport(current, event.skillKind, event.connectorTools) : current;
   if (event.type === "decideApproval") return canDecideApproval(current) ? decideApproval(current, event.decision) : current;
   if (event.type === "draftProfile") return canDraftProfile(current, event.statedAge) ? draftProfile(current, event.statedAge) : current;
   if (event.type === "offerHandoff") return canOfferHandoff(current) ? offerHandoff(current, event.linkAvailable) : current;
@@ -594,6 +712,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
+  if (raw.type === "checkConnectorSetup" && typeof raw.clientCanAdd === "boolean") return { type: "checkConnectorSetup", clientCanAdd: raw.clientCanAdd };
+  if (raw.type === "resumeAfterConnector") return { type: "resumeAfterConnector" };
   if (raw.type === "readAppFacts" && typeof raw.appMatches === "boolean" && typeof raw.inviteMode === "boolean") return { type: "readAppFacts", appMatches: raw.appMatches, inviteMode: raw.inviteMode };
   if (raw.type === "chooseTransport" && (raw.skillKind === "NativeConnectorSkill" || raw.skillKind === "PeonSkill") && typeof raw.connectorTools === "boolean") return { type: "chooseTransport", skillKind: raw.skillKind, connectorTools: raw.connectorTools };
   if (raw.type === "decideApproval" && (raw.decision === "ApproveExact" || raw.decision === "AskChanges" || raw.decision === "DeclineSignup")) return { type: "decideApproval", decision: raw.decision };
@@ -620,8 +740,8 @@ export function parseState(x: unknown): AgentSignup | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "CheckingCapability" || raw.phase === "Unsupported" || raw.phase === "ReadingApp" || raw.phase === "WrongApp" || raw.phase === "Drafting" || raw.phase === "BelowJoinAge" || raw.phase === "AwaitingApproval" || raw.phase === "Declined" || raw.phase === "ReadyForHandoff" || raw.phase === "HandedOff" || raw.phase === "CheckingStatus" || raw.phase === "ExistingMember" || raw.phase === "NeedsInvite" || raw.phase === "InvitationUnavailable" || raw.phase === "OnReview" || raw.phase === "MessagesStopped" || raw.phase === "SaveUnconfirmed" || raw.phase === "ReadyToSubmit" || raw.phase === "ConfirmingProfile" || raw.phase === "ProfileNotSent" || raw.phase === "Saved" || raw.phase === "HandedToMessages") && (raw.transport === "TransportUndecided" || raw.transport === "NativeConnectorHandoff" || raw.transport === "ConnectorHandoff" || raw.transport === "MessagesHandoff" || raw.transport === "NoTransport") && (raw.age === "AgeNotStated" || raw.age === "Under13" || raw.age === "Teen" || raw.age === "Adult") && typeof raw.inviteOnly === "boolean" && typeof raw.approved === "boolean" && typeof raw.minorNotified === "boolean" && Number.isSafeInteger(raw.handoffs) && typeof raw.browserEnrolled === "boolean" && typeof raw.inviteAccepted === "boolean" && Number.isSafeInteger(raw.submits) && Object.keys(raw).length === 10)) return undefined;
-  const parsed: AgentSignup = ({ phase: raw.phase, transport: raw.transport, age: raw.age, inviteOnly: raw.inviteOnly, approved: raw.approved, minorNotified: raw.minorNotified, handoffs: raw.handoffs, browserEnrolled: raw.browserEnrolled, inviteAccepted: raw.inviteAccepted, submits: raw.submits });
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "CheckingCapability" || raw.phase === "AwaitingConnector" || raw.phase === "Unsupported" || raw.phase === "ReadingApp" || raw.phase === "WrongApp" || raw.phase === "Drafting" || raw.phase === "BelowJoinAge" || raw.phase === "AwaitingApproval" || raw.phase === "Declined" || raw.phase === "ReadyForHandoff" || raw.phase === "HandedOff" || raw.phase === "CheckingStatus" || raw.phase === "ExistingMember" || raw.phase === "NeedsInvite" || raw.phase === "InvitationUnavailable" || raw.phase === "OnReview" || raw.phase === "MessagesStopped" || raw.phase === "SaveUnconfirmed" || raw.phase === "ReadyToSubmit" || raw.phase === "ConfirmingProfile" || raw.phase === "ProfileNotSent" || raw.phase === "Saved" || raw.phase === "HandedToMessages") && (raw.transport === "TransportUndecided" || raw.transport === "NativeConnectorHandoff" || raw.transport === "ConnectorHandoff" || raw.transport === "MessagesHandoff" || raw.transport === "NoTransport") && (raw.connectorSetup === "SetupNotChecked" || raw.connectorSetup === "SetupOffered" || raw.connectorSetup === "SetupImpossible") && (raw.age === "AgeNotStated" || raw.age === "Under13" || raw.age === "Teen" || raw.age === "Adult") && typeof raw.inviteOnly === "boolean" && typeof raw.approved === "boolean" && typeof raw.minorNotified === "boolean" && Number.isSafeInteger(raw.handoffs) && typeof raw.browserEnrolled === "boolean" && typeof raw.inviteAccepted === "boolean" && Number.isSafeInteger(raw.submits) && Object.keys(raw).length === 11)) return undefined;
+  const parsed: AgentSignup = ({ phase: raw.phase, transport: raw.transport, connectorSetup: raw.connectorSetup, age: raw.age, inviteOnly: raw.inviteOnly, approved: raw.approved, minorNotified: raw.minorNotified, handoffs: raw.handoffs, browserEnrolled: raw.browserEnrolled, inviteAccepted: raw.inviteAccepted, submits: raw.submits });
   return inv(parsed) ? parsed : undefined;
 }
 
