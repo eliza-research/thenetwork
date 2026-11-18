@@ -76,6 +76,52 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("sent");
   });
 
+  test("overlapping dispatches never repeat an item when a new item arrives between plans", async () => {
+    const { now, store, notifier, queue, sink, sent: calls, r } = await setup();
+    const first = (await notifier.add(req(r.personId, "overlap-first", "First requested update is ready."), now())).item;
+    const locker = new SQL({url, max: 1});
+    let release!: () => void, acquired!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const locked = new Promise<void>(resolve => { acquired = resolve; });
+    const held = locker.begin(async tx => {
+      await tx`select id from notify.inbox_items where id = ${first.id.slice(4)} for update`;
+      acquired(); await gate;
+    });
+    await locked;
+    const dispatches: ReturnType<Notifier["dispatch"]>[] = [];
+    const waitFor = async (count: number) => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const [row] = await admin`select count(*)::int as n from pg_stat_activity where datname = ${db} and wait_event_type = 'Lock'`;
+        if (row.n >= count) return;
+        await Bun.sleep(10);
+      }
+      throw new Error(`Expected ${count} dispatches waiting on the held inbox row`);
+    };
+    try {
+      dispatches.push(notifier.dispatch(now(), sink)); await waitFor(1);
+      await notifier.add(req(r.personId, "overlap-second", "Second requested update is ready."), now());
+      const replica = new Notifier(new PgNotifyStore(sql), {get: id => id === r.personId ? r : undefined}, {isQuiet: () => false});
+      dispatches.push(replica.dispatch(now(), sink)); await waitFor(2);
+      release(); await held; await Promise.all(dispatches);
+      // A losing batch leaves its unclaimed items for the next tick.
+      await replica.dispatch(now(), sink);
+      await queue.drain(); await queue.drain();
+      for (const summary of ["First requested update is ready.", "Second requested update is ready."])
+        expect(calls.filter(call => call.text.includes(summary))).toHaveLength(1);
+      const items: Array<{id: string; notifiedAt?: number}> = await store.unseen(r.personId, now());
+      expect(items).toHaveLength(2);
+      expect(items.every(i => i.notifiedAt !== undefined)).toBe(true);
+      const deliveries: Array<{itemIds: string[]}> = await store.pendingDeliveries(r.personId);
+      expect(deliveries.flatMap(d => d.itemIds).sort()).toEqual(items.map(i => i.id).sort());
+      expect((await replica.dispatch(now(), sink)).sent).toHaveLength(0);
+      await queue.drain();
+      expect(calls).toHaveLength(deliveries.length);
+    } finally {
+      release(); await held; await Promise.allSettled(dispatches); await locker.close();
+    }
+  }, 30_000);
+
   test("seen on another surface while waiting in the queue: suppressed", async () => {
     const { now, store, notifier, queue, sink, sent: calls, r } = await setup();
     const it = (await notifier.add(req(r.personId, "pl2", "Dinner moved to 8."), now())).item;
