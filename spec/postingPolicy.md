@@ -38,3 +38,21 @@ pure def payRangeAllowed(low: int, high: int): bool =
 pure def lawPayRangeIsOrdered(low: int, high: int): bool =
   payRangeAllowed(low, high) implies low <= high
 ```
+
+### Confirm only the posting shown in the read-back
+
+Save a text draft only after an affirmative reply to its read-back. A reply
+that changes a field needs another read-back. When editing or closing a saved
+post, the version shown must still be current and open. The shell compares
+the stored fields and revision before applying the decision.
+
+```quint
+pure def confirmPosting(ready: bool, affirmative: bool, edited: bool, revisionMatches: bool): bool =
+  ready and affirmative and not(edited) and revisionMatches
+
+pure def lawEditedPostingNeedsReadback(ready: bool, affirmative: bool, revisionMatches: bool): bool =
+  not(confirmPosting(ready, affirmative, true, revisionMatches))
+
+pure def lawStalePostingCannotBeConfirmed(ready: bool, affirmative: bool, edited: bool): bool =
+  not(confirmPosting(ready, affirmative, edited, false))
+```

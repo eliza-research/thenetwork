@@ -29,3 +29,23 @@ export function lawPayRangeIsOrdered(low: number, high: number): boolean {
   //@ ensures \result === true
   return !payRangeAllowed(low, high) || low <= high;
 }
+
+/** Story: Publish a job with a clear pay range / Confirm only the posting shown in the read-back (spec/postingPolicy.md:42) */
+//@ pure
+export function confirmPosting(ready: boolean, affirmative: boolean, edited: boolean, revisionMatches: boolean): boolean {
+  return ready && affirmative && !edited && revisionMatches;
+}
+
+/** Story: Publish a job with a clear pay range / Confirm only the posting shown in the read-back (spec/postingPolicy.md:42) */
+//@ pure
+export function lawEditedPostingNeedsReadback(ready: boolean, affirmative: boolean, revisionMatches: boolean): boolean {
+  //@ ensures \result === true
+  return !confirmPosting(ready, affirmative, true, revisionMatches);
+}
+
+/** Story: Publish a job with a clear pay range / Confirm only the posting shown in the read-back (spec/postingPolicy.md:42) */
+//@ pure
+export function lawStalePostingCannotBeConfirmed(ready: boolean, affirmative: boolean, edited: boolean): boolean {
+  //@ ensures \result === true
+  return !confirmPosting(ready, affirmative, edited, false);
+}
