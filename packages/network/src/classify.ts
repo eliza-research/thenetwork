@@ -753,6 +753,34 @@ function clauseAt(t: string, i: number, len: number): string {
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
+/** A group word in a past-tense clause ("I had a great weekend", "this weekend was great") talks about the past, not about a future slot: it must not expand to its days. */
+const PAST_TENSE = /\b(had|was|were|did)\b/;
+const pastTenseAt = (t: string, i: number, len: number): boolean => PAST_TENSE.test(clauseAt(t, i, len));
+
+/** Evening by label hour: 5pm and later, before 5am. Same boundaries as the daypart mapping in #159. */
+const isEveningHour = (h: number): boolean => h >= 17 || h < 5;
+
+/**
+ * Hour from a probe label ("Thursday 7pm" -> 19). Used to map a daypart word onto offered slots.
+ * Morning: 5:00-11:59. Afternoon: 12:00-16:59. Evening/night: 17:00-4:59.
+ * Same boundaries as the daypart mapping in #159.
+ */
+function labelHour(label: string): number | undefined {
+  const m = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(label);
+  if (!m) return undefined;
+  let h = Number(m[1]);
+  if (h === 12) h = 0;
+  if (m[3]!.toLowerCase() === "pm") h += 12;
+  return h;
+}
+const daypartOfHour = (h: number): "morning" | "afternoon" | "evening" =>
+  h >= 5 && h < 12 ? "morning" : h >= 12 && h < 17 ? "afternoon" : "evening";
+/** Daypart words in a probe reply. "night" and "after work" read as evening. */
+const DAYPART_WORDS: [RegExp, "morning" | "afternoon" | "evening"][] = [
+  [/\bmornings?\b/g, "morning"],
+  [/\bafternoons?\b|\blunch\b/g, "afternoon"],
+  [/\b(?:evenings?|nights?|after work)\b/g, "evening"],
+];
 
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
@@ -795,9 +823,125 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // A part word in the same clause narrows a named day to that part of the day
+  // ("Saturday evening" is not the Saturday 11am slot; "Thursday morning" is not
+  // the Thursday 7pm slot). The part boundaries match the daypart mapping in #159
+  // (morning 5:00-11:59, afternoon 12:00-16:59, evening 17:00-4:59). A day part
+  // the probe did not offer is a counter-offer, like an unoffered day. Only matchAll
+  // is used on the shared daypart regexes: a .test() on them would leave lastIndex
+  // behind and make later calls order-dependent.
+  const sameClause = (a: number, b: number): boolean => {
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    return !/[.,;!?]|\b(but|though|however|although|so)\b/.test(t.slice(lo, hi));
+  };
+  const partsInClause = (at: number): Set<"morning" | "afternoon" | "evening"> => {
+    const parts = new Set<"morning" | "afternoon" | "evening">();
+    for (const [re, part] of DAYPART_WORDS) {
+      for (const pm of t.matchAll(re)) {
+        if (sameClause(at, pm.index!) && !negatedAt(t, pm.index!, pm[0].length)) parts.add(part);
+      }
+    }
+    return parts;
+  };
+  const partKeys = (keys: string[], parts: Set<"morning" | "afternoon" | "evening">): string[] =>
+    keys.filter(k => {
+      const o = options.find(o => o.key === k);
+      const h = o ? labelHour(o.label) : undefined;
+      return h !== undefined && parts.has(daypartOfHour(h));
+    });
+  let unofferedDayPart = false;
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (!keys.length) continue;
+    for (const m of t.matchAll(re)) {
+      const parts = partsInClause(m.index!);
+      if (!parts.size) { mark(keys, m.index!, m[0].length); continue; }
+      const narrowed = partKeys(keys, parts);
+      if (narrowed.length) mark(narrowed, m.index!, m[0].length);
+      else if (!negatedAt(t, m.index!, m[0].length)) unofferedDayPart = true;
+    }
+  }
+  // "Weekend" names the Saturday and Sunday options ("this weekend works" books only
+  // those; Thursday is not the weekend). With a part word in the same clause it names
+  // only the weekend options in that part ("weekend morning works" is the Saturday
+  // 11am slot, not the Thursday 7pm one). A weekend part the probe did not offer is
+  // a counter-offer, like an unoffered day.
+  const weekendKeys = options.filter(o => o.label.startsWith("Saturday") || o.label.startsWith("Sunday")).map(o => o.key);
+  let unofferedWeekend = false;
+  let unofferedWeekendPart = false;
+  for (const m of t.matchAll(/\bweekends?\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
+    const parts = partsInClause(m.index!);
+    if (!parts.size) {
+      if (weekendKeys.length) mark(weekendKeys, m.index!, m[0].length);
+      else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekend = true;
+      continue;
+    }
+    const narrowed = partKeys(weekendKeys, parts);
+    if (narrowed.length) mark(narrowed, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekendPart = true;
+  }
+  // "Weekday" names the Monday-to-Friday options ("any weekday works" books only those;
+  // Saturday and Sunday are not weekdays). A weekday the probe did not offer is a counter-offer, like an
+  // unoffered day: the member is free at a time that was not offered.
+  // With a daypart in the same clause ("weekday morning works"), only the weekday options
+  // in that part are named: the bare weekday reading must not also fire, or a morning
+  // reply would book the evening option too. A weekday part the probe did not offer is
+  // a counter-offer, like an unoffered day. The part boundaries match the daypart mapping
+  // in #159 (morning 5:00-11:59, afternoon 12:00-16:59, evening 17:00-4:59).
+  const weekdayKeys = options.filter(o => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].some(d => o.label.startsWith(d))).map(o => o.key);
+  const weekdayPartKeys = (part: "morning" | "afternoon" | "evening") => options.filter(o => {
+    if (!["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].some(d => o.label.startsWith(d))) return false;
+    const h = labelHour(o.label);
+    return h !== undefined && daypartOfHour(h) === part;
+  }).map(o => o.key);
+  let unofferedWeekday = false;
+  let unofferedWeekdayPart = false;
+  // A daypart word in the same clause as "weekday" (either order: "weekday morning",
+  // "mornings on weekdays"). A daypart refused in its own clause ("weekday mornings,
+  // not evenings") does not count. Only matchAll is used on the shared daypart regexes:
+  // a .test() on them would leave lastIndex behind and make later calls order-dependent.
+  for (const m of t.matchAll(/\bweekdays?\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
+    const parts = new Set<"morning" | "afternoon" | "evening">();
+    for (const [re, part] of DAYPART_WORDS) {
+      for (const pm of t.matchAll(re)) {
+        if (sameClause(m.index!, pm.index!) && !negatedAt(t, pm.index!, pm[0].length)) parts.add(part);
+      }
+    }
+    if (parts.size) {
+      const keys = [...new Set([...parts].flatMap(p => weekdayPartKeys(p)))];
+      if (keys.length) mark(keys, m.index!, m[0].length);
+      else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekdayPart = true;
+    } else if (weekdayKeys.length) mark(weekdayKeys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekday = true;
+  }
+  // "Weeknight" names the weekday-evening options ("a weeknight works" books only those;
+  // a Saturday 11am or a Thursday 11am is not a weeknight). The codebase already defines
+  // weeknights this way: availabilityTags maps them to days [1..5] with part "evening".
+  // The evening boundary (5pm and later, before 5am) matches the daypart mapping in #159.
+  // A weeknight the probe did not offer is a counter-offer, like an unoffered day.
+  const weeknightKeys = options.filter(o => {
+    if (!["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].some(d => o.label.startsWith(d))) return false;
+    const h = labelHour(o.label);
+    return h !== undefined && isEveningHour(h);
+  }).map(o => o.key);
+  let unofferedWeeknight = false;
+  for (const m of t.matchAll(/\bweeknights?\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
+    if (weeknightKeys.length) mark(weeknightKeys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeeknight = true;
+  }
+  // "During the week" names the Monday-to-Friday options ("during the week works" books only those;
+  // Saturday and Sunday are not during the week). The phrase carries no weekday word, so the
+  // DAY_WORDS loop above never sees it. A weekday the probe did not offer is a counter-offer, like an
+  // unoffered day: the member is free at a time that was not offered.
+  const duringWeekKeys = options.filter(o => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].some(d => o.label.startsWith(d))).map(o => o.key);
+  let unofferedDuringWeek = false;
+  for (const m of t.matchAll(/\bduring the week\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
+    if (duringWeekKeys.length) mark(duringWeekKeys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedDuringWeek = true;
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -814,6 +958,25 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  // A yes aimed at a weekday the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "a weekday works" when no weekday option was offered must not book
+  // the weekend. A named offered time still books that time.
+  if (unofferedWeekday && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+  // A yes aimed at a weeknight the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "a weeknight works" when no weekday-evening option was offered must not book
+  // the weekend or a weekday morning. A named offered time still books that time.
+  if (unofferedWeeknight && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+  // offered times: "during the week works" when no weekday option was offered must not book
+  // the weekend. A named offered time still books that time.
+  if (unofferedDuringWeek && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+  // A yes aimed at a weekday part the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "weekday morning works" when no weekday-morning option was offered must not book
+  // the weekend. A named offered time still books that time.
+  if (unofferedWeekdayPart && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+  // A yes aimed at a day part the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "weekend evening works" when no weekend-evening option was offered must not
+  // book the weekdays. A named offered time still books that time.
+  if ((unofferedDayPart || unofferedWeekend || unofferedWeekendPart) && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
