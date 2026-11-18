@@ -62,7 +62,11 @@ export class Scheduler {
   readonly queue = new EventQueue();
   private handlers = new Map<string, (ev: ScheduledEvent<any>) => void | Promise<void>>();
   processed = 0;
-  constructor(readonly clock: SimClock, private opts: SchedulerOptions) {}
+  constructor(readonly clock: SimClock, private opts: SchedulerOptions) {
+    if (opts.mode === "accelerated" && opts.speed !== undefined && (!Number.isFinite(opts.speed) || opts.speed <= 0)) {
+      throw new Error("accelerated speed must be a positive finite number");
+    }
+  }
 
   on<T>(kind: string, handler: (ev: ScheduledEvent<T>) => void | Promise<void>) { this.handlers.set(kind, handler as any); }
   at<T>(t: number, kind: string, data: T) { return this.queue.push(Math.max(t, this.clock.now()), kind, data); }
