@@ -233,7 +233,7 @@ export const PLAN_AGAIN_RE = /\bwould you do (this|that|it) again\b/i;
 export function planAgainAnswer(text: string): "yes" | "no" | "unclear" {
   const t = text.toLowerCase().replace(/[‘’]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed)\b/.test(t)) return "unclear";
-  if (/\b(probably not|not really|no\b|nah|wouldn'?t)\b/.test(t)) return "no";
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t (?:do (?:this|that|it)|go) again|not again|never again)\b/.test(t)) return "no";
   if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again)\b/.test(t)) return "yes";
   return "unclear";
 }
