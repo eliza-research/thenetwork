@@ -10,7 +10,7 @@ accepted merges and pays after maintainer review. There is no escrow.
 ## Before you start
 
 1. Star and fork the repository with the contributor's own GitHub account.
-   For normal contributions, open a PR from your fork into `main`.
+   For normal contributions, open a PR from your fork into `vibestack`.
 2. Read the [product specification](spec/product/README.md) and the affected
    Vibespec stories and rules. The product specification owns launch scope.
    The [founder decision history](spec/product/source/founder-decisions.md)
@@ -51,12 +51,24 @@ accepted merges and pays after maintainer review. There is no escrow.
 - Accepted: reproduced bugs, matching-algorithm and simulation validation, measured hill-climbing, security, and tests that prove real behavior (CONTRIBUTING.md section 3).
 - Not accepted: UI, style or copy changes, preference refactors, speculative features, busywork tests, mock-only proof, placeholders or TODOs, unverified claims, duplicates and secrets.
 - No UI changes. The only exception is a fix for a broken user flow, with before and after video.
-- Evidence or nothing: numbers before and after, same command and seeds, and a run with real LLM calls (CONTRIBUTING.md section 7.2). Mocked LLM output is not proof.
-- Test the changed flow in several agent clients and report client, version, provider and model for each (CONTRIBUTING.md section 8). Install other clients and drive them with computer use when they have no command line.
+- Reproduce the problem on the target branch before writing a fix. Show the
+  corrected result on the PR commit with the same inputs. Use real model
+  calls for changes to model-backed behavior.
+- Test changed agent flows in the affected clients. Report the client,
+  version, provider, model, and result for each (CONTRIBUTING.md section 8).
 - Simplify first: extend or merge what exists; remove dead code.
-- Validate with `bun run sim`, `bun run test:integration` and `bun run test:e2e`. A bug fix adds a sim gate, a scenario, a corpus row or an integration or e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
+- For application changes, validate with `bun run sim`,
+  `bun run test:integration` and `bun run test:e2e`. For a bug fix, add a sim gate,
+  scenario, corpus row, integration case, or e2e case that fails before the
+  fix. See [the test policy](docs/tests-policy.md).
 - Defend the design: give two other implementations.
-- Fill in the PR evidence checklist (CONTRIBUTING.md section 12.2).
+- Before opening or marking a PR ready, complete its `## Evidence` section.
+  Include change types, test results and proof of the change. Add before and
+  after UI video, redacted non-UI logs, benchmarks, or on-device results when
+  the change affects those paths. Follow the [evidence policy](CONTRIBUTING.md#evidence).
+- Maintainers close submissions that fail to prove a useful change or add
+  complexity to unlikely paths without proof of reachability and material impact.
+  Eligible Slop.cash submissions incur a Points debit under the published policy.
 - Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
 
 **Security suite** (`bun run security`, also part of `bun run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
