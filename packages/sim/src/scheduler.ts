@@ -72,18 +72,24 @@ export class Scheduler {
   async runUntil(until: number): Promise<void> {
     const sleep = this.opts.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
     const speed = this.opts.mode === "realtime" ? 1 : this.opts.speed ?? 1440;
+    let waitedUntil = this.clock.now();
     while (this.queue.size) {
       const next = this.queue.peek()!;
       if (next.at > until) break;
       if (this.opts.mode !== "discrete") {
-        const wallMs = (next.at - this.clock.now()) / speed;
-        if (wallMs > 0) await sleep(wallMs);
+        const wallMs = (next.at - Math.max(this.clock.now(), waitedUntil)) / speed;
+        if (wallMs > 0) {
+          await sleep(wallMs);
+          waitedUntil = next.at;
+        }
       }
-      this.queue.pop();
-      this.clock.set(Math.max(next.at, this.clock.now()));
-      const h = this.handlers.get(next.kind);
-      if (!h) throw new Error(`no handler for event kind ${next.kind}`);
-      await h(next);
+      // An earlier event may have arrived during sleep. Run the event we remove, and
+      // retain the time already waited so the displaced event does not wait twice.
+      const due = this.queue.pop()!;
+      this.clock.set(Math.max(due.at, this.clock.now()));
+      const h = this.handlers.get(due.kind);
+      if (!h) throw new Error(`no handler for event kind ${due.kind}`);
+      await h(due);
       this.processed++;
     }
     if (this.clock.now() < until) this.clock.set(until);
