@@ -108,7 +108,7 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
  * coverage) plus facets from their active connected sources. Hidden truth labels are stripped.
  * Minors (stated age < 18): every facet agent_private.
  */
-function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: string) => boolean, facets: Facet[], intents: Intent[], feat: SnapshotFeatures) {
+function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: string, at: number) => boolean, facets: Facet[], intents: Intent[], feat: SnapshotFeatures) {
   const minor = p.public.claimedAge < 18;
   const c = k.chat;
   const said = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
@@ -125,7 +125,7 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
   k.observations.forEach((o, i) => facets.push({ ...o.facet, tags: [...o.facet.tags], id: `${p.id}:s${facets.length}:${i}`, memberId: p.id, scope: minor ? "agent_private" : o.facet.scope }));
   for (const i of c.intents) {
     const it = p.public.statedIntents[i];
-    const rec = it && intentRecordTiming(p, i, now, jt, { unresponsive: unresponsive(p.id) });
+    const rec = it && intentRecordTiming(p, i, now, jt, { unresponsive: at => unresponsive(p.id, at) });
     if (!it || !rec) continue;
     const def = desireById.get(it.desireId);
     intents.push({
@@ -136,8 +136,32 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
   }
 }
 
+/** Replay the World's unanswered-message counter into intervals where check-ins get no answer. */
+function checkInSilence(s: SnapshotState): (id: MemberId, at: number) => boolean {
+  if (!s.records) return id => (s.unanswered.get(id) ?? 0) >= 2;
+  const counts = new Map<MemberId, number>();
+  const intervals = new Map<MemberId, { from: number; to?: number }[]>();
+  for (const r of s.records) {
+    if (r.type !== "message" || r.msg.ts > s.now) continue;
+    const m = r.msg, n = counts.get(m.memberId) ?? 0;
+    if (m.direction === "inbound") {
+      if (n >= 2) intervals.get(m.memberId)!.at(-1)!.to = m.ts;
+      counts.set(m.memberId, 0);
+    } else if (m.status === "delivered" && m.meta?.proactive) {
+      counts.set(m.memberId, n + 1);
+      if (n === 1) {
+        const spans = intervals.get(m.memberId) ?? [];
+        spans.push({ from: m.ts });
+        intervals.set(m.memberId, spans);
+      }
+    }
+  }
+  return (id, at) => (intervals.get(id) ?? []).some(x => x.from <= at && (x.to === undefined || at < x.to));
+}
+
 export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapshot {
   const feat: SnapshotFeatures = { ...SNAPSHOT_FEATURES, ...(s.features ?? {}) };
+  const unresponsive = checkInSilence(s);
   const joined = personas.filter(p => s.joined.has(p.id));
   const ids = new Set(joined.map(p => p.id));
   const members = joined.map(p => memberOf(p, s));
@@ -148,7 +172,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
   for (const p of joined) {
     const jt = s.joined.get(p.id)!;
     const k = p.knowledge;
-    if (k) pushKnownFacets(p, k, jt, s.now, id => (s.unanswered.get(id) ?? 0) >= 2, facets, intents, feat);
+    if (k) pushKnownFacets(p, k, jt, s.now, unresponsive, facets, intents, feat);
     else {
       const f = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
         ({ id: `${p.id}:f${facets.length}:${i}`, memberId: p.id, kind, value, tags, scope, provenance: "said", confidence: 0.8, validFrom: jt });
@@ -166,7 +190,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
       p.public.statedIntents.forEach((it, i) => {
         // Anchored to the snapshot's `now`: stated at join (or statedAt), re-confirmed at the
         // check-ins the member answered, withdrawn once the want lapsed (persona.ts).
-        const rec = intentRecordTiming(p, i, s.now, jt, { unresponsive: (s.unanswered.get(p.id) ?? 0) >= 2 });
+        const rec = intentRecordTiming(p, i, s.now, jt, { unresponsive: at => unresponsive(p.id, at) });
         if (!rec) return;
         const def = desireById.get(it.desireId);
         intents.push({
