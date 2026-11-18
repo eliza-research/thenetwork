@@ -360,7 +360,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       const invite = (f: Flow) => { if (co.adversary !== "scam") { hours -= S.interviewHours; recruiterHours += S.interviewHours; } schedule(f); };
       for (const f of pending.filter(x => !x.expired && x.onFile).sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1))) if (canInterview()) invite(f);
       const ats = u01(seed, "ats", co.id) < S.atsShare;
-      const unread = pending.filter(x => !x.expired && !x.onFile);
+      const unread = pending.filter(x => x.reviewed === undefined && !x.expired && !x.onFile);
       if (ats) unread.sort((a, b) => (looks(b) - looks(a)) || (a.week - b.week) || (a.cand < b.cand ? -1 : 1));
       const readCap = S.readBase + S.readPerUrgency * (j.urgency - 1);
       let reads = 0;
