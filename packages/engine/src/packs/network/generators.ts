@@ -297,6 +297,9 @@ export function warmPath(ctx: GenCtx): Candidate[] {
         if (!mb || isMinor(w, b) || isMinor(w, path.via)) continue;
         // Pair rules before ranking, so a blocked / dealbreaker pair never takes one of the slots.
         if (!w.canMeet([a, b]) || pairReason(w, a, b, intent.category)) continue;
+        const mv = w.get(path.via);
+        if (!mv || w.holds.has(path.via) || mv.m.state === "paused") continue;
+        if (w.blocked.has(pairKey(a, path.via)) || w.blocked.has(pairKey(b, path.via))) continue;
         const f = w.intentFit(intent, mb, "match");
         if (f.sim < w.cfg.retrieval.warmMinSim) continue;
         const role: Role = f.facet && ["skill", "offer", "resource"].includes(f.facet.kind) ? "provider" : "peer";
