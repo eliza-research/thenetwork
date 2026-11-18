@@ -94,7 +94,7 @@ pure def lawCarriedTrustHoldRequiresOneCurrentOwner(canonicalBan: bool, staffHol
 
 ### Keep the requested and result audits in order
 
-The audit stages are a run of their own, apart from the hold and ban runs. The action runs only after the request audit is recorded. An action that returns gets a subsequent result audit, and only after the action. Preserve the existing best-effort handling for a result-audit failure.
+The audit stages are a run of their own, apart from the hold and ban runs. The action runs only after the request audit is recorded. An action that returns gets a subsequent result audit, and only after the action. Preserve the existing best-effort handling for a result-audit failure. Changed on 2026-11-18 (audit OPS27): the leak-review release and drop, the inbound turn release and the phone-hold decision now follow this run too; before, the first two acted before their only audit row and the phone-hold decision wrote no result row.
 
 ```quint
 pure def canRecordRequestedSafetyAudit(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting

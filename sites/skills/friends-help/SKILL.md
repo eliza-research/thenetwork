@@ -74,8 +74,8 @@ phone number.
    If the browser recognized an existing membership, report its current status.
    Do not enroll them again or replace their profile. Stop for
    `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app, and tell the
-   person the returned `next_step`: for `not_joined` it is to connect again and
-   choose **Finish signup** on the connection page. For a new
+   person the returned `next_step`: for `not_joined` it is to disconnect the connector, connect
+   it again and choose **Finish signup** on the connection page. For a new
    signup confirmed in the browser, only `onboarding` or `active` allows the
    approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->

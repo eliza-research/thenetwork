@@ -51,7 +51,7 @@ pure def sometimesCanSave(unit: RuntimeUnit): bool = unit.phase == StateSaved
 
 ### The engine runs on a snapshot outside the store lock
 
-A tick that reaches its engine run under the lock does not compute there. It records the engine request from the state that it loaded, ends that unit without a save, and releases the lock. The engine run, with its model judge, then computes without the lock, so inbound turns and staff actions do not wait for it. A second unit waits for the lock, loads the newest state, ticks again, and uses the computed result in place of the engine call. While a computation of this store is in flight, a new tick does not start. A tick computes at most twice; when its commit still asks for a different run, the tick saves nothing and the next tick starts again. Changed (audit OPS23): the engine and its model judge ran under the lock, so a signed turn waited behind the daily run past the 8 second turn limit.
+A tick that reaches its engine run under the lock does not compute there. It records the engine request from the state that it loaded, ends that unit without a save, and releases the lock. The engine run, with its model judge, then computes without the lock, so inbound turns and staff actions do not wait for it. A second unit waits for the lock, loads the newest state, ticks again, and uses the computed result in place of the engine call. While a computation of this store is in flight in this process, a new tick of this process does not start. A tick of another process can still take the free lock; its commit then loads the newest state, so it never commits the same daily run twice, but each such process pays for its own engine run and model judge (docs/deploy.md asks for one ticking replica for this reason). A tick computes at most twice; when its commit still asks for a different run, the tick saves nothing and the next tick starts again. The commit unit ticks at the time that the tick started, not at the time that the computation ended: the result is compared with an input built at that time. So the expiries, the deferred-send timing, and the last tick time of that commit are late by the compute time; the delivery queue checks quiet hours, caps, consent, and bans again at send time with its own clock. Changed (audit OPS23): the engine and its model judge ran under the lock, so a signed turn waited behind the daily run past the 8 second turn limit. Changed (OPS23 review): the rule now records the late commit time and the cost of a second process.
 
 ```quint
 pure val maxEngineAttempts: int = 2
@@ -61,26 +61,39 @@ pure def tickMayStartBesideEngine(engineInFlight: bool): bool = not(engineInFlig
 pure def engineAttemptAllowed(attempt: int): bool = attempt >= 0 and attempt < maxEngineAttempts
 
 pure def lawComputingTickSkips(engineInFlight: bool): bool = engineInFlight implies not(tickMayStartBesideEngine(engineInFlight))
-
-pure def lawEngineAttemptsBounded(attempt: int): bool = engineAttemptAllowed(attempt) implies attempt < maxEngineAttempts
 ```
 
 ### A prepared engine result commits only for members whose evidence did not change
 
-The commit uses the computed result only for the same run: the same run key (the kind of run and its New York day), the same engine configuration, and the same evidence that names no member. Otherwise the tick computes again. A proposal, an engine question, or a standing row of the result commits only when every member that it names has the same engine evidence in the commit's input as in the input that was computed. The commit then applies every eligibility gate of the tick to the newest state (opt-out, blocks, age, holds, bans), and the delivery queue checks consent and bans again at send time. Changed (audit OPS23): new with the lock-free engine run, so that a member who stopped, was banned, or changed during the run is not contacted from the old snapshot.
+The commit uses the computed result only for the same run: the same run key (the kind of run and its New York day), the same engine configuration, and the same shared evidence. Otherwise the tick computes again. Each entry of the engine input has one owner. A public event is its own evidence, an entry that names a member is evidence of each member that it names, and only the rest (the run time and entries that name no member and no event) is shared. A proposal, an engine question, or a standing row of the result commits only when no owner that it names (its members, and the public event that anchors a proposal) has different evidence in the commit's input than in the computed input. The commit then applies every eligibility gate of the tick to the newest state (opt-out, blocks, age, holds, bans), and the delivery queue checks consent and bans again at send time. Changed (audit OPS23): new with the lock-free engine run, so that a member who stopped, was banned, or changed during the run is not contacted from the old snapshot. Changed (OPS23 review): public events were shared evidence, so an event that started during a long run dropped the whole result and made the tick compute again; now only a proposal anchored to that event is dropped.
 
 ```quint
+type EvidenceOwner = SharedEvidence | MemberEvidence | EventEvidence
+
+pure def evidenceOwner(publicEvent: bool, namesMember: bool): EvidenceOwner =
+  if (publicEvent) EventEvidence else if (namesMember) MemberEvidence else SharedEvidence
+
+pure def lawMemberEntryIsNeverShared(publicEvent: bool, namesMember: bool): bool =
+  namesMember implies evidenceOwner(publicEvent, namesMember) != SharedEvidence
+
+pure def lawEventEntryIsItsOwnEvidence(publicEvent: bool, namesMember: bool): bool =
+  publicEvent implies evidenceOwner(publicEvent, namesMember) == EventEvidence
+
 pure def preparedRunUsable(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool): bool =
   sameKey and sameConfig and sameSharedEvidence
 
-pure def preparedItemCommits(runUsable: bool, membersUnchanged: bool): bool = runUsable and membersUnchanged
+pure def preparedItemCommits(runUsable: bool, named: Set[str], changed: Set[str]): bool =
+  runUsable and not(named.exists(owner => changed.contains(owner)))
 
-pure def lawChangedMemberNeverCommits(runUsable: bool, membersUnchanged: bool): bool =
-  not(membersUnchanged) implies not(preparedItemCommits(runUsable, membersUnchanged))
+pure def lawChangedOwnerNeverCommits(runUsable: bool, named: Set[str], changed: Set[str], owner: str): bool =
+  (named.contains(owner) and changed.contains(owner)) implies not(preparedItemCommits(runUsable, named, changed))
 
-pure def lawStaleRunNeverCommits(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool, membersUnchanged: bool): bool =
+pure def lawUnchangedItemOfUsableRunCommits(named: Set[str], changed: Set[str]): bool =
+  named.forall(owner => not(changed.contains(owner))) implies preparedItemCommits(true, named, changed)
+
+pure def lawStaleRunNeverCommits(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool, named: Set[str], changed: Set[str]): bool =
   not(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence))
-    implies not(preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), membersUnchanged))
+    implies not(preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), named, changed))
 ```
 
 ### Runtime follow-up depends on the adapter and whether the tick ran

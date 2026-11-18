@@ -47,7 +47,7 @@ pure def sometimesLinkRefused(link: PhotoUploadLink): bool = link.phase == Uploa
 
 ### A link uploads once, before it expires, on its own app, for a holder who is still eligible
 
-Every use of an open link closes it. The use uploads only when the request reaches the link's own app before the expiry and the holder passes the same checks again at use. Any other use closes the link with nothing stored, so a member asks for a new link. The shell rejects a request without the current photo consent, or with an empty or oversized batch, before it uses the link. A consent sent with the batch is recorded on the membership before storage.
+Every use of an open link closes it. The use uploads only when the request reaches the link's own app before the expiry and the holder passes the same checks again at use. Any other use closes the link with nothing stored, so a member asks for a new link. The shell rejects a request from a still eligible holder without the current photo consent, or with an empty or oversized batch, before it uses the link; a holder who is no longer eligible closes the link even without the consent. Changed: before, a member who left the app (which clears the consent) got a consent error and kept an open link. A consent sent with the batch is recorded on the membership before storage.
 
 ```quint
 pure def uploadLinkUsable(link: PhotoUploadLink, holder: UploadLinkHolder, sameApp: bool, at: int): bool =
@@ -70,13 +70,14 @@ pure def lawMinorNeverUploads(link: PhotoUploadLink, holder: UploadLinkHolder, s
 pure def sometimesLinkSpent(link: PhotoUploadLink): bool = link.phase == UploadLinkSpent
 ```
 
-### One link use carries one to four photos of at most four MiB each
+### One link use carries one to four photos of at most four MiB each and eight MiB in all
 
-A batch has the size that one private rating reads, so every photo in it can be rated. Each photo then goes through the normal upload checks.
+A batch has the size that one private rating reads, so every photo in it can be rated. The whole batch is at most the size of one normal upload, eight MiB, so it fits under the nine MiB body that the site router and the backend's public port read. Each photo then goes through the normal upload checks. Changed: the eight MiB total is new; before, four photos of four MiB each were promised and the edge refused any batch over nine MiB before the backend saw it.
 
 ```quint
 import photoPolicy as Policy from "./photoPolicy"
 
-pure def uploadLinkBatchAllowed(count: int, largestBytes: int): bool =
+pure def uploadLinkBatchAllowed(count: int, largestBytes: int, totalBytes: int): bool =
   count >= 1 and count <= Policy::ratingMaxPhotos and largestBytes >= 1 and largestBytes <= Policy::ratingMaxBytes
+    and totalBytes >= largestBytes and totalBytes <= Policy::uploadMaxBytes
 ```

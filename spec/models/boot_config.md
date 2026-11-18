@@ -222,6 +222,11 @@ module boot_config {
       // `turnstile` and not modeled separately).
       not(d) or (c.turnLen >= MIN_SECRET_LENGTH and c.staffTokenLen >= MIN_SECRET_LENGTH),
     }
+  // Not modeled: spec/bootPolicy.md "Exactly one system answers the carrier's inbound messages" (audit SHA43) is a
+  // routing choice, not a refusal. With NETWORK_CHANNEL=eliza_cloud loadConfig sets blooioWebhook false and both
+  // listeners answer 404 webhook_not_served on /webhooks/blooio (backend.test.ts covers it). main.ts passes the same
+  // decision to serveService (packages/network/test/service-entry.integration.test.ts covers it). The rule that the
+  // turn secret is never also a staff token is not modeled (no token values here); the same test covers it.
 
   // The review option each entry passes to the NetworkService constructor (main.ts:51-55,
   // server.ts:74-90: `network: { seed }`, no review), so the ConsentNetwork default.
@@ -459,12 +464,16 @@ module boot_config {
     sitesKeep,
   }
 
+  // main.ts, right after the gate: spec/bootPolicy.md lineAndStaffProblems (review of audit OPS29), so a
+  // deployed main.ts refuses a short or missing turn secret or staff token, as loadConfig does.
   // main.ts:36-37: `NETWORK_DATABASE_URL || DATABASE_URL`, so a blank NETWORK_DATABASE_URL gives
   // DATABASE_URL, as the gate reads it (W3-458, fixed). Then outside dev main.ts:39-45 refuses a
   // superuser, BYPASSRLS or owner service login, as server.ts:57-60 (Q-boot_config-W4-3, fixed).
   action mainDbUrl = all {
     stage == "gated", entry == "main",
-    if (not(snap.db))
+    if (deployed(snap) and not(snap.turnLen >= MIN_SECRET_LENGTH and snap.staffTokenLen >= MIN_SECRET_LENGTH))
+      startFails("main_line_and_staff", false, dbEnv)
+    else if (not(snap.db))
       // The gate checked the database only for a deployed environment (env-core.ts:101,130).
       startFails(if (deployed(snap)) "main_db_url_after_gate" else "main_db_url", false, dbEnv)
     else if (declared(snap) != "dev" and not(snap.svcLoginOk)) startFails("service_login", false, dbEnv)

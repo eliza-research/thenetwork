@@ -165,7 +165,7 @@ export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boole
 
 const NOTICE = {
   whichMatch: "You have more than one match. Tell me which one this is for and I'll pass it on.",
-  holdExpired: "I couldn't check your last message to your match in time, so I didn't pass it on. You can send it again.",
+  holdExpired: "I couldn't check what you asked me to pass on to your match in time, so I didn't send it. You can send it again.",
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
   swapAlready: "I already asked them; I'll share your number if they want to swap too.",

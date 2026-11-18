@@ -72,7 +72,7 @@ import { agentSignalsOpenCase, handleAgentSignalReview, parseAgentSignals, recor
 import { MEMBER_FACT_PAGE_SIZE, memberFactCommand, memberFactEditPrompt, memberFactListText, memberFactReply, type MemberFactCommand } from "./member-fact-command.ts";
 import { ProfileFactEdits } from "./profile-fact-edits.ts";
 import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
-import { directReplyCollectable, openReplayAnswersCurrent, storedReplyAdmitted } from "../../core/src/generated/signedInbox.ts";
+import { collectedReplyMayLeave, directReplyCollectable, openReplayAnswersCurrent, storedReplyAdmitted } from "../../core/src/generated/signedInbox.ts";
 import { openTurnAnswer } from "../../core/src/generated/sharedContext.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
@@ -184,7 +184,7 @@ export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
 const MAX_BODY_BYTES = 256 * 1024;
 /** The fixed answer when a member's conversation context is unavailable (spec/sharedContext.md). */
-const CONTEXT_UNAVAILABLE_REPLY = "Sorry, I can't help with that right now. Please try again later.";
+export const CONTEXT_UNAVAILABLE_REPLY = "Sorry, I can't help with that right now. Please try again later.";
 export const WEBHOOK_PATH = "/webhooks/blooio";
 /**
  * STOP, START, HELP and "leave <app>" have one owner: this service, inside the signed turn
@@ -1522,6 +1522,8 @@ export class NetworkService implements RuntimeHost {
   onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
 
   onEraseAccount(fn: (personId: string) => Promise<unknown> | unknown) { this.accountEraseListeners.push(fn); }
+  /** Whether an account erasure hook (the connector's) is registered: the privacy replay of a restore waits for it. */
+  eraseHooksRegistered(): boolean { return this.accountEraseListeners.length > 0; }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId, ordinaryLeavePersonId?: string) {
@@ -2258,7 +2260,12 @@ export class NetworkService implements RuntimeHost {
           const own = e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
           const body = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId,
             change => { rt.unit.standingIntent = change; });
-          if (body) rt.system(memberId, `sys:${rowId}`, body, "reply", "standing_intent");
+          if (body) {
+            rt.system(memberId, `sys:${rowId}`, body, "reply", "standing_intent");
+            // The member's own intent references are hex digests that the line's phone pattern can read as a number.
+            const references = body.split(/\s+/).filter(token => /^\W*I-[0-9A-F]{12}\W*$/u.test(token));
+            if (references.length) (rt.unit.collectedPublicLinks ??= new Map()).set(`sys:${rowId}`, references);
+          }
           return "standing_intents" as const;
         } finally {
           rt.replyingTo = undefined;
@@ -2606,7 +2613,16 @@ export class NetworkService implements RuntimeHost {
         this.log(`[inbound] a ${kind} direct text to a number opted out of ${rt.app.id} was not collected (${id})`);
         return;
       }
-      await this.sql.begin(tx => this.inbox.collect(tx, [{id, body, kind: kind === "compliance" ? "compliance" : "reply"}]));
+      await this.sql.begin(async tx => {
+        const reply: CollectedReply = {id, body, kind: kind === "compliance" ? "compliance" : "reply"};
+        // spec/signedInbox.md, "Every collected reply passes the line's leak guard"
+        const reasons = await collectedReplyGuard(rt.adapter).collectedLeaks(tx, {id, to, kind: reply.kind, text: body});
+        if (!collectedReplyMayLeave(reasons.length)) {
+          this.log(`[alert] a direct reply failed the collected leak guard (${rt.id}, ${id})`);
+          return;
+        }
+        await this.inbox.collect(tx, [reply]);
+      });
       return;
     }
     await rt.adapter.direct(to, body, id, kind);
@@ -2757,7 +2773,7 @@ export class NetworkService implements RuntimeHost {
     await this.people.deletePending(this.phoneKey(e164), "share", app.id);
     if (person) {
       for (const m of await this.people.memberships(person.id)) {
-        if (m.app !== app.id && m.state !== "removed" && m.state !== "invited") await this.accounts.share(app, { e164, personId: person.id }, m.app, ["first_name", "city", "interests"]);
+        if (m.app !== app.id && m.state !== "removed" && m.state !== "invited") await this.accounts.share(app, { e164, personId: person.id }, m.app, ["interests"]);
       }
       await applyBaseProfileGrants({ people: this.people, banned: () => this.accounts.banned(e164, person), runtimeFor: a => this.runtimeFor(a), now: this.clock.now() },
         person.id, { app: app.id, memberId, runtime: rt });
@@ -3493,8 +3509,16 @@ export class NetworkService implements RuntimeHost {
         if (openTurnAnswer(!!context) === "AnswerOpen" && context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
         if (accountEligible && member) {
           const unavailable: CollectedReply = {id: `sys:${turn.id}:context`, body: CONTEXT_UNAVAILABLE_REPLY, kind: "reply"};
-          await this.sql.begin(tx => this.inbox.collect(tx, [unavailable]));
-          collected.push(unavailable);
+          const memberId = turn.memberId, guard = collectedReplyGuard(rt!.adapter);
+          const sent = await this.sql.begin(async tx => {
+            // spec/signedInbox.md, "Every collected reply passes the line's leak guard"
+            const reasons = await guard.collectedLeaks(tx, {id: unavailable.id, memberId, to: input.from, kind: "reply", text: unavailable.body});
+            if (!collectedReplyMayLeave(reasons.length)) return false;
+            await this.inbox.collect(tx, [unavailable]);
+            await guard.recordCollected(tx, [{id: unavailable.id, memberId, to: input.from, kind: "reply", text: unavailable.body}]);
+            return true;
+          });
+          if (sent) collected.push(unavailable);
           this.log(`[alert] ${turn.app}: a member's context is unavailable; the turn answers with the fixed reply`);
         }
       }
@@ -3518,13 +3542,6 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
-      if (handled.app && handled.replies.length) {
-        const number = await admission(handled.app);
-        // spec/signedInbox.md, "A stored ordinary reply goes out only while the number stays admitted"
-        if (!storedReplyAdmitted(handled.replyKind !== "compliance", number.optedOut, number.held, number.banned)) {
-          return json({error: "turn_context_changed", retryable: false}, 409);
-        }
-      }
       if (handled.replyKind !== "compliance" && handled.app && handled.memberId && handled.replyIds?.length) {
         const memberId = handled.memberId;
         const rt = await this.runtimeOfMember(handled.app, memberId);
@@ -3695,6 +3712,13 @@ export class NetworkService implements RuntimeHost {
       if (handled.reason === "onboarding_asked") {
         const current = await admission(handled.app ?? undefined);
         if (!current.allowed || current.age !== undefined) return json({error: "turn_onboarding_changed", retryable: false}, 409);
+      }
+      if (handled.app && handled.replies.length) {
+        const number = await admission(handled.app);
+        // spec/signedInbox.md, "A stored ordinary reply goes out only while the number stays admitted"
+        if (!storedReplyAdmitted(handled.replyKind !== "compliance", number.optedOut, number.held, number.banned)) {
+          return json({error: "turn_context_changed", retryable: false}, 409);
+        }
       }
       if (handled.app) await (handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : this.runtimeFor(handled.app))?.projectNotifications();
     }
@@ -4020,7 +4044,7 @@ export class NetworkService implements RuntimeHost {
         const b = await body(req) as Record<string, any> | undefined;
         if (typeof b?.id !== "string" || !b.id.startsWith("msg:") || b.id.length > 600) return json({ ok: false, error: "id_required" }, 400);
         const turnId = b.id;
-        return result(await this.auditedRun({ actor: user.id, roles: user.roles, action: "resolve_inbound_turn", mode: "real", app: rt.app.id }, {},
+        return result(await this.auditedRun({ actor: user.id, roles: user.roles, action: "resolve_inbound_turn", targetId: turnId, mode: "real", app: rt.app.id }, {},
           async () => (await this.inbox.resolve(turnId)) ? { ok: true } : { ok: false, reason: "not_stuck" }));
       }
       if (req.method === "GET" && path === "/bias") {

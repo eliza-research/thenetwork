@@ -73,7 +73,7 @@ pure def sometimesReviewRejects(relay: RelayLifecycle): bool = relay.phase == Re
 
 ### A held item that staff do not decide by its review deadline expires unsent
 
-The review deadline of a held item is the time it was held plus the network's review window, the same window that closes an unreviewed proposal. The deadline is exclusive: at the deadline the item expires, its text is cleared, and it can never be released or sent. The desk tells the sender that the item did not go and records a review expiry, which the operations alerts count as a missed review SLA. Before the deadline, a held item that waited longer than its app's review SLA raises the review SLA alert of the operations timing rules. New rule: a held item had no expiry and no alert (audit OPP21).
+The review deadline of a held item is the time it was held plus the network's review window, the same window that closes an unreviewed proposal. The deadline is exclusive: at the deadline the item expires, its text is cleared, and it can never be released or sent. The desk tells the sender that the item did not go, in one notice for all of that sender's items that expire together, and records a review expiry for each item, which the operations alerts count as a missed review SLA. Before the deadline, a held item that waited longer than its app's review SLA raises the review SLA alert of the operations timing rules. The desk expires due items at each tick and before each staff release or rejection, so a staff decision after the deadline finds the item expired. New rule: a held item had no expiry and no alert (audit OPP21).
 
 ```quint
 pure def canExpireHold(relay: RelayLifecycle, now: int, deadline: int): bool =

@@ -18,16 +18,16 @@ type RecipientVerdict = RecipientEligible | RecipientDeclined | RecipientUnknown
   RecipientBlockedPair | RecipientOtherNotMatchable | RecipientOtherHeld | RecipientOtherOnWatch
 
 type RecipientFacts = { declined: bool, known: bool, optedOut: bool, accountRestricted: bool, held: bool,
-  onlyWhenAsked: bool, minor: bool, onWatch: bool }
+  onlyWhenAsked: bool, notAdult: bool, onWatch: bool }
 type RecipientSend = { kind: str, reply: bool, proactive: bool, askKind: bool }
-type OtherParticipantFacts = { blocked: bool, present: bool, verifiedInvitee: bool, underage: bool,
+type OtherParticipantFacts = { blocked: bool, present: bool, verifiedInvitee: bool, notAdult: bool,
   restricted: bool, declinedAtJoin: bool, reportHeld: bool, watched: bool }
 
 pure val kindValues = Set("probe", "reveal", "safety", "reply", "reengage", "invite_notice", "cancellation", "info")
-pure val okOther: OtherParticipantFacts = { blocked: false, present: true, verifiedInvitee: false, underage: false,
+pure val okOther: OtherParticipantFacts = { blocked: false, present: true, verifiedInvitee: false, notAdult: false,
   restricted: false, declinedAtJoin: false, reportHeld: false, watched: false }
 pure val othersValues = Set(
-  List(), List(okOther), List(okOther, { ...okOther, blocked: true }), List({ ...okOther, underage: true }),
+  List(), List(okOther), List(okOther, { ...okOther, blocked: true }), List({ ...okOther, notAdult: true }),
   List({ ...okOther, present: false }), List({ ...okOther, present: false, verifiedInvitee: true }),
   List({ ...okOther, reportHeld: true }), List({ ...okOther, watched: true }),
 )
@@ -45,26 +45,26 @@ pure def recipientOwnVerdict(recipient: RecipientFacts, send: RecipientSend): Re
   else RecipientEligible
 
 pure def lawOptedOutIsNeverEligible(kind: str, reply: bool, proactive: bool, askKind: bool, accountRestricted: bool,
-    held: bool, onlyWhenAsked: bool, minor: bool, onWatch: bool): bool =
+    held: bool, onlyWhenAsked: bool, notAdult: bool, onWatch: bool): bool =
   recipientOwnVerdict({ declined: false, known: true, optedOut: true, accountRestricted: accountRestricted, held: held,
-    onlyWhenAsked: onlyWhenAsked, minor: minor, onWatch: onWatch },
+    onlyWhenAsked: onlyWhenAsked, notAdult: notAdult, onWatch: onWatch },
     { kind: kind, reply: reply, proactive: proactive, askKind: askKind }) == RecipientOptedOut
 
-pure def lawDeclinedComesFirst(kind: str, reply: bool, known: bool, optedOut: bool, held: bool, minor: bool): bool =
+pure def lawDeclinedComesFirst(kind: str, reply: bool, known: bool, optedOut: bool, held: bool, notAdult: bool): bool =
   recipientOwnVerdict({ declined: true, known: known, optedOut: optedOut, accountRestricted: false, held: held,
-    onlyWhenAsked: false, minor: minor, onWatch: false },
+    onlyWhenAsked: false, notAdult: notAdult, onWatch: false },
     { kind: kind, reply: reply, proactive: false, askKind: false }) == RecipientDeclined
 
 pure def lawHeldGetsNothingAboutAnother(kind: str, reply: bool, proactive: bool, askKind: bool, onlyWhenAsked: bool): bool =
   Outreach::outreachRequiresAdult(kind) implies
     recipientOwnVerdict({ declined: false, known: true, optedOut: false, accountRestricted: false, held: true,
-      onlyWhenAsked: onlyWhenAsked, minor: false, onWatch: false },
+      onlyWhenAsked: onlyWhenAsked, notAdult: false, onWatch: false },
       { kind: kind, reply: reply, proactive: proactive, askKind: askKind }) == RecipientHeld
 ```
 
 ### A message about another member needs two adults with no block between them
 
-New rule: before this module, `checkRecipient` held these checks by hand. Only the kinds that outreach policy marks as about another member need these checks. For those kinds, a minor recipient and a recipient on watch get nothing. Then the module checks each other person the message is about. A block in either direction refuses the send. An unknown person, a minor, a paused or restricted account, or a person declined at join cannot be in the message. The one exception is an invitation notice about a verified invitee who joined and has no member record in this app yet. An open report on another person, or another person on watch, refuses the send. Each check covers every other person before the next check, so the verdict names the first failed check, not the first failed person. Neutral cancellations, replies and safety notices do not take these checks: a minor can get the notice that a plan is off.
+New rule: before this module, `checkRecipient` held these checks by hand. Only the kinds that outreach policy marks as about another member need these checks. For those kinds, a minor recipient and a recipient on watch get nothing. Then the module checks each other person the message is about. A block in either direction refuses the send. An unknown person, a minor, a paused or restricted account, or a person declined at join cannot be in the message. The one exception is an invitation notice about a verified invitee who joined and has no member record in this app yet. An open report on another person, or another person on watch, refuses the send. Each check covers every other person before the next check, so the verdict names the first failed check, not the first failed person. Neutral cancellations, replies and safety notices do not take these checks: a minor can get the notice that a plan is off. Changed in review: the age fact is now "not a known adult" (`notAdult`) for the recipient and for each other person, in place of the minor flag alone. The shell sets it for a minor, a minor signal or report, an unknown or conflicting age, and a lowest known age that cannot be matched, the same reading as every other adult gate in the Network, because the product rule says that an unknown age is not eligible and the minor flag alone let a member with no age on record get or be named in a message about another member. The refusal reasons stay "minor" and "other_not_matchable".
 
 ```quint
 pure def otherParticipantSkipped(kind: str, other: OtherParticipantFacts): bool =
@@ -72,7 +72,7 @@ pure def otherParticipantSkipped(kind: str, other: OtherParticipantFacts): bool 
 
 pure def otherParticipantUnmatchable(kind: str, other: OtherParticipantFacts): bool =
   not(otherParticipantSkipped(kind, other)) and
-    (not(other.present) or other.underage or other.restricted or other.declinedAtJoin)
+    (not(other.present) or other.notAdult or other.restricted or other.declinedAtJoin)
 
 pure def anyOtherBlocked(others: List[OtherParticipantFacts]): bool = others.some(o => o.blocked)
 pure def anyOtherUnmatchable(kind: str, others: List[OtherParticipantFacts]): bool =
@@ -86,7 +86,7 @@ pure def recipientVerdict(recipient: RecipientFacts, send: RecipientSend, others
   val own = recipientOwnVerdict(recipient, send)
   if (own != RecipientEligible) own
   else if (not(Outreach::outreachRequiresAdult(send.kind))) RecipientEligible
-  else if (recipient.minor) RecipientMinor
+  else if (recipient.notAdult) RecipientMinor
   else if (recipient.onWatch) RecipientOnWatch
   else if (anyOtherBlocked(others)) RecipientBlockedPair
   else if (anyOtherUnmatchable(send.kind, others)) RecipientOtherNotMatchable
@@ -94,25 +94,31 @@ pure def recipientVerdict(recipient: RecipientFacts, send: RecipientSend, others
   else if (anyOtherWatched(send.kind, others)) RecipientOtherOnWatch
   else RecipientEligible
 
-pure def lawMinorNeverGetsMessageAboutAnother(kind: str, reply: bool, proactive: bool, askKind: bool,
+pure def lawNotAdultNeverGetsMessageAboutAnother(kind: str, reply: bool, proactive: bool, askKind: bool,
     held: bool, onlyWhenAsked: bool, onWatch: bool, others: List[OtherParticipantFacts]): bool =
   Outreach::outreachRequiresAdult(kind) implies
     recipientVerdict({ declined: false, known: true, optedOut: false, accountRestricted: false, held: held,
-      onlyWhenAsked: onlyWhenAsked, minor: true, onWatch: onWatch },
+      onlyWhenAsked: onlyWhenAsked, notAdult: true, onWatch: onWatch },
       { kind: kind, reply: reply, proactive: proactive, askKind: askKind }, others) != RecipientEligible
 
-pure def lawBlockedPairIsNeverEligible(kind: str, reply: bool, proactive: bool, minor: bool, onWatch: bool,
+pure def lawNotAdultOtherIsNeverInMessage(kind: str, reply: bool, proactive: bool, others: List[OtherParticipantFacts]): bool =
+  (Outreach::outreachRequiresAdult(kind) and others.some(o => o.notAdult and o.present)) implies
+    recipientVerdict({ declined: false, known: true, optedOut: false, accountRestricted: false, held: false,
+      onlyWhenAsked: false, notAdult: false, onWatch: false },
+      { kind: kind, reply: reply, proactive: proactive, askKind: false }, others) != RecipientEligible
+
+pure def lawBlockedPairIsNeverEligible(kind: str, reply: bool, proactive: bool, notAdult: bool, onWatch: bool,
     others: List[OtherParticipantFacts]): bool =
   (Outreach::outreachRequiresAdult(kind) and anyOtherBlocked(others)) implies
     recipientVerdict({ declined: false, known: true, optedOut: false, accountRestricted: false, held: false,
-      onlyWhenAsked: false, minor: minor, onWatch: onWatch },
+      onlyWhenAsked: false, notAdult: notAdult, onWatch: onWatch },
       { kind: kind, reply: reply, proactive: proactive, askKind: false }, others) != RecipientEligible
 
 pure def lawRefusalIsFinal(kind: str, reply: bool, proactive: bool, askKind: bool, declined: bool, known: bool,
-    optedOut: bool, accountRestricted: bool, held: bool, onlyWhenAsked: bool, minor: bool, onWatch: bool,
+    optedOut: bool, accountRestricted: bool, held: bool, onlyWhenAsked: bool, notAdult: bool, onWatch: bool,
     others: List[OtherParticipantFacts]): bool =
   val recipient = { declined: declined, known: known, optedOut: optedOut, accountRestricted: accountRestricted,
-    held: held, onlyWhenAsked: onlyWhenAsked, minor: minor, onWatch: onWatch }
+    held: held, onlyWhenAsked: onlyWhenAsked, notAdult: notAdult, onWatch: onWatch }
   val send = { kind: kind, reply: reply, proactive: proactive, askKind: askKind }
   recipientOwnVerdict(recipient, send) != RecipientEligible implies
     recipientVerdict(recipient, send, others) == recipientOwnVerdict(recipient, send)

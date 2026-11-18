@@ -301,9 +301,16 @@ export function privacySupportAllowed(globalRoles: string[], reasonLength: numbe
 
 /** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
 //@ pure
-export function lawSupportNeedsGlobalAdmin(globalRoles: string[], reasonLength: number): boolean {
+export function lawSupportWithoutGlobalAdminRefused(globalRoles: string[], reasonLength: number): boolean {
   //@ ensures \result === true
-  return !privacySupportAllowed(globalRoles, reasonLength) || globalRoles.includes("admin");
+  return !(!globalRoles.includes("admin")) || !privacySupportAllowed(globalRoles, reasonLength);
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
+//@ pure
+export function lawSupportReasonOutsideBoundsRefused(globalRoles: string[], reasonLength: number): boolean {
+  //@ ensures \result === true
+  return !(reasonLength < privacySupportReasonMin || reasonLength > privacySupportReasonMax) || !privacySupportAllowed(globalRoles, reasonLength);
 }
 
 /** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */

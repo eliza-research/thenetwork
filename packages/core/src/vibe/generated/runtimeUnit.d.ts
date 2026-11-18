@@ -5,6 +5,8 @@ export type UnitPhase = "LoadingSnapshot" | "RestoringSnapshot" | "RunningAction
 export interface RuntimeUnit {
     phase: UnitPhase;
 }
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export type EvidenceOwner = "SharedEvidence" | "MemberEvidence" | "EventEvidence";
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 export type StartupPlan = "RecoverDeliveryQueue" | "RepairProjection";
 /** One variant per transition in the spec. */
@@ -56,16 +58,22 @@ export declare function tickMayStartBesideEngine(engineInFlight: boolean): boole
 export declare function engineAttemptAllowed(attempt: number): boolean;
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
 export declare function lawComputingTickSkips(engineInFlight: boolean): boolean;
-/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
-export declare function lawEngineAttemptsBounded(attempt: number): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 export declare function preparedRunUsable(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-export declare function preparedItemCommits(runUsable: boolean, membersUnchanged: boolean): boolean;
+export declare function preparedItemCommits(runUsable: boolean, named: string[], changed: string[]): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-export declare function lawChangedMemberNeverCommits(runUsable: boolean, membersUnchanged: boolean): boolean;
+export declare function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-export declare function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean, membersUnchanged: boolean): boolean;
+export declare function lawChangedOwnerNeverCommits(runUsable: boolean, named: string[], changed: string[], owner: string): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function lawUnchangedItemOfUsableRunCommits(named: string[], changed: string[]): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean, named: string[], changed: string[]): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 export declare function matchingDisabledByRegistry(matchingAllowed: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */

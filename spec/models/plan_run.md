@@ -174,8 +174,10 @@ module plan_run {
   pure def bookedNear(e: Env, m: str): bool = e.intro.get(m) == "booked"
 
   /**
-   * checkRecipient (network.ts:4219) for an ABOUT_OTHERS kind (probe, reveal): the reason, and the set of
-   * other members that caused a refusal.
+   * checkRecipient for an ABOUT_OTHERS kind (probe, reveal): the reason, and the set of other members that
+   * caused a refusal. The code's verdict is recipientVerdict (spec/recipientEligibility.md); this model keeps
+   * its order for the facts it tracks and merges the other-person reasons into "other". The minors set stands for the
+   * code's notAdult fact: a minor, a minor signal or report, or an unknown or conflicting age.
    */
   pure def checkRecipient(e: Env, id: str, about: Set[str]): (str, Set[str]) =
     if (e.optedOut.contains(id)) ("opted_out", Set())
@@ -436,7 +438,9 @@ module plan_run {
       val o1 = { ...o, alternates: o.alternates.exclude(Set(m)), excused: o.excused.union(Set(m)) }
       if (wasAlternate and not(o1.participants.contains(m)) and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
       // A minor who was asked and then replaced is still on the roster: the plan closes, booked or not
-      // (spec/opportunityLifecycle.md, closesForMinor); a booked plan on closeBooking.
+      // (spec/opportunityLifecycle.md, closesForMinor); a booked plan on closeBooking. In the code, a member asked
+      // about an earlier plan whose time and place this plan keeps (a replacement, a fallback partner plan, a repeat)
+      // counts as contacted here too (network.ts minorKnows, timeAndPlaceChain); this model has one plan.
       else if (minor and o1.contacted.contains(m) and not(o1.participants.contains(m)))
         done(if (o1.stage == "scheduled") closeBookingF(e, o1, "minors policy") else closeF(e, o1, "minors policy"))
       else if (not(o1.participants.contains(m))) done(o1)

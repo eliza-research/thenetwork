@@ -60,3 +60,21 @@ pure def lawNamedTargetIsLive(liveMatches: int, named: bool, namedLive: bool): b
   relayTarget(liveMatches, named, namedLive) == RelayToNamedMatch implies (named and namedLive)
 ```
 
+
+### A number ask with several live matches is never scored as abuse
+
+A member who asks for a match's number ("can I get her number?") starts a number swap. The shell finds every "<whose> number" in the text and checks that each one is a pronoun or the first name of one of the member's live matches, and that the rest of the text names no other contact detail. With one live match, such an ask opens the turn as before. With two or more live matches, it also opens the turn, unscored, so the agent's relay call gets the desk's "which match" question; the desk never guesses. Without a live match, or with a name that is not a live match, or with another contact detail, the text stays contact extraction and is scored. New rule: with two live matches, the desk found no single match, so the usual number ask was scored as abuse and gave the member a trust risk point (review of audit SHA38).
+
+```quint
+type NumberAskChoice = NumberAskOpens | NumberAskScored
+
+pure def numberAsk(liveMatches: int, asks: bool, everyAskNamesLiveMatch: bool, otherContact: bool): NumberAskChoice =
+  if (liveMatches >= 1 and asks and everyAskNamesLiveMatch and not(otherContact)) NumberAskOpens
+  else NumberAskScored
+
+pure def lawNumberAskNeedsALiveMatch(liveMatches: int, asks: bool, everyAskNamesLiveMatch: bool, otherContact: bool): bool =
+  numberAsk(liveMatches, asks, everyAskNamesLiveMatch, otherContact) == NumberAskOpens implies (liveMatches >= 1 and asks and everyAskNamesLiveMatch and not(otherContact))
+
+pure def lawSeveralMatchesAreNotAbuse(liveMatches: int): bool =
+  liveMatches > 1 implies numberAsk(liveMatches, true, true, false) == NumberAskOpens
+```

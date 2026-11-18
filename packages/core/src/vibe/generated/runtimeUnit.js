@@ -96,12 +96,6 @@ export function lawComputingTickSkips(engineInFlight) {
     //@ ensures \result === true
     return !engineInFlight || !tickMayStartBesideEngine(engineInFlight);
 }
-/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
-//@ pure
-export function lawEngineAttemptsBounded(attempt) {
-    //@ ensures \result === true
-    return !engineAttemptAllowed(attempt) || attempt < maxEngineAttempts;
-}
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 //@ pure
 export function preparedRunUsable(sameKey, sameConfig, sameSharedEvidence) {
@@ -109,20 +103,43 @@ export function preparedRunUsable(sameKey, sameConfig, sameSharedEvidence) {
 }
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 //@ pure
-export function preparedItemCommits(runUsable, membersUnchanged) {
-    return runUsable && membersUnchanged;
+export function preparedItemCommits(runUsable, named, changed) {
+    return runUsable && !named.some((owner) => changed.includes(owner));
 }
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 //@ pure
-export function lawChangedMemberNeverCommits(runUsable, membersUnchanged) {
-    //@ ensures \result === true
-    return !(!membersUnchanged) || !preparedItemCommits(runUsable, membersUnchanged);
+export function evidenceOwner(publicEvent, namesMember) {
+    return publicEvent ? "EventEvidence" : (namesMember ? "MemberEvidence" : "SharedEvidence");
 }
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 //@ pure
-export function lawStaleRunNeverCommits(sameKey, sameConfig, sameSharedEvidence, membersUnchanged) {
+export function lawChangedOwnerNeverCommits(runUsable, named, changed, owner) {
     //@ ensures \result === true
-    return !(!preparedRunUsable(sameKey, sameConfig, sameSharedEvidence)) || !preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), membersUnchanged);
+    return !(named.includes(owner) && changed.includes(owner)) || !preparedItemCommits(runUsable, named, changed);
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawUnchangedItemOfUsableRunCommits(named, changed) {
+    //@ ensures \result === true
+    return !(!named.some((owner) => !(!changed.includes(owner)))) || preparedItemCommits(true, named, changed);
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawStaleRunNeverCommits(sameKey, sameConfig, sameSharedEvidence, named, changed) {
+    //@ ensures \result === true
+    return !(!preparedRunUsable(sameKey, sameConfig, sameSharedEvidence)) || !preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), named, changed);
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawMemberEntryIsNeverShared(publicEvent, namesMember) {
+    //@ ensures \result === true
+    return !namesMember || evidenceOwner(publicEvent, namesMember) !== "SharedEvidence";
+}
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawEventEntryIsItsOwnEvidence(publicEvent, namesMember) {
+    //@ ensures \result === true
+    return !publicEvent || evidenceOwner(publicEvent, namesMember) === "EventEvidence";
 }
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure

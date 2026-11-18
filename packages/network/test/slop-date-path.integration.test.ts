@@ -177,6 +177,17 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       expect([words, r.ok, r.code ?? r.error ?? r.reason]).toEqual([words, false, "edit_leak"]);
     }
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
+    // spec/probeDispatch.md, "A reviewer can read each first probe of the open revision" (audit OPP20, CRI13):
+    // the reviewer reads the words of the slop date probe, with its age and distance bands, before approving.
+    const probesPath = (revision: number) => `/apps/slop/review/${encodeURIComponent(item.oppId)}/probes?revision=${revision}`;
+    expect(await (await staff(s, REVIEWER, "GET", probesPath(item.revision + 1))).json()).toEqual({ ok: false, error: "preview_unavailable" });
+    const previewed = await (await staff(s, REVIEWER, "GET", probesPath(item.revision))).json() as
+      { ok: boolean; preview: { app: string; revision: number; probes: { memberId: string; text: string | null; fallback?: string }[] } };
+    expect(previewed).toMatchObject({ ok: true, preview: { app: "slop", revision: item.revision } });
+    expect(previewed.preview.probes.map(p => p.memberId).sort()).toEqual([rae, sam].sort());
+    for (const p of previewed.preview.probes) expect(p.text).toMatch(/^(?![\s\S]*\b(Rae|Sam)\b)[\s\S]*\?/);
+    expect((await sql`select count(*)::int as n from network.staff_audit where action = 'read_review_probes' and target_id = ${item.oppId}`)[0].n).toBe(2);
+    expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
     expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision })).json() as any).ok).toBe(true);
 
     // A profile from Rae's own AI assistant (MCP submit_profile): learned, never the member's answer.
@@ -212,6 +223,13 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const [booked] = await sql`select state, meeting_at from network.opportunities where app_id = 'slop' and id = ${item.oppId}`;
     expect(booked?.state).toBe("SCHEDULED");
     for (const id of [rae, sam]) expect((await inbox(id)).some(m => /You're both in: a first date with/.test(m.body))).toBe(true);
+    // The first probe each member got is the text the reviewer read. The member asked first gets it word
+    // for word; the second member is offered only the times the first one picked.
+    const firstProbe = async (id: string) => (await inbox(id)).find(m => m.opp === item.oppId)?.body ?? "";
+    const withoutTimes = (t: string | null) => t?.replace(/: coffee, [^.]+\./, ": coffee, <times>.");
+    const delivered = await Promise.all(previewed.preview.probes.map(async p => ({ p, got: await firstProbe(p.memberId) })));
+    for (const { p, got } of delivered) expect(withoutTimes(got)).toBe(withoutTimes(p.text));
+    expect(delivered.filter(({ p, got }) => got === p.text).length).toBeGreaterThanOrEqual(1);
     expect(assistantTried).toBe(true);
     // The assistant's profile can't cancel the booked date or report anyone; only Rae's own texts do.
     await fromAssistant("Sorry, I can't make it anymore, cancel the date.");

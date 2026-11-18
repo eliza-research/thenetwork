@@ -1,5 +1,6 @@
 import { backendBoot, backendWebhookServed, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
-import { parseTokenGrants } from "../../packages/observatory/src/staff.ts";
+import { lineAndStaffFacts, lineAndStaffMessages } from "../../packages/network/service/line-staff-boot.ts";
+import { isBlooioWebhookPath } from "../../packages/network/service/serve.ts";
 import {
   backendAcceptsWork, canStartTimer, initial as lifecycleInitial, step as stepBackendLifecycle,
 } from "../../packages/core/src/generated/backendLifecycle.ts";
@@ -110,15 +111,14 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
   const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
-  const staffTokens = [...parseTokenGrants(e.NETWORK_SERVICE_TOKENS, { explicitApp: env === "production" }).keys()];
+  const lineStaff = lineAndStaffFacts(e, env === "production");
   const policy = backendBoot({
     environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), database: Boolean(databaseUrl),
     migrate: migrateOnBoot, migrationUrl: Boolean(e.MIGRATION_DATABASE_URL),
     sameLoginUrl: Boolean(e.MIGRATION_DATABASE_URL && databaseUrl && e.MIGRATION_DATABASE_URL === databaseUrl),
     turnstile: Boolean(e.TURNSTILE_SECRET_KEY), turnstileSite: Boolean(e.TURNSTILE_SITE_KEY?.trim()), proxyLength: proxySecret?.length ?? 0,
     hashLength: e.PLATFORM_HASH_KEY?.length ?? 0, leakKeyBytes: new TextEncoder().encode(e.LEAK_LABEL_KEY ?? "").length,
-    turnSecretLength: e.SERVICE_TURN_SECRET?.length ?? 0, staffTokenCount: staffTokens.length,
-    shortestStaffTokenLength: Math.min(...staffTokens.map(t => t.length), 0x7fffffff), publicEventsLogin: Boolean(e.NETWORK_PUBLIC_EVENTS_DATABASE_URL),
+    ...lineStaff, publicEventsLogin: Boolean(e.NETWORK_PUBLIC_EVENTS_DATABASE_URL),
   });
   const { deployed } = policy;
   const missing: string[] = [];
@@ -130,7 +130,6 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     if (policy.turnstileSiteMissing) missing.push("TURNSTILE_SITE_KEY");
     missing.push(...otpConfigProblems(e));
     if (policy.proxyMissing) missing.push("PLATFORM_PROXY_SECRET");
-    if (policy.staffTokensMissing) missing.push("NETWORK_SERVICE_TOKENS");
     if (policy.publicEventsLoginMissing) missing.push("NETWORK_PUBLIC_EVENTS_DATABASE_URL");
   }
   // Deployed: migrations run as the owner, the service as a login that RLS and the grants apply to
@@ -144,9 +143,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
   if (policy.leakKeyShort) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
-  // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
-  if (policy.turnSecretShort) throw new Error(`PLATFORM_ENV=${env} needs SERVICE_TURN_SECRET of at least ${SECRET_MIN} characters (the Eliza gateway's signed routes)`);
-  if (policy.staffTokenShort) throw new Error(`PLATFORM_ENV=${env} needs every NETWORK_SERVICE_TOKENS token to have at least ${SECRET_MIN} characters`);
+  // spec/bootPolicy.md, "Both entries refuse a deployment whose shared line or staff API could not work"
+  const lineStaffProblems = lineAndStaffMessages(policy, SECRET_MIN);
+  if (lineStaffProblems.length) throw new Error(`PLATFORM_ENV=${env} needs ${lineStaffProblems.join("; ")}`);
   // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
   const blooioWebhook = backendWebhookServed(e.NETWORK_CHANNEL ?? "");
 
@@ -191,7 +190,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (cloudAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=eliza_cloud without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
   if (channel === "eliza_cloud" && (!e.NETWORK_CLOUD_DELIVERY_ORIGIN || !e.SERVICE_TURN_SECRET || e.SERVICE_TURN_SECRET.length<32 || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("Cloud sends need NETWORK_CLOUD_DELIVERY_ORIGIN, SERVICE_TURN_SECRET and BLOOIO_FROM");
   if (channel === "blooio" && (!e.BLOOIO_API_KEY || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("live sends need BLOOIO_API_KEY and BLOOIO_FROM");
-  if (!staffTokens.length) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
+  if (!lineStaff.staffTokenCount) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (blooioWebhook && !e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
   if (!blooioWebhook && e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is ignored: with NETWORK_CHANNEL=eliza_cloud the Eliza gateway owns the carrier webhook and /webhooks/blooio is not served");
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
@@ -224,6 +223,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
  * through the channel adapter, which asks `allowed` (liveSendAllowed) per app. Replies to a signed
  * /internal/turn go back to the Eliza gateway in the response, and the gateway sends them: no backend
  * flag gates them, for any app. The founder has not decided to change either fact (audit PER34, SHA41).
+ * packages/network/test/live-send-table.integration.test.ts pins the turn-reply column at the signed turn route.
  */
 export interface LiveSendRow { app: AppId; flags: string[]; queued: "live" | "dry-run"; turnReplies: "sent by the gateway" }
 export function liveSendTable(e: Env, channel: BackendConfig["channel"], allowed: (env: Env, app: AppId) => boolean): LiveSendRow[] {
@@ -356,7 +356,7 @@ export interface BackendDeps {
   publicEvents?: () => Promise<unknown>;
 }
 
-const isBlooioWebhook = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
+const isBlooioWebhook = isBlooioWebhookPath;
 const MCP_PATH = /^\/(mcp(\/.*)?|oauth\/.*|\.well-known\/oauth-[a-z-]+(\/.*)?)$/;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 

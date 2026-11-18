@@ -127,10 +127,10 @@ export function lawExpiredLinkNeverUploads(holder: UploadLinkHolder, sameApp: bo
   return redeemUploadLink(local_0, holder, sameApp, exact_photoUploadLink(at + photoUploadLinkTtlMs)).phase !== "UploadLinkSpent";
 }
 
-/** Story: Add my photos with a private one-time link / One link use carries one to four photos of at most four MiB each (spec/photoUploadLink.md) */
+/** Story: Add my photos with a private one-time link / One link use carries one to four photos of at most four MiB each and eight MiB in all (spec/photoUploadLink.md) */
 //@ pure
-export function uploadLinkBatchAllowed(count: number, largestBytes: number): boolean {
-  return count >= 1 && count <= photoPolicy_ratingMaxPhotos && largestBytes >= 1 && largestBytes <= photoPolicy_ratingMaxBytes;
+export function uploadLinkBatchAllowed(count: number, largestBytes: number, totalBytes: number): boolean {
+  return count >= 1 && count <= photoPolicy_ratingMaxPhotos && largestBytes >= 1 && largestBytes <= photoPolicy_ratingMaxBytes && totalBytes >= largestBytes && totalBytes <= photoPolicy_uploadMaxBytes;
 }
 
 /** Do the rules allow this event in this state? */

@@ -132,12 +132,22 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
 
 const TICK_MS = 60_000;
 
-/** The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790). */
-export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
+/** The legacy carrier webhook route, with or without its app suffix. */
+export const isBlooioWebhookPath = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
+
+/**
+ * The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790).
+ * blooioWebhook is backendWebhookServed(NETWORK_CHANNEL): false when the Eliza gateway owns the carrier webhook.
+ */
+export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; blooioWebhook: boolean; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  const fetch = (req: Request) => !o.blooioWebhook && isBlooioWebhookPath(new URL(req.url).pathname)
+    ? Response.json({ ok: false, error: "webhook_not_served" }, { status: 404 })
+    : svc.fetch(req);
   // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 16 KB.
-  const server = await serveHttp({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
-  log(`listening on http://${o.host}:${server.port} (POST /webhooks/blooio[/:app], GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
+  const server = await serveHttp({ hostname: o.host, port: o.port, fetch, maxRequestBodySize: 256 * 1024 });
+  log(`listening on http://${o.host}:${server.port} (${o.blooioWebhook ? "POST /webhooks/blooio[/:app], " : ""}GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
   const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: 16 * 1024 });
   log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);

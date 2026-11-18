@@ -519,7 +519,7 @@ Do this once before the first real member joins, then on the first working day o
 ### 8.3 Restore for real (data loss or corruption) **[FOUNDER]**
 
 1. Stop the backend's ticks: set the `backend` service's replicas to 0. Nothing is sent while it is stopped.
-2. Restore into a new database, as in 8.2 step 2, with `--db network_restored_<date> --keep-privileges --replay` (the service and console logins need their grants; `--replay` carries the erasures, STOPs, leaves and bans made after the backup from `RESTORE_SOURCE_DATABASE_URL`, or use `--source-lost`: runbook-privacy.md section 3). After step 5, run `POST /privacy/replay` before you open public traffic. Pick the backup from before the problem (`--r2 postgres/production/<UTC time>`). Add `--roles` only when the target is a new, empty server: the script refuses it on the source server.
+2. Restore into a new database, as in 8.2 step 2, with `--db network_restored_<date> --keep-privileges --replay` (the service and console logins need their grants; `--replay` carries the erasures, STOPs, leaves and bans made after the backup from `RESTORE_SOURCE_DATABASE_URL`, or use `--source-lost`: runbook-privacy.md section 3). The backend runs the queued replay when it starts in step 5 (runbook-privacy.md section 3); `POST /privacy/replay` is only for items that stay open. Pick the backup from before the problem (`--r2 postgres/production/<UTC time>`). Add `--roles` only when the target is a new, empty server: the script refuses it on the source server.
 3. Check: `"mismatches":0`, and the spot checks of 8.2 step 4.
 4. In the restored database, create the service and console logins again only if they do not exist on that server (the dump keeps the roles without passwords). Set new passwords and update the variables.
 5. Point `NETWORK_DATABASE_URL`, `MIGRATION_DATABASE_URL` and the console's URLs at the restored database. Start the backend (replicas 1). The boot log must show `applied: 0` (or only the migrations newer than the backup).
@@ -556,15 +556,15 @@ Checked on 2026-10-09 against `packages/platform/src/accounts.ts` (`join` and `j
 
 ### 9.2 A member changes their own number (PRD F25)
 
-Settings page, "Change my number" (`POST /api/me/phone/start`, then `POST /api/me/phone/confirm`; `accounts.ts` `startNumberChange` and `confirmNumberChange`):
+The member tells their agent; the skill gives them the one-purpose link `https://<domain>/phone` (spec/phoneChange.md; the sites have no settings page). That page calls `POST /api/me/phone/start`, then `POST /api/me/phone/confirm`; `accounts.ts` `startNumberChange` and `confirmNumberChange`):
 
-1. The member logs in with a code to the current number. The change starts only within 10 minutes of that login (the confirmation from the existing number). After that the API answers 403 `reauth`.
+1. The member signs in on the current number: a platform code on an OTP site, or a Cloud phone proof on a Cloud sign-in site (`/api/auth/cloud/start` with `returnPath` `/phone`). The change starts only within 10 minutes of that sign-in (the confirmation from the existing number). After that the API answers 403 `reauth`. A member who no longer has the current number writes to help@ntwrk.party.
 2. A code goes to the new number through the same OTP service and limits as a login (Twilio Verify in production), at most 3 changes started per person a day. The answer is the same whether or not the new number is known.
 3. The member types that code within 15 minutes. Only then is the new number checked: a banned new number answers `review`, a number that belongs to anyone (a member, a number on hold) answers `number_in_use`, and nothing moves.
 4. The move, in one transaction (`PgPeopleStore.movePhone`): the phone identity, the consent history (copied to the new number, then the old number's rows deleted; a STOP from the new number that is newer still wins), the person's keyed phone hash (linked agents' OAuth grants move with it), and the age floor (the lowest of both numbers). The old number's sessions, codes and pending text flows end. Messages still waiting in the outbound queue for the old number end unsent (`suppressed_ineligible`, note "number changed"). A delete of everything by an earlier owner of the new number no longer suppresses it. If the new number's age floor is lower, the person's lowest age follows and every app's member follows it.
-5. The browser gets a new session on the new number. The backend refreshes every network's member addresses at once (`deploy/backend/server.ts`).
+5. On an OTP site the browser gets a new session on the new number. On a Cloud sign-in site the browser's session and Cloud identity end, and the member signs in through Cloud with the new number. Cloud-bound connector grants of the old number end; native grants move. The backend refreshes every network's member addresses at once (`deploy/backend/server.ts`).
 
-Refused: a number on hold (`review`), a banned person or number (`review`; a new number would escape a ban by phone), the same number (`same_number`), Cloud sign-in sites (`cloud_auth_required`).
+Refused: a number on hold (`review`), a banned person or number (`review`; a new number would escape a ban by phone), the same number (`same_number`).
 
 Audit: `platform.phone_changes` keeps one row per change: who asked (`member`), when it was asked and confirmed, and the keyed hashes of the old and the new number. It never keeps the old number. A change that was not confirmed is removed by the retention purge; delete everything removes the person's rows.
 

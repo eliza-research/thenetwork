@@ -65,25 +65,56 @@ pure def networkBoot(facts: NetworkBootFacts): NetworkBoot = {
 }
 ```
 
+### Both entries refuse a deployment whose shared line or staff API could not work
+
+In staging and production both entries, `main.ts` and the combined backend, need the Eliza turn secret and at least one staff token, and the turn secret and every staff token have the secret character limit. The turn secret must not also be a staff token. Changed (review): this rule is new. Before it, `main.ts` only warned when the turn secret or the staff tokens were missing, so the shared line and every staff review answered errors; a staff token count of zero or less counts as missing, because a check for exactly zero let a negative count through; and the Eliza Cloud side holds the turn secret, so it must not get staff access with it.
+
+```quint
+type LineAndStaffProblems = { turnSecretShort: bool, staffTokensMissing: bool, staffTokenShort: bool, turnSecretReused: bool }
+
+pure def lineAndStaffProblems(deployed: bool, turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int, turnSecretIsStaffToken: bool): LineAndStaffProblems = {
+  turnSecretShort: deployed and turnSecretLength < minimumSecretLength,
+  staffTokensMissing: deployed and staffTokenCount <= 0,
+  staffTokenShort: deployed and staffTokenCount > 0 and shortestStaffTokenLength < minimumSecretLength,
+  turnSecretReused: deployed and turnSecretIsStaffToken
+}
+
+pure def lineAndStaffRefused(p: LineAndStaffProblems): bool =
+  p.turnSecretShort or p.staffTokensMissing or p.staffTokenShort or p.turnSecretReused
+
+pure val turnSecretLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
+pure val shortestStaffTokenLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
+pure val staffTokenCountValues = Set(-1, 0, 1, 2)
+
+pure def lawDeployedEntryHasLineAndStaffSecrets(environment: Environment, turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int, turnSecretIsStaffToken: bool): bool =
+  (deployedEnvironment(environment) and
+    not(lineAndStaffRefused(lineAndStaffProblems(true, turnSecretLength, staffTokenCount, shortestStaffTokenLength, turnSecretIsStaffToken)))) implies
+    (turnSecretLength >= minimumSecretLength and staffTokenCount > 0 and
+      shortestStaffTokenLength >= minimumSecretLength and not(turnSecretIsStaffToken))
+```
+
 ### The combined backend entry checks its own database, provider and secret configuration
 
-The combined backend needs a database in every environment. Staging and production also need proxy configuration, a Turnstile secret and a Turnstile site key, a hash key, a leak-label key, the Eliza turn secret, at least one staff token, and the public event catalog's ingest login. A supplied proxy secret must meet the character limit in every environment. The deployed hash key, turn secret and every staff token have the same character limit. The leak-label key limit is in UTF-8 bytes. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL. Changed: a deployed backend now also refuses to start without the Turnstile site key, the turn secret or a strong staff token, because without them the agent signup connector, the shared line and every staff review answered errors while health stayed green; it also needs the ingest login, because the scheduled catalog refresh runs as that login.
+The combined backend needs a database in every environment. Staging and production also need proxy configuration, a Turnstile secret and a Turnstile site key, a hash key, a leak-label key, the Eliza turn secret, at least one staff token, and the public event catalog's ingest login. A supplied proxy secret must meet the character limit in every environment. The deployed hash key, turn secret and every staff token have the same character limit. The leak-label key limit is in UTF-8 bytes. A deployed backend that migrates at startup needs a migration URL. A supplied deployed migration URL must differ from the service URL. Changed: a deployed backend now also refuses to start without the Turnstile site key, the turn secret or a strong staff token, because without them the agent signup connector, the shared line and every staff review answered errors while health stayed green; it also needs the ingest login, because the scheduled catalog refresh runs as that login. The turn secret and staff token checks are the shared rule above. Changed (review): those four checks now come from the shared rule, so `main.ts` and the combined backend refuse the same secrets.
 
 ```quint
 type BackendBootFacts = {
   environment: Environment, database: bool, migrate: bool, migrationUrl: bool, sameLoginUrl: bool,
   turnstile: bool, turnstileSite: bool, proxyLength: int, hashLength: int, leakKeyBytes: int,
-  turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int, publicEventsLogin: bool
+  turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int, publicEventsLogin: bool,
+  turnSecretIsStaffToken: bool
 }
 
 type BackendBoot = {
   deployed: bool, databaseMissing: bool, turnstileMissing: bool, turnstileSiteMissing: bool, proxyMissing: bool, hashMissing: bool,
   proxyShort: bool, hashShort: bool, leakKeyShort: bool, migrationMissing: bool, sharedLogin: bool,
-  turnSecretShort: bool, staffTokensMissing: bool, staffTokenShort: bool, publicEventsLoginMissing: bool
+  turnSecretShort: bool, staffTokensMissing: bool, staffTokenShort: bool, publicEventsLoginMissing: bool,
+  turnSecretReused: bool
 }
 
 pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
   val deployed = deployedEnvironment(facts.environment)
+  val secrets = lineAndStaffProblems(deployed, facts.turnSecretLength, facts.staffTokenCount, facts.shortestStaffTokenLength, facts.turnSecretIsStaffToken)
   {
     deployed: deployed, databaseMissing: not(facts.database),
     turnstileMissing: deployed and not(facts.turnstile),
@@ -95,28 +126,26 @@ pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
     leakKeyShort: deployed and facts.leakKeyBytes < minimumSecretLength,
     migrationMissing: deployed and facts.migrate and not(facts.migrationUrl),
     sharedLogin: deployed and facts.sameLoginUrl,
-    turnSecretShort: deployed and facts.turnSecretLength < minimumSecretLength,
-    staffTokensMissing: deployed and facts.staffTokenCount == 0,
-    staffTokenShort: deployed and facts.staffTokenCount > 0 and facts.shortestStaffTokenLength < minimumSecretLength,
-    publicEventsLoginMissing: deployed and not(facts.publicEventsLogin)
+    turnSecretShort: secrets.turnSecretShort,
+    staffTokensMissing: secrets.staffTokensMissing,
+    staffTokenShort: secrets.staffTokenShort,
+    publicEventsLoginMissing: deployed and not(facts.publicEventsLogin),
+    turnSecretReused: secrets.turnSecretReused
   }
 }
 
 pure def backendBootRefused(boot: BackendBoot): bool =
   boot.databaseMissing or boot.turnstileMissing or boot.turnstileSiteMissing or boot.proxyMissing or boot.hashMissing or
     boot.proxyShort or boot.hashShort or boot.leakKeyShort or boot.migrationMissing or boot.sharedLogin or
-    boot.turnSecretShort or boot.staffTokensMissing or boot.staffTokenShort or boot.publicEventsLoginMissing
-
-pure val turnSecretLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
-pure val shortestStaffTokenLengthValues = Set(0, minimumSecretLength - 1, minimumSecretLength)
-pure val staffTokenCountValues = Set(0, 1, 2)
+    boot.turnSecretShort or boot.staffTokensMissing or boot.staffTokenShort or boot.publicEventsLoginMissing or
+    boot.turnSecretReused
 
 pure def lawDeployedBackendServesSignupLineAndStaff(environment: Environment, turnstileSite: bool, turnSecretLength: int, staffTokenCount: int, shortestStaffTokenLength: int): bool =
   val facts = {
     environment: environment, database: true, migrate: false, migrationUrl: true, sameLoginUrl: false,
     turnstile: true, turnstileSite: turnstileSite, proxyLength: minimumSecretLength, hashLength: minimumSecretLength,
     leakKeyBytes: minimumSecretLength, turnSecretLength: turnSecretLength, staffTokenCount: staffTokenCount,
-    shortestStaffTokenLength: shortestStaffTokenLength, publicEventsLogin: true
+    shortestStaffTokenLength: shortestStaffTokenLength, publicEventsLogin: true, turnSecretIsStaffToken: false
   }
   (deployedEnvironment(environment) and not(backendBootRefused(backendBoot(facts)))) implies
     (turnstileSite and turnSecretLength >= minimumSecretLength and

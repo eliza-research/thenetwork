@@ -109,7 +109,7 @@ pure def sometimesFinishesAfterReplay(restore: Restore): bool = restore.phase ==
 
 > As a member who erased my account, said STOP, left an app, or was banned after the last backup, I want a restore to keep that change.
 
-The replay source is the source database: the command reads it after the dump is applied and before the backend serves the restored database. The dump is one snapshot, so a source row that the restored database does not have was written after the backup. The shell copies the missing consent events, bans and suppressions at once: the send path, joins and sign-in read them, so no message reaches these people even before the backend runs. It queues each erasure, leave and STOP for the backend, which runs the member's own account erasure, app leave or STOP path and their hooks. A copied ban starts without its projection receipt, and the backend resumes the ban projection; in the same restore transaction the shell removes the banned number's queued texts and revokes the banned person's live shares, as the live ban write does. The backend runs the queue when it starts, before its first tick and before it serves a request; the staff replay route runs the same queue again for the items that could not run. If the source database cannot be read, nothing can be replayed: the operator states it and records the lost window. Changed after review: the STOP replay used to copy only the consent events, so a member who sent STOP after the backup stayed eligible for matching; and the queue used to wait for a staff call.
+The replay source is the source database: the command reads it after the dump is applied and before the backend serves the restored database. The dump is one snapshot, so a source row that the restored database does not have was written after the backup. The shell copies the missing consent events, bans and suppressions at once: the send path, joins and sign-in read them, so no message reaches these people even before the backend runs. It queues each erasure, leave and STOP for the backend, which runs the member's own account erasure, app leave or STOP path and their hooks; the backend registers every forget and erasure hook (the connector grants included) before it runs the queue. A copied ban starts without its projection receipt, and the backend resumes the ban projection; in the same restore transaction the shell removes the banned number's queued texts and revokes the banned person's live shares, as the live ban write does. The backend runs the queue when it starts, before its first tick and before it serves a request; the staff replay route runs the same queue again for the items that could not run. If the source database cannot be read, nothing can be replayed: the operator states it and records the lost window. Changed after review: the STOP replay used to copy only the consent events, so a member who sent STOP after the backup stayed eligible for matching; and the queue used to wait for a staff call.
 
 ### A source row that the restored database lacks is replayed
 
@@ -122,17 +122,18 @@ pure def lawReplayCopiesOnlyMissingRows(inRestored: bool): bool = replaysSourceR
 
 ### An erasure after the backup is replayed
 
-New rule (F24): a person whose tombstone is in the source and who is live in the restored database is erased again with the account erasure.
+New rule (F24): every account erasure appends one row to the erasure ledger, and a later join of the same number does not remove it. A person with a ledger row in the source that the restored database lacks, and who is live in the restored database, is erased again with the account erasure. Changed after review: the rule used to read the source tombstone, but a new join by the same number revives the tombstone, so a person who erased and then joined another app was missed and the restore brought back the erased memberships, profiles and opt-ins.
 
 ```quint
-pure def replaysErasure(sourceErased: bool, restoredErased: bool): bool = sourceErased and not(restoredErased)
-pure def lawErasedPersonDoesNotStayLive(sourceErased: bool, restoredErased: bool): bool =
-  sourceErased implies (restoredErased or replaysErasure(sourceErased, restoredErased))
+pure def replaysErasure(erasedAfterBackup: bool, restoredErased: bool): bool = erasedAfterBackup and not(restoredErased)
+pure def lawErasedPersonDoesNotStayLive(erasedAfterBackup: bool, restoredErased: bool): bool =
+  erasedAfterBackup implies (restoredErased or replaysErasure(erasedAfterBackup, restoredErased))
+pure def lawNoErasureNoReplay(restoredErased: bool): bool = not(replaysErasure(false, restoredErased))
 ```
 
 ### A leave after the backup is replayed
 
-New rule (F24): a live restored membership whose source membership was removed, or replaced by a new member after a leave and a new join, leaves the app again. A person erased in the source has no membership rows there, and the erasure covers them.
+New rule (F24): a live restored membership whose source membership was removed, or replaced by a new member after a leave and a new join, leaves the app again. A person erased in the source has no membership rows there, and the erasure ledger covers them, also after the same number joined again. Changed after review: the last sentence used to rely on the tombstone, which a new join revives.
 
 ```quint
 pure def replaysLeave(restoredLive: bool, sourceHasMembership: bool, sourceLive: bool, sameMember: bool): bool =
@@ -152,6 +153,19 @@ pure def lawLaterStartIsKept(copiedOptOut: bool, inScope: bool, membershipLive: 
   not(replaysStop(copiedOptOut, inScope, membershipLive, false))
 pure def lawStoppedMembershipStops(membershipLive: bool): bool = membershipLive implies replaysStop(true, true, membershipLive, true)
 pure def lawStopOutsideScopeStays(stillOptedOut: bool): bool = not(replaysStop(true, false, true, stillOptedOut))
+```
+
+### The backend runs a queued erasure or leave only after the connector hooks are registered
+
+New rule (F24, after review): the start refuses to run the queue while an erasure or leave item is open, the database has the connector schema, and no connector forget hook is registered. Before this rule the production backend ran the queue before it registered the connector hooks, so a replayed erasure or leave marked the item done and kept the restored OAuth grants, tokens and connector requests.
+
+```quint
+pure def replayStartAllowed(openForgetItem: bool, connectorSchema: bool, connectorHooks: bool): bool =
+  not(openForgetItem and connectorSchema and not(connectorHooks))
+pure def lawForgetReplayNeedsConnectorHooks(openForgetItem: bool, connectorHooks: bool): bool =
+  (openForgetItem and not(connectorHooks)) implies not(replayStartAllowed(openForgetItem, true, connectorHooks))
+pure def lawNoConnectorSchemaNoWait(openForgetItem: bool, connectorHooks: bool): bool =
+  replayStartAllowed(openForgetItem, false, connectorHooks)
 ```
 
 ### The backend runs the queued replay at start, and each item by one runner until it holds

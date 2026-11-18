@@ -90,6 +90,15 @@ async function main() {
       return new BlooioAdapter({ net, provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, memberOf: rt.memberOf, from, app: rt.app.id, city: rt.city });
     } : undefined,
   });
+  // The MCP server and its OAuth server on the service's own platform parts (packages/mcp). The oauth
+  // schema is applied here. Off (404 mcp_not_enabled) without TURNSTILE_SITE_KEY outside dev. It comes
+  // before start: the start runs the privacy replay of a restore, whose erasures and leaves need the
+  // connector forget hooks that this registers (spec/databaseRestore.md, "Story: Carry privacy changes
+  // made after the backup into the restored database").
+  const mcp = await createServiceMcp(svc, { databaseUrl: c.databaseUrl, proxySecret: c.proxySecret, log: s => log.info(s), migrate: !c.deployed });
+  log.info("mcp", { enabled: !!mcp });
+  // loadConfig required the Turnstile keys and the database, so a deployed MCP server is on; refuse rather than serve a dead signup path.
+  if (c.deployed && !mcp) throw new Error("refusing to start: the MCP server is off, so the agent signup connector would answer 404");
   await svc.start();
   // A member's own number change (packages/platform accounts.ts, PRD F25): each network reads the new
   // address at once, so nothing queued later goes to the old number.
@@ -104,12 +113,6 @@ async function main() {
     log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
   }
 
-  // The MCP server and its OAuth server on the service's own platform parts (packages/mcp). The oauth
-  // schema is applied here. Off (404 mcp_not_enabled) without TURNSTILE_SITE_KEY outside dev.
-  const mcp = await createServiceMcp(svc, { databaseUrl: c.databaseUrl, proxySecret: c.proxySecret, log: s => log.info(s), migrate: !c.deployed });
-  log.info("mcp", { enabled: !!mcp });
-  // loadConfig required the Turnstile keys and the database, so a deployed MCP server is on; refuse rather than serve a dead signup path.
-  if (c.deployed && !mcp) throw new Error("refusing to start: the MCP server is off, so the agent signup connector would answer 404");
 
   const pool = new SQL({ url: c.databaseUrl, max: 1, idleTimeout: 30, connection: { application_name: "network-backend-health" } });
   // Monitoring and alerts (ops.ts; docs/deploy.md section 7): its own small pool, so a slow webhook never holds a service connection.

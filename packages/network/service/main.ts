@@ -17,6 +17,8 @@ import { networkRoutePolicy } from "./route-authority.ts";
 import { CloudChannelAdapter } from "./cloud-channel.ts";
 import { BlooioAdapter, liveFlag, liveSendAllowed } from "./channel.ts";
 import { serveService, startTicks } from "./serve.ts";
+import { backendWebhookServed, minimumSecretLength } from "../../core/src/generated/bootPolicy.ts";
+import { lineAndStaffFacts, lineAndStaffMessages, lineAndStaffProblemsFor } from "./line-staff-boot.ts";
 import { NetworkService, webhookSecretsFromEnv } from "./service.ts";
 
 function arg(name: string): string | undefined {
@@ -29,6 +31,12 @@ async function main() {
   // without Twilio, Turnstile, the proxy secret, the hash key, the session secret, a database and
   // review mode "human" (env.ts bootConfigProblems). Only PLATFORM_ENV=dev gets the dev shortcuts.
   const env = assertBootConfig();
+  // spec/bootPolicy.md, "Both entries refuse a deployment whose shared line or staff API could not work"
+  const lineStaff = lineAndStaffFacts(process.env, env === "production");
+  const lineStaffProblems = lineAndStaffMessages(lineAndStaffProblemsFor(env !== "dev", lineStaff), minimumSecretLength);
+  if (lineStaffProblems.length) throw new Error(`refusing to start (PLATFORM_ENV=${env}): needs ${lineStaffProblems.join("; ")}`);
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  const blooioWebhook = backendWebhookServed(process.env.NETWORK_CHANNEL ?? "");
   const once = process.argv.includes("--once");
   const dryRun = process.argv.includes("--dry-run") || !!networkRoutePolicy(process.env);
   const url = process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -58,9 +66,9 @@ async function main() {
     const mode = cloud ? (liveSendAllowed(process.env,rt.app.id) ? "eliza_cloud LIVE" : "eliza_cloud (refusing: live approval flags are needed)") : blooio ? (liveSendAllowed(process.env, rt.app.id) ? "blooio LIVE" : `blooio (refusing: BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1${rt.app.id === "ntwrk" ? "" : ` and ${liveFlag(rt.app.id)}=1`} are needed)`) : "dry-run";
     console.log(`network ${rt.id}: sends ${mode}, review "human", matching ${rt.matchingAllowed ? "allowed (the admin switch decides)" : "not allowed (platform.networks)"}`);
   }
-  if (!process.env.NETWORK_SERVICE_TOKENS) console.warn("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
-  if (!process.env.BLOOIO_WEBHOOK_SECRET) console.warn("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
-
+  if (!lineStaff.staffTokenCount) console.warn("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
+  if (blooioWebhook && !process.env.BLOOIO_WEBHOOK_SECRET) console.warn("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
+  if (!blooioWebhook) console.log("inbound: the Eliza gateway owns the carrier webhook (NETWORK_CHANNEL=eliza_cloud); /webhooks/blooio is not served");
   if (!process.env.SERVICE_TURN_SECRET) console.warn("SERVICE_TURN_SECRET is not set: /internal/turn and the other signed routes answer 503");
   if (once) {
     await svc.inboxTick();
@@ -72,7 +80,7 @@ async function main() {
   const port = Number(arg("--port") ?? process.env.NETWORK_SERVICE_PORT ?? 4848);
   const apiPort = Number(arg("--api-port") ?? process.env.PLATFORM_API_PORT ?? 8790);
   if (!local) console.warn(`binding ${host}: use this only behind an access proxy (runbook-real 7)`);
-  const servers = await serveService(svc, { host, port, apiPort });
+  const servers = await serveService(svc, { host, port, apiPort, blooioWebhook });
   const ticks = startTicks(svc);
   await ticks.first;
   const stop = async () => { await ticks.stop(); servers.stop(); await svc.close(); process.exit(0); };

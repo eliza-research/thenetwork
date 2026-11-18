@@ -12,6 +12,14 @@ Imported from `quint/staff_console.qnt` at `30d950e`. See [model index](README.m
 
 The production staff role projection and route admission use [Observatory staff permissions](../staffPermissions.md). Audit, revocation and socket timing remain in this standalone flow.
 
+Compared with `vibestack-matching` on 2026-11-18 for the reveal, the case rows and the matching switch. Three earlier fixes are gone from `packages/observatory/web`, so three invariants are open defects and are not part of `safety`:
+
+- `inv_revealShownTruly` (SD-247): `store.ts` `unreveal` removes the client reveal whatever the DELETE answer is, so after a 403, a 503 or a network error the server still serves the revealed data while the badge is gone.
+- `inv_actionTargetsSelectedPerson` (SD-068): `SafetyCases` in `admin.tsx` has no `key={s.app}` and `useFetch` keeps the old answer until the new one comes. For that time the rows of the old app stay, and "Close case" sends the old row's case id (`sc1`) to the new app, which closes another member's case.
+- `inv_confirmMatchesApp` (SD-246): `Config` in `admin.tsx` also has no `key={s.app}`. An armed switch survives an app switch until the config read answers, and the confirm sends `on: !c.matchingEnabled` of the old app to the new app.
+
+The confirm press of the matching switch now always sends; a reload of the config (a new `c`) or the 4 s timer ends the ask.
+
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
 //
@@ -237,7 +245,8 @@ module staff_console {
   action unrevealWith(st: str, app: str, reached: bool, auditUp: bool): bool = {
     val m = MEMBER_OF.get(app)
     val serverDeletes = reached and rolesFor(s.grantsCopy, st, app).size() > 0 and allowedR(s.grantsCopy, st, Set("safety"), app)
-    val clientDrops = serverDeletes and auditUp
+    // store.ts unreveal (2026-11-18): the client drops the reveal whatever the answer is (SD-247 regressed).
+    val clientDrops = true
     all {
       s.clientReveals.exists(r => r.st == st and r.app == app and r.m == m),
       s' = { ...s,
@@ -373,9 +382,11 @@ module staff_console {
   // setApp (web/store.ts:507-520). SafetyCases and Config mount once per app (admin.tsx SafetyCases and Config
   // with key={s.app}; SD-068 fix d8b34a1, SD-246 fix e6daa04): an app switch drops the rows, a typed note, the
   // config data and an armed switch, and both panels read again for the new app.
+  // Compared on 2026-11-18: SafetyCases and Config have no key={s.app} any more. useFetch keeps the last answer
+  // until the read for the new app answers, so the rows, a typed note, the config data and an armed switch stay
+  // (SD-068 and SD-246 regressed). pollSafety and configPoll replace them.
   action switchApp(app: str): bool = s' = { ...s,
-    cs: { ...s.cs, shownApp: app, dataApp: if (app == s.cs.shownApp) s.cs.dataApp else "none", note: if (app == s.cs.shownApp) s.cs.note else false },
-    cf: if (app == s.cs.shownApp) s.cf else { ...s.cf, armed: false, dataApp: "none" },
+    cs: { ...s.cs, shownApp: app },
   }
 
   // A poll of GET /api/safety (admin.tsx useFetch, SD-466 fix 2bf14c3): an answer replaces the data; a network
@@ -450,17 +461,16 @@ module staff_console {
   pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): str =
     if (mg.stored.get(app)) "on" else if (not(CONSOLE_ALLOWS.get(app))) "locked" else "off"
 
-  // Config "Turn on/off" (admin.tsx AppConfig, press): logic/review.ts flip decides. The first click arms and
-  // stores the target `!c.matchingEnabled` read from the panel's data. The second click sends that target to
-  // the app shown now, or sends nothing when the data already shows it (another admin made the change; slice
-  // report bug 11, quint/review_desk.qnt). The button shows only with data. The console refuses on for a
-  // locked app (real.ts matching_locked).
+  // Config "Turn on/off" (admin.tsx Config): the generated consoleWorkspace pressMatchingSwitch and
+  // confirmMatchingSwitch. The first click arms with the target `!c.matchingEnabled` read from the panel's data.
+  // The second click sends that target to the app shown now (store.control uses the current app). A change made
+  // by another admin ends the ask only through a reload of the config (configPoll). The button shows only with
+  // data. The console refuses on for a locked app (real.ts matching_locked).
   action pressSwitch(st: str): bool = all {
     allowedR(s.grantsCopy, st, Set(), s.cs.shownApp),
     s.cf.dataApp != "none",
     val current = s.mg.stored.get(s.cf.dataApp)
     if (not(s.cf.armed)) s' = { ...s, cf: { ...s.cf, armed: true, armedApp: s.cs.shownApp, target: not(current) } }
-    else if (s.cf.target == current) s' = { ...s, cf: { ...s.cf, armed: false } }
     else {
       val app = s.cs.shownApp
       val on = s.cf.target
@@ -473,7 +483,8 @@ module staff_console {
   }
 
   // The Config useFetch key (mode, matchingEnabled, review mode) changes, and the panel refetches for the app shown.
-  action configPoll: bool = s' = { ...s, cf: { ...s.cf, dataApp: s.cs.shownApp } }
+  // The answer is a new `c`, so the ask (edit.of === c) ends.
+  action configPoll: bool = s' = { ...s, cf: { ...s.cf, dataApp: s.cs.shownApp, armed: false } }
   // The 4 s timer disarms the switch.
   action disarm: bool = s' = { ...s, cf: { ...s.cf, armed: false } }
 
@@ -796,7 +807,6 @@ module staff_console {
     inv_revokedNoData,
     inv_revealAudited,
     inv_revealBound,
-    inv_revealShownTruly,
     inv_socketAuthorized,
     inv_auditFirst,
     inv_consoleAuditFirst,
@@ -804,14 +814,12 @@ module staff_console {
     inv_servedOnlyCheckedLogin,
     inv_ageFailClosed,
     inv_photosOnlyAdults,
-    inv_actionTargetsSelectedPerson,
     inv_failedPollKeepsInput,
     inv_successTextMatchesScope,
     inv_modeHasRunningSource,
     inv_commandRunsInSeenMode,
     inv_consoleShowsGate,
     inv_tickRunImpliesRegistry,
-    inv_confirmMatchesApp,
     inv_promptOnlyForBadToken,
     inv_previewRefusalTrue,
     inv_releaseBySameStaff,
@@ -854,21 +862,22 @@ module staff_console {
       .then(readMember("S1", "slop", true))
       .expect(s.lastRead.valid and not(s.lastRead.revealed) and s.reveals.size() == 0 and inv_revokedNoData)
 
-  // SD-247 (fixed, e662d5f): after the role loss, "End" gets 403; the client keeps the reveal on screen.
+  // SD-247 (OPEN again, 2026-11-18): after the role loss, "End" gets 403; the client drops the reveal while
+  // the server keeps the grant.
   run endRevealRefusedKeepsItTest =
     init0
       .then(revealPost("S1", "slop", true))
       .then(revokeGrant(("S1", "safety", "slop")))
       .then(reloadRoles(true))
       .then(unreveal("S1", "slop", true))
-      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 0 and not(inv_revealShownTruly))
 
-  // A network error on "End" also keeps the reveal on screen.
+  // OPEN: a network error on "End" also drops the reveal on screen while the server keeps it.
   run endRevealUnreachedTest =
     init0
       .then(revealPost("S1", "slop", true))
       .then(unreveal("S1", "slop", false))
-      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 0 and not(inv_revealShownTruly))
 
   // "End" that the server accepts drops the reveal on both sides.
   run endRevealTest =
@@ -877,12 +886,12 @@ module staff_console {
       .then(unreveal("S1", "slop", true))
       .expect(s.reveals.size() == 0 and s.clientReveals.size() == 0)
 
-  // "End" with the audit sink down: the server deleted the grant, then answered 503; the badge stays.
+  // "End" with the audit sink down: the server deleted the grant, then answered 503; the client drops it too.
   run endRevealAuditDownTest =
     init0
       .then(revealPost("S1", "slop", true))
       .then(unrevealWith("S1", "slop", true, false))
-      .expect(s.reveals.size() == 0 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .expect(s.reveals.size() == 0 and s.clientReveals.size() == 0 and inv_revealShownTruly)
 
   // A reveal needs its audit row: with the audit sink down nothing is granted (server.ts:589-591).
   run revealNeedsAuditTest =
@@ -959,12 +968,20 @@ module staff_console {
       .then(reloadRoles(true))
       .expect(not(s.age.photosShown))
 
-  // SD-068 (fixed, d8b34a1): S2 (admin@*) sees slop's sc1 (x) and switches to peon: the slop rows go, and Close
-  // is not possible until peon's cases load; then it closes peon's sc1 (y), the case on the row.
+  // SD-068 (OPEN again, 2026-11-18): S2 (admin@*) sees slop's sc1 (x) and switches to peon. Until peon's cases
+  // answer, the slop rows stay, and Close on the row closes peon's sc1 (y).
   run crossAppCloseTest =
     init0
+      .then(pollSafety(true))
       .then(switchApp("peon"))
-      .expect(s.cs.dataApp == "none")
+      .expect(s.cs.dataApp == "slop")
+      .then(pressClose("S2"))
+      .expect(s.cs.intended == "x" and s.cs.actual == "y" and not(inv_actionTargetsSelectedPerson))
+
+  // After peon's cases answer, Close closes the case on the row.
+  run crossAppCloseAfterPollTest =
+    init0
+      .then(switchApp("peon"))
       .then(pollSafety(true))
       .then(pressClose("S2"))
       .expect(s.cs.intended == "y" and s.cs.actual == "y" and inv_actionTargetsSelectedPerson)
@@ -1061,24 +1078,33 @@ module staff_console {
       .then(pressSwitch("S2"))
       .expect(not(s.mg.stored.get("peon")))
 
-  // SD-246 (fixed, e6daa04): armed on slop, switch to peon: the switch is disarmed and the slop data goes. The
-  // next click after peon's data loads only arms peon.
+  // SD-246 (OPEN again, 2026-11-18): armed on slop, switch to peon before peon's config answers: the switch stays
+  // armed with slop's data, and the confirm sends slop's target to peon.
   run armedSwitchCarriesTest =
     init0
       .then(pressSwitch("S2"))
       .then(switchApp("peon"))
-      .expect(not(s.cf.armed) and s.cf.dataApp == "none")
+      .expect(s.cf.armed and s.cf.dataApp == "slop")
+      .then(pressSwitch("S2"))
+      .expect(s.cf.sent and s.cf.sentApp == "peon" and s.cf.sentArmedFor == "slop" and not(inv_confirmMatchesApp))
+
+  // When peon's config answers first, the ask ends and the next click only arms peon.
+  run armedSwitchReloadTest =
+    init0
+      .then(pressSwitch("S2"))
+      .then(switchApp("peon"))
       .then(configPoll)
+      .expect(not(s.cf.armed))
       .then(pressSwitch("S2"))
       .expect(s.cf.armed and s.cf.armedApp == "peon" and not(s.cf.sent) and inv_confirmMatchesApp)
 
-  // Bug 11 (flip): S2 arms "turn on" for slop, another admin turns slop on, the panel reads it again; the
-  // confirm click sends nothing.
+  // Bug 11 (flip): S2 arms "turn on" for slop, another admin turns slop on, and the push reloads the config:
+  // the ask ends and nothing is sent.
   run switchAlreadyFlippedTest =
     init0
       .then(pressSwitch("S2"))
       .then(directServiceSwitch("slop", true))
-      .then(pressSwitch("S2"))
+      .then(configPoll)
       .expect(not(s.cf.armed) and not(s.cf.sent) and s.mg.stored.get("slop"))
 
   // SD-470 (fixed, 0f9fc3d): a request with token 0 is in flight, token 0 stops working, a new token is set; the

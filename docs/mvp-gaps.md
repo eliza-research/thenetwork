@@ -311,7 +311,7 @@ The six founder decisions on the critical path are in [mvp-plan.md](mvp-plan.md)
 | 6 | Store the lowest stated age when a join is refused for age? | Nothing is stored, so a retry with an older age can pass (audit platform-1). |
 | 7 | After "delete everything", keep a hash of a person whom others blocked? | Blocks stay on the tombstone; a new join with the same phone is a new person. |
 | 8 | How long must the opt-in record be kept after deletion (10DLC)? | Consent events are deleted; only the suppression hash stays. Counsel. |
-| 9 | The base-profile fields that can be shared, and the share copy | First name, city, age band, interests. The share choice is hidden on the sites. No engine reads grants yet. |
+| 9 | The base-profile fields that can be shared, and the share copy | A text SHARE reply grants interests only; the joined app copies the confirmed, non-private interests once (spec/baseProfileShare.md). `POST /api/me/share` still stores grants that nothing reads, and no site shows it. |
 | 10 | The link notice to a known number ("You've used this number with us before...") | Sent after a join by a known person; on a recycled number it reveals something about the old owner. |
 | 11 | The per-app brand texts (agent names, STOP/HELP, invite-only and under-age replies) | Drafts in `packages/platform/src/apps.ts`; counsel should check the STOP wording. |
 | 12 | The invite-only reply on The Network | At most one a day per number; nothing stored. |

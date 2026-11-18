@@ -8,7 +8,7 @@ A scheduler plan is tentative until the inbox and recipient are read again. A Vi
 
 ### Re-read the planned items before recording a digest
 
-Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed, the recipient's address, channel or time zone changed, or a prepared assistant link no longer covers the item app. Reuse the original plan while its items, destination and link authority still fit.
+Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed, the recipient's address, channel or time zone changed, or a prepared assistant link no longer covers the item app. Reuse the original plan while its items, destination and link authority still fit. A re-read counts only what it can see: a plan names at least one item and the re-read keeps between none and all of them, so the re-read now refuses any other counts; before, the rule accepted counts the scheduler never forms, such as a negative remaining count.
 
 ```quint
 type DigestPhase =
@@ -30,7 +30,11 @@ pure def lawExpiredItemLeavesTheDigest(seen: bool, notified: bool, expiresAt: in
 
 pure def inboxItemAllowedForRecipient(requested: bool, proactiveAllowed: bool): bool = requested or proactiveAllowed
 
-pure def canRereadItems(digest: DigestFlow): bool = digest.phase == DigestStarting
+pure def rereadCountsPossible(plannedCount: int, remainingCount: int): bool =
+  plannedCount >= 1 and remainingCount >= 0 and remainingCount <= plannedCount
+
+pure def canRereadItems(digest: DigestFlow, plannedCount: int, remainingCount: int): bool =
+  digest.phase == DigestStarting and rereadCountsPossible(plannedCount, remainingCount)
 pure def rereadItems(digest: DigestFlow, plannedCount: int, remainingCount: int, recipientAvailable: bool, destinationChanged: bool): DigestFlow =
   { phase:
     if (remainingCount == 0 or not(recipientAvailable)) DigestCancelled

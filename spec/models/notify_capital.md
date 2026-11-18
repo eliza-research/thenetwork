@@ -47,6 +47,28 @@ Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.
 // `safety` holds every invariant that the code on this branch keeps. The invariants that still fail
 // are named values outside `safety`; each has a comment with the register id and the reason it is
 // not fixed (skipped, not reproduced, refuted, or a residual found by this model).
+//
+// COMPARISON WITH BRANCH vibestack-matching (2026-11-18). Line numbers in this file are from the
+// source branch and are stale; find the code by name (Notifier.plan, dispatch, recordSent,
+// stillNeeded in packages/notify/src/scheduler.ts; PgNotifyStore.addItem, recordDelivery;
+// service.ts delivered, notifyRecipient, notifySink; runtime.ts start, save, writeUnit, forget;
+// packages/network/src/capital.ts capitalWiring). In agreement: the weekly cap (default 2, the
+// weeklyDigest decision keeps only requested items over the cap), MAX_IGNORED_STREAK, the dedupe key,
+// the delivery id hash, recordDelivery (one transaction, locks the pending items in id order, refuses
+// a known id or a notified, seen or expired item: SD-150), stillNeeded, the recipient (first member
+// with an address, The Network first, proactiveAllowed true), the ledger built with reader: false.
+// OPEN: the model keeps the fixed behavior of the source branch; the code on this branch lacks these
+// fixes, so they are code defects, not model drift:
+//  - Notifier.recordSent runs addItem and recordDelivery in two transactions (SD-151). A throw or a stop
+//    between them leaves a Network text's item pending until the next projection; a scheduler dispatch in
+//    that window texts it again [noRepeatOfNetworkText].
+//  - runtime.ts start() replays network.capital_events `order by t, id`; the table has no seq column
+//    (SD-153) [the capital replay invariants].
+//  - capitalWiring.onLedger returns nothing; the unit stores every emitted capital event (writeUnit) and
+//    the live ledger records it only after the commit, so an event the ledger refuses is still stored
+//    (SD-156).
+// Not compared in full: Part B ledger rules against packages/capital (they now come from the generated
+// capitalLedger spec); the model's ledger actions were left as they are.
 module notify_capital {
 
   // ================================================================================================

@@ -39,7 +39,7 @@ const LIVE = new Set(["active", "paused", "onboarding"]);
 /** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
   ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree and I will text you a private link to add them. Reply NO PHOTOS and I keep none.`,
-  link: (url: string) => `Here is your private link to add up to 4 photos. It works once, for 15 minutes: ${url} To request a copy or deletion, email help@ntwrk.party.`,
+  link: (url: string) => `Here is your private link to add up to 4 photos, 4 MB each and 8 MB in all. It works once, for 15 minutes: ${url} To request a copy or deletion, email help@ntwrk.party.`,
   agreed: "Thanks. To request a copy or deletion, email help@ntwrk.party.",
   linkLimit: "You asked for several photo links today. Ask again tomorrow.",
   declined: "OK. I will not keep your photos.",

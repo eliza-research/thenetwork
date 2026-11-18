@@ -77,8 +77,9 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
         const name = gated[property];
         if (!name) return value.bind(target);
         return async (...args: unknown[]) => {
+          // The plan's own build reads the signals too; only an armed read is the dispatch's rebuild.
+          if (name === "signals" && flow.armed.has("signals")) flow.rebuilt = true;
           await gate(flow, name);
-          if (name === "signals") flow.rebuilt = true;
           return value.apply(target, args);
         };
       },
@@ -116,6 +117,8 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     if (!event.recipientAvailable) flow.recipient = undefined;
     else if (event.destinationChanged) flow.recipient = { ...flow.recipient, to: "+12125553002" };
     // The plan's own build read the signals; only the dispatch's rebuild, record and enqueue wait from here.
+    // The plan's build already set `rebuilt`; only a signals read after the re-read is the dispatch's rebuild.
+    flow.rebuilt = false;
     flow.armed = new Set(["signals", "record", "enqueue"]);
     await progress(flow);
     return "accepted";
@@ -133,10 +136,17 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     await progress(flow, () => flow.notifier.stillNeeded(flow.deliveryId!, START).then(needed => { flow.result = { kind: "revalidate", needed }; }));
   }
 
+  /** The inbox shows item ids as "inb_<row id>" (packages/notify/src/pg-store.ts). */
+  function rowId(itemId: string): string {
+    const match = /^inb_(\d+)$/.exec(itemId);
+    if (!match) throw new Error(`Unexpected inbox item id ${itemId}`);
+    return match[1]!;
+  }
+
   async function revalidate(flow: Flow, event: Extract<Event, { type: "revalidateQueuedItems" }>) {
     const [first, second] = flow.itemIds;
-    if (!event.allPresent) await sql`delete from notify.inbox_items where id = ${Number(second)}`;
-    if (event.anyExpired) await sql`update notify.inbox_items set expires_at = ${new Date(START - 1)} where id = ${Number(first)}`;
+    if (!event.allPresent) await sql`delete from notify.inbox_items where id = ${rowId(second!)}::bigint`;
+    if (event.anyExpired) await sql`update notify.inbox_items set expires_at = ${new Date(START - 1)} where id = ${rowId(first!)}::bigint`;
     if (!event.anyUnseen) await flow.store.markSeen(flow.personId, "imessage", START);
     await progress(flow);
   }

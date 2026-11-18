@@ -12,6 +12,8 @@ Imported from `quint/console_views.qnt` at `30d950e`. See [model index](README.m
 
 The browser calls [Observatory detail and photo reads](../consoleMemberView.md) for the inspector detail responses and Slop photo panel. The standalone model also covers search, drawer tabs, game proposals and counts.
 
+Compared with `vibestack-matching` on 2026-11-18. Open defect (low, simulated world only): the propose tray in `packages/observatory/web/main.tsx` (`Tray`) computes `minor` as `picks.some(id => s.members.get(id)?.minor)`, so a pick that the store does not know does not block the button. The game server (`GameSource.propose` in `packages/observatory/src/sources/game.ts`) refuses an unknown or under-18 participant, so no such proposal is accepted. `canPropose_noMinor` states the browser rule; it is not part of `safety`, and `unknownPickTest` replays the defect.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=20 max-samples=2000
@@ -29,9 +31,19 @@ The browser calls [Observatory detail and photo reads](../consoleMemberView.md) 
 //   - Game proposals (ProposeTray in main.tsx). Picks, store age changes, a person that the store
 //     forgets, sparks and the game end.
 //   - The everyone-yes counts (KpiGrid in panels.tsx).
-//   Each LemmaScript step function in packages/observatory/web/logic/views.ts is a pure def here with
-//   the same name and the same decision. Each shell event is an action that calls it. The server is
-//   a nondeterministic environment.
+//   The old LemmaScript core web/logic/views.ts is gone (compared with vibestack-matching on 2026-11-18).
+//   Each pure def here keeps the decision of the code that replaced it:
+//     readNew/readStart/readCancel/canLand/readLand = generated consoleMemberView initial, beginDetail,
+//       cancelDetails, canFinishDetail, finishDetail (useDetailGate in panels.tsx);
+//     photoAllowed/photoView = generated staffPhotoAllowed, staffPhotoView (SlopPanel);
+//     tabVisible/effectiveTab = generated consoleNavigation tabVisible, shownTab (drawer.tsx);
+//     canPropose = generated consoleWorkspace proposeAllowed with the tray's `minor` (main.tsx Tray);
+//     isRevealed/saidYes/yesCounts = REVEALED, SAID_YES and the counts in panels.tsx Overview.
+//   useLive keys its data by a scope (app, mode, authEpoch, the reveal grant, the truth lens): any change
+//   of scope takes the data off the screen at once (`d?.scope === scope ? d.value : undefined`), so
+//   depChange and authChange both unmount the member panel. SlopPanel keys its photos by a scope that
+//   holds `allowed`: a change of `allowed` clears the photos and cancels the photo requests in flight.
+//   The game server (GameSource.propose) refuses an unknown or under-18 pick.
 //
 // BOUNDS
 //   Persons 1..3 (person 1 is the person whose panel is open). At most MAX_TICKET read starts.
@@ -85,6 +97,9 @@ module console_views {
   pure val MAX_TICKET = 5
   pure val MAX_PHOTO_REQS = 2
   pure val MAX_PICKS = 3
+  // consoleWorkspace minProposalPicks and the upper bound of proposeAllowed.
+  pure val MIN_PICKS = 2
+  pure val MAX_PROPOSAL_PICKS = 6
   pure val RULES = Set(NeverMinor, NeedsVerification, ReasonRequired)
   pure val TABS = Set(Review, Feed, Pipeline, Requests, Engine, Safety, Metrics, Lab, Config, Game)
   // "" is a status that the map does not know (panels.tsx passes `o.status[id] ?? ""`); "proposed"
@@ -131,11 +146,15 @@ module console_views {
   pure def effectiveTab(want: ViewTab, c: TabCaps): ViewTab =
     if (tabVisible(want, c)) want else Feed
 
-  // ---- propose (views.ts canPropose). The loop returns false at the first pick that the map does
-  // not know or that is a minor. A fold with the same test gives the same result.
+  // ---- propose (main.tsx Tray: canSubmitProposal -> proposeAllowed). `minor` is true only for a pick that
+  // the store knows as a minor: `s.members.get(id)?.minor`. A pick that the store does not know passes.
   pure def canPropose(picks: List[int], minor: int -> bool, hasGame: bool, sparks: int, over: bool): bool =
-    if (not(hasGame) or sparks <= 0 or over) false
-    else picks.foldl(true, (ok, p) => ok and minor.keys().contains(p) and not(minor.get(p)))
+    val minorPicked = picks.foldl(false, (b, p) => b or (minor.keys().contains(p) and minor.get(p)))
+    hasGame and picks.length() >= MIN_PICKS and picks.length() <= MAX_PROPOSAL_PICKS and not(minorPicked) and sparks > 0 and not(over)
+
+  // GameSource.propose: an unknown member or one under 18 is refused before anything is sent.
+  pure def serverAccepts(picks: List[int], minor: int -> bool): bool =
+    picks.foldl(true, (ok, p) => ok and minor.keys().contains(p) and not(minor.get(p)))
 
   // ---- everyone-yes (views.ts isRevealed, saidYes, allOf, yesCounts)
   pure def isRevealed(s: str): bool =
@@ -181,7 +200,7 @@ module console_views {
   // time of the send, some pick was a minor or unknown to the store.
   var picks: List[int]
   var game: { has: bool, sparks: int, over: bool }
-  var proposals: List[{ picks: List[int], bad: bool }]
+  var proposals: List[{ picks: List[int], bad: bool, accepted: bool }]
 
   // Opportunities: each one is the list of its participants' statuses (KpiGrid input).
   var opps: List[List[str]]
@@ -208,8 +227,9 @@ module console_views {
 
   // SlopPanel effect: `if (photos && !held) setPhotos(null)`. It runs in the same action as the
   // change of gate (see the assumption in the header).
+  // A gate that no longer allows photos also cancels the photo requests in flight (the scope holds `allowed`).
   pure def settle(p: { loaded: bool, reqs: int, trail: bool }, g: PhotoGate): { loaded: bool, reqs: int, trail: bool } =
-    { loaded: photoHeld(g, p.loaded), reqs: p.reqs, trail: p.loaded and p.trail and photoAllowed(g) }
+    { loaded: photoHeld(g, p.loaded), reqs: if (photoAllowed(g)) p.reqs else 0, trail: p.loaded and p.trail and photoAllowed(g) }
 
   // ---------------------------------------------------------------- init
   action init = all {
@@ -252,8 +272,9 @@ module console_views {
     drawerUnchanged, playUnchanged,
   }
 
-  // panels.tsx useLive, a dependency change (mode, app, reveal grant): the cleanup cancels, the
-  // effect cancels again, then `run()` starts a read.
+  // panels.tsx useLive, a dependency change (mode, app, reveal grant, truth lens): the data of the old
+  // scope leaves the screen at once (the panel and its SlopPanel unmount), the cleanup cancels, then
+  // `run()` starts a read.
   action depChange = all {
     gate.last < MAX_TICKET,
     nondet r = RULES.oneOf()
@@ -262,9 +283,10 @@ module console_views {
       gate' = g1,
       epoch' = epoch + 1,
       inflight' = inflight.union(Set({ ticket: g1.last, epoch: epoch + 1, rule: r })),
-      hasData' = hasData, shown' = shown, lastLand' = lastLand,
+      hasData' = false, shown' = shown, lastLand' = lastLand,
     },
-    members' = members, canSafety' = canSafety, photos' = photos, opps' = opps,
+    photos' = { loaded: false, reqs: 0, trail: false },
+    members' = members, canSafety' = canSafety, opps' = opps,
     drawerUnchanged, playUnchanged,
   }
 
@@ -421,13 +443,13 @@ module console_views {
     readsUnchanged, drawerUnchanged,
   }
 
-  // ProposeTray: the button is `disabled={!ready}`, and `submit` sends the picks of the same render.
-  // The server answer (and its participant_minor refusal) is outside the model.
+  // ProposeTray: the button is `canPropose={ready}`, and `submit` checks the same gate and sends the picks
+  // of the same render. GameSource.propose accepts or refuses them (serverAccepts).
   action propose = all {
     ready,
     proposals.length() < 3,
     val bad = picks.foldl(false, (b, p) => b or not(members.keys().contains(p)) or members.get(p))
-    proposals' = proposals.append({ picks: picks, bad: bad }),
+    proposals' = proposals.append({ picks: picks, bad: bad, accepted: serverAccepts(picks, members) }),
     picks' = List(),
     game' = game,
     members' = members, canSafety' = canSafety, photos' = photos, opps' = opps,
@@ -495,10 +517,13 @@ module console_views {
   }
 
   // Rule: AGENTS.md "Age policy" (minors are never matched or connected); PRD 28.3 game is staff only.
-  // LemmaScript: canPropose, `ensures \result ==> forall(i, minor.has(picks[i]) && !minor.get(picks[i]))`
-  // and `ensures \result ==> hasGame && sparks > 0 && !over`.
-  // A proposal never includes a minor or a person that the store does not know.
+  // OPEN DEFECT, not in safety: the browser sends a proposal with a pick that the store does not know
+  // (main.tsx Tray). A proposal never includes a minor or a person that the store does not know.
   val canPropose_noMinor: bool = proposals.foldl(true, (ok, pr) => ok and not(pr.bad))
+
+  // The browser never sends a pick that it knows as a minor, and the server accepts no bad pick.
+  val proposalNoKnownMinor: bool = proposals.foldl(true, (ok, pr) =>
+    ok and not(pr.accepted and pr.bad))
 
   // LemmaScript: canPropose, the same contract, on the gate that enables the button.
   val readyOnlyInGame: bool = ready implies (game.has and game.sparks > 0 and not(game.over))
@@ -516,7 +541,7 @@ module console_views {
 
   val safety: bool = and {
     photoNeverMinor, photoTrail, shownRise, readCancel_noLand, readGateOk,
-    effectiveTabVisible, canPropose_noMinor, readyOnlyInGame, yesCountsBound,
+    effectiveTabVisible, proposalNoKnownMinor, readyOnlyInGame, yesCountsBound,
   }
 
   // ================================================================ witnesses (each MUST be violated)
@@ -543,6 +568,8 @@ module console_views {
   // The tray has a minor pick in a live game, and the button is off.
   val witness_minorPickBlocked: bool =
     not(game.has and game.sparks > 0 and not(game.over) and picks.length() > 0 and not(ready))
+  // The open defect is reachable: the browser sends a pick that the store does not know.
+  val witness_unknownPickSent: bool = not(proposals.foldl(false, (b, pr) => b or pr.bad))
   // An opportunity has a yes from everyone.
   val witness_everyoneYes: bool = yesCounts(opps).yes == 0
 
@@ -569,9 +596,13 @@ module console_views {
     assert(photoView(g, true) == Hide and not(photoHeld(g, true)))
   }
 
-  // A pick that the store does not know blocks the proposal (fail closed).
-  run unknownPickTest = assert(not(canPropose([1, 2], Map(1 -> false), true, 1, false))
-                               and canPropose([1, 2], Map(1 -> false, 2 -> false), true, 1, false))
+  // OPEN DEFECT: a pick that the store does not know does not block the button (fail open); the game
+  // server refuses it. A known minor blocks it.
+  run unknownPickTest = assert(and {
+    canPropose([1, 2], Map(1 -> false), true, 1, false), not(serverAccepts([1, 2], Map(1 -> false))),
+    not(canPropose([1, 2], Map(1 -> false, 2 -> true), true, 1, false)),
+    canPropose([1, 2], Map(1 -> false, 2 -> false), true, 1, false),
+  })
 
   // A saved Lab tab on a real-only console falls back to the feed.
   run labFallbackTest = {

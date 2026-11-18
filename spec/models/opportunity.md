@@ -10,7 +10,7 @@ Check review and deadlines, participant answers, name disclosure, STOP, cancella
 
 Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch](../probeDispatch.md), [review deadline rule](../reviewDeadline.md), and [meeting confirmation and attendance settlement](../meetingSettlement.md). The Network shell keeps the roster, persisted statuses, channel effects, and attendance records. The [repeat encounter rules](../repeatEncounter.md) cover a new review after two private responses to the same completed meeting.
 
-The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
+The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers member answers in the pair path. An assistant's profile submission leaves the outreach state in place and does not call the modeled answer action, so it never starts, confirms or closes a job posting read-back ([posting policy](../postingPolicy.md), "Only the member's own text in the thread issues a command"). Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds. A reply to an expired probe ([probe reply rules](../probeReply.md), "A late answer to an expired probe hears once that the invitation ended") gets one direct answer and changes no opportunity state, so the modeled answer action does not take it. A replacement asks again each member who agreed ([probe dispatch](../probeDispatch.md), "A replacement asks again every member who agreed to the earlier arrangement"); the model takes the pair path, and the shell applies the same rule to an activity-partner plan backfill.
 
 The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
 
@@ -197,8 +197,9 @@ module opportunity {
     not(mm(s, m).forgotten) and not(mm(s, m).optedOut) and not(mm(s, m).minor) and not(busy(s, m, except))
 
   // ---------------------------------------------------------------- the send pipeline (N:3862-3954)
-  // The gates of send() in order: checkRecipient (N:4215), budget, the Blooio streak, timing.
-  // Messages about other members and recruiting are refused for a minor (spec/outreachPolicy.md).
+  // The gates of send() in order: checkRecipient (recipientVerdict, spec/recipientEligibility.md), budget, the Blooio streak, timing (recipientTimingAllowed).
+  // Messages about other members and recruiting are refused for a minor (spec/outreachPolicy.md). The minor flag here stands
+  // for the code's notAdult fact (spec/recipientEligibility.md): a minor, a minor signal or report, or an unknown or conflicting age.
   pure def sendGate(s: S, m: str, kind: str, timing: str, aboutOthers: bool, proactive: bool, env: Env): str = {
     val x = mm(s, m)
     if (x.forgotten or x.optedOut) "refused"
@@ -455,7 +456,8 @@ module opportunity {
       val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
       if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       // A minor who was asked and then replaced is still on the roster: the open item closes, booked or not
-      // (spec/opportunityLifecycle.md, closesForMinor). A booking closes on closeBooking.
+      // (spec/opportunityLifecycle.md, closesForMinor). A booking closes on closeBooking. In the code, a member asked
+      // about an earlier plan whose time and place this item keeps counts as contacted (network.ts minorKnows).
       else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m)))
         push(a1, [J(if (x.stage == "scheduled") "closeBooking" else "close", o, "", reason)])
       else if (not(x.parts.contains(m))) a1

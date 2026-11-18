@@ -95,6 +95,8 @@ test("with the audit sink down, no staff action runs; with it up, each action ha
   expect(await hold(reassigned)).toBeUndefined();
   expect(await phases("leak_drop")).toEqual(["requested:true", "result:true"]);
   expect(await phases("resolve_inbound_turn")).toEqual(["requested:true", "result:true"]);
+  // Both rows name the turn that staff released (its provider message id, never a phone number).
+  expect((await sql`select target_id from network.staff_audit where action='resolve_inbound_turn' order by id`).map(r => r.target_id)).toEqual(["msg:blooio:stuck-1", "msg:blooio:stuck-1"]);
   expect((await sql`select detail->>'decision' as decision, detail->>'phase' as phase, ok from network.staff_audit where action='safety' and detail->>'safety'='phone_hold' order by id`)
     .map(r => `${r.decision}:${r.phase}:${r.ok}`)).toEqual(["same_owner:requested:true", "same_owner:result:true", "new_owner:requested:true", "new_owner:result:true"]);
   // The leak decision keeps the staff member's reason on both rows.

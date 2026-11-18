@@ -35,10 +35,10 @@ const staff=(token:string,method:string,path:string,body?:unknown)=>service.fetc
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   service=new NetworkService({url,clock,photoStorage:null,instance:"agent-signals-integration",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
-    networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:m=>console.error("SVC",m),tokens:"safety@friends:saf-tok,reviewer@friends:rev-tok",
+    networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},tokens:"safety@friends:saf-tok,reviewer@friends:rev-tok",
     adapter:()=>new DryRunAdapter(()=>{})});
   await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
-  for(const [index,text] of ["friends.help","Ari, 29","I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()) console.error("SETUP",JSON.stringify(await sendTurn(`setup-${index}`,text)));
+  for(const [index,text] of ["friends.help","Ari, 29","I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()) await sendTurn(`setup-${index}`,text);
   const opened=await sendTurn("concern-open","Tell me something about the weather");expect(opened.outcome).toBe("open");memberId=opened.memberId;
 },120_000);
 afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});

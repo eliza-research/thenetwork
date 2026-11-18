@@ -55,6 +55,44 @@ Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.
 //    when the stored version is newer than the view (lockAdmission, SD-020 fix 6cc9d1b).
 //  - The per-recipient hourly cap, the line caps and invalid time zones are left out (3 rows cannot reach
 //    them). The live flags are fixed for a run (they are process env).
+//
+// COMPARISON WITH BRANCH vibestack-matching (2026-11-18). The `oq:nnn`, `rt:nnn` and `svc:nnn` line numbers
+// are from the source branch and are stale; find the code by function name (OutboundQueue.drain, dispatch,
+// send, recordClaimedFailure, acceptReceipt, reconcileUnknown, applyStatus, inbound; channel.ts lineQueue;
+// runtime.ts drainQueue, storeStatuses, writeUnit, forget; service.ts turn-receipt handler).
+// Closed in the model: the failure write after a send is guarded on this worker's claim (status sending,
+// own lease, the claimed attempt), not on "sending or unknown_acceptance" (respond, Work.tries).
+// The gate order, the statuses, LEASE, REPLY_WINDOW, UNKNOWN_TTL (from next_attempt_at), the TTLs, the
+// unanswered cap and re-engagement, the line safety exemption for compliance, the person cap, the leak gate,
+// the receipt lookup and the receipt rank rules agree with the code.
+// OPEN: the model keeps the fixed behavior of the source branch. The code on this branch does not have these
+// fixes, so these are code defects, not model drift (the invariant that each one breaks is in brackets):
+//  - NOT_SENT is /^(refused|suppressed|blocked|parked|failed|expired|dropped)/: failed_unknown releases its
+//    person-cap slot (reconcileUnknown calls capRelease) although the text may have gone out (SD-090)
+//    [capAtMost, notSentMeansNotOut].
+//  - The stale hook is wrapped in guarded(..., false): a throw reads as "not stale" and the row can be sent
+//    (SD-299) [noClaimWhenClosed].
+//  - drain()'s catch ends the row parked_error at once with end() (no status guard, no attempt count, no
+//    backoff) (SD-117 form); a throw of the admission transaction parks a row that only needed a retry.
+//  - dispatch writes held_awaiting_reply with no check that the person wrote after the conversation read
+//    (SD-147: inbound() runs without the line lock) [heldOnlyWhileUnanswered].
+//  - reconcileUnknown does not end "collected" or "send_unknown" replies after the TTL; nothing else does
+//    (SD-100) [collectedResolvable].
+//  - collectedReceipt does not update platform.line_conversations, so accepted collected replies do not count
+//    in the unanswered streak (SD-148) [unansweredAtMost].
+//  - drainQueue has no stateCurrent check and send() has no stored-state version fence; send() rechecks
+//    safety_held and account_status only for proactive rows (SD-020) [noClaimWhileHeld, noClaimWhenClosed].
+//  - send() rechecks consent only when the row has a member: a direct text to a non-member is admitted after a
+//    STOP that commits during dispatch (Q-outbound_queue-1) [noClaimAfterStop].
+//  - acceptReceipt writes sent_at for a receipt with status failed (SD-337) [sentAtOnlyIfOut].
+//  - Under Cloud, accepted is not terminal in acceptReceipt, so a row to a non-member keeps its address and
+//    text after acceptance (SD-091) [nonMemberBodyClearedAtEnd].
+//  - storeStatuses writes the drain's change with no condition (Q-outbound_queue-3) and drainQueue has no
+//    SD-336 repair (only projectNotifications repairs provider statuses); direct() does not store its changes
+//    (SD-136) [mirrorNotStuckWaiting, mirrorSettles].
+// Not changed in the model: send() also rechecks quiet hours inside the admission transaction, parks an
+// agent-initiated row with an invalid zone (parked_invalid_timezone), and a ClaimedSendWriteError keeps the
+// lease for recover(). The model has no zones and no failing outcome write.
 module outbound_queue {
 
   // ------------------------------------------------------------------ constants
@@ -116,7 +154,8 @@ module outbound_queue {
     row: str, dec: str, readStatus: str, readSeq: int, isNew: bool, reeng: bool, resp: str,
     direct: bool,         // BlooioAdapter.direct: no stateCurrent check before it and no status repair after it
     net: str, seen: Set[str], pend: List[(str, str)],
-    swept: bool           // reconcileUnknown has ended the collected replies past the TTL (SD-100 fix b6ea5e1)
+    swept: bool,          // reconcileUnknown has ended the collected replies past the TTL (SD-100 fix b6ea5e1)
+    tries: int            // the attempts value that this worker's claim wrote (recordClaimedFailure guard)
   }
   type Ghost = {
     maxRank: int, bad: Set[str], foreign: bool, receiptRefused: bool, projected: bool,
@@ -163,7 +202,7 @@ module outbound_queue {
     sentAt: false, cause: "", turnLive: false, lastWait: "", doubt: false, acctFree: false
   }
   pure val IDLE: Work = { phase: "idle", row: "", dec: "", readStatus: "", readSeq: 0, isNew: false, reeng: false,
-    resp: "", direct: false, net: "nyc", seen: Set(), pend: List(), swept: false }
+    resp: "", direct: false, net: "nyc", seen: Set(), pend: List(), swept: false, tries: 0 }
   pure val NO_GHOST: Ghost = { maxRank: 0, bad: Set(), foreign: false, receiptRefused: false, projected: false,
     heldSeq: 0, deliveryFailed: false, wasDeferred: false, wasParked: false, lost: false, resent: false }
 
@@ -558,7 +597,7 @@ module outbound_queue {
       else if (adm == "admitted") all {
         rows' = rows.set(r, { ...row, status: "sending", attempts: row.attempts + 1, lease: true, leaseUntil: env.now + LEASE }),
         ghost' = bump(ghost, r, "sending").setBy(r, x => { ...x, bad: x.bad.union(bad) }),
-        work' = work.set(w, { ...wk, phase: "calling" }),
+        work' = work.set(w, { ...wk, phase: "calling", tries: row.attempts + 1 }),
         slots' = slots, conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
       else if (adm == "busy") all {
@@ -596,21 +635,23 @@ module outbound_queue {
   // The answer is written. dbErr: the accept transaction throws. send() now awaits acceptReceipt and maps the error
   // to failure "unknown" (Q-outbound_queue-2 fix 1e3585b): the row waits as unknown_acceptance and keeps its cap slot;
   // the receipt lookup (or the TTL) resolves it.
-  // Every write after a failed call is guarded on the statuses the send owns (oq send: OWNED = sending,
-  // unknown_acceptance; fix 8ca695b): while the call ran, recover() and a receipt lookup may have recorded the
-  // acceptance, or erasure ended the row. Such a row keeps its recorded outcome, and the drain records no change.
+  // Every write after a failed call is guarded on the claim that this worker made (oq recordClaimedFailure:
+  // status 'sending', lease_owner = this worker, attempts = the claimed attempt): while the call ran, recover() may
+  // have moved the row to unknown_acceptance, a receipt lookup may have recorded the acceptance, another worker may
+  // have claimed it again, or erasure ended the row. Such a row keeps its recorded outcome, and the drain reports
+  // the current status (currentStatus). The accept commit (acceptReceipt) keeps its own guard, acceptOk.
   action respond(w: str, dbErr: bool): bool = {
     val wk = work.get(w)
     val r = wk.row
     val row = rows.get(r)
     val retryable = wk.resp == "rejected"
-    val owned = row.status == "sending" or row.status == "unknown_acceptance"
+    val owned = row.status == "sending" and row.lease and row.attempts == wk.tries
     val failure = (wk.resp == "ok" and dbErr) or (wk.resp != "ok" and wk.resp != "failedReceipt")
     all {
       wk.phase == "responded",
       wk.resp == "ok" or not(dbErr),
       if (failure and not(owned)) all {
-        work' = work.set(w, { ...wk, phase: "locked" }),
+        work' = work.set(w, { ...wk, phase: "locked", pend: push(wk, r, row.member, row.status) }),
         rows' = rows, ghost' = ghost, slots' = slots, conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
       else if (wk.resp == "ok" and dbErr) waitAct(w, "unknown_acceptance", env.now, "unknown", env.mode == "cloud", wk.readSeq)

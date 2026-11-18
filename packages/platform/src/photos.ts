@@ -475,14 +475,18 @@ export class PhotoService {
     return this.adult(personId, app, tx);
   }
 
-  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined): Promise<PhotoResult<{ id: string }>> {
+  /**
+   * `holderRefused`: a caller's own holder check, read next to the ban and adult checks (the upload link's
+   * staff hold and live membership, photo-upload-link.ts). True refuses the photo as "not_member".
+   */
+  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, holderRefused?: () => Promise<boolean>): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     let change = stepPhotoChange(photoChangeInitial, {
       type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
     });
     if (change.phase === "UnsupportedApp") return { ok: false, reason: "app_not_allowed" };
     if (change.phase === "ConsentMissing") return { ok: false, reason: "consent_required" };
-    const who = await this.mayTake(personId, app);
+    const who = (await this.mayTake(personId, app)) ?? (holderRefused && (await holderRefused()) ? "not_member" : undefined);
     change = stepPhotoChange(change, { type: "checkUploader", eligible: who === undefined });
     if (!canScreenFile(change)) return { ok: false, reason: who ?? "adults_only" };
     const tooLarge = input.length > PHOTO_MAX_BYTES;

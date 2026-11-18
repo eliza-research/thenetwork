@@ -5,7 +5,8 @@
 import { runEngine, type EngineConfigInput, type EngineDeps, type EngineResult } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
-import { preparedItemCommits, preparedRunUsable } from "../../core/src/generated/runtimeUnit.ts";
+import type { NetworkEvent } from "@thenetwork/core";
+import { evidenceOwner, preparedItemCommits, preparedRunUsable } from "../../core/src/generated/runtimeUnit.ts";
 
 /** One engine run that a tick asks for. `key` names the run: its kind and its New York day. */
 export interface EngineRequest { key: string; input: EngineInput; config: EngineConfigInput; deps: EngineDeps }
@@ -28,11 +29,16 @@ export async function computeEngine(request: EngineRequest): Promise<{ request: 
   return { request, result: await inlineEngine(request) };
 }
 
+/** The evidence key of a public event: a separate namespace, so an event id never reads as a member id. */
+const eventOwner = (id: string) => `event\0${id}`;
+
 /**
- * The engine evidence of the input, split by member: every list item and every record entry that names
- * a member goes to that member; the rest (the time, public events) is shared. One digest per part.
+ * spec/runtimeUnit.md, "A prepared engine result commits only for members whose evidence did not change"
+ * The engine evidence of the input, one digest per owner (evidenceOwner): each public event is its own
+ * evidence (it leaves the input when it starts, by the clock, with no member change); each other list
+ * item and record entry that names a member goes to every member it names; the rest is shared.
  */
-function evidence(input: EngineInput, ids: ReadonlySet<string>): { shared: string; members: Map<string, string> } {
+function evidence(input: EngineInput, ids: ReadonlySet<string>): { shared: string; owners: Map<string, string> } {
   const parts = new Map<string, string[]>();
   const shared: string[] = [];
   const named = (value: unknown, out: Set<string>) => {
@@ -40,25 +46,30 @@ function evidence(input: EngineInput, ids: ReadonlySet<string>): { shared: strin
     if (Array.isArray(value)) { for (const v of value) named(v, out); return; }
     if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) { if (ids.has(k)) out.add(k); named(v, out); }
   };
-  const put = (text: string, owners: Set<string>) => {
-    if (!owners.size) { shared.push(text); return; }
-    for (const id of owners) { const list = parts.get(id) ?? []; list.push(text); parts.set(id, list); }
+  const put = (text: string, publicEvent: string | undefined, members: Set<string>) => {
+    const owner = evidenceOwner(publicEvent !== undefined, members.size > 0);
+    const keys = owner === "EventEvidence" ? [eventOwner(publicEvent!)] : owner === "MemberEvidence" ? [...members] : [];
+    if (!keys.length) { shared.push(text); return; }
+    for (const key of keys) { const list = parts.get(key) ?? []; list.push(text); parts.set(key, list); }
   };
   for (const [field, value] of Object.entries(input)) {
-    if (Array.isArray(value)) {
-      for (const item of value) { const owners = new Set<string>(); named(item, owners); put(`${field}:${stableStringify(item)}`, owners); }
+    if (field === "events" && Array.isArray(value)) {
+      for (const event of value as NetworkEvent[]) put(`${field}:${stableStringify(event)}`, event.id, new Set());
+    } else if (Array.isArray(value)) {
+      for (const item of value) { const owners = new Set<string>(); named(item, owners); put(`${field}:${stableStringify(item)}`, undefined, owners); }
     } else if (value && typeof value === "object") {
-      for (const [k, v] of Object.entries(value)) { const owners = new Set<string>(); named(k, owners); named(v, owners); put(`${field}.${k}:${stableStringify(v)}`, owners); }
+      for (const [k, v] of Object.entries(value)) { const owners = new Set<string>(); named(k, owners); named(v, owners); put(`${field}.${k}:${stableStringify(v)}`, undefined, owners); }
     } else shared.push(`${field}:${stableStringify(value)}`);
   }
   const digest = (xs: string[]) => sha256(xs.sort().join("\n"));
-  return { shared: digest(shared), members: new Map([...ids].map(id => [id, digest(parts.get(id) ?? [])])) };
+  return { shared: digest(shared), owners: new Map([...parts].map(([key, xs]) => [key, digest(xs)])) };
 }
 
 /**
  * spec/runtimeUnit.md, "A prepared engine result commits only for members whose evidence did not change"
  * The engine step of the commit unit. A different run asks for a new computation (EngineRunDue); in the
- * same run, each proposal, question and standing row keeps only when its members' evidence is unchanged.
+ * same run, each proposal, question and standing row keeps only when no owner it names (its members, the
+ * public event that anchors a proposal) has changed evidence.
  */
 export function preparedEngine(prepared: { request: EngineRequest; result: EngineResult }): EngineStep {
   return async current => {
@@ -67,13 +78,15 @@ export function preparedEngine(prepared: { request: EngineRequest; result: Engin
     const usable = preparedRunUsable(prepared.request.key === current.key,
       stableStringify(prepared.request.config) === stableStringify(current.config), before.shared === now.shared);
     if (!usable) throw new EngineRunDue({ ...current, input: structuredClone(current.input) });
-    const unchanged = (members: readonly string[]) => preparedItemCommits(usable, members.every(id => before.members.get(id) === now.members.get(id)));
+    const changed = [...new Set([...before.owners.keys(), ...now.owners.keys()])].filter(key => before.owners.get(key) !== now.owners.get(key));
+    const commits = (named: string[]) => preparedItemCommits(usable, named, changed);
     const { result } = prepared;
     return {
       ...result,
-      proposals: result.proposals.filter(p => unchanged([...p.participants, ...p.alternates])),
-      asks: result.asks.filter(a => unchanged([a.memberId])),
-      ...(result.memberStanding ? { memberStanding: result.memberStanding.filter(row => unchanged([row.memberId])) } : {}),
+      proposals: result.proposals.filter(p => commits([...p.participants, ...p.alternates,
+        ...(p.anchor?.type === "event" ? [eventOwner(p.anchor.id)] : [])])),
+      asks: result.asks.filter(a => commits([a.memberId])),
+      ...(result.memberStanding ? { memberStanding: result.memberStanding.filter(row => commits([row.memberId])) } : {}),
     };
   };
 }

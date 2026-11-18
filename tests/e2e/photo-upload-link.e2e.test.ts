@@ -10,6 +10,7 @@ import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
 import { PHOTO_CONSENT } from "../../packages/platform/src/photos.ts";
+import { writeStaffHold } from "../../packages/network/service/staff-safety-holds.ts";
 import { Browser, newPhone, pgAvailable, signIn, startStack, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 const T = 120_000;
@@ -20,9 +21,11 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
   beforeAll(async () => { st = await startStack(); sql = new SQL({ url: st.url, max: 2 }); }, T);
   afterAll(async () => { await sql?.close(); await st?.close(); });
 
-  const chunk = (type: string, data: Uint8Array) => { const o = new Uint8Array(12 + data.length); o.set([0, 0, data.length >> 8, data.length & 0xff]); o.set(new TextEncoder().encode(type), 4); o.set(data, 8); return o; };
-  const png = (tag: string) => {
-    const parts = [Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", new Uint8Array(13)), chunk("IDAT", new TextEncoder().encode(`PIXELS-${tag}`)), chunk("IEND", new Uint8Array(0))];
+  const chunk = (type: string, data: Uint8Array) => { const o = new Uint8Array(12 + data.length); new DataView(o.buffer).setUint32(0, data.length); o.set(new TextEncoder().encode(type), 4); o.set(data, 8); return o; };
+  /** A PNG; `bytes` pads the pixel chunk so the file is a phone-photo size. */
+  const png = (tag: string, bytes = 0) => {
+    const pixels = new Uint8Array(Math.max(0, bytes - 57) + `PIXELS-${tag}`.length); pixels.set(new TextEncoder().encode(`PIXELS-${tag}`));
+    const parts = [Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", new Uint8Array(13)), chunk("IDAT", pixels), chunk("IEND", new Uint8Array(0))];
     const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let k = 0; for (const p of parts) { o.set(p, k); k += p.length; } return o;
   };
   let seq = 0;
@@ -126,5 +129,41 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     expect(await photoCount(phone)).toBe(1);
     const m = await st.svc.people.getMembership(await personOf(phone), "slop");
     expect(m?.profile.photoConsent).toBe(PHOTO_CONSENT.version);
+  }, T);
+  const MiB = 1024 * 1024;
+  test("a batch is bounded by 8 MiB in all, so the largest allowed batch passes the site router", async () => {
+    const { phone, token } = await adultWithLink();
+    // Over the router's 9 MiB: refused at the edge, unread, and the link stays open.
+    expect((await upload(token, [png("e1", 3.5 * MiB), png("e2", 3.5 * MiB), png("e3", 3.5 * MiB)])).status).toBe(413);
+    // Under the router's cap but over 8 MiB in all: refused before the link is used.
+    const over = await upload(token, [png("o1", 2.9 * MiB), png("o2", 2.9 * MiB), png("o3", 2.9 * MiB)]);
+    expect([over.status, ((await over.json()) as { error: string }).error]).toEqual([413, "too_large"]);
+    expect(await photoCount(phone)).toBe(0);
+    // The largest batch the link text promises arrives through the router and is stored.
+    const ok = await upload(token, [png("m1", 4 * MiB - 64 * 1024), png("m2", 4 * MiB - 64 * 1024)]);
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect(await photoCount(phone)).toBe(2);
+  }, T);
+
+  test("a staff hold refuses an issue and a link issued before it; a member who left slop cannot use a link", async () => {
+    const held = await adultWithLink();
+    const personId = await personOf(held.phone);
+    await sql.begin(tx => writeStaffHold(tx, personId, "slop", randomUUID(), st.clock.now()));
+    expect((await upload(held.token, [png("held")])).status).toBe(410);
+    expect(await st.svc.photoLinks.issue(personId, "slop", "agent")).toEqual({ ok: false, reason: "held" });
+    expect(tokenIn((await turn(held.phone, "ADD PHOTOS")).replies)).toBeUndefined();
+    expect(await photoCount(held.phone)).toBe(0);
+
+    const left = await adultWithLink();
+    expect((await turn(left.phone, "leave slop.date")).outcome).toBe("handled");
+    expect((await upload(left.token, [png("left")])).status).toBe(410);
+    expect(await photoCount(left.phone)).toBe(0);
+    expect((await st.svc.photoLinks.issue(await personOf(left.phone), "slop", "agent")).ok).toBe(false);
+  }, T);
+
+  test("an unknown token is refused before the body is read", async () => {
+    // A body that is not even multipart: before the fix the server read and judged it (415); now the token is looked up first.
+    const res = await st.site("slop", "/api/photos/upload", { method: "POST", body: "x".repeat(1024), headers: { "content-type": "text/plain", "x-photo-upload-link": "A".repeat(43) } });
+    expect([res.status, ((await res.json()) as { error: string }).error]).toEqual([410, "link_unavailable"]);
   }, T);
 });

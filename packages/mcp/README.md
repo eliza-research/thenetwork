@@ -34,7 +34,7 @@ Every input schema has `additionalProperties: false`. Public tools take `app` on
 
 
 
-Ntwrk, Friends and Slop use the native connector authorization link for browser enrollment. The person verifies their phone, confirms the app enrollment and text consent, then chooses whether to allow the connector. An exact signup request keeps the browser and the resulting app membership bound together. A separate connection that the person approved before joining still expires when the phone gains a person. A person who allowed access without joining gets `not_joined` from `check_status`, with a next step that says to connect the app again and choose Finish signup. See [connector browser authorization](../../spec/oauthBrowserAuthorization.md) and [connector tools](../../spec/connectorTools.md).
+Ntwrk, Friends and Slop use the native connector authorization link for browser enrollment. The person verifies their phone, confirms the app enrollment and text consent, then chooses whether to allow the connector. An exact signup request keeps the browser and the resulting app membership bound together. A separate connection that the person approved before joining still expires when the phone gains a person. A person who allowed access without joining gets `not_joined` from `check_status`, with a next step that says to disconnect the app in the agent, connect it again and choose Finish signup. See [connector browser authorization](../../spec/oauthBrowserAuthorization.md) and [connector tools](../../spec/connectorTools.md).
 
 
 ## 3. Rules it keeps

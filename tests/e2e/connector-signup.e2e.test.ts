@@ -184,7 +184,7 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     const skipped = await allow("friends", b, first, verified.html);
     const notJoined = await status("friends", skipped);
     expect(notJoined).toMatchObject({ app: "friends", status: "not_joined" });
-    expect(notJoined.next_step).toContain("connect friends.help again in your agent");
+    expect(notJoined.next_step).toContain("disconnect friends.help in your agent's connector settings, then connect it again");
     expect(notJoined.next_step).toContain("Finish signup");
 
     // The next step: a new connection in the same browser offers Finish signup at once.

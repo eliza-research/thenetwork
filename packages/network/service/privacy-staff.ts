@@ -5,10 +5,10 @@
 // spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored database"
 import { randomUUID } from "node:crypto";
 import {
-  privacySupportAllowed, privacySupportDecision, privacySupportExportApps, privacySupportScopeAllowed,
+  privacySupportAllowed, privacySupportDecision, privacySupportExportApps, privacySupportOperation, privacySupportScopeAllowed,
   type PrivacySupportDecision, type PrivacySupportOperation, type PrivacySupportScope,
 } from "../../core/src/generated/accountPrivacy.ts";
-import { replayItemDone, type ReplayOutcome } from "../../core/src/generated/databaseRestore.ts";
+import { replayItemDone, replayStartAllowed, type ReplayOutcome } from "../../core/src/generated/databaseRestore.ts";
 import { APP_IDS, isAppId, type AppId } from "../../platform/src/apps.ts";
 import { maskPhone, normalizePhone } from "../../platform/src/phone.ts";
 import { globalRolesFor } from "../../observatory/src/staff.ts";
@@ -101,8 +101,7 @@ async function startRequest(svc: NetworkService, user: StaffUser, reason: string
   });
 }
 
-// spec/accountPrivacy.md, "Staff act only on the confirmed person after a fresh code from the number";
-// "A support request runs the member's own export or account erasure"
+// spec/accountPrivacy.md, "Staff act only on the confirmed person after a fresh code from the number"
 async function confirmRequest(svc: NetworkService, user: StaffUser, reason: string, id: string, e164: string, body: Body): Promise<Response> {
   if (!UUID.test(id)) return json({ ok: false, error: "request_unavailable" }, 404);
   const echoed = body.personId === null || typeof body.personId === "string" ? body.personId : undefined;
@@ -129,7 +128,8 @@ async function confirmRequest(svc: NetworkService, user: StaffUser, reason: stri
       await svc.sql`update platform.privacy_requests set completed_at = ${new Date(svc.clock.now())}, completed_by = ${user.id}, outcome = ${outcome}
         where id = ${id}::uuid and completed_at is null`;
     };
-    if (row!.operation === "erase") {
+    // spec/accountPrivacy.md, "A support request runs the member's own export or account erasure"
+    if (privacySupportOperation(OPERATIONS[row!.operation]!) === "DeleteAccount") {
       if (!(await svc.accounts.deleteAll(who))) return { ok: false, detail: { refused: "erasure_refused" }, response: json({ ok: false, error: "erasure_refused" }, 409) };
       await complete("erased");
       return { ok: true, detail: { outcome: "erased" }, response: json({ ok: true, outcome: "erased", personId: row!.person_id, phone: maskPhone(e164) }) };
@@ -155,8 +155,15 @@ export const RESTORE_REPLAY_ACTOR: StaffUser = { id: "system:restore-replay", ro
 
 /** At start, before the first tick: run the open replay items with an audit row before and after, and log what stays open. */
 export async function replayPrivacyAtStart(svc: NetworkService): Promise<void> {
-  const [open] = await svc.sql<{ n: number }[]>`select count(*)::int as n from platform.privacy_replay where replayed_at is null`;
+  const [open] = await svc.sql<{ n: number; forget: boolean; connector: boolean }[]>`select count(*)::int as n,
+    coalesce(bool_or(kind in ('erase', 'leave')), false) as forget, exists (select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'oauth' and c.relname = 'grants') as connector
+    from platform.privacy_replay where replayed_at is null`;
   if (!open?.n) return;
+  // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
+  if (!replayStartAllowed(open.forget, open.connector, svc.eraseHooksRegistered())) {
+    throw new Error("refusing to start: the privacy replay has open erasures or leaves and the connector forget hooks are not registered; create the MCP server (createServiceMcp) before start");
+  }
   await audited(svc, RESTORE_REPLAY_ACTOR, { action: "privacy_replay", targetId: "restore", reason: "start after a restore", detail: {} }, async () => {
     const items = await runPrivacyReplay(svc, RESTORE_REPLAY_ACTOR);
     const left = items.filter(i => !i.done);

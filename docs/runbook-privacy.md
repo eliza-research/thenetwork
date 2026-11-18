@@ -45,13 +45,19 @@ The member must prove that they hold the number. Staff never act on an email alo
 
 5. Reply to the member: the export, or that the erasure is done. A per-app leave is a text command (`leave <app>`) and needs no staff.
 
+Known limits, open for a founder decision:
+
+- The code is the normal login code of the app in step 2 ("your code for <app>"). Its text does not say that it authorizes an export or an erasure of the whole account, and the check takes the newest code of that app and number, so a login code that the member asks for after step 2 also passes. Tell the member in the email what the code is for, and never accept a code that the member did not get after your request.
+- The export goes to the email address that wrote to support. Nothing binds that address to the number: the code proves only that the writer can read texts to the number.
+- The code goes through the phone verification service. If that service sends on the shared line, a number that sent STOP may not get it. When the member says that no code came, do not act; ask the founder.
+
 ## 3. A restore for real: replay the privacy changes
 
 A backup is one snapshot. Erasures, STOPs, leaves and bans made after it are in the source database only. `deploy/backup/restore.ts` replays them when it can read the source database.
 
 1. Set `RESTORE_SOURCE_DATABASE_URL` to a login that can read the source database (the damaged one). Run the restore of runbook-real.md 8.3 step 2 with `--keep-privileges --replay`. A recovery without `--replay` or `--source-lost` is refused.
-2. The command copies the missing consent events, bans and suppressions into the restored database at once. For each copied ban it also deletes the banned number's queued texts and revokes the banned person's live shares. It queues each erasure, leave, STOP and ban projection in `platform.privacy_replay`. The log line `restore checked` shows `privacyReplay` with the counts.
-3. Start the backend on the restored database (runbook-real.md 8.3 step 5). The backend runs the queue when it starts, before its first tick and before it serves a request. The audit log shows `privacy_replay` rows with the actor `system:restore-replay`. Each item gets an outcome: `applied`, `already` (the change was already in place; `already:no_member` for a ban with no live membership, where the ban row already refuses the number), or `held`, `no_phone` and `refused:<reason>`. These last three stay open. The backend logs `[alert] privacy replay: N item(s) stay open`. Fix the cause (for example, decide the hold with `/holds`), then run the open items again:
+2. The command finds each erasure after the backup in `platform.erasure_ledger` (append-only; a new join by the same number does not remove the row), and copies the missing consent events, bans and suppressions into the restored database at once. A copied ban of a person who joined after the backup keeps that person's phone hash from the source. For each copied ban it also deletes the banned number's queued texts and revokes the banned person's live shares. It queues each erasure, leave, STOP and ban projection in `platform.privacy_replay`. The log line `restore checked` shows `privacyReplay` with the counts.
+3. Start the backend on the restored database (runbook-real.md 8.3 step 5). The backend runs the queue when it starts, before its first tick and before it serves a request, and after it registers the connector hooks, so a replayed erasure or leave also deletes the restored OAuth grants, tokens and connector requests. A backend that has no connector hooks refuses to start while an erasure or leave stays queued. The audit log shows `privacy_replay` rows with the actor `system:restore-replay`. Each item gets an outcome: `applied`, `already` (the change was already in place; `already:no_member` for a ban with no live membership, where the ban row already refuses the number), or `held`, `no_phone` and `refused:<reason>`. These last three stay open. The backend logs `[alert] privacy replay: N item(s) stay open`. Fix the cause (for example, decide the hold with `/holds`), then run the open items again:
 
    ```bash
    curl -sS -X POST http://backend.railway.internal:4848/privacy/replay \

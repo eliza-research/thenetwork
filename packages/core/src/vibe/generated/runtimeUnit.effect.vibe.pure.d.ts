@@ -1,5 +1,5 @@
 // Generated from spec/runtimeUnit.md via Vibestack and VibeLang. Run pnpm run spec:sync.
-import type { RuntimeUnit, StartupPlan, Event } from "./runtimeUnit.ts";
+import type { RuntimeUnit, EvidenceOwner, StartupPlan, Event } from "./runtimeUnit.ts";
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) @throws {never} */
 export declare const maxEngineAttempts: number;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
@@ -38,16 +38,22 @@ export declare function tickMayStartBesideEngine(engineInFlight: boolean): boole
 export declare function engineAttemptAllowed(attempt: number): boolean;
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) @throws {never} */
 export declare function lawComputingTickSkips(engineInFlight: boolean): boolean;
-/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) @throws {never} */
-export declare function lawEngineAttemptsBounded(attempt: number): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
 export declare function preparedRunUsable(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
-export declare function preparedItemCommits(runUsable: boolean, membersUnchanged: boolean): boolean;
+export declare function preparedItemCommits(runUsable: boolean, named: string[], changed: string[]): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
-export declare function lawChangedMemberNeverCommits(runUsable: boolean, membersUnchanged: boolean): boolean;
+export declare function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
-export declare function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean, membersUnchanged: boolean): boolean;
+export declare function lawChangedOwnerNeverCommits(runUsable: boolean, named: string[], changed: string[], owner: string): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
+export declare function lawUnchangedItemOfUsableRunCommits(named: string[], changed: string[]): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
+export declare function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean, named: string[], changed: string[]): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
+export declare function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
+export declare function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export declare function matchingDisabledByRegistry(matchingAllowed: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */

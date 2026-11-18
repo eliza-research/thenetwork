@@ -146,8 +146,9 @@ export const MAX_API_BODY_BYTES = 16 * 1024;
 export const REVIEW_MESSAGE = "We need to check this number before it can be used here. Please try again later, or email us for help.";
 /** Delete everything needs a code from a login in the last 10 minutes. */
 export const REAUTH_MESSAGE = "For your safety, log in again with a new code, then delete everything.";
-/** A number change needs a code to the current number from the last 10 minutes too (PRD F25). */
-export const REAUTH_CHANGE_MESSAGE = "For your safety, log in again with a new code, then change your number.";
+/** A number change needs a sign-in on the current number from the last 10 minutes (PRD F25): a platform code on an
+ *  OTP site, a Cloud phone sign-in on a Cloud site, so the text names neither. */
+export const REAUTH_CHANGE_MESSAGE = "For your safety, sign in again with your current number, then change your number.";
 
 /** Cookie header -> map. A malformed value (bad %-escape) is skipped, never thrown. */
 export function parseCookies(header: string | null): Map<string, string> {

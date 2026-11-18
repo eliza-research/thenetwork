@@ -67,27 +67,36 @@ pure def lawWeakAcknowledgementNeedsUninterruptedTurn(precedingMessages: int, ac
 
 ### A late answer to an expired probe hears once that the invitation ended
 
-When a one-to-one probe expires without an answer, the member can still reply to it. A direct reply that answers yes, no or with a short acknowledgement gets one honest answer: the invitation ended and nothing was shared. The reply counts only when the expired probe is still the latest message the Network sent the member, the transport accepted that exact probe, and the reply arrived after the acceptance and after the expiry. The Network records no consent and no availability from it, and it does not open a model turn about it. A second late reply gets nothing. Changed in this revision: before, a short reply was dropped without an answer and a longer one opened a model turn with no matching item (audit OPP19).
+When a one-to-one probe or a plan invitation expires without an answer after its response window, the member can still reply to it. A direct reply that answers yes, no or with a short acknowledgement gets one honest answer: the invitation ended and nothing was shared. The reply counts only when the expired probe is still the latest message the Network sent the member, the transport accepted that exact probe, and the reply arrived after the acceptance and after the expiry. A reply that comes after a later message from the Network is not read as an answer to the expired probe, because it can answer that later message; it goes the normal way. A second such reply, while that honest answer is still the latest message to the member, gets no new answer and opens no model turn. The Network records no consent and no availability from any of these replies, and it does not open a model turn about the expired probe. Changed in this revision: before, a short reply was dropped without an answer and a longer one opened a model turn with no matching item (audit OPP19); the first fix let a second late reply open a model turn, and it did not cover a plan invitation.
 
 ```quint
-type LateProbeRoute = TellProbeEnded | NotALateProbeAnswer
+type LateProbeRoute = TellProbeEnded | AlreadyToldProbeEnded | NotALateProbeAnswer
 
 pure def lateProbeRoute(direct: bool, answered: bool, latestProbe: bool, receiptAccepted: bool,
-    acceptedAt: int, endedAt: int, receivedAt: int, alreadyTold: bool): LateProbeRoute =
-  if (direct and answered and latestProbe and receiptAccepted and acceptedAt <= receivedAt and endedAt <= receivedAt
-      and not(alreadyTold)) TellProbeEnded
+    acceptedAt: int, endedAt: int, receivedAt: int, alreadyTold: bool, latestIsEndNotice: bool): LateProbeRoute =
+  if (alreadyTold)
+    if (direct and answered and latestIsEndNotice) AlreadyToldProbeEnded else NotALateProbeAnswer
+  else if (direct and answered and latestProbe and receiptAccepted and acceptedAt <= receivedAt and endedAt <= receivedAt)
+    TellProbeEnded
   else NotALateProbeAnswer
 
 pure def lawALateAnswerIsToldOnce(direct: bool, answered: bool, latestProbe: bool, receiptAccepted: bool,
-    acceptedAt: int, endedAt: int, receivedAt: int): bool =
-  lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true) == NotALateProbeAnswer
+    acceptedAt: int, endedAt: int, receivedAt: int, latestIsEndNotice: bool): bool =
+  lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true, latestIsEndNotice) != TellProbeEnded
+
+pure def lawASecondLateAnswerOpensNoTurn(latestProbe: bool, receiptAccepted: bool, acceptedAt: int, endedAt: int, receivedAt: int): bool =
+  lateProbeRoute(true, true, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true, true) == AlreadyToldProbeEnded
 
 pure def lawALateAnswerNeedsTheDeliveredProbe(direct: bool, answered: bool, latestProbe: bool,
-    acceptedAt: int, endedAt: int, receivedAt: int): bool =
-  lateProbeRoute(direct, answered, latestProbe, false, acceptedAt, endedAt, receivedAt, false) == NotALateProbeAnswer
+    acceptedAt: int, endedAt: int, receivedAt: int, latestIsEndNotice: bool): bool =
+  lateProbeRoute(direct, answered, latestProbe, false, acceptedAt, endedAt, receivedAt, false, latestIsEndNotice) == NotALateProbeAnswer
+
+pure def lawAReplyAfterALaterMessageGoesTheNormalWay(direct: bool, answered: bool, receiptAccepted: bool,
+    acceptedAt: int, endedAt: int, receivedAt: int, latestIsEndNotice: bool): bool =
+  lateProbeRoute(direct, answered, false, receiptAccepted, acceptedAt, endedAt, receivedAt, false, latestIsEndNotice) == NotALateProbeAnswer
 
 pure def lawAnAnswerBeforeTheExpiryIsNotLate(direct: bool, answered: bool, latestProbe: bool, acceptedAt: int,
-    endedAt: int, receivedAt: int): bool =
+    endedAt: int, receivedAt: int, latestIsEndNotice: bool): bool =
   receivedAt < endedAt implies
-    lateProbeRoute(direct, answered, latestProbe, true, acceptedAt, endedAt, receivedAt, false) == NotALateProbeAnswer
+    lateProbeRoute(direct, answered, latestProbe, true, acceptedAt, endedAt, receivedAt, false, latestIsEndNotice) == NotALateProbeAnswer
 ```

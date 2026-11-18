@@ -173,7 +173,7 @@ pure def sometimesExportsMembership(privacy: PrivacyRequest): bool =
 
 ### Only a global admin with a stated reason opens or confirms a support request
 
-New rule: before this change no staff route served a support request. A support request reaches every app of a person, so only an admin grant for all apps admits it, and the staff member states a reason of 5 to 500 characters at each step. Every other role, an admin of one app included, is refused.
+New rule: before this change no staff route served a support request. A support request reaches every app of a person, so only an admin grant for all apps admits it, and the staff member states a reason of 5 to 500 characters at each step. Every other role, an admin of one app included, is refused. Changed after review: the first law only restated the rule, so the laws now say that a missing global admin role and a reason length outside 5 to 500 are each refused for every other input.
 
 ```quint
 pure val privacySupportReasonMin: int = 5
@@ -184,8 +184,11 @@ pure val globalRolesValues = Set(List(), List("admin"), List("reviewer", "safety
 pure def privacySupportAllowed(globalRoles: List[str], reasonLength: int): bool =
   globalRoles.includes("admin") and reasonLength >= privacySupportReasonMin and reasonLength <= privacySupportReasonMax
 
-pure def lawSupportNeedsGlobalAdmin(globalRoles: List[str], reasonLength: int): bool =
-  privacySupportAllowed(globalRoles, reasonLength) implies globalRoles.includes("admin")
+pure def lawSupportWithoutGlobalAdminRefused(globalRoles: List[str], reasonLength: int): bool =
+  not(globalRoles.includes("admin")) implies not(privacySupportAllowed(globalRoles, reasonLength))
+
+pure def lawSupportReasonOutsideBoundsRefused(globalRoles: List[str], reasonLength: int): bool =
+  (reasonLength < privacySupportReasonMin or reasonLength > privacySupportReasonMax) implies not(privacySupportAllowed(globalRoles, reasonLength))
 ```
 
 ### A support export covers one app or every app, and an erasure covers every app
@@ -242,7 +245,7 @@ pure def lawCompletedSupportRequestNeverActsAgain(elapsedMs: int, echoedPerson: 
 
 ### A support request runs the member's own export or account erasure
 
-New rule: the operator path has no erasure or export of its own. A confirmed erasure runs "Erase my account" for the current owner of the phone: each live membership's forget hook (Network rows, photos and that app's connector grants), grants and connector requests in every app, sessions, shares, pending texts, consent and the phone binding. It keeps the tombstone, the suppression, the lowest age, bans and safety records. A phone with no person erases only its phone data, as the member path does. A confirmed export runs "Read my own app data" for each app in scope.
+New rule: the operator path has no erasure or export of its own. A confirmed erasure runs "Erase my account" for the current owner of the phone: each live membership's forget hook (Network rows, photos and that app's connector grants), grants and connector requests in every app, sessions, shares, pending texts, consent and the phone binding. It keeps the tombstone, the suppression, the lowest age, bans and safety records. A phone with no person erases only its phone data, as the member path does. A confirmed export runs "Read my own app data" for each app in scope. Changed after review: the shell chose the member operation from the request record by itself, so it now selects it through this function.
 
 ```quint
 pure def privacySupportOperation(operation: PrivacySupportOperation): PrivacyOperation =

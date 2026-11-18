@@ -70,7 +70,7 @@ The transcript captured on 2026-10-07 is gone: it showed the old `buddies` id, a
 | `GET /api/me` on another site with the first site's cookie | 401: each site has its own cookie |
 | Stop messages on one site (or STOP on the shared line) | every app stops for that number; "leave <app>" or the leave button leaves one app |
 | `POST /api/me/delete {"scope":"all"}` within 10 minutes of a login | `{"ok":true}`; later, 403 `reauth` |
-| `POST /api/me/phone/start {"phone"}` within 10 minutes of a login, then `POST /api/me/phone/confirm {"code"}` with the code from the new number | `{"ok":true}`, then `{"ok":true,"phoneMasked"}` and a new session cookie on the new number; later than 10 minutes, 403 `reauth`; a number that belongs to someone, 409 `number_in_use` (only after its code); runbook-real.md 9.2 |
+| `POST /api/me/phone/start {"phone"}` within 10 minutes of a login, then `POST /api/me/phone/confirm {"code"}` with the code from the new number | `{"ok":true}`, then `{"ok":true,"phoneMasked"}` and a new session cookie on the new number (a Cloud sign-in site clears the session and Cloud identity instead); later than 10 minutes, 403 `reauth`; a number that belongs to someone, 409 `number_in_use` (only after its code); runbook-real.md 9.2 |
 | Any request straight to the backend without the router's signature, in staging or production | 421 `edge_required` |
 
 ## 4. Rules the service keeps
@@ -149,7 +149,7 @@ Work to match the founder decisions (PRD 40, AGENTS.md):
 Not built:
 
 - The demo replay (`GET /api/demo` is 404; the sites hide the section).
-- The share UI (`POST /api/me/share` stores grants; no site shows it; no engine view reads grants).
+- The share UI (`POST /api/me/share` stores grants; no site shows it; only the text SHARE reply copies interests, spec/baseProfileShare.md).
 - Turnstile on the sites, and the carrier lookup (VoIP, landline, recent port).
 - Member invites by first name in production: the Network's invite flow calls `ctx.invite`, which the service does not supply, so "here's an invite link" names no link. Staff invites by phone work.
 - The `cross_app_leak` judge invariant in the simulator and the lab (`test/crossapp.test.ts` checks it in one test world).

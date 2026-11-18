@@ -27,7 +27,8 @@ Imported from `quint/chatjson_loop.qnt` at `30d950e`. See [model index](README.m
 //   packages/core/src/generated/chatRetry.ts). attemptGate is chatRetry `preflight` with
 //   `deadlineExpired`; afterFailure is chatRetry `rejectReply`. The shell (chatJson.ts tryChatJson)
 //   sends events to the generated `step` and does not decide again.
-//   Compared with chatJson.ts and llm.ts on branch vibestack-matching (2026-11-17): no state drift.
+//   Compared with chatJson.ts, llm.ts and spec/chatRetry.md on branch vibestack-matching
+//   (2026-11-17, again 2026-11-18): no state drift. The llm.ts line numbers below are current.
 //   The environment can abort the caller signal and let time pass between two passes (callbacks,
 //   the event loop).
 //

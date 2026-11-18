@@ -269,7 +269,7 @@ const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoine
 
 /** spec/connectorTools.md, "The member status decides which member tool can act": the join path from a live connection. */
 const connectAgain = (a: McpApp) =>
-  `connect ${a.name} again in your agent. On the connection page, choose Finish signup, check your details and the text message terms, then allow access.`;
+  `disconnect ${a.name} in your agent's connector settings, then connect it again. On the connection page, choose Finish signup, check your details and the text message terms, then allow access.`;
 const textKeyword = (a: McpApp) => (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : "");
 
 const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {

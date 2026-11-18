@@ -189,8 +189,8 @@ export function copyFor(b: CopyBrand) {
   /** An age came, but no first name. */
   joinNeedName: "Thanks. And your first name?",
   /** A person who already uses another app with this number joined this one. It never names the other app. */
-  linkNotice: "You've used this number with us before. Nothing is shared between apps unless you say so. Reply SHARE to reuse your first name, city and interests here.",
-  shareDone: "Done. I'll reuse those basics here. Nothing else is shared.",
+  linkNotice: "You've used this number with us before. Nothing is shared between apps unless you say so. Reply SHARE to reuse the interests you confirmed before.",
+  shareDone: "Done. I'll reuse the interests you confirmed before. Nothing else is shared.",
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
   };

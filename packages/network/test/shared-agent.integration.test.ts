@@ -12,7 +12,7 @@ import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
-import {lookingForAsk, NetworkService} from "../service/service.ts";
+import {CONTEXT_UNAVAILABLE_REPLY, lookingForAsk, NetworkService} from "../service/service.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
@@ -495,6 +495,23 @@ test("a member with more than fifty shareable facts gets the newest fifty in the
   expect(open.context.facets).toContain("Shared interest number 54");
   expect(open.context.facets).not.toContain("Shared interest number 0");
   expect(open.context.facets.every((fact: string) => fact.length <= 300)).toBe(true);
+}, 60_000);
+
+// spec/sharedContext.md, "A member whose context is unavailable still gets an answer"
+// spec/signedInbox.md, "Every collected reply passes the line's leak guard"
+test("a member whose context is withheld gets the fixed handled reply, never silence", async () => {
+  const phone = "+12125550177", before = escaped;
+  const {joined} = await joinFriendsByText(phone, "withheld");
+  const member = joined.memberId as string;
+  // A first name that fails the output check withholds the whole context (spec/sharedContext.md).
+  await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
+  const answer = await post(turn("withheld-open", phone, "Tell me something about the weather", "friends"));
+  expect(answer.status).toBe(200);
+  const body = await answer.json() as any;
+  expect(body).toMatchObject({outcome: "handled", app: "friends", memberId: member, reason: "context_unavailable", replyKind: "reply",
+    replies: [CONTEXT_UNAVAILABLE_REPLY]});
+  expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status: "collected", line: "dry-run"}]);
+  expect(escaped).toBe(before);
 }, 60_000);
 
 // spec/textEnrollment.md, "An active membership gets its welcome and at most one follow-up"

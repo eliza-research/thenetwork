@@ -15,6 +15,11 @@ export function inboxItemAllowedForRecipient(requested, proactiveAllowed) {
 }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
+export function rereadCountsPossible(plannedCount, remainingCount) {
+    return plannedCount >= 1 && remainingCount >= 0 && remainingCount <= plannedCount;
+}
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
 export function inboxItemStillPending(seen, notified) {
     return !seen && !notified;
 }
@@ -30,13 +35,13 @@ export function inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at) {
 }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
-export function canRereadItems(digest) {
-    return digest.phase === "DigestStarting";
+export function canRereadItems(digest, plannedCount, remainingCount) {
+    return digest.phase === "DigestStarting" && rereadCountsPossible(plannedCount, remainingCount);
 }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged) {
-    //@ ensures (inv(digest) && canRereadItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
+    //@ ensures (inv(digest) && canRereadItems(digest, plannedCount, remainingCount)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
     return { phase: remainingCount === 0 || !recipientAvailable ? "DigestCancelled" : (remainingCount === plannedCount && !destinationChanged ? "ReusingDigest" : "RebuildingDigest") };
 }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
@@ -146,7 +151,7 @@ export function lawForeignQueuedDigestCannotSend(threadCopy, boundLink, appScope
 //@ pure
 export function enabled(current, event) {
     if (event.type === "rereadItems")
-        return canRereadItems(current);
+        return canRereadItems(current, event.plannedCount, event.remainingCount);
     if (event.type === "recordDigest")
         return canRecordDigest(current);
     if (event.type === "enqueueDigest")
@@ -163,7 +168,7 @@ export function step(current, event) {
     //@ requires inv(current)
     //@ ensures inv(\result)
     if (event.type === "rereadItems")
-        return canRereadItems(current) ? rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged) : current;
+        return canRereadItems(current, event.plannedCount, event.remainingCount) ? rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged) : current;
     if (event.type === "recordDigest")
         return canRecordDigest(current) ? recordDigest(current, event.recorded) : current;
     if (event.type === "enqueueDigest")

@@ -627,7 +627,8 @@ module turn_consent {
   /**
    * The run completes (inbox.ts signed, service.ts sharedTurn): done where processing, with the response. An open
    * turn needs no collected reply, an active membership with an opt-in and a context (ctxOk is the oracle for
-   * sharedContext: facets and the leak check; SD-212/215 fixed in the oracle's code, SD-216 not reproduced). A row
+   * sharedContext: facets and the leak check; SD-212/215 fixed in the oracle's code, SD-216 not reproduced). An open
+   * turn without a context answers handled with the one fixed reply (audit SHA40; before, no reply). A row
    * that is no longer processing makes the done update throw: failOut.
    */
   action complete(r: int, lost: bool, ctxOk: bool): bool = all {
@@ -638,8 +639,11 @@ module turn_consent {
     val proc = rows.keys().contains(m) and rows.get(m).st == "processing"
     val a = wk.app
     val openOk = wk.open and wk.replies.size() == 0 and openAllowed(a) and ctxOk
+    // spec/sharedContext.md, "A member whose context is unavailable still gets an answer": the fixed reply, decided now.
+    val unavailable = wk.open and wk.replies.size() == 0 and openAllowed(a) and not(ctxOk)
     val resp: Resp =
       if (openOk) { ...NORESP, kind: "open", app: a, ctx: w.ctx }
+      else if (unavailable) { ...NORESP, kind: "handled", consent: wk.consent, replies: Set("reply"), app: a, rseq: w.seq }
       else { ...NORESP, kind: "handled", consent: wk.consent, replies: wk.replies, app: a, rseq: wk.rseq }
     if (proc) {
       val ans = answer(gw, w, g, m, r, resp, lost)

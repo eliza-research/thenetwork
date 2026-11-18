@@ -11,8 +11,14 @@ import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
 import { Mini, type Spec } from "./mini.ts";
 
 const TURN_LIMIT_MS = 8_000;
-const CLIMB_WANT = { objective: "find a regular climbing partner", category: "hobby" as const };
-const climber = (id: string, name: string): Spec => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [CLIMB_WANT] });
+/** Three pairs with no shared interest between pairs: a with c, b with d, e with f. */
+const partner = (id: string, name: string, hobby: string, skill: string): Spec => ({ id, name, age: 30, area: "Greenpoint",
+  interests: [hobby], skills: [skill], wants: [{ objective: `find a regular ${hobby} partner`, category: "hobby" as const }] });
+const PEOPLE: Spec[] = [
+  partner("a", "Ana Diaz", "climbing", "belaying"), partner("c", "Cy Moss", "climbing", "belaying"),
+  partner("b", "Ben Ito", "chess", "openings"), partner("d", "Dee Park", "chess", "openings"),
+  partner("e", "Eve Lund", "pottery", "glazing"), partner("f", "Fay Roe", "pottery", "glazing"),
+];
 
 /** The engine's judge model, held until the test releases it. A held call then fails, so the engine keeps its earlier stages (fail open). */
 function heldJudge() {
@@ -34,9 +40,9 @@ describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
 
   test("a STOP during a long engine run answers inside the turn limit, and the run's commit contacts neither the stopped nor a changed member", async () => {
     const judge = heldJudge();
-    const ids = ["a", "b", "c", "d", "e", "f"];
-    const w = new Mini(ids.map((id, i) => climber(id, ["Ana Diaz", "Ben Ito", "Cy Moss", "Dee Park", "Eve Lund", "Fay Roe"][i]!)),
-      { review: "auto", maxNewPerDay: 20, plans: false, growth: false, engineLLM: judge.llm });
+    const ids = PEOPLE.map(p => p.id);
+    // Not selective: the failed judge writes no explanations, and the ntwrk want heuristics are not under test here.
+    const w = new Mini(PEOPLE, { review: "auto", maxNewPerDay: 20, plans: false, growth: false, selective: false, engineLLM: judge.llm });
     await w.onboard(...ids);
     const store = new PgStore(url, "ntwrk:nyc");
     stores.push(store);
@@ -52,21 +58,21 @@ describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
     // A second tick while the run computes does not start another run.
     expect(await runTick(w.net, store, now)).toBe(false);
 
-    // Two signed turns while the judge is still held: a question from b gets its answer, and a STOP from a is stored.
+    // Two inbound turns while the judge is still held: a question from b gets its answer, and a STOP from a is stored.
     const stopMark = w.mark();
     let started = performance.now();
     const question = await within(runStored(w.net, store, n => n.onInbound({ id: "ask-b", memberId: "b", body: "what can you do for me?", ts: now, channel: "sms" })), TURN_LIMIT_MS);
-    expect(question.done).toBe(true);
+    // The gateway's real answer for an open question: the agent converses ("open"), never a busy retry.
+    expect(question.done && question.v).toBe("open");
     expect(performance.now() - started).toBeLessThan(TURN_LIMIT_MS);
-    expect(w.to("b", stopMark).filter(s => s.reply).length).toBeGreaterThan(0);
     started = performance.now();
     const stop = await within(runStored(w.net, store, n => n.onInbound({ id: "stop-a", memberId: "a", body: "STOP", keyword: "STOP", ts: now, channel: "sms" })), TURN_LIMIT_MS);
-    expect(stop.done).toBe(true);
+    expect(stop.done && stop.v).toBe("handled");
     expect(performance.now() - started).toBeLessThan(TURN_LIMIT_MS);
     expect((await store.load())!.members.find(m => m.id === "a")!.optedOut).toBe(true);
 
     // b's profile changes during the run (a new stated interest): the run read the old one.
-    w.facets.push({ id: "b:interest:chess", memberId: "b", kind: "interest", value: "chess", tags: ["chess"], scope: "matchable", provenance: "said",
+    w.facets.push({ id: "b:interest:go", memberId: "b", kind: "interest", value: "go", tags: ["go"], scope: "matchable", provenance: "said",
       confidence: 0.9, validFrom: now, source: "chat", observedAt: now, inferred: false, confirmedByMember: true });
 
     const before = new Set((await store.load())!.opps.map(o => o.id));
@@ -76,7 +82,8 @@ describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
     const saved = (await store.load())!;
     expect(saved.lastTick).toBe(now);
     const fromRun = saved.opps.filter(o => o.origin === "engine" && !before.has(o.id));
-    // The run committed work for the members who did not change.
+    // The run committed work for the members who did not change (the pottery pair e and f).
+    expect(fromRun.map(o => o.participants)).toContainEqual(expect.arrayContaining(["e", "f"]));
     expect(fromRun.length).toBeGreaterThan(0);
     for (const o of fromRun) {
       expect(o.participants).not.toContain("a");

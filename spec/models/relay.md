@@ -31,6 +31,11 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 //   relay-item            packages/network/src/relay.ts (RelayDesk.request, apply, deliver, release, reject, forget)
 //   relay-swap            packages/network/src/relay.ts:298-362 (swap, cancelSwaps)
 //   relay-match-view      packages/network/src/network.ts:5374-5379 (relayMatchOf), modelled as `matchOpen`
+//
+// Outside the bounds: the model has one match. A member with two or more live matches must name one by an
+// active item of the open context, or the desk asks which one and decides nothing (RelayDesk.matchFor,
+// spec/relayDecision.md "A relay names its match when the member has more than one live match", audit SHA38).
+// shared-relay.integration.test.ts covers it with two live matches.
 //   photo-relay-item      packages/platform/src/photo-relay.ts (select, review, revoke, claimForAction, issueDelivery, delivery)
 //   action-receipt        packages/network/service/relay-endpoint.ts:175-263
 //   relay-classifier-hook packages/engine/src/relay.ts:411-434 (relayItemAsync), an oracle
@@ -55,8 +60,13 @@ module relay {
   // log cap is reachable in a short trace (SD-387). Everything else that reads the log reads the same cap.
   pure val LOG_MAX = 3
   // The review SLA of the app (service.ts afterTick -> slaAlerts, DEFAULT_SLA_HOURS: 6 to 24 hours), scaled to
-  // 30 minutes. A held relay item past it raises one "[alert] review SLA" line (SD-133); it does not expire.
+  // 30 minutes. A held relay item past it raises one "[alert] review SLA" line (SD-133).
   pure val HELD_SLA = 30
+  // The network's review window (network.ts relayHost reviewWindowMs = reviewSlaHours, 12 hours by default), scaled
+  // to 90 minutes. The model keeps it longer than the SLA, as 12 hours is for slop (6 h) and friends and ntwrk (12 h);
+  // peon's 24-hour SLA is longer, so a peon hold expires first and its expiry raises the operations review SLA alert
+  // (ops.ts reviewExpired24h). A held item that staff did not decide by then expires unsent (relay.ts expireHolds, OPP21).
+  pure val HOLD_WINDOW = 90
   // The selected-photo path stays off in production (no PhotoRelayPolicy, service.ts:400-403). The model keeps it
   // on as a regression guard.
   pure val PHOTO_RELAY = true
@@ -144,7 +154,8 @@ module relay {
       or x.erased.get(src) or x.erased.get(dst)
   pure def partiesHold(x: World, src: str, dst: str): bool = x.trustHold.get(src) or x.trustHold.get(dst)
 
-  // Network.checkRecipient for a relay send (network.ts:4527-4542): opted out, account, hold, minor, block.
+  // Network.checkRecipient for a relay send (recipientVerdict, spec/recipientEligibility.md): opted out, account, hold, minor, block.
+  // Here minor stands for the code's notAdult fact: a minor, a minor signal or report, or an unknown or conflicting age.
   pure def recipientRefuses(x: World, src: str, dst: str): bool =
     x.optedOut.get(dst) or x.erased.get(dst) or x.trustHold.get(dst) or x.blocked or x.minor.get(dst)
       or x.minor.get(src) or x.trustHold.get(src) or x.erased.get(src)
@@ -320,7 +331,7 @@ module relay {
       ep.phase.get(k) == "claimed", ep.kind.get(k) == "text",
       not(w.erased.get(src)),
       if (not(w.matchOpen)) all {
-        // matchFor finds no open match: refused, nothing logged (relay.ts:193-194).
+        // matchFor finds no live match: refused, nothing logged (relay.ts request).
         desk' = desk, queue' = queue, g' = g,
       } else {
         val a = apply(w, d0, queue, readGhost(w, d0, g, src, dst), k, "text", src, dst, textDecision(w, src, dst, tc), false, refuse)
@@ -535,7 +546,8 @@ module relay {
     val g2 = if (canGo) g.with("staleRelease", g.staleRelease.union(staleItems(desk, g))) else g
     all {
       iid != PHOTO_ITEM,
-      desk.held.keys().contains(iid), h.status == "held",
+      // network.ts releaseRelay expires overdue items first, so a release after the deadline answers not_held.
+      desk.held.keys().contains(iid), h.status == "held", w.now - h.at < HOLD_WINDOW,
       desk' = d2, queue' = persist(d2, q2),
       w' = w, ep' = ep, photo' = photo, g' = g2,
     }
@@ -550,7 +562,7 @@ module relay {
     val d2 = if (d2a.verdict.keys().contains(iid)) d2a.with("verdict", d2a.verdict.set(iid, d2a.verdict.get(iid).with("staff", "rejected"))) else d2a
     all {
       iid != PHOTO_ITEM,
-      desk.held.keys().contains(iid), h.status == "held",
+      desk.held.keys().contains(iid), h.status == "held", w.now - h.at < HOLD_WINDOW,
       desk' = d2, queue' = persist(d2, queue),
       w' = w, ep' = ep, photo' = photo, g' = g,
     }
@@ -591,12 +603,24 @@ module relay {
     w' = w.with("now", w.now + dt),
     desk' = desk, queue' = queue, ep' = ep, photo' = photo, g' = g,
   }
-  // service.ts afterTick -> slaAlerts (lines 539-545, 2862-2877): held relay items share the app's review SLA (SD-133).
+  // RelayDesk.expireHolds (network.ts expireRelayHolds, at each tick and before each staff decision): each held item
+  // at its review deadline expires. Its text goes, it is never sent, and its sender gets one notice (not modelled: an
+  // info message, not a relay row). spec/relayLifecycle.md, "A held item that staff do not decide by its review
+  // deadline expires unsent" (audit OPP21).
+  pure def expiredDesk(d: Desk, now: int): Desk =
+    d.with("held", d.held.keys().mapBy(i => {
+      val h = d.held.get(i)
+      if (h.status == "held" and now - h.at >= HOLD_WINDOW) h.with("status", "expired").with("hasText", false) else h
+    }))
+  // The network tick expires overdue held items, then service.ts afterTick -> slaAlerts raises the alert for each
+  // item still held past the app's review SLA (SD-133). The tick's other work is tickFlush.
   action slaTick: bool = {
-    val over = desk.held.keys().filter(i => desk.held.get(i).status == "held" and w.now - desk.held.get(i).at > HELD_SLA)
+    val d1 = expiredDesk(desk, w.now)
+    val over = d1.held.keys().filter(i => d1.held.get(i).status == "held" and w.now - d1.held.get(i).at > HELD_SLA)
     all {
       g' = g.with("alerted", g.alerted.union(over)).with("slaAt", w.now),
-      w' = w, desk' = desk, queue' = queue, ep' = ep, photo' = photo,
+      desk' = d1, queue' = persist(d1, queue),
+      w' = w, ep' = ep, photo' = photo,
     }
   }
 
@@ -838,6 +862,11 @@ module relay {
     (h.status == "held" and g.slaAt - h.at > HELD_SLA) implies g.alerted.contains(i)
   })
 
+  // spec/relayLifecycle.md, "A held item that staff do not decide by its review deadline expires unsent": an
+  // expired item keeps no text and never has a queued or sent row.
+  val expiredStaysUnsent = desk.held.keys().forall(i =>
+    desk.held.get(i).status == "expired" implies (not(desk.held.get(i).hasText) and not(queue.rows.keys().contains(i))))
+
   val safety = and {
     numberMovesOnlyIfBothConsented,
     withdrawnNotSent,
@@ -855,6 +884,7 @@ module relay {
     photoRetryAfterRateHold,
     recordReviewMatches,
     heldSlaAlerted,
+    expiredStaysUnsent,
   }
 
   // ---- Properties outside `safety` (checked one by one; see the findings file).
@@ -877,8 +907,9 @@ module relay {
   // The engine checks consent freshness at decision time only; delivery after quiet hours is by design
   // ("I'll pass that on when it's a reasonable hour", relay.ts:164). Not a stated rule at delivery time.
   val consentFreshAtDelivery = g.events.forall(e => e.number implies e.fresh)
-  // SD-133: a held relay item has no expiry by design (service.ts slaAlerts: "does not expire"); the fix raises the
-  // SLA alert (heldSlaAlerted, in `safety`). This property stays violated.
+  // SD-133: a held relay item past the SLA raises the alert (heldSlaAlerted, in `safety`). Since OPP21 it also expires at
+  // the review window, but only at the next tick or staff decision, so it can stay "held" past the SLA. This property
+  // stays violated; no release or reject happens after the deadline (the staff guards).
   val heldDecidedInTime = desk.held.keys().forall(i => desk.held.get(i).status == "held" implies w.now - desk.held.get(i).at <= HELD_SLA)
   // SD-093: a claimed key does not stay processing with no worker. Liveness, not safety.
   val noStuckKey = REQS.forall(k => not(ep.receipt.get(k) == "processing" and ep.phase.get(k) == "dead"))
@@ -900,6 +931,8 @@ module relay {
   val witness_photoServed = not(photo.served)
   // A held relay item raised the review SLA alert.
   val witness_heldAlerted = g.alerted.size() == 0
+  // A held relay item expired unsent at its review deadline.
+  val witness_heldExpired = not(desk.held.keys().exists(i => desk.held.get(i).status == "expired"))
   // A lost passed item was taken back by RelayDesk.unsent (the log says block with send:refused semantics).
   val witness_unsentSynced = not(desk.log.keys().exists(i => desk.log.get(i).decision == "block" and g.lost.contains(i)
     and queue.records.keys().contains(i) and queue.records.get(i).decision == "block"))
@@ -1075,8 +1108,21 @@ module relay {
   run heldSlaAlertTest =
     init
       .then(claim("a1", "text")).then(commitText("a1", "hold", false)).then(answer("a1"))
-      .then(timePass(20)).then(timePass(20)).then(slaTick)
+      .then(timePass(20)).then(timePass(15)).then(slaTick)
       .expect(g.alerted.contains("a1") and heldSlaAlerted and not(heldDecidedInTime))
+
+  // OPP21 (fixed): a held item that staff do not decide by the review window expires unsent; a later release does nothing.
+  run heldExpiresTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "hold", false)).then(answer("a1"))
+      .then(timePass(45)).then(timePass(45)).then(slaTick)
+      .expect(desk.held.get("a1").status == "expired" and not(desk.held.get("a1").hasText)
+        and queue.records.get("a1").review == "expired" and expiredStaysUnsent and safety)
+  run releaseAfterExpiryTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "hold", false)).then(answer("a1"))
+      .then(timePass(45)).then(timePass(45)).then(staffRelease("a1", false))
+      .fail()
 
   // Regression guard for the selected photo: the bytes go only on the bound, approved, unexpired item.
   run photoServedTest =

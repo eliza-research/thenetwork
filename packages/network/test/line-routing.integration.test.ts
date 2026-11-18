@@ -132,6 +132,50 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     expect(misses).toEqual([]);
   }, T);
 
+  // spec/lineRouting.md, "STOP ends the message before any other check"; "A banned number gets only HELP and app leave"; "An invitation decline and a held number come before any flow"
+  test("the line gate: STOP before the ban, a banned or held number gets only HELP, a member's app keyword joins that app too", async () => {
+    const clock = new SimClock(START);
+    const { s, directs } = service(clock);
+    await s.start();
+    const repliesTo = (to: string, from: number) => directs.slice(from).filter(d => d.to === to).map(d => d.body);
+
+    const banned = newPhone();
+    await s.people.ban({ id: "line-routing-ban", scope: "phone", personId: null, phoneHash: s.accounts.phoneHash(banned), reason: "fixture",
+      reportId: null, bannedBy: "fixture", at: clock.now() });
+    let mark = directs.length;
+    expect(await text(s, clock, banned, "slop")).toBe("held");
+    expect(await text(s, clock, banned, "hi, I'm 30")).toBe("held");
+    expect(repliesTo(banned, mark)).toEqual([]);
+    expect(await text(s, clock, banned, "HELP")).toBe("held");
+    expect(repliesTo(banned, mark)).toHaveLength(1);
+    expect(await text(s, clock, banned, "STOP")).toBe("stopped");
+    expect(await activeApps(banned)).toEqual([]);
+
+    // A known number that staff put on the recycled-number hold.
+    const held = newPhone();
+    expect(await text(s, clock, held, "friends")).toBe("join_asked");
+    expect(await text(s, clock, held, "Cy, 34")).toBe("joined");
+    await s.people.setPhoneHold(held, "recycled_number", clock.now());
+    mark = directs.length;
+    expect(await text(s, clock, held, "slop")).toBe("held");
+    expect(await text(s, clock, held, "what's new?")).toBe("held");
+    expect(repliesTo(held, mark)).toEqual([]);
+    expect(await text(s, clock, held, "HELP")).toBe("held");
+    expect(repliesTo(held, mark)).toHaveLength(1);
+
+    const member = newPhone();
+    expect(await text(s, clock, member, "slop.date")).toBe("join_asked");
+    expect(await text(s, clock, member, "Rae, 33")).toBe("joined");
+    expect(await text(s, clock, member, "friends.help")).toBe("join_asked");
+    expect(await text(s, clock, member, "Rae, 33")).toBe("joined");
+    expect(await activeApps(member)).toEqual(["friends", "slop"]);
+    expect(await text(s, clock, member, "leave slop.date")).toBe("left");
+    expect(await activeApps(member)).toEqual(["friends"]);
+    // STOP on the shared line stops every app the member is in (a member's STOP is "handled", a stranger's "stopped").
+    expect(await text(s, clock, member, "STOP")).toBe("handled");
+    for (const app of ["friends", "slop"] as const) expect(await s.accounts.optedIn(app, member)).toBe(false);
+  }, T);
+
   test("an answer to \"what are you looking for?\": each app wanted, refused or absent, then only the apps not refused", async () => {
     const clock = new SimClock(START);
     const { s } = service(clock);

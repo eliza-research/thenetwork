@@ -8,7 +8,7 @@ A member needs to read their own saved profile without restarting onboarding or 
 
 Check ownership, app scope, opt-out, revision, and expiry. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [saved-profile read spec](../savedProfileRead.md) generates the production classification and resolution steps for flow A. Its terminal outcomes match this flow's `Reply` values. The [suggestion review spec](../profileSuggestionReview.md) generates batch admission and command handling in flow B. The standalone model allows future Calendar observations as a storage abstraction. The production text preview and command boundary requires every displayed item's observed time to be at or before the review time. The standalone model still covers routing, membership state and batch storage.
+The [saved-profile read spec](../savedProfileRead.md) generates the production classification and resolution steps for flow A. Its terminal outcomes match this flow's `Reply` values. The [suggestion review spec](../profileSuggestionReview.md) generates batch admission and command handling in flow B. Like the production text preview and command boundary, the model requires every displayed item's observed time to be at or before the review time, for Gmail and Calendar rows. The standalone model also covers routing, membership state and batch storage.
 
 The [profile journey](../savedProfileJourney.md) follows reads and
 leaving an app through signed turns. It compares disclosed profile
@@ -23,34 +23,42 @@ Imported from `quint/profile_read.qnt` at `30d950e`. See [model index](README.md
 // profile_read: two profile flows of the service on the shared line.
 //
 // WHAT THIS MODELS
-//   A. The saved-profile read (packages/network/service/profile-read.ts profileReadRequest, and the
-//      member unit in packages/network/service/service.ts route() and inbound, lines 1092-1093 and
-//      1443-1470). A text arrives from one person for one member unit. The shell turns the text into
-//      ReadFacts; readDecision (profile-core.ts) gives notRead, read, readApp, ambiguous or refused.
-//      The member unit then rechecks the sender: the sender's person has an active membership in the
-//      routed app, that membership is the member of the unit, and that member did not opt out.
-//      Only then does it answer, and only with the sender's own saved profile.
-//   B. The suggestion review batch (packages/network/service/profile-suggestion-review.ts
-//      renderSuggestionReview, parseSuggestionReview and reviewSuggestionMessage). currentBatch
-//      (profile-core.ts) selects the batch that a member may see and answer. A decision also needs
-//      the token revision of the batch. An accept with a scope or an edit gives a preview with the
-//      next revision; any other decision (a reject, or an accept with no change) is saved: the decided
-//      suggestion leaves the batch and the revision goes up (store decide, profile-suggestions.ts
-//      reviewPath; view() lists only the "proposed" rows, so a batch with no row left is not current).
-//   Each LemmaScript function in profile-core.ts is a pure def here with the same name and the same
-//   decision: readOnly, readDecision, sameOwner, suggestionOk, currentBatch. Each shell handler is an
-//   action that calls them and does not decide again.
+//   A. The saved-profile read (packages/network/service/profile-read.ts profileReadRequest, and
+//      packages/network/service/service.ts route() (profileApp, checkExplicitRoute ProfileRoute),
+//      inbound (a sender with no member unit gets a silent "handled") and memberUnit (the
+//      `const read = commandText ? profileReadRequest(...)` block)). A text arrives from one person for
+//      one member unit. The shell turns the text into ReadFacts; spec/savedProfileRead.md classifyRead
+//      gives the intent (OrdinaryTurn, OwnRead, NamedRead, UnclearRead, OtherProfile; readDecision
+//      here: NotRead, Read, ReadApp, Ambiguous, Refused). The member unit then rechecks the sender
+//      (resolveRead): the sender's person has an active membership in the routed app, that membership
+//      is the member of the unit (sameMember), and that member did not opt out. Only then does it
+//      answer, and only with the sender's own saved profile.
+//   B. The suggestion review batch (packages/network/service/profile-suggestion-review.ts batchReview,
+//      renderSuggestionReview, parseSuggestionReview and reviewSuggestionMessage; the generated
+//      spec/profileSuggestionReview.md checkBatch, checkItems, readCommand). currentBatch here is
+//      checkBatch and checkItems together: the batch that a member may see and answer. A decision also
+//      needs the token revision of the batch. An accept with a changed scope or an edit gives a
+//      preview with the next revision; any other decision (a reject, or an accept with the current
+//      scope) is saved: the decided suggestion leaves the batch and the revision goes up
+//      (profile-suggestions.ts decide; view() lists only the "proposed" rows, so a batch with no row
+//      left is not current).
+//   The pure defs readDecision and currentBatch give the same decisions as the generated
+//   savedProfileRead readIntent/resolveRead and profileSuggestionReview checkBatch/checkItems. Each
+//   shell handler is an action that calls them and does not decide again.
+//   Compared with the code on branch vibestack-matching on 2026-11-18. Closed drift: suggestionOk
+//   allowed a Calendar row with a future observedAt (SD-240); batchReview now refuses any row with
+//   observedAt > now, for both sources.
 //   The gateway is a nondeterministic environment: the member id of a turn can belong to another
 //   person (a wrong or a forged binding), and a turn can come from another chat.
 //
 // BOUNDS
 //   People 1 and 2. Apps SLOP and PEON (NONE is no app). Time 0..MAX_T. One batch at a time. Each
 //   suggestion row is three values: valid (id, text, a known source and a known kind), calendar (the
-//   source is google_calendar: its observedAt can be in the future, SD-240) and observedAt. A batch has
+//   source is google_calendar; it has the same time rule as gmail) and observedAt. A batch has
 //   one representative row and a count. The owner is (person, app, chat); the user and organization
 //   binding of the store (profile-suggestions.ts batch()) is part of `person` here.
 //
-// RELATION TO quint/profile_learning.qnt (branch wave2/profile_learning)
+// RELATION TO spec/models/profile_learning.md
 //   That model has the whole connector journey. It reads currentBatch as one predicate (renderable) and
 //   it does not model the profile read. This model has the decision inputs of currentBatch one by one,
 //   so each conjunct of the core can fail.
@@ -63,12 +71,17 @@ Imported from `quint/profile_read.qnt` at `30d950e`. See [model index](README.md
 //
 // OUTSIDE THE MODEL
 //   - The regular expressions and the text normalization: the shell computes ReadFacts and the
-//     batch flags, and LemmaScript proves the core from them. ownSubject (the "my " / "the ... i saved"
+//     batch flags, and the generated specs decide from them. ownSubject (the "my " / "the ... i saved"
 //     owner words) is the flag `own`.
 //   - The reply copy and savedProfileText. A shown profile is a record of whose membership it is.
 //   - The store transaction of decide (profile_learning.qnt has it).
 //   - The member unit answers a read only when the text is not a carrier keyword and does not come from
 //     the assistant (MCP source); otherwise the text goes to onInbound. Such texts are ROpen here.
+//   - In memberUnit, other commands (peon search, gathering RSVP, calendar, participation controls,
+//     fact commands, invite delivery, standing intents) are checked before the read. A text that one
+//     of them takes is ROpen here: it never shows a profile.
+//   - A text from a number with no member unit in the routed app: inbound returns "handled" with no
+//     reply. memberTexts requires a member unit, so the model has no record for it.
 //   - Safe-integer flags (numbersSafe, observedSafe): the model has ideal integers.
 module profile_read {
 
@@ -79,7 +92,7 @@ module profile_read {
   pure val MAX_T = 6
   pure val MAX_SUGGESTIONS = 10
 
-  // ---------------------------------------------------------------- core A (profile-core.ts)
+  // ---------------------------------------------------------------- core A (spec/savedProfileRead.md)
   type ReadDecision = NotRead | Read | ReadApp | Ambiguous | Refused
 
   type ReadFacts = {
@@ -103,7 +116,7 @@ module profile_read {
     else if (f.appKnown) ReadApp
     else Ambiguous
 
-  // ---------------------------------------------------------------- core B (profile-core.ts)
+  // ---------------------------------------------------------------- core B (spec/profileSuggestionReview.md)
   type Status = Pending | Resolved
   type Owner = { person: int, app: App, chat: int }
   type Suggestion = { valid: bool, calendar: bool, observedAt: int }
@@ -120,8 +133,8 @@ module profile_read {
 
   pure def sameOwner(b: Batch, o: Owner): bool = b.owner == o
 
-  // A Calendar event start can be in the future (the store accepts it); a Gmail time cannot (SD-240).
-  pure def suggestionOk(s: Suggestion, now: int): bool = s.valid and (s.calendar or s.observedAt <= now)
+  // profile-suggestion-review.ts batchReview: every row needs observedAt <= now, Gmail and Calendar.
+  pure def suggestionOk(s: Suggestion, now: int): bool = s.valid and s.observedAt <= now
 
   pure def currentBatch(b: Batch, o: Owner, now: int): bool = and {
     b.status == Pending, sameOwner(b, o),
@@ -164,7 +177,7 @@ module profile_read {
   pure def routeOf(d: ReadDecision, asked: App, lineApp: App, dedicated: bool): App =
     if (dedicated) lineApp else if (d == ReadApp) asked else lineApp
 
-  // service.ts 1443-1470: the member unit. `memberOf` is the person that the unit's member id belongs to.
+  // service.ts memberUnit, the profile read block (resolveRead): the member unit. `memberOf` is the person that the unit's member id belongs to.
   pure def answer(f: ReadFacts, sender: int, memberOf: int, asked: App, route: App,
                   mem: Set[(int, App)], out: Set[(int, App)]): ReadLog =
     val d = readDecision(f)
@@ -311,44 +324,53 @@ module profile_read {
   // ---------------------------------------------------------------- invariants
   // Rule: a member may read only the profile saved for their own number (service.ts reply
   // "I can only show the profile saved for your own number"; profile-read.ts savedProfileText uses
-  // own.membership). Code: service.ts 1446-1456 own check; profile-core.ts readDecision.
-  // LemmaScript: readDecision `ensures (\result === "read" || \result === "readApp") ==> readOnly(f) && f.own ...`.
-  val inv_onlyOwnProfileShown = reads.forall(r =>
+  // own.membership). Code: service.ts memberUnit sameMember check. Same fact as
+  // spec/savedProfileRead.md alwaysOnlyOwnProfileShown.
+  val alwaysOnlyOwnProfileShown = reads.forall(r =>
     r.reply == RShow implies (r.profileOf == r.sender and r.recipient == r.sender and r.facts.own))
 
   // Rule: a text that names another person's profile is refused or not read, never shown.
-  // Code: profile-core.ts readDecision; LemmaScript `ensures (\result === "refused") === (readOnly(f) && !f.own)`.
+  // Code: spec/savedProfileRead.md readIntent OtherProfile, resolveRead RefuseOtherProfile.
   val inv_otherProfileRefused = reads.forall(r =>
     not(r.facts.own) implies (r.reply == RRefused or r.reply == RSilent or r.reply == ROpen))
 
-  // Rule: "A combined read/edit is still an edit request, never a read-only operation" (profile-read.ts).
-  // LemmaScript: readDecision `ensures f.asksChange ==> \result === "notRead"`.
-  val inv_changeNeverRead = reads.forall(r => r.facts.asksChange implies r.reply == ROpen)
+  // Rule: a combined read and edit is an edit request, never a read. Same fact as
+  // spec/savedProfileRead.md lawAChangeIsAnOrdinaryTurn.
+  val lawAChangeIsAnOrdinaryTurn = reads.forall(r => r.facts.asksChange implies r.reply == ROpen)
 
-  // Rule: STOP stops every reply of the read path (AGENTS.md hard rule STOP; service.ts 1452-1456 optedOut check).
+  // Rule: STOP stops every reply of the read path (service.ts memberUnit optedOut check).
   val inv_optedOutGetsNoProfile = reads.forall(r => r.optedOut implies (r.reply == RSilent or r.reply == ROpen))
 
+  // Rule: every read reply (show, ask, refuse, other line) needs a sender who is the member of the
+  // unit, a member of the routed app, and not opted out. Same fact as spec/savedProfileRead.md
+  // alwaysNoReadReplyWithoutAuthority.
+  val alwaysNoReadReplyWithoutAuthority = reads.forall(r =>
+    (r.reply == RShow or r.reply == RAmbiguous or r.reply == RRefused or r.reply == ROtherLine) implies
+      (r.recipient == r.sender and not(r.optedOut)))
+
   // Rule: a read of one app shows only that app's profile (service.ts "This line is for ..." reply).
-  // LemmaScript: readDecision `ensures \result === "readApp" ==> f.appText && f.appKnown`.
+  // Code: spec/savedProfileRead.md resolveRead requestedAppMatches.
   val inv_shownAppIsAskedApp = reads.forall(r =>
     r.reply == RShow implies (r.profileApp == r.route and (r.asked == NONE or not(r.facts.appText) or r.asked == r.route)))
 
   // Rule: profile-suggestion-review.ts "Each command applies only to this batch": a review text is shown
-  // only for the pending batch of the same person and chat, before it expires. Code: currentBatch.
-  // LemmaScript: currentBatch `ensures \result ==> b.status === "pending" && sameOwner(b, o)` and the time conjunct.
-  val inv_renderOnlyCurrent = batchLog.forall(l =>
+  // only for the pending batch of the same person and chat, before it expires. Code: batchReview.
+  // Same fact as spec/profileSuggestionReview.md alwaysReviewNeedsEligibleBatch.
+  val alwaysReviewNeedsEligibleBatch = batchLog.forall(l =>
     l.current and l.owner == l.batchOwner and l.status == Pending and l.at < l.expiresAt)
 
   // Rule: "The store must atomically recheck owner, revision, expiry and pending state"
   // (profile-suggestion-review.ts parseSuggestionReview). A decision has the batch's own revision.
-  val inv_decisionOnlyCurrentRevision = batchLog.forall(l => l.kind != "render" implies (l.current and l.revMatch))
+  // Same fact as spec/profileSuggestionReview.md alwaysActionNeedsBoundCommand.
+  val alwaysActionNeedsBoundCommand = batchLog.forall(l => l.kind != "render" implies (l.current and l.revMatch))
 
   // Rule: copy "Pending review expires <t>": no decision at or after the expiry.
   val inv_noDecisionAfterExpiry = batchLog.forall(l => l.kind != "render" implies l.at < l.expiresAt)
 
   val safety = and {
-    inv_onlyOwnProfileShown, inv_otherProfileRefused, inv_changeNeverRead, inv_optedOutGetsNoProfile,
-    inv_shownAppIsAskedApp, inv_renderOnlyCurrent, inv_decisionOnlyCurrentRevision, inv_noDecisionAfterExpiry,
+    alwaysOnlyOwnProfileShown, inv_otherProfileRefused, lawAChangeIsAnOrdinaryTurn, inv_optedOutGetsNoProfile,
+    alwaysNoReadReplyWithoutAuthority, inv_shownAppIsAskedApp, alwaysReviewNeedsEligibleBatch,
+    alwaysActionNeedsBoundCommand, inv_noDecisionAfterExpiry,
   }
 
   // ---------------------------------------------------------------- reachability witnesses (expected VIOLATED)
@@ -368,9 +390,8 @@ module profile_read {
   val witness_noRender = not(batchLog.exists(l => l.kind == "render"))
   // A scope change or an edit gives a new revision, and a later saved decision is taken on it.
   val witness_noRejectAfterPreview = not(batchLog.exists(l => l.kind == "saved") and batch.revision > 2)
-  // A Calendar suggestion with a future event start is still shown (SD-240).
-  val witness_noFutureCalendar = not(batchLog.exists(l => l.kind == "render") and batch.status == Pending
-                                     and batch.rows.exists(s => s.calendar and s.observedAt > clock))
+  // A Calendar suggestion is shown once its observed time has come.
+  val witness_noCalendarRender = not(batchLog.exists(l => l.kind == "render") and batch.rows.exists(s => s.calendar))
   // A saved decision on a batch of two leaves the batch current with the next revision.
   val witness_noPartialSave = not(batchLog.exists(l => l.kind == "saved") and batch.status == Pending and batch.count > 0)
 
@@ -417,11 +438,13 @@ module profile_read {
     .then(tick)
     .then(all { assert(not(currentBatch(batch, { person: 1, app: SLOP, chat: 1 }, clock))), stutter })
 
-  // A Gmail time in the future is refused; a Calendar event start in the future is not (SD-240).
+  // A future observed time is refused for Gmail and for Calendar; the present time is accepted.
   run futureCalendarTest = init.then(makeBatch(1, 1, 3))
     .then(all { assert(not(currentBatch({ ...batch, rows: Set({ valid: true, calendar: false, observedAt: clock + 1 }) },
                                         { person: 1, app: SLOP, chat: 1 }, clock))
-                       and currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock + 1 }) },
+                       and not(currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock + 1 }) },
+                                            { person: 1, app: SLOP, chat: 1 }, clock))
+                       and currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock }) },
                                         { person: 1, app: SLOP, chat: 1 }, clock)), stutter })
 }
 ```

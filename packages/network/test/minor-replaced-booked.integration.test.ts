@@ -10,15 +10,26 @@ import { Mini } from "./mini.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
-test("a booked plan closes when a member who was asked about it and replaced is found to be a minor", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
-  await w.onboard("a", "b", "c");
-  const id = w.propose(["a", "b"], { alternates: ["c"] });
+/**
+ * Ana says yes, Ben declines and is replaced by Cy. Ana is asked again about Cy and says yes
+ * (spec/probeDispatch.md, "A replacement asks again every member who agreed to the earlier arrangement"); Cy is
+ * then asked.
+ */
+async function replaceB(w: Mini) {
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);
   await w.say("a", "yes");
   expect(await w.runUntil(() => w.probed("b"))).toBe(true);
   await w.say("b", "No thanks, I'll pass.");
+  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+  await w.say("a", "yes");
   expect(await w.runUntil(() => w.probed("c"))).toBe(true);
+}
+
+test("a booked plan closes when a member who was asked about it and replaced is found to be a minor", async () => {
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+  await w.onboard("a", "b", "c");
+  const id = w.propose(["a", "b"], { alternates: ["c"] });
+  await replaceB(w);
   await w.say("c", "yes");
   expect(w.meetings.length).toBe(1);
   const from = w.mark();
@@ -53,11 +64,7 @@ test("after a minor signal at night, the adults' cancellation is not about a pla
   const queued = () => (w.net.exportState() as unknown as { deferred: { meta: { proposalId?: string } }[] }).deferred.filter(d => d.meta.proposalId === id);
   await w.onboard("a", "b", "c");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
-  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
-  await w.say("a", "yes");
-  expect(await w.runUntil(() => w.probed("b"))).toBe(true);
-  await w.say("b", "No thanks, I'll pass.");
-  expect(await w.runUntil(() => w.probed("c"))).toBe(true);
+  await replaceB(w);
   await w.until(22);
   await w.say("c", "yes");
   expect(w.meetings.length).toBe(1);
@@ -176,11 +183,7 @@ test("a booked pair closes when its asked and replaced member who stated 30 writ
   await w.onboard("a", "c");
   await joinStatingThirty(w, "b");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
-  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
-  await w.say("a", "yes");
-  expect(await w.runUntil(() => w.probed("b"))).toBe(true);
-  await w.say("b", "No thanks, I'll pass.");
-  expect(await w.runUntil(() => w.probed("c"))).toBe(true);
+  await replaceB(w);
   await w.say("c", "yes");
   expect(w.meetings.length).toBe(1);
   const from = w.mark();
@@ -203,11 +206,7 @@ test("a minor signal after the start closes the booking without a message to the
   const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
   await w.onboard("a", "b", "c");
   const id = w.propose(["a", "b"], { alternates: ["c"] });
-  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
-  await w.say("a", "yes");
-  expect(await w.runUntil(() => w.probed("b"))).toBe(true);
-  await w.say("b", "No thanks, I'll pass.");
-  expect(await w.runUntil(() => w.probed("c"))).toBe(true);
+  await replaceB(w);
   await w.say("c", "yes");
   const meetingAt = w.net.exportState().opps.find(o => o.id === id)!.meetingAt!;
   await w.run(meetingAt + 30 * 60_000 - w.clock.now());

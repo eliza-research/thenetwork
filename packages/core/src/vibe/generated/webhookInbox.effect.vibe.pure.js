@@ -17,9 +17,13 @@ export function lawComplianceGoesFirst(signedTurnBlocks) { return M.lawComplianc
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export function earlierWebhookCancellable(selectedTurn, compliance) { return M.earlierWebhookCancellable(selectedTurn, compliance); }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
+export function canStartWebhook(turn, attempts, stopCommand) { return M.canStartWebhook(turn, attempts, stopCommand); }
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
+export function startWebhook(turn, attempts, stopCommand) { return M.startWebhook(turn, attempts, stopCommand); }
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export function canRecordHandled(turn) { return M.canRecordHandled(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
-export function recordHandled(turn, stopCommand) { return M.recordHandled(turn, stopCommand); }
+export function recordHandled(turn) { return M.recordHandled(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export function canRecordCompletion(turn) { return M.canRecordCompletion(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
@@ -31,13 +35,15 @@ export function lawNeverCancelCompliance(selectedTurn) { return M.lawNeverCancel
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export function stepDoneRequiresCompletion(before, via, after) { return M.stepDoneRequiresCompletion(before, via, after); }
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
-export function recordFailure(turn, attempts, stopCommand) { return M.recordFailure(turn, attempts, stopCommand); }
+export function recordFailure(turn) { return M.recordFailure(turn); }
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
+export function alwaysStopNeverDropped(turn) { return M.alwaysStopNeverDropped(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
 export function sometimesCanRetryWebhook(turn) { return M.sometimesCanRetryWebhook(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
 export function canRecordFailure(turn) { return M.canRecordFailure(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
-export function lawStopNeverDrops(turn, attempts) { return M.lawStopNeverDrops(turn, attempts); }
+export function lawStopNeverDrops(turn) { return M.lawStopNeverDrops(turn); }
 /** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md) @throws {never} */
 export function webhookAnswer(done, failed) { return M.webhookAnswer(done, failed); }
 /** Do the rules allow this event in this state? @throws {never} */

@@ -43,7 +43,8 @@ module plan_crew {
   pure val MEMBERS = Set("a", "b", "c", "d")
   pure val CREW0 = Set("a", "b", "c")
   // The members asked about the plan the crew came from: the crew, and d, who was asked and declined. The crew
-  // meets at that plan's time and place (crewSource and knowsCrew, network.ts).
+  // meets at that plan's time and place (crewSource and knowsCrew, network.ts). In the code the set also holds the
+  // members asked about each earlier plan whose time and place that plan keeps (timeAndPlaceChain, network.ts).
   pure val SOURCE_ASKED = Set("a", "b", "c", "d")
   pure val MAXT = 13
   pure val CREW_TIMEOUT = 3    // crew offer resolves after 3 days (network.ts:3221)

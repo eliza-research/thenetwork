@@ -206,15 +206,22 @@ export function lawReplayCopiesOnlyMissingRows(inRestored: boolean): boolean {
 
 /** Story: Carry privacy changes made after the backup into the restored database / An erasure after the backup is replayed (spec/databaseRestore.md) */
 //@ pure
-export function replaysErasure(sourceErased: boolean, restoredErased: boolean): boolean {
-  return sourceErased && !restoredErased;
+export function replaysErasure(erasedAfterBackup: boolean, restoredErased: boolean): boolean {
+  return erasedAfterBackup && !restoredErased;
 }
 
 /** Story: Carry privacy changes made after the backup into the restored database / An erasure after the backup is replayed (spec/databaseRestore.md) */
 //@ pure
-export function lawErasedPersonDoesNotStayLive(sourceErased: boolean, restoredErased: boolean): boolean {
+export function lawErasedPersonDoesNotStayLive(erasedAfterBackup: boolean, restoredErased: boolean): boolean {
   //@ ensures \result === true
-  return !sourceErased || (restoredErased || replaysErasure(sourceErased, restoredErased));
+  return !erasedAfterBackup || (restoredErased || replaysErasure(erasedAfterBackup, restoredErased));
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / An erasure after the backup is replayed (spec/databaseRestore.md) */
+//@ pure
+export function lawNoErasureNoReplay(restoredErased: boolean): boolean {
+  //@ ensures \result === true
+  return !replaysErasure(false, restoredErased);
 }
 
 /** Story: Carry privacy changes made after the backup into the restored database / A leave after the backup is replayed (spec/databaseRestore.md) */
@@ -262,6 +269,26 @@ export function lawStoppedMembershipStops(membershipLive: boolean): boolean {
 export function lawStopOutsideScopeStays(stillOptedOut: boolean): boolean {
   //@ ensures \result === true
   return !replaysStop(true, false, true, stillOptedOut);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs a queued erasure or leave only after the connector hooks are registered (spec/databaseRestore.md) */
+//@ pure
+export function replayStartAllowed(openForgetItem: boolean, connectorSchema: boolean, connectorHooks: boolean): boolean {
+  return !(openForgetItem && connectorSchema && !connectorHooks);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs a queued erasure or leave only after the connector hooks are registered (spec/databaseRestore.md) */
+//@ pure
+export function lawForgetReplayNeedsConnectorHooks(openForgetItem: boolean, connectorHooks: boolean): boolean {
+  //@ ensures \result === true
+  return !(openForgetItem && !connectorHooks) || !replayStartAllowed(openForgetItem, true, connectorHooks);
+}
+
+/** Story: Carry privacy changes made after the backup into the restored database / The backend runs a queued erasure or leave only after the connector hooks are registered (spec/databaseRestore.md) */
+//@ pure
+export function lawNoConnectorSchemaNoWait(openForgetItem: boolean, connectorHooks: boolean): boolean {
+  //@ ensures \result === true
+  return replayStartAllowed(openForgetItem, false, connectorHooks);
 }
 
 /** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */

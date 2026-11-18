@@ -16,6 +16,7 @@ import type { OtpProvider } from "../../platform/src/otp.ts";
 import { maskPhone } from "../../platform/src/phone.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
+import { createServiceMcp } from "../service/serve.ts";
 import { START } from "./mini.ts";
 import { backup } from "../../../deploy/backup/backup.ts";
 import { restore } from "../../../deploy/backup/restore.ts";
@@ -147,11 +148,17 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     await fresh();
     const clock = new SimClock(START);
     const { s } = service(clock);
-    const erasing = newPhone(), stopping = newPhone(), leaving = newPhone(), banning = newPhone();
-    for (const [phone, name] of [[erasing, "Cy"], [stopping, "Di"], [leaving, "Ed"], [banning, "Flo"]] as const) await joinByText(s, clock, phone, "slop", name);
+    const erasing = newPhone(), stopping = newPhone(), leaving = newPhone(), banning = newPhone(), rejoining = newPhone(), late = newPhone();
+    for (const [phone, name] of [[erasing, "Cy"], [stopping, "Di"], [leaving, "Ed"], [banning, "Flo"], [rejoining, "Ida"]] as const) await joinByText(s, clock, phone, "slop", name);
     await joinByText(s, clock, leaving, "friends", "Ed");
     const erased = (await s.accounts.personFor(erasing))!, left = (await s.accounts.personFor(leaving))!, banned = (await s.accounts.personFor(banning))!;
-    const stopped = (await s.accounts.personFor(stopping))!;
+    const stopped = (await s.accounts.personFor(stopping))!, rejoined = (await s.accounts.personFor(rejoining))!;
+    // A connector grant of the person who erases after the backup: the restore brings it back with the dump.
+    await sql`insert into oauth.clients (id, redirect_uris, auth_method, app_id, surface, kind, created_at)
+      values ('client_privacy', '{https://client.example/callback}', 'none', 'slop', 'full', 'dcr', ${new Date(clock.now())})`;
+    await sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at)
+      values ('grant_privacy', 'client_privacy', 'slop', ${s.accounts.phoneHash(erasing)}, ${erased.id}, '{membership:read}', 'https://slop.date/mcp',
+        ${new Date(clock.now())}, ${new Date(clock.now() + 30 * 24 * 60 * MINUTE)})`;
     const [stopMember] = await sql`select id from network.members where app_id = 'slop' and person_id = ${stopped.id}::uuid` as { id: string }[];
 
     // A queued text of the banned number in the backup: the restore must not keep it.
@@ -161,6 +168,15 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       await backup({ url: urlOf(DB), outDir: dir, roles: false });
 
       expect(await s.accounts.deleteAll({ e164: erasing, personId: erased.id })).toBe(true);
+      // An erasure, then a new join of another app by the same number: the join revives the tombstone.
+      expect(await s.accounts.deleteAll({ e164: rejoining, personId: rejoined.id })).toBe(true);
+      await joinByText(s, clock, rejoining, "friends", "Ida");
+      expect(await s.accounts.personFor(rejoining)).toMatchObject({ id: rejoined.id });
+      // A person who joins after the backup and gets a person ban that carries no phone hash.
+      await joinByText(s, clock, late, "slop", "Jo");
+      const latePerson = (await s.accounts.personFor(late))!;
+      await sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, banned_by, at)
+        values ('ban_late_person', 'person', ${latePerson.id}::uuid, null, 'confirmed by staff', 'staff:adm', ${new Date(clock.now())})`;
       await text(s, clock, stopping, "STOP");
       expect(await s.accounts.optedIn("slop", stopping)).toBe(false);
       expect(await s.accounts.leave(s.apps.friends, { e164: leaving, personId: left.id })).toBe(true);
@@ -173,23 +189,33 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       const restored = await restore({ serverUrl: ADMIN_URL, db: RESTORED, dir, replayFrom: urlOf(DB) });
       expect(restored.mismatches).toEqual([]);
       // The leave is an opt-out of friends too: its STOP item finds the membership already left.
-      expect(restored.privacy).toMatchObject({ erasures: 1, leaves: 1, stops: 2 });
+      expect(restored.privacy).toMatchObject({ erasures: 2, leaves: 1, stops: 2 });
       expect(restored.privacy!.bans).toBeGreaterThan(0);
     } finally { await rm(dir, { recursive: true, force: true }); }
 
     const { s: back } = service(clock, RESTORED);
     const restoredSql = new SQL({ url: urlOf(RESTORED), max: 1 });
+    let mcp: Awaited<ReturnType<typeof createServiceMcp>>;
     try {
       // The copied facts hold before the backend runs anything.
       expect(await back.accounts.optedIn("slop", stopping)).toBe(false);
       expect(await back.people.isSuppressed(back.accounts.phoneHash(erasing))).toBe(true);
       expect(await back.accounts.banned(banning)).toBe(true);
+      // spec/databaseRestore.md, "A source row that the restored database lacks is replayed": the ban of a person
+      // who joined after the backup keeps that person's phone hash.
+      expect(await back.accounts.banned(late)).toBe(true);
       expect(await restoredSql`select count(*)::int as n from platform.pending_texts where phone_hash = ${back.accounts.phoneHash(banning)}`).toEqual([{ n: 0 }]);
 
       // spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
+      // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
+      await expect(back.start()).rejects.toThrow(/connector forget hooks/);
+      expect(await restoredSql`select count(*)::int as n from oauth.grants where person_id = ${erased.id}`).toEqual([{ n: 1 }]);
+      mcp = await createServiceMcp(back, { env: { PLATFORM_ENV: "dev" }, databaseUrl: urlOf(RESTORED), migrate: false, log: () => {} });
       await back.start();
+      expect(await restoredSql`select count(*)::int as n from oauth.grants where person_id = ${erased.id}`).toEqual([{ n: 0 }]);
       expect(await restoredSql`select kind, app_id, outcome, replayed_at is not null as done, claimed_until from platform.privacy_replay
         order by case kind when 'erase' then 0 when 'leave' then 1 when 'stop' then 2 else 3 end, app_id`).toEqual([
+        { kind: "erase", app_id: null, outcome: "applied", done: true, claimed_until: null },
         { kind: "erase", app_id: null, outcome: "applied", done: true, claimed_until: null },
         { kind: "leave", app_id: "friends", outcome: "applied", done: true, claimed_until: null },
         { kind: "stop", app_id: "friends", outcome: "already", done: true, claimed_until: null },
@@ -203,6 +229,11 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       expect(await slop.readState(n => n.eligible(stopMember!.id as never))).toBe(false);
       expect(await back.accounts.personFor(erasing)).toBeUndefined();
       expect(await liveMembers(restoredSql, erased.id)).toEqual([]);
+      // spec/databaseRestore.md, "An erasure after the backup is replayed": the new join did not hide the erasure.
+      expect(await back.accounts.personFor(rejoining)).toBeUndefined();
+      expect(await liveMembers(restoredSql, rejoined.id)).toEqual([]);
+      expect(await back.people.getMembership(rejoined.id, "slop")).toBeUndefined();
+      expect(await back.accounts.optedIn("slop", rejoining)).toBe(false);
       expect(await liveMembers(restoredSql, left.id)).toEqual([{ app_id: "slop", account_status: "active" }]);
       expect(await back.people.getMembership(left.id, "friends")).toMatchObject({ state: "removed" });
       expect(await liveMembers(restoredSql, banned.id)).toEqual([{ app_id: "slop", account_status: "restricted" }]);
@@ -225,6 +256,9 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       await restoredSql`update platform.phone_identities set hold = null where e164 = ${held}`;
       expect((await staff(back, "adm-tok", "/privacy/replay", { reason: REASON })).body.items).toEqual([{ kind: "erase", outcome: "applied", done: true }]);
       expect(await back.accounts.personFor(held)).toBeUndefined();
-    } finally { await restoredSql.close(); }
+    } finally {
+      await (mcp?.store as unknown as { close?(): Promise<void> } | undefined)?.close?.();
+      await restoredSql.close();
+    }
   }, T);
 });

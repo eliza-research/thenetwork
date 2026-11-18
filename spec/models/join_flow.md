@@ -20,6 +20,24 @@ Imported from `quint/join_flow.qnt` at `30d950e`. See [model index](README.md) f
 //
 // join_flow: the web Join journey on the four sites, on the browser side.
 //
+// STATUS (comparison of 2026-11-18, branch vibestack-matching). This is a historical model. The shell and
+// core files that it names (sites/shared/join.ts, auth.ts, join-core.ts, phone-core.ts) are not in this
+// branch, and no code calls the pure defs below. The current page is spec/browserJoin.md (peon.biz only;
+// packages/ui/src/hooks/useJoin.ts and api/join.ts). Only the server seams still exist, and they agree
+// with the server side of this model:
+//   - GET /api/me (packages/platform/src/api.ts) now gives signupView on every app unless the number is
+//     in review, so the server change that JF-2 needed is made. The current page sends the marker when
+//     it has one (useJoin.ts). markerApp stays nondeterministic here because it models the old page.
+//   - POST /api/join answers 409 account_changed when a supplied marker does not match
+//     (signupAccountViewMatches in the generated siteEnrollment; no marker is accepted) - the
+//     `m.marker != c` branch of onJoin.
+//   - A live member who joins again gets ok with the existing membership (joinLocked, ReturnExisting).
+//   - The server normalizer is normalizePhone (packages/platform/src/phone.ts): US and Canadian numbers
+//     only, the same contract as the phoneE164 oracle below.
+//   - The session cookie of another tab, the OTP start and verify answers and the refused set (held,
+//     banned, under age, invite-only) are as the model's environment says.
+// Do not use this model as evidence for the current page.
+//
 // WHAT THIS MODELS
 //   The browser state of /join (sites/shared/join.ts and sites/shared/auth.ts, OTP mode):
 //   steps loading, invite, phone, code, profile, member, blocked, done; the profile form in the DOM;
@@ -43,15 +61,14 @@ Imported from `quint/join_flow.qnt` at `30d950e`. See [model index](README.md) f
 //   are timers in the shell or the server. Time is the order of actions only, so the model has no
 //   tick variable.
 //
-// RUN (from the repository root; quint 0.33.1; there is no Apalache in this setup)
-//   quint typecheck quint/join_flow.qnt
+// RUN: pnpm run quint:check join_flow (scripts/quint-check.ts). The source branch ran:
 //   quint run quint/join_flow.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
 //   Each witness_<name> must be VIOLATED (the state is reachable). noStaleAnswerSeen holds (part of safety).
 //   Defects JF-1 and JF-3 are fixed in the shell and the core. These hold (seeds 11 and 29):
 //   quint run quint/join_flow.qnt --invariant=<name> --max-samples=20000 --max-steps=20 --seed=29
 //   for signInMatchesSession, staleAnswerNeverMovesStep, joinAppliesToShownAccountWithMarker, safety.
-//   joinAppliesToShownAccount is still VIOLATED when markerApp is false: slop.date and peon.biz get no
-//   signupView from /api/me (api.ts), so the page has no marker to send (JF-2 needs a server change).
+//   joinAppliesToShownAccount is still VIOLATED when markerApp is false: on the source branch slop.date
+//   and peon.biz got no signupView from /api/me (JF-2). On this branch /api/me gives it on every app.
 //   `safety` is the conjunction of the invariants that hold.
 //
 // ABSTRACTIONS

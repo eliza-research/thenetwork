@@ -240,9 +240,12 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await fact("f1", "fact", "works nights", "shareable", "confirmed", null);
     // SHARE answers the notice (the last app that wrote to them is slop): a grant, then slop reads it.
     expect(await text(s, clock, p, "SHARE")).toBe("handled");
-    expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["first_name", "city", "interests"] });
-    expect((await sql`select kind, value, privacy_scope, source, status from network.facets where app_id = 'slop' and member_id = ${sl.id} and source = 'share_grant'`).map((r: any) => ({ ...r })))
+    expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["interests"] });
+    const copies = await sql`select id, kind, value, privacy_scope, source, status from network.facets where app_id = 'slop' and member_id = ${sl.id} and source = 'share_grant'`;
+    expect(copies.map(({ id: _id, ...r }: any) => r))
       .toEqual([{ kind: "interest", value: "rock climbing", privacy_scope: "matchable", source: "share_grant", status: "confirmed" }]);
+    // The copy never names the app it came from.
+    for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(String(copies[0]!.id).toLowerCase()).not.toContain(word.toLowerCase());
     // The joined app keeps the first name and city it was told.
     expect((await sql`select name from network.members where app_id = 'slop' and id = ${sl.id}`)[0]).toEqual({ name: "Sam" });
 

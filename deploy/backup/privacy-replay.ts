@@ -37,11 +37,17 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         const consent = await copyMissing(src, tx, "consent_events", "id");
         if (consent.length) await tx`select setval(pg_get_serial_sequence('platform.consent_events', 'id'), (select max(id) from platform.consent_events))`;
         // A copied ban has no projection receipt here: the replay route resumes its projection. A person who
-        // joined after the backup is not in this database: the ban keeps its phone hash, which refuses that number.
-        const banPeople = (await src`select distinct person_id::text as id from platform.bans where person_id is not null` as { id: string }[]).map(r => r.id);
-        const known = new Set((await tx`select id::text from platform.people where id = any(${banPeople}::uuid[])` as { id: string }[]).map(r => r.id));
-        const bans = await copyMissing(src, tx, "bans", "id", row => ({ ...row, projection_completed_at: null,
-          person_id: typeof row.person_id === "string" && known.has(row.person_id) ? row.person_id : null }), row => row.person_id !== null || row.phone_hash !== null);
+        // joined after the backup is not in this database: the ban takes that person's phone hash from the
+        // source, which refuses that number.
+        const banPeople = (await src`select distinct b.person_id::text as id, p.phone_hash from platform.bans b
+          join platform.people p on p.id = b.person_id` as { id: string; phone_hash: string | null }[]);
+        const sourceHash = new Map(banPeople.map(r => [r.id, r.phone_hash]));
+        const known = new Set((await tx`select id::text from platform.people where id = any(${banPeople.map(r => r.id)}::uuid[])` as { id: string }[]).map(r => r.id));
+        const bans = await copyMissing(src, tx, "bans", "id", row => {
+          const person = typeof row.person_id === "string" ? row.person_id : null;
+          if (person === null || known.has(person)) return { ...row, projection_completed_at: null };
+          return { ...row, projection_completed_at: null, person_id: null, phone_hash: row.phone_hash ?? sourceHash.get(person) ?? null };
+        }, row => row.person_id !== null || row.phone_hash !== null);
         for (const ban of bans) {
           if (typeof ban.person_id === "string") await tx`update platform.share_grants set revoked_at = ${new Date(String(ban.at))}
             where person_id = ${ban.person_id}::uuid and revoked_at is null`;
@@ -50,10 +56,12 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         }
         const suppressions = await copyMissing(src, tx, "suppression", "phone_hash");
 
-        const erasedInSource = (await src`select id::text from platform.people where deleted_at is not null` as { id: string }[]).map(r => r.id);
-        const liveHere = new Set((await tx`select id::text from platform.people where deleted_at is null and id = any(${erasedInSource}::uuid[])` as { id: string }[]).map(r => r.id));
-        // spec/databaseRestore.md, "An erasure after the backup is replayed"
-        const erase = erasedInSource.filter(id => replaysErasure(true, !liveHere.has(id)));
+        // spec/databaseRestore.md, "An erasure after the backup is replayed": a ledger row the restored database lacks.
+        const ledgerHere = new Set((await tx`select id::text from platform.erasure_ledger` as { id: string }[]).map(r => r.id));
+        const erasedAfter = [...new Set((await src`select id::text, person_id::text from platform.erasure_ledger order by id` as { id: string; person_id: string }[])
+          .filter(r => replaysSourceRow(ledgerHere.has(r.id))).map(r => r.person_id))];
+        const liveHere = new Set((await tx`select id::text from platform.people where deleted_at is null and id = any(${erasedAfter}::uuid[])` as { id: string }[]).map(r => r.id));
+        const erase = erasedAfter.filter(id => replaysErasure(true, !liveHere.has(id)));
 
         const live = await tx<MembershipRow[]>`select person_id::text, app_id, member_id, state from platform.memberships where state <> 'removed'`;
         const before = await src<MembershipRow[]>`select person_id::text, app_id, member_id, state from platform.memberships

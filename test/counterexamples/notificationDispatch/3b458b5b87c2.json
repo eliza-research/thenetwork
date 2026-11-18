@@ -1,0 +1,16 @@
+{
+  "origin": "walk 2 of seed 1",
+  "seed": 1,
+  "trace": [
+    [
+      "person-b",
+      {
+        "type": "rereadItems",
+        "plannedCount": 2,
+        "remainingCount": 2,
+        "recipientAvailable": true,
+        "destinationChanged": false
+      }
+    ]
+  ]
+}

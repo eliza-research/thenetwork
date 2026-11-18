@@ -122,8 +122,11 @@ module runtime_ops {
     oppSeq: str -> int,
     oppRows: (str, int) -> str,
     minted: Set[(str, int)],
-    /** spec/runtimeUnit.md: per replica, the tick's engine run ("idle" or "computing") and the STOPs committed when it was captured. */
-    eng: str -> { phase: str, seen: Set[str] },
+    /**
+     * spec/runtimeUnit.md: per replica, the tick's engine run ("idle", "computing" without the lock, or "committing"
+     * under the lock), the STOPs committed when it was captured, and the STOPs its commit unit loaded.
+     */
+    eng: str -> { phase: str, seen: Set[str], view: Set[str] },
     /** Ghost: members a tick commit contacted although their STOP was committed. */
     contactedAfterStop: Set[str],
   }
@@ -315,7 +318,7 @@ module runtime_ops {
       used: Set(), acked: Set(), channel: channel,
       backup: Set(), backupTaken: false, restored: false, rolledBack: Set(), rolesOnSource: false,
       twoCities: twoCities, oppSeq: NETWORKS.mapBy(_ => 0), oppRows: Map(), minted: Set(),
-      eng: REPLICAS.mapBy(_ => { phase: "idle", seen: Set() }), contactedAfterStop: Set(),
+      eng: REPLICAS.mapBy(_ => { phase: "idle", seen: Set(), view: Set() }), contactedAfterStop: Set(),
     },
     tk: { tickSet: tickSet, inboxAge: -1, expiredAge: -1, lastTickRan: 0, lastSave: 0, lastRoundAt: -1 },
     al: { st: ALERT_KEYS.mapBy(_ => CLOSED), sigWaiting: 0, lastOpsAt: -1, posts: 0,
@@ -403,24 +406,34 @@ module runtime_ops {
    * store.ts runTick, spec/runtimeUnit.md "The engine runs on a snapshot outside the store lock" (OPS23): the first
    * tick unit takes the lock, loads, reaches its engine run, records the request, ends without a save and releases
    * the lock, in one step. The engine run then computes without the lock: inbound units take the lock meanwhile.
-   * A tick does not start while this replica's engine run computes.
+   * A tick of this replica does not start while its engine run computes.
    */
   action tickCapture(r: str): bool = all {
     s.st.unit.get(r).phase == "idle", s.st.lockHolder == "", s.st.eng.get(r).phase == "idle",
-    s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "computing", seen: s.st.committed }) } },
+    s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "computing", seen: s.st.committed, view: Set() }) } },
+  }
+  /** The commit unit waits for the lock (runStored path, store.ts withLock) and loads the newest state. */
+  action tickCommitLoad(r: str): bool = all {
+    s.st.eng.get(r).phase == "computing", s.st.lockHolder == "", s.st.unit.get(r).phase == "idle",
+    s' = { ...s, st: { ...s.st, lockHolder: r, eng: s.st.eng.set(r, { ...s.st.eng.get(r), phase: "committing", view: s.st.committed }) } },
   }
   /**
-   * The commit unit waits for the lock, loads the newest state and ticks again with the computed result
+   * The commit unit ticks again with the computed result and saves on the lock connection
    * (spec/runtimeUnit.md "A prepared engine result commits only for members whose evidence did not change").
-   * The result names the members who had not stopped at capture; the tick's gates on the newest state drop
-   * every member whose STOP is committed now. Its save writes the newest state, so every committed STOP stays.
+   * The result names the members who had not stopped at capture; the tick's gates on the loaded state drop
+   * every member whose STOP the commit unit loaded. The tick adds no STOP, so its save keeps every committed STOP.
    */
-  action tickCommit(r: str): bool = all {
-    s.st.eng.get(r).phase == "computing", s.st.lockHolder == "", s.st.unit.get(r).phase == "idle",
+  action tickCommitSave(r: str): bool = all {
+    s.st.eng.get(r).phase == "committing", s.st.lockHolder == r,
     val proposed = EVENTS.exclude(s.st.eng.get(r).seen)
-    val contacted = proposed.exclude(s.st.committed)
-    s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "idle", seen: Set() }),
+    val contacted = proposed.exclude(s.st.eng.get(r).view)
+    s' = { ...s, st: { ...s.st, lockHolder: "", eng: s.st.eng.set(r, { phase: "idle", seen: Set(), view: Set() }),
       contactedAfterStop: s.st.contactedAfterStop.union(contacted.intersect(s.st.committed)) } },
+  }
+  /** The commit unit lost its lock connection (loseConnection): its save cannot commit, and it contacts nobody. */
+  action tickCommitFails(r: str): bool = all {
+    s.st.eng.get(r).phase == "committing", s.st.lockHolder != r,
+    s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "idle", seen: Set(), view: Set() }) } },
   }
 
   action mint(n: str): bool = all {
@@ -700,7 +713,7 @@ module runtime_ops {
     advance,
     nondet r = oneOf(REPLICAS)
     nondet e = oneOf(EVENTS)
-    any { takeLock(r, e), load(r), apply(r), save(r), saveFails(r), loseConnection(r), tickCapture(r), tickCommit(r) },
+    any { takeLock(r, e), load(r), apply(r), save(r), saveFails(r), loseConnection(r), tickCapture(r), tickCommitLoad(r), tickCommitSave(r), tickCommitFails(r) },
     nondet n = oneOf(NETWORKS) mint(n),
     backupRun,
     restore,
@@ -888,7 +901,6 @@ module runtime_ops {
     .then(saveFails("A"))
     .expect(noLostWrite and s.st.committed == Set("stop2") and s.st.acked == Set("stop2"))
 
-  /** With the lock held the whole time, the same two units keep both STOPs. */
   /**
    * OPS23 fixed: A's tick captures its engine run and computes without the lock; B's STOP unit takes the lock and
    * commits stop1 meanwhile; A's commit contacts stop2's member only and keeps stop1.
@@ -897,8 +909,15 @@ module runtime_ops {
   run stopDuringEngineTest = initProd
     .then(tickCapture("A"))
     .then(takeLock("B", "stop1")).then(load("B")).then(apply("B")).then(save("B"))
-    .then(tickCommit("A"))
+    .then(tickCommitLoad("A")).then(tickCommitSave("A"))
     .expect(noContactAfterStop and noLostWrite and s.st.committed == Set("stop1") and s.st.eng.get("A").phase == "idle")
+
+  /** While the commit unit holds the lock, a STOP unit cannot take it; the STOP commits after the tick's save. */
+  run stopWaitsForCommitTest = initProd
+    .then(tickCapture("A")).then(tickCommitLoad("A"))
+    .then(takeLock("B", "stop1")).fail()
+
+  /** With the lock held the whole time, the same two units keep both STOPs. */
 
   run lockedUnitsTest = initProd
     .then(takeLock("A", "stop1")).then(load("A")).then(apply("A")).then(save("A"))

@@ -25,11 +25,18 @@ Imported from `quint/profile_learning.qnt` at `30d950e`. See [model index](READM
 // journey-parent-turn, learning-context-proof, cloud-proof-chain, review-proofs, connector-profile-journey.
 // Source reports: docs/research/state-machines/gap-connector-journey.md, platform-consent.md section 7.
 //
-// State of the code: the fixes for SD-170, SD-175, SD-240, SD-455, SD-458, SD-462, SD-463, SD-464 and
-// Q-profile_learning-1 are in (docs/research/quint-findings/profile_learning.md). Line numbers below were
-// compared with the code on claude/formal-main.
-// The invariants of the defects that are still open (SD-112, SD-172, SD-242, SD-376) are kept out of
-// `safety`; each one is a named value with the defect id and the reason.
+// State of the code: compared with the code on branch vibestack-matching on 2026-11-18. The model
+// follows that code. The fixes for SD-175 (in collect and accept), SD-455, SD-458, SD-463, SD-464 and
+// Q-profile_learning-1, which the source branch claude/formal-main had, are not in this code, and
+// SD-240 has a new form (the store saves a future Calendar row that the review then refuses). The
+// fix for SD-170 is in (migration 0053 forget_profile_suggestions also removes the V1 receipts).
+// The invariants of the defects that are open on this branch are kept out of `safety`: they are in
+// `openDefects`, and each one names the defect id and the reason.
+// The `PS:nnn`-style line numbers below come from claude/formal-main and are stale on this branch.
+// Find the code by function name: PS owned/batch/view/propose/getPendingBatch/decide/deleteBatch/
+// applyRevokedConnection/applyOwnerWithdrawal/expirePending, RV batchReview, EP
+// profileSuggestionEndpoint, LC learningConsentContextEndpoint, PF profileReviewFactory, RT forget
+// (runtime.ts), SV fetch and stop/stopped.
 //
 // Code (abbreviations as in gap-connector-journey.md):
 //   PS = packages/network/service/profile-suggestions.ts
@@ -160,9 +167,10 @@ module profile_learning {
   // owned() finds a row (PS:83-91): the membership is not removed, the person is not deleted, and the
   // member row still joins the person (forget sets person_id null).
   val ownedExists = (membership == "active" or membership == "paused") and not(forgotten)
-  // PS member().eligible: the projection, and the canonical consent ledger (fix of SD-175: a STOP or a
-  // leave consent event makes the member ineligible before the projection changes).
-  val eligible = membership == "active" and not(projOut) and not(ledgerStop) and not(minor) and not(banned)
+  // PS owned() `eligible`: account active, the projection n.opted_out, age 18+, membership active and not
+  // in review, no ban, no hold. It does not read the canonical consent ledger (SD-175, open on this branch:
+  // a STOP or leave consent event does not make the member ineligible until the projection runs).
+  val eligible = membership == "active" and not(projOut) and not(minor) and not(banned)
     and not(held) and not(forgotten)
   // activeMembership at turn time (SV:2372-2390, AC:329-338): the ledger, ban, hold, state. 13+ passes.
   val turnOpen = membership == "active" and not(ledgerStop) and not(banned) and not(held) and not(forgotten)
@@ -170,12 +178,15 @@ module profile_learning {
   val locked = col.active
   def sourceProof(c: int): bool = conn.get(c) == "active" and learningConsent
   def proposedOf(b: int): Set[int] = itemsOf(b).filter(i => row.get(i).status == "proposed")
-  // RV currentBatch: not expired, at least one pending row, every pending Gmail row observed <= now.
-  // A Calendar event start can be in the future (fix of SD-240).
+  // RV batchReview (spec/profileSuggestionReview.md checkBatch, checkItems): not expired, at least one
+  // pending row, every pending row observed <= now, for Gmail and for Calendar.
   def renderable(b: int): bool = batch.get(b).exists and nowN < batch.get(b).expiresAt
-    and proposedOf(b) != Set() and proposedOf(b).forall(i => row.get(i).cal or row.get(i).obs <= nowN)
-  // PS propose: one Cloud source check per distinct (source, connection) of the proposal (fix of SD-455).
+    and proposedOf(b) != Set() and proposedOf(b).forall(i => row.get(i).obs <= nowN)
+  // The distinct (source, connection) scopes of the proposal.
   def scopesOf(b: int): Set[(bool, int)] = itemsOf(b).map(i => (plan.get(i).cal, plan.get(i).conn))
+  // PS propose calls `authorize` once for each suggestion (`for (const s of input.suggestions)`), not once
+  // for each distinct scope (SD-455, open on this branch).
+  def callsOf(b: int): int = itemsOf(b).size()
   val cmdFresh = cmdAt >= 0 and nowN - cmdAt < PARENT and not(sealed)
 
   // ------------------------------------------------------------------ init
@@ -235,10 +246,10 @@ module profile_learning {
     keepClock, keepMember, keepCloud, keepStore, keepGhost }
 
   // ------------------------------------------------------------------ learning consent context (LC)
-  // LC:13-98 reads the ledger twice and the projection, signs a proof, writes nothing. SV fetch answers
-  // 503 identity_unavailable when profile review is off (fix of SD-464). Cloud then writes learning consent.
+  // LC reads the ledger twice and the projection, signs a proof, writes nothing. Cloud then writes
+  // learning consent. SV fetch serves LC whenever its route policy and secret are set; it does not check
+  // NETWORK_PROFILE_REVIEW_ENABLED (SD-464, open on this branch), so `reviewEnabled` is not a guard here.
   action consentContext(b: int): bool = all {
-    reviewEnabled,
     // LC:43 and LC:52 take `for share` on the person and member rows: they wait for a running collect.
     turnAt.get(b) >= 0, nowN - turnAt.get(b) < PARENT, not(sealed), not(locked),
     eligible, not(ledgerStop),
@@ -283,11 +294,12 @@ module profile_learning {
     v1Receipts' = v1Receipts, v2Receipts' = v2Receipts, lastReq' = lastReq,
     keepClock, keepMember, keepCloud, keepTurns, keepGhost }
 
-  // One Cloud source-proof round trip per distinct (source, connection), under the row locks (SD-455 fix).
-  // With two different scopes the calls check item 1 and then item 2; with one scope only item 1.
-  // PF:92: sourceUntil = min(sourceUntil, proof.expiresAt). A false answer returns null: rollback.
+  // One Cloud source-proof round trip per suggestion, under the row locks (PS propose; SD-455 open).
+  // The calls check item 1 and then item 2.
+  // PF profileSuggestionAuthorization: sourceUntil = min(sourceUntil, proof.expiresAt). A false answer
+  // returns null: rollback.
   action collectSourceCall = all {
-    col.active, col.calls < scopesOf(col.b).size(),
+    col.active, col.calls < callsOf(col.b),
     val i = 2 * col.b - 1 + col.calls
     if (sourceProof(plan.get(i).conn))
       col' = col.with("calls", col.calls + 1).with("until", imin(col.until, nowN + SRC_TTL))
@@ -297,16 +309,16 @@ module profile_learning {
     v1Receipts' = v1Receipts, v2Receipts' = v2Receipts, lastReq' = lastReq,
     keepClock, keepMember, keepCloud, keepTurns, keepGhost }
 
-  // The rest of T2: member() reads eligibility again after the last Cloud call (fix of
-  // Q-profile_learning-1 and, with the ledger, SD-175), checkAuthority, receipt lookup and replay, insert,
-  // view, checkAuthority, COMMIT. Then render after commit (EP:111-113): a null render answers
-  // "Nothing new was saved".
+  // The rest of T2: checkAuthority, receipt lookup and replay, insert, view, checkAuthority, COMMIT.
+  // PS propose reads eligibility only once, in owned() at the start (collectBegin); it does not read it
+  // again after the Cloud calls (Q-profile_learning-1, open on this branch). Then EP renders after the
+  // commit: a null render answers "I couldn’t collect those suggestions. Nothing new was saved."
   action collectCommit = all {
-    col.active, col.calls == scopesOf(col.b).size(),
+    col.active, col.calls == callsOf(col.b),
     val b = col.b
     val fresh = nowN < col.until and nowN < col.at + col.ttl
-    if (not(fresh) or not(eligible))
-      // member() is not eligible: null, rollback. checkAuthority throws: rollback, 503.
+    if (not(fresh))
+      // checkAuthority throws: rollback, 503.
       all { col' = NOCOL, batch' = batch, row' = row, facts' = facts, collectReceipt' = collectReceipt,
             created' = created, addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld,
             addedMinor' = addedMinor, saidNothingSaved' = saidNothingSaved, replayed' = replayed }
@@ -318,8 +330,9 @@ module profile_learning {
     else
       val newItems = itemsOf(b).mapBy(i => { status: "proposed", conn: plan.get(i).conn, cal: plan.get(i).cal,
                                              obs: plan.get(i).obs, hasValue: true, fact: false, terminalAt: -1 })
-      // RV currentBatch fails only for a future Gmail row; the store never makes one (PS:182-183).
-      val anyFuture = itemsOf(b).exists(i => plan.get(i).obs > nowN and not(plan.get(i).cal))
+      // RV batchReview refuses any future row. The store saves a future Calendar row (PS propose refuses
+      // only a future Gmail row), so the render is null and the reply says nothing was saved (SD-240).
+      val anyFuture = itemsOf(b).exists(i => plan.get(i).obs > nowN)
       all {
         col' = NOCOL,
         batch' = batch.set(b, { exists: true, createdAt: col.at, expiresAt: col.at + col.ttl, rev: 1, retain: col.retain }),
@@ -383,10 +396,13 @@ module profile_learning {
 
   // ------------------------------------------------------------------ review (EP decide/delete, RV, PS)
   // reviewSuggestionMessage: getPendingBatch + parse (T1), then decide (T2). The token revision comes
-  // from T1; a stale token is a nondeterministic choice. Source proof per accept or edit (PS:285-287).
-  // An accept reads member() again after the Cloud calls (fix of Q-profile_learning-1); one action here,
-  // so `eligible` is read at the commit. A committed decide stores its result on the review turn
-  // (fix of SD-458): "saved" for accept or reject, "preview" with the new revision for an edit.
+  // from T1; a stale token is a nondeterministic choice. Source proof per accept or edit (PS decide).
+  // PS decide reads `eligible` once in batch() before the Cloud calls; one action here, so the window of
+  // Q-profile_learning-1 in decide is not modeled (collect shows it). A committed decide does not store
+  // its result on the review turn (SD-458, open on this branch): the result is "saved" for accept or
+  // reject, "preview" with the new revision for an edit or a scope change, and a retry is parsed again.
+  // One turn applies at most one command (`cmdUsed`): the turn text is one command, each commit moves the
+  // revision in the token, and a delete removes the batch.
   action decide(b: int, i: int, act: str, stale: bool, lost: bool): bool = all {
     reviewEnabled, cmdFresh, not(cmdUsed), not(locked), ownedExists, batchOf(i) == b,
     batch.get(b).exists,
@@ -465,15 +481,16 @@ module profile_learning {
     turnAt' = turnAt, cmdAt' = cmdAt, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
     keepClock, keepMember, keepCloud }
 
-  // The gateway sends the same signed request again after a lost reply. EP calls PS priorReview first
-  // (fix of SD-458): owned() must find the member; the stored "saved" or "deleted" result comes back as it
-  // is; a stored "preview" comes back only while the batch keeps that revision and has not expired (an
-  // older preview is stale, and a denial is correct).
+  // The gateway sends the same signed request again after a lost reply. EP has no stored result for a
+  // decide or delete (SD-458, open): a retried decide carries the old revision in its token, so
+  // parseSuggestionReview refuses it; a retried delete finds no batch. Both answer "denied".
+  // A denial is a defect when the owner still exists and the first result is still current (a "saved" or
+  // "deleted" result, or a preview whose revision and expiry still hold).
   action retryLast = all {
     lastReq.lost, not(locked),
     val bt = batch.get(lastReq.b)
     val previewCurrent = bt.exists and bt.rev == lastReq.rev and nowN < bt.expiresAt
-    val ok = ownedExists and (lastReq.kind != "preview" or previewCurrent)
+    val ok = false
     // A denial is a defect only when the owner still exists and the stored result is still current.
     val stable = ownedExists and (lastReq.kind != "preview" or previewCurrent)
     all {
@@ -614,10 +631,11 @@ module profile_learning {
     keepClock, keepMember, keepCloud, keepTurns }
 
   // ------------------------------------------------------------------ leave and delete everything
-  // AC.leave (AC:472-481): consent event, then onForget (runtime forget: facets and, since the fix of
-  // SD-463, profile suggestion batches deleted, person_id null, turns sealed), then forgetMembership
-  // (state removed; the 0039 trigger deletes what is left). Three separate transactions; a crash can stop
-  // the run between them, but the batches are already gone after the forget.
+  // AC.leave: consent event, then onForget (runtime forget: facets deleted, person_id null, turns
+  // sealed), then forgetMembership (state removed; the 0039 and 0053 triggers delete the batches and the
+  // V1 receipts). Three separate transactions. RT forget does not delete profile_suggestion_batches
+  // (SD-463, open on this branch): a crash between the forget and the membership removal leaves the
+  // batches and their pending text until the expiry tick.
   action leaveConsent = all { leaveStage == "none", membership == "active" or membership == "paused",
     leaveStage' = "consent", ledgerStop' = true,
     projOut' = projOut, banned' = banned, held' = held, minor' = minor, membership' = membership,
@@ -626,11 +644,11 @@ module profile_learning {
   // The forget unit updates network.members (person_id null): it waits for the `for update of n` lock.
   action leaveForget = all { leaveStage == "consent", not(locked),
     leaveStage' = "forgot", forgotten' = true, sealed' = true,
+    // RT forget deletes network.facets of the member (fact_id is set null). It resets the member's inbound
+    // turns (action_receipts '{}'): the collect and V2 receipts go. The batches and rows stay.
     facts' = Set(),
-    // RT:611 forget: delete from platform.profile_suggestion_batches (rows cascade). RT:592-595 resets the
-    // member's inbound turns (action_receipts '{}'): the collect and V2 receipts go.
-    batch' = BATCHES.mapBy(b => NOBATCH),
-    row' = ITEMS.mapBy(i => if (row.get(i).status == "none") NOITEM else NOITEM.with("status", "gone")),
+    batch' = batch,
+    row' = ITEMS.mapBy(i => row.get(i).with("fact", false)),
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held, minor' = minor, membership' = membership,
     collectReceipt' = Set(), col' = col, plan' = plan,
     v1Receipts' = v1Receipts, v2Receipts' = Set(), lastReq' = lastReq,
@@ -661,6 +679,13 @@ module profile_learning {
     keepClock, keepCloud, keepTurns, keepGhost }
 
   // ------------------------------------------------------------------ step
+  // Pick a pending row; accept is the most common command; a stale token is the rarer case.
+  action review = all { ITEMS.exists(j => row.get(j).status == "proposed"),
+    nondet i = ITEMS.filter(j => row.get(j).status == "proposed").oneOf()
+    nondet k = 1.to(4).oneOf()
+    nondet s = 1.to(4).oneOf()
+    nondet lost = Set(true, false).oneOf()
+    decide(batchOf(i), i, if (k <= 2) "accept" else if (k == 3) "edit" else "reject", s == 1, lost) }
   // The member journey and the follow-up steps of each machine.
   action journey = any {
     nondet b = BATCHES.oneOf()
@@ -669,13 +694,7 @@ module profile_learning {
     // A second collect on a turn that already committed (a gateway replay); repeated for the sampler only.
     all { collectReceipt != Set(), nondet b = collectReceipt.oneOf() collectBegin(b) },
     memberReviewCmd, collectSourceCall, collectCommit, stopProjection, start,
-    // Pick a pending row; accept is the most common command; a stale token is the rarer case.
-    all { ITEMS.exists(j => row.get(j).status == "proposed"),
-      nondet i = ITEMS.filter(j => row.get(j).status == "proposed").oneOf()
-      nondet k = 1.to(4).oneOf()
-      nondet s = 1.to(4).oneOf()
-      nondet lost = Set(true, false).oneOf()
-      decide(batchOf(i), i, if (k <= 2) "accept" else if (k == 3) "edit" else "reject", s == 1, lost) },
+    review,
     retryLast, expireTick,
     nondet c = CONNS.oneOf() any { reconnect(c), withdrawCmd(c) },
     nondet c = CONNS.oneOf()
@@ -697,13 +716,15 @@ module profile_learning {
   action time = any { tick, tick, tickN, tickC }
   // The in-flight collect transaction: its next Cloud call or its commit.
   action inflight = any { collectSourceCall, collectCommit }
-  // The same transitions as `any { time, journey, disturb, terminal }` (inflight is part of journey).
+  // The same transitions as `any { time, journey, disturb, terminal }` (inflight, memberReviewCmd and
+  // review are part of journey).
   // The repeated branches only change how often the random simulator picks each group: clock and
   // journey steps often, and an open collect transaction usually runs on, so that long journeys are
   // sampled. Apalache and the set of reachable states do not depend on these weights.
   action step =
     if (col.active) any { inflight, inflight, inflight, inflight, inflight, inflight, time, journey, disturb, terminal }
-    else any { time, time, journey, journey, journey, journey, journey, journey, disturb, disturb, terminal }
+    else any { time, time, journey, journey, journey, journey, journey, journey, memberReviewCmd, review, review,
+               disturb, disturb, terminal }
 
   // ------------------------------------------------------------------ invariants
   // INV-1. SQL check 0039:38: a proposed row has text; every other row has none.
@@ -721,19 +742,21 @@ module profile_learning {
   // INV-4. AGENTS.md age policy and founder decision 1: minors (13-17) never add source data (J-13).
   val inv_minorNeverAdds = not(addedMinor)
 
-  // INV-5. AGENTS.md founder decision 3 (bans) and the eligibility rule in PS member(): a banned or held
-  // person adds no source data. The check must hold when the data commits. (Q-profile_learning-1, fixed)
+  // INV-5. Founder decision 3 (bans) and the eligibility rule in PS owned(): a banned or held person adds
+  // no source data. The check must hold when the data commits. OPEN on this branch, not in `safety`:
+  // Q-profile_learning-1. A hold, or a ban by phone, during the Cloud source calls is not seen.
   val inv_bannedOrHeldNeverAdds = not(addedBannedOrHeld)
 
-  // INV-6. PRD 40.3 (STOP stops every app) and the code comment LC:70 "STOP is canonical even when a
+  // INV-6. PRD 40.3 (STOP stops every app) and the code comment in LC "STOP is canonical even when a
   // delayed projection has not reached the member row yet": no source data after the ledger says STOP
-  // (J-14). (SD-175, fixed)
+  // (J-14). OPEN on this branch, not in `safety`: SD-175. PS owned() reads only the projection.
   val inv_noAddAfterStop = not(addedAfterStop)
 
   // INV-7. noEffectAfterExpiry: RV copy "Pending review expires <t>", PS:273: no accept after expiry.
   val inv_noAcceptAfterExpiry = not(acceptedAfterExpiry)
 
-  // INV-8. EP:113 reply "Nothing new was saved" must be true (J-10). (SD-240, fixed)
+  // INV-8. The EP collect reply "Nothing new was saved" must be true (J-10). OPEN on this branch, not in
+  // `safety`: SD-240. A future Calendar row commits, and the render then fails.
   val inv_nothingSavedIsTrue = saidNothingSaved.forall(b => not(batch.get(b).exists))
 
   // INV-9. DE:24 and WE:21 comments: "Never affect batches created AFTER proof.revokedAt / cutoffAt,
@@ -768,7 +791,7 @@ module profile_learning {
   val inv_v2NotDeniedBySkew = not(v2DeniedBySkew)
 
   // INV-13. 0039:60 comment "The existing app leave/delete path cannot retain these new private records"
-  // (J-6): once the member is forgotten, no batch stays. (SD-463, fixed)
+  // (J-6): once the member is forgotten, no batch stays. OPEN on this branch, not in `safety`: SD-463.
   val inv_leaveErases = forgotten implies BATCHES.forall(b => not(batch.get(b).exists))
 
   // INV-14. AC:483 comment "Delete everything: ... keep a tombstone and the suppression hash" and PRD
@@ -785,16 +808,16 @@ module profile_learning {
 
   // INV-16. The 5 s source proof (profile-review-source.ts:68) and PF:92 min(): one Cloud source call per
   // distinct (source, connection) in one transaction, else the earliest proof bounds the whole batch.
-  // (SD-455, fixed)
+  // OPEN on this branch, not in `safety`: SD-455.
   val inv_oneSourceCallPerScope = col.active implies col.calls <= scopesOf(col.b).size()
 
   // INV-17. AGENTS.md service contract "idempotent on x-ntwrk-svc-id": a retried request that committed
   // returns its first result, not a denial, while the owner exists and a stored preview is still current.
-  // (SD-458, fixed)
+  // OPEN on this branch, not in `safety`: SD-458.
   val inv_retryKeepsResult = not(retryDeniedAfterCommit)
 
   // INV-18. PF:99 "no flag or incomplete real scope means no automatically granted access": no learning
-  // consent proof while profile review is off. (SD-464, fixed)
+  // consent proof while profile review is off. OPEN on this branch, not in `safety`: SD-464.
   val inv_consentNeedsReview = consentProofs != Set() implies reviewEnabled
 
   // INV-19. PRD 33 "data retention schedule" and section 30 "minimal retained records": terminal rows
@@ -810,9 +833,7 @@ module profile_learning {
   // Every invariant that the fixed code must keep.
   val safety = and {
     inv_textOnlyWhenProposed, inv_factOnlyFromAccept, inv_oneBatchPerTurn, inv_minorNeverAdds,
-    inv_bannedOrHeldNeverAdds, inv_noAddAfterStop, inv_noAcceptAfterExpiry, inv_nothingSavedIsTrue,
-    inv_leaveErases, inv_deleteAllErasesIdentity, inv_oneSourceCallPerScope,
-    inv_retryKeepsResult, inv_consentNeedsReview, inv_noConsentProofAfterStop,
+    inv_noAcceptAfterExpiry, inv_deleteAllErasesIdentity, inv_noConsentProofAfterStop,
   }
 
   // The invariants of the defects that are still open (each comment above gives the id and the reason).
@@ -822,6 +843,13 @@ module profile_learning {
     inv_v2NotDeniedBySkew,                                        // SD-242
     inv_stopNotBlockedByCloud,                                    // SD-112
     inv_terminalRowsPurged,                                       // SD-376
+    inv_noAddAfterStop,                                           // SD-175
+    inv_bannedOrHeldNeverAdds,                                    // Q-profile_learning-1
+    inv_nothingSavedIsTrue,                                       // SD-240
+    inv_oneSourceCallPerScope,                                    // SD-455
+    inv_retryKeepsResult,                                         // SD-458
+    inv_leaveErases,                                              // SD-463
+    inv_consentNeedsReview,                                       // SD-464
   }
 
   // ------------------------------------------------------------------ witnesses (must be reachable)
@@ -869,58 +897,52 @@ module profile_learning {
       .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
       .expect(replayed and created.get(1) == 1 and inv_oneBatchPerTurn)
 
-  // SD-455 (fixed): two Gmail rows on one connection are one scope: one source call, then the commit.
-  // A second call is not enabled.
+  // SD-455 (open): two Gmail rows on one connection are one scope, but PS propose makes two source calls.
   run oneSourceCallTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
-      .then(collectPlan(1, 2, false, 2, false, false, false)).then(collectSourceCall)
-      .expect(col.calls == 1 and inv_oneSourceCallPerScope)
+      .then(collectPlan(1, 2, false, 2, false, false, false)).then(collectSourceCall).then(collectSourceCall)
+      .expect(col.calls == 2 and not(inv_oneSourceCallPerScope))
       .then(collectCommit)
       .expect(batch.get(1).exists and safety)
 
-  // SD-455 (fixed): the same scope cannot make a second call.
-  run noSecondSourceCallTest =
-    initWith(true)
-      .then(memberCollectCmd(1)).then(consentContext(1))
-      .then(collectPlan(1, 2, false, 2, false, false, false)).then(collectSourceCall).then(collectSourceCall)
-      .fail()
-
-  // SD-240 (fixed): a future Calendar row: the batch commits, renders, and the member can reject the row.
+  // SD-240 (open): a future Calendar row: the batch commits, but it does not render, so the reply says
+  // "Nothing new was saved" and the member cannot review the row before its event start.
   run futureCalendarTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
       .then(collectFixed(1, 1, true, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
-      .expect(batch.get(1).exists and renderable(1) and row.get(1).obs > nowN and inv_nothingSavedIsTrue)
+      .expect(batch.get(1).exists and not(renderable(1)) and row.get(1).obs > nowN
+              and not(inv_nothingSavedIsTrue) and safety)
       .then(memberReviewCmd).then(decide(1, 1, "reject", false, false))
-      .expect(row.get(1).status == "rejected" and safety)
+      .fail()
 
-  // SD-175 (fixed): STOP reaches the ledger after the consent proof; the projection has not run. A new
-  // collect cannot begin.
+  // SD-175 (open): STOP reaches the ledger after the consent proof; the projection has not run. A new
+  // collect begins and commits.
   run stopLedgerBlocksBeginTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1)).then(stopLedger)
-      .then(collectFixed(1, 1, false, false))
-      .fail()
+      .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
+      .expect(batch.get(1).exists and not(inv_noAddAfterStop) and safety)
 
-  // SD-175 and Q-profile_learning-1 (fixed): STOP reaches the ledger during the Cloud calls. The member()
-  // read after the last call sees it: rollback, no batch.
+  // SD-175 and Q-profile_learning-1 (open): STOP reaches the ledger during the Cloud calls. PS propose
+  // does not read eligibility again: the batch commits.
   run stopLedgerDuringCollectTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
       .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(stopLedger).then(collectSourceCall)
       .then(collectCommit)
-      .expect(not(col.active) and not(batch.get(1).exists) and not(projOut) and safety)
+      .expect(not(col.active) and batch.get(1).exists and not(projOut) and not(inv_noAddAfterStop) and safety)
 
-  // Q-profile_learning-1 (fixed): a ban during the Cloud source calls: no batch.
+  // Q-profile_learning-1 (open): a ban during the Cloud source calls: the batch commits.
   run banDuringCollectTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
       .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(ban).then(collectSourceCall)
       .then(collectCommit)
-      .expect(not(batch.get(1).exists) and created.get(1) == 0 and safety)
+      .expect(batch.get(1).exists and not(inv_bannedOrHeldNeverAdds) and safety)
 
-  // Q-profile_learning-1 (fixed): a hold after the collect: accept is denied, reject is allowed.
+  // A hold after the collect: accept is denied (PS decide reads `eligible` in batch()).
   run holdBlocksAcceptTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
@@ -938,7 +960,8 @@ module profile_learning {
       .expect(not(inv_stopNotBlockedByCloud) and safety)
       .then(stopProjection).fail()
 
-  // SD-458 (fixed): accept commits, the reply is lost, the gateway retries: the stored result comes back.
+  // SD-458 (open): accept commits, the reply is lost, the gateway retries: the retry is denied although
+  // the fact was saved.
   run decideRetryTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
@@ -946,20 +969,20 @@ module profile_learning {
       .then(memberReviewCmd)
       .then(decide(1, 1, "accept", false, true))
       .then(retryLast)
-      .expect(inv_retryKeepsResult and facts == Set(1) and batch.get(1).rev == 2 and safety)
+      .expect(not(inv_retryKeepsResult) and facts == Set(1) and batch.get(1).rev == 2 and safety)
 
-  // SD-458 (fixed): an edit, then a delete, each with a lost reply: both retries get the stored result.
+  // SD-458 (open): a delete with a lost reply: the retry is denied although the batch was deleted.
   run editDeleteRetryTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
       .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
       .then(memberReviewCmd)
-      .then(decide(1, 1, "edit", false, true)).then(retryLast)
+      .then(decide(1, 1, "edit", false, false))
       .expect(inv_retryKeepsResult and batch.get(1).rev == 2)
       .then(memberReviewCmd).then(deleteBatch(1, true)).then(retryLast)
-      .expect(inv_retryKeepsResult and not(batch.get(1).exists) and safety)
+      .expect(not(inv_retryKeepsResult) and not(batch.get(1).exists) and safety)
 
-  // One review turn applies one command (PS:271, PS:332): a delete on the turn of the accept is refused.
+  // One review turn applies one command: a delete on the turn of the accept is refused.
   run oneCommandPerTurnTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
@@ -968,13 +991,15 @@ module profile_learning {
       .then(deleteBatch(1, false))
       .fail()
 
-  // SD-463 (fixed): leave stops after onForget: no batch stays.
+  // SD-463 (open): leave stops after onForget: the batch stays until the membership is removed.
   run leaveCrashTest =
     initWith(true)
       .then(memberCollectCmd(1)).then(consentContext(1))
       .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
       .then(leaveConsent).then(leaveForget)
-      .expect(not(batch.get(1).exists) and not(ownedExists) and membership == "active" and safety)
+      .expect(batch.get(1).exists and not(inv_leaveErases) and not(ownedExists) and membership == "active" and safety)
+      .then(leaveMembership)
+      .expect(not(batch.get(1).exists) and safety)
 
   // SD-170 (fixed): delete everything after a V1 cleanup removes the receipt.
   run deleteAllReceiptTest =
@@ -984,11 +1009,11 @@ module profile_learning {
       .then(deleteAll)
       .expect(v1Receipts.keys() == Set() and safety)
 
-  // SD-464 (fixed): with review off the consent context signs nothing.
+  // SD-464 (open): with review off the consent context still signs a proof.
   run consentWithoutReviewTest =
     initWith(false)
       .then(memberCollectCmd(1)).then(consentContext(1))
-      .fail()
+      .expect(not(inv_consentNeedsReview) and safety)
 
   // SD-172 (open, skipped): the Network clock runs ahead; a batch made before the revocation is skipped by
   // V1 disconnect.

@@ -14,6 +14,15 @@ Production uses [Safety cases and report review](../safetyCase.md) for the case 
 
 The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. The older independent minor-signal trace remains an abstraction of the age path.
 
+Compared with `vibestack-matching` on 2026-11-18. This comparison was partial: the trust rules (`packages/network/src/trust.ts` `add`, `block`, `report`, `lift`, `decay`, and the generated `levelForScore` and `trustDecayPoints` of [trust levels](../trustLevel.md)), the report decisions (`reportAfterDecision`, `holdLiftResult`, `caseCloseResult`, `holdAuthority` of [safety cases](../safetyCase.md)) and `ConsentNetwork.holdMember`, `markBanned`, `dismissReport`, `closeCase`, `metBefore` agree with the model. The executable model was not changed. Drift that stays open (the code is right; the model is older):
+
+1. Staff lift. `NetworkService.liftHold` (`packages/network/service/service.ts`) is now one unit of work. It reads `platform.staff_safety_holds` (`currentStaffHold`), refuses a global hold without safety on every app (`needs_safety_everywhere`), calls `ConsentNetwork.liftHold(memberId, actor, note, durableStaffHold)`, and its member command `liftStaffHold` (`packages/network/service/staff-safety-holds.ts`) reads the rows again under the person lock and refuses a change (`hold_changed`). It deletes the app row and adds the app to `released_apps` of the global row. The model's three steps `liftStart`, `liftTx`, `liftUnit` (the W3-644 race) and its rewrite of `"*"` into rows for the apps where the person is a member now are older. In the code the global row still covers the apps where the person is not a member at the lift.
+2. Durable hold on another app. `syncMember` no longer applies a person hold as a trust hold. `snapshot.ts` maps a durable staff hold and a canonical ban to `accountStatus: "restricted"` (`durableStaffHoldSnapshotStatus`, `staffBanSnapshotStatus` of [staff safety](../staffSafetyService.md)), and `syncMember` drops the member from open items. There is no hold level, no hold notice and no `held` report status from that path. The model's `sync` (holdMember with a notice) gives the same `matchable` result but more writes.
+3. The other apps of a staff hold use `holdMember(..., "projection")`, which does not decide reports. The model's `staffHoldApply` marks open reports `held` on those apps.
+4. A lift with a durable hold and no runtime hold returns ok and marks the case lifted (`holdLiftResult(actor, runtimeHeld || durableStaffHold)`). The model's `liftUnitOf` ends in `liftNotOnHold` with no case change.
+5. A block on this app (`ConsentNetwork.applyBlock`) closes every open item (`OPEN_STAGES`, probing included) that has both people as participants. The model's `callOffPair` agrees; `blockOnlyAffectsPair` now counts the asked members of an item closed while probing. The model's tick call-off on the other apps (`blocked_elsewhere`, SD-025) has no function of that name in `network.ts` now. The comparison found only the approval re-check (`blocked_pair` in the approval check), which refuses a new approval. Not verified: whether an item that is already booked on another app is called off after a person block. If it is not, two people who blocked each other on slop can still meet through a booked peon item.
+6. Every `file:line` comment in the model is stale. Find the code by the function name.
+
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
 // Safety and trust (docs/research/2026-11-07-state-machines.md section 6.9). Machines: person-safety-carryover
@@ -1113,10 +1122,13 @@ module safety_trust {
   // PRD F23 "Block ... only affects the pair". A block calls an item off only when the blocker and the target
   // are both going to it: a member who said no to a plan does not call it off for the others. SD-045 (fixed
   // in df588c8). The stricter "nobody else is going" form is `blockLeavesOthersPlan` below (NEW-3).
+  // Compared 2026-11-18: an item closed while it was probing (nobody told yet) counts its asked members, as
+  // callOffPair and network.ts applyBlock do (a member who said no is replaced or removed from the participants).
   val blockOnlyAffectsPair = OPP_IDS.forall(k => {
     val o = s.opps.get(k)
-    (o.closedBy == "blocked" or o.closedBy == "blocked_elsewhere") implies
-      (o.going.exists(x => x.p == o.blocker) and o.going.exists(x => x.p == o.target))
+    val inIt = if (o.told == Set()) o.parts else o.going
+    val closedByBlock = o.closedBy == "blocked" or o.closedBy == "blocked_elsewhere"
+    closedByBlock implies (inIt.exists(x => x.p == o.blocker) and inIt.exists(x => x.p == o.target))
   })
 
   // metBefore doc "Anonymous probes do not count: neither knew who the other was"; trust.ts:9 "only when the
@@ -1226,15 +1238,21 @@ module safety_trust {
     relayBlockReachesSafety,
     safetyNoticeImmediate,
     banRevokesShares,
-    // wave 4: rules that fail on the code now (code items; see docs/research/quint-findings/safety_trust.md)
+    // wave 4 rules (code items; see docs/research/quint-findings/safety_trust.md). Two of them fail on the code
+    // of 2026-11-18 and are listed below `safety` as open defects: relayAgeSignalReachesAgePolicy and
+    // minorSignalFollowsPerson.
     reportSubjectMeant,
     bannedNeverMatchable,
-    relayAgeSignalReachesAgePolicy,
     reporterStandingKept,
     engineHoldVisible,
     strangersCannotEngineHold,
-    minorSignalFollowsPerson,
   }
+
+  // OPEN DEFECTS (2026-11-18), not in safety. relayAgeSignalReachesAgePolicy: nothing in the Network or the
+  // service reads RelayRecord.ageSignal (packages/network/src/relay.ts and store.ts only store it), so a member
+  // whose own relayed text says they are under 18 stays matchable. minorSignalFollowsPerson (SD-074, W3-236): a
+  // minor report or signal on one app does not keep the person out of matching on their other apps.
+  val openAgeDefects = relayAgeSignalReachesAgePolicy and minorSignalFollowsPerson
 
   // ------------------------------------------------------------------ rules kept out of `safety`
   // Each of these still fails on the code. They are not in `safety` because the fix needs a decision that is
@@ -1277,7 +1295,8 @@ module safety_trust {
   // A profile-share grant is live (the ban revokes it).
   val witness_shareGrant = not(s.shareGrants != Set())
   // new paths of the fixes
-  val witness_carryoverHold = not(ALL_MIDS.exists(m => m.g == 1 and s.live.get(m) and lvl(s, m) == "hold" and s.personHolds.exists(h => h._1 == m.p and h._2 == m.app)))
+  // Random runs of 14 steps do not reach it; automaticHardHoldCarriesFromForgetTest replays it. Not a witness.
+  val reach_carryoverHold = not(ALL_MIDS.exists(m => m.g == 1 and s.live.get(m) and lvl(s, m) == "hold" and s.personHolds.exists(h => h._1 == m.p and h._2 == m.app)))
   val witness_callOffElsewhere = not(OPP_IDS.exists(k => s.opps.get(k).closedBy == "blocked_elsewhere"))
   val witness_relayCase = not(s.relayLog.exists(x => x._2 == "blockSevere" and s.live.get(x._1) and s.caseSt.get(x._1) == "open"))
   // wave 4 paths
@@ -1333,7 +1352,7 @@ module safety_trust {
       .then(join("slop", "ben"))
       .expect(covered(s, BEN_S1) and not(matchable(s, BEN_S1)) and not(covered(s, BEN_P)))
       .then(tick(1))
-      .expect(not(witness_carryoverHold))
+      .expect(not(reach_carryoverHold))
 
   // SD-021 retained requirement: a minor report on slop, a leave and a rejoin. The new member is held.
   run sd021MinorReportCarriedOverTest =

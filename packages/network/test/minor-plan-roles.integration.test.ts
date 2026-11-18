@@ -110,6 +110,44 @@ test("a plan whose member who said yes is now a minor by the record closes at th
   expect(w.sent.slice(from).filter(s => s.to === "a")).toEqual([]);
 });
 
+// spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": a smaller plan that
+// keeps the time and place of a plan counts as asked about for each member who was asked about that plan. Before,
+// c declined the group plan, its two yes-sayers got a partner plan at the same time and place, and c was then
+// found to be 16: the partner plan stayed in review for the two adults.
+test("a fallback partner plan closes when a member asked about the plan it came from is found to be a minor", async () => {
+  const { w, oppId } = await probedGroupPlan(3);
+  for (const [id, text] of [["a", "yes"], ["b", "yes"], ["c", "no thanks"], ["d", "no thanks"]] as const) await w.say(id, text);
+  expect(await w.runUntil(() => w.probed("e"), DAY)).toBe(true);
+  await w.say("e", "no thanks");
+  const fallback = () => w.net.exportState().opps.find(o => o.id !== oppId)!;
+  expect(fallback()).toMatchObject({ stage: "review", participants: ["a", "b"] });
+  const from = w.mark();
+  await w.say("c", "I'm 16, is that ok?");
+  expect(fallback()).toMatchObject({ stage: "closed", closedReason: "minors policy" });
+  expect(w.net.reviewQueue()).toEqual([]);
+  await w.run(DAY);
+  expect(w.sent.slice(from).filter(s => s.meta.proposalId === fallback().id)).toEqual([]);
+});
+
+// spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person": a replacement for a
+// cancelled booking and a repeat of a table keep the time and place of the plan they follow. Before, e, who was asked
+// about that plan, was found to be 16, and the new plan for the three adults stayed in review.
+test.each(["replacement", "repeat"] as const)("a %s plan closes when a member asked about the plan it follows is found to be a minor", async kind => {
+  const { w, oppId } = await probedGroupPlan(3);
+  const state = w.net.exportState();
+  const source = state.opps.find(o => o.id === oppId)!;
+  Object.assign(source, { stage: kind === "replacement" ? "closed" : "done", closedFrom: "scheduled", closedReason: "participant dropped",
+    contacted: ["a", "b", "c", "d", "e"], meetingAt: w.clock.now() });
+  w.net.importState(state);
+  const now = w.clock.now();
+  const follow = w.net["submitPlan"]({ ...source.plan!, id: `plan_${kind}`, invited: ["a", "b", "c"], alternates: [],
+    ...(kind === "repeat" ? { repeatOf: oppId } : {}), createdAt: now }, now, kind === "replacement" ? oppId : undefined)!;
+  expect(w.net.reviewQueue().map(i => i.oppId)).toEqual([follow.id]);
+  await w.say("e", "I'm 16, is that ok?");
+  expect(w.net.exportState().opps.find(o => o.id === follow.id)).toMatchObject({ stage: "closed", closedReason: "minors policy" });
+  expect(w.net.reviewQueue()).toEqual([]);
+});
+
 /**
  * A friends crew of a, b, c and d that came from a table e was asked about and declined. e joined with no record age
  * and stated 30.

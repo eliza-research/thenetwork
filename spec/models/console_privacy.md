@@ -12,6 +12,8 @@ Imported from `quint/console_privacy.qnt` at `30d950e`. See [model index](README
 
 Production chooses its view class with [Observatory staff permissions](../staffPermissions.md). This standalone model covers the field-level effects.
 
+Compared again with `vibestack-matching` on 2026-11-18. Open defect: `countsMember` in `packages/observatory/src/shape.ts` drops the age fields, but it keeps `declined` (set by `packages/observatory/src/sources/real.ts` for a member declined at join, that is under 13, with `community: "declined"`) and `weekly` (never set for members aged 13-17). A counts-class caller can read these age facts. `countsGetNoAgeFacts` states the rule; it is not part of `safety`, and `declinedLeaksTest` replays the defect.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=15 max-samples=3000
@@ -36,6 +38,8 @@ Production chooses its view class with [Observatory staff permissions](../staffP
 //   are people.ts summary (its restricted() helper and origin()); reasonOk is the AppPanel button gate
 //   (reason.trim().length < 5) and server.ts PERSON_REASON_MIN; crossAppShown is the generated
 //   canOpenPerson of spec/consoleNavigation.md. Each pure def here keeps the decision of that code.
+//   Compared again on 2026-11-18: no change in shape.ts, people.ts or apps.tsx. The member keys now include
+//   declined, weekly and community (ObsMember in types.ts, written by sources/real.ts), which countsMember keeps.
 //
 // BOUNDS
 //   One caller, one member, one opportunity, one person. Four apps (slop is private). Reasons of
@@ -134,7 +138,12 @@ module console_privacy {
   // PRIVATE_APPS in apps.ts is {"slop"} today. The model also lets friends be private, so that a
   // person can hold two private memberships (the one-line rule of holdLines then has force).
   pure val PRIVATE_CHOICES = Set(Set("slop"), Set("slop", "friends"))
-  pure val MEMBER_KEYS = Set("id", "name", "age", "minor", "ageUnknown", "trust", "occupation", "controlled", "area", "counters")
+  pure val MEMBER_KEYS = Set("id", "name", "age", "minor", "ageUnknown", "trust", "occupation", "controlled", "area", "counters",
+                             "declined", "weekly", "community")
+  // Fields that tell the member's age band. declined: declined at join (under 13); community "declined" says
+  // the same; weekly: never set for members aged 13-17 (types.ts ObsMember). The code keeps the last three
+  // in countsMember (an open defect, see countsGetNoAgeFacts).
+  pure val AGE_FACT_KEYS = Set("age", "minor", "ageUnknown", "trust", "declined", "weekly", "community")
   pure val OPP_KEYS = Set("id", "state", "participants", "feedback", "explanations", "objective")
   pure val OPP_STATES = Set("PROPOSED", "ACCEPTED", "COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED")
 
@@ -308,6 +317,11 @@ module console_privacy {
   // Code: apps.tsx AppPanel disables Open below 5 trimmed characters.
   val panelNeedsReason: bool = opened.indices().forall(i => opened[i].reason >= PERSON_REASON_MIN)
 
+  // OPEN DEFECT, not in safety: the counts class gets no age fact at all, masked or not. shape.ts countsMember
+  // keeps declined, weekly and community. declinedLeaksTest replays it.
+  val countsGetNoAgeFacts: bool =
+    memberSent.cls == Counts implies memberSent.fields.forall(f => not(AGE_FACT_KEYS.contains(f.key)))
+
   val safety: bool = and {
     noFieldAboveClass, truthOnlyFullLens, oracleOnlyWhenShown,
     privateNotListed, hiddenHoldsRestricted, privateOriginHidden, panelNeedsReason,
@@ -357,6 +371,12 @@ module console_privacy {
   run namesAppTest = assert(and {
     not(namesApp(ANY_APP)), namesApp("peon"), namesApp(blockOrigin("slop", false)), not(namesApp(blockOrigin("slop", true))),
     crossAppShown(true, true), not(crossAppShown(true, false)), not(crossAppShown(false, true)),
+  })
+
+  // OPEN DEFECT: the counts class keeps the declined flag and the weekly opt-in.
+  run declinedLeaksTest = assert(and {
+    memberFieldUse(Counts, "declined") == Keep, memberFieldUse(Counts, "weekly") == Keep,
+    AGE_FACT_KEYS.contains("declined"),
   })
 
   // A reason of four characters does not open a panel; five does.
