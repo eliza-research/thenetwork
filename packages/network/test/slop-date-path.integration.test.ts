@@ -240,6 +240,56 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await judgeCost("after-complete-date-path");
   }, T);
 
+  test("a date slot exactly a day away stays in the offered and booked times", async () => {
+    const friday = Date.UTC(2026, 9, 9, 18); // Friday 14:00 New York; sat_day starts 24 hours later.
+    const results: { offset: number; offered: number; booked: number; expected: number }[] = [];
+    for (const offset of [-1, 0, 1]) {
+      await svc?.close(); svc = undefined;
+      await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+      const clock = new SimClock(friday - HOUR);
+      const s = svc = new NetworkService({
+        url: URL_, clock, instance: "slop-slot", log: () => {}, env: { PLATFORM_ENV: "dev" },
+        networks: [{ id: "slop:nyc" }],
+        tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET,
+        network: { seed: 1 }, photoStorage: null, notify: false, adapter: () => new DryRunAdapter(() => {}),
+      });
+      await s.start();
+      for (const [phone, profile] of [
+        [RAE, ["Rae, 29", "I'm a woman into men. Live in Greenpoint, love climbing and live music", "I'm a woman looking for men, 27 to 38, within 5 miles of 11222"]],
+        [SAM, ["Sam, 31", "I'm a man into women. Williamsburg, I climb and go to shows", "I'm a man looking for women, 25 to 35, within 5 miles of 11211"]],
+      ] as const) for (const body of ["slop", ...profile, "A relationship, no smokers", "Saturday afternoons work best"])
+        await text(s, clock, phone, body);
+      const rae = (await memberId(RAE))!, sam = (await memberId(SAM))!;
+      clock.set(friday + offset);
+      expect((await staff(s, ADMIN, "POST", "/apps/slop/matching", { on: true })).status).toBe(200);
+      await s.tick();
+      const queue = await (await staff(s, REVIEWER, "GET", "/apps/slop/review")).json() as any;
+      const item = queue.items?.find((x: any) => x.proposal.participants.includes(rae) && x.proposal.participants.includes(sam));
+      expect(item).toBeDefined();
+      expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
+      expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20 })).json() as any).ok).toBe(true);
+      await s.tick();
+      const first = s.runtimeFor("slop")!.net.exportState().opps.find(o => o.id === item.oppId)!;
+      const offered = Object.values(first.offered ?? {}).flat()[0]?.start;
+      expect(offered).toBeNumber();
+      for (let i = 0; i < 24; i++) {
+        for (const [id, phone] of [[rae, RAE], [sam, SAM]] as const) {
+          const awaiting = s.runtimeFor("slop")!.net.memberList().find(m => m.id === id)?.awaiting;
+          if (awaiting?.kind === "probe" && awaiting.oppId === item.oppId) await text(s, clock, phone, "Yes, the first time works");
+        }
+        if ((await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`)[0]?.state === "SCHEDULED") break;
+        await run(s, clock, HOUR);
+      }
+      const [booked] = await sql`select state, meeting_at from network.opportunities where app_id = 'slop' and id = ${item.oppId}`;
+      expect(booked?.state).toBe("SCHEDULED");
+      for (const id of [rae, sam]) expect((await inbox(id)).some(m => m.opp === item.oppId && /You're both in: a first date with/.test(m.body))).toBe(true);
+      results.push({ offset, offered: offered!, booked: new Date(booked.meeting_at).getTime(), expected: friday + DAY + (offset <= 0 ? 0 : 5 * HOUR) });
+    }
+    for (const r of results) expect({ offset: r.offset, offered: r.offered, booked: r.booked })
+      .toEqual({ offset: r.offset, offered: r.expected, booked: r.expected });
+    await svc?.close(); svc = undefined;
+  }, T);
+
   // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to
   // meet after the seeks question was asked its two times is read as straight. The read-back says so,
   // and the member can change it. Before this, seeks stayed empty and the member was never matchable.
