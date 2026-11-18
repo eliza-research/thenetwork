@@ -41,3 +41,7 @@
 {"text":"Don't stop emailing me, but please stop texting me.","match":"likely"}
 {"text":"Don't stop texting me, I like the updates.","match":"none"}
 {"text":"You never stop texting me, leave me alone","match":"likely"}
+{"text": "I don't want texts anymore", "match": "likely"}
+{"text": "I don't want messages anymore", "match": "likely"}
+{"text": "I don't want to get texts anymore", "match": "likely"}
+{"text": "I don't want coffee anymore", "match": "none"}
