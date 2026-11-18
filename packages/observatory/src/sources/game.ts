@@ -250,6 +250,9 @@ export class GameSource implements DataSource {
     this.timers = [];
     this.store.clock.playing = false;
     await this.takeover?.releaseAll();
+    // Releasing a controlled member resumes the old step. Drain its callbacks before a reset
+    // replaces the world, projector and store, or those callbacks would update the new world.
+    await this.advancing;
   }
 
   private onRecord(r: RunRecord) {
