@@ -142,6 +142,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Ben is on friends too (the hold and the ban reach every app).
     await web.login("friends", ben);
     expect((await web.join("friends", 32, "Ben")).status).toBe(200);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(200);
     const a = (await memberOf("slop", ana))!.id, b = (await memberOf("slop", ben))!.id, bf = (await memberOf("friends", ben))!.id;
     expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
 
@@ -177,6 +178,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect([(await memberOf("slop", ben))!.account_status, (await memberOf("friends", ben))!.account_status]).toEqual(["restricted", "restricted"]);
     const after = await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any;
     expect(after.reports[0].status).toBe("banned");
+    // spec/webSession.md, "Only a live token on the requested app can authenticate"
+    expect(await web.json("friends", "GET", "/api/me")).toEqual({ status: 401, body: { ok: false, error: "unauthorized" } });
 
     // The banned number cannot join any other app, by text or on the web; nothing is stored and nothing is answered.
     const before = directs.length;
@@ -203,9 +206,12 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
   test("ban by person; dismiss a report", async () => {
     await fresh();
     const clock = new SimClock(START);
-    const { s } = service(clock);
+    const { s, otp } = service(clock);
     const cy = newPhone(), di = newPhone();
     for (const [p, who] of [[cy, "Cy, 40"], [di, "Di, 38"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    const web = site(s, clock, otp), unrelated = site(s, clock, otp);
+    await web.login("slop", di);
+    await unrelated.login("slop", cy);
     await text(s, clock, cy, "report Di, she asked me for money on venmo");
     await text(s, clock, di, "report Cy, he was rude");
     const q = (await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any).reports as any[];
@@ -214,6 +220,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/dismiss", { reportId: "nope", note: "no such report" })).json()).toEqual({ ok: false, reason: "unknown_report" });
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" })).json()).toEqual({ ok: true });
     expect((await sql`select scope from platform.bans`).map((r: any) => r.scope)).toEqual(["person"]);
+    expect((await web.json("slop", "GET", "/api/me")).status).toBe(401);
+    expect((await unrelated.json("slop", "GET", "/api/me")).status).toBe(200);
     expect(await text(s, clock, di, "friends")).toBe("held");
   }, T);
 

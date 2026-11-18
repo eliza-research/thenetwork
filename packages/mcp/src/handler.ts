@@ -529,7 +529,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const began = stepIssuance(issuanceInitial, { type: "beginApproval", requestLive: requestIsLive(at, r.expiresAt) });
     if (began.phase !== "AwaitingAuthority") return expired();
     const grant: Grant = { id: `${authority ? "grant_cloud_" : "grant_"}${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: Math.min(at + ttl.grantMs, authority?.expiresAt ?? Infinity), revokedAt: null, ...(authority ? { cloudAuthority: authority } : {}) };
-    const cloudStatus = await cloudGrantCurrent(grant);
+    const cloudStatus = await grantCurrent(grant);
     const checked = stepIssuance(began, {
       type: "checkGrantAuthority",
       authority: cloudStatus === "valid" ? "AuthorityValid" : cloudStatus === "unavailable" ? "AuthorityUnavailable" : "AuthorityInvalid",
@@ -601,7 +601,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const grant = await store.getGrant(ac.grantId);
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
       if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
-      const cloudStatus=await cloudGrantCurrent(grant);
+      const cloudStatus=await grantCurrent(grant);
       if(ac.expiresAt<=now())return bad("invalid_grant");
       if(cloudStatus==="unavailable")return temporarilyUnavailable();
       if(cloudStatus!=="valid")return bad("invalid_grant");
@@ -628,7 +628,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const grant = await store.getGrant(t.grantId);
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
       if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
-      const cloudStatus=await cloudGrantCurrent(grant);
+      const cloudStatus=await grantCurrent(grant);
       if(t.expiresAt<=now())return bad("invalid_grant");
       if(cloudStatus==="unavailable")return temporarilyUnavailable();
       if(cloudStatus!=="valid")return bad("invalid_grant");
@@ -740,13 +740,18 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
-    const cloudStatus=await cloudGrantCurrent(grant);
+    const cloudStatus=await grantCurrent(grant);
     if(t.expiresAt<=now())return "invalid";
     if(cloudStatus!=="valid")return cloudStatus;
     return { token: t, grant, client };
   }
 
-  async function cloudGrantCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
+  async function grantCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
+    try {
+      if (await o.platform.grantIsBanned(grant.phoneKey, grant.personId)) return "invalid";
+    } catch {
+      return "unavailable";
+    }
     if(!grant.id.startsWith("grant_cloud_") && grant.cloudAuthority==null)return "valid";
     const authority=grant.cloudAuthority;
     if(!authority || grant.expiresAt<=now() || grant.expiresAt>authority.expiresAt || authority.expiresAt<=now())return "invalid";

@@ -11,7 +11,7 @@ import { PgOAuthStore } from "../src/pg-store.ts";
 import { createMcpHandler } from "../src/handler.ts";
 import { platformHooks } from "../src/hooks.ts";
 import { sha256hex } from "../src/util.ts";
-import { addMember, call, connect, origin, PHONE_A, register, setup, tokenRequest } from "./harness.ts";
+import { addMember, browserFlow, call, connect, origin, PHONE_A, register, setup, tokenRequest, VERIFIER } from "./harness.ts";
 
 const USER = process.env.USER ?? "postgres";
 // An admitted Linux fixture may provide its already-running, isolated loopback PG.
@@ -168,6 +168,38 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     expect(dump).not.toContain("5550142");
     expect((await store.auditRows()).map((a: { kind: string }) => a.kind)).toEqual(expect.arrayContaining(["client_registered", "consent_granted", "token_issued", "token_refreshed", "refresh_replay"]));
   });
+
+  test("a canonical ban invalidates issued access, refresh and unused authorization codes across apps", async () => {
+    await migrate(testUrl.toString(), { lockTimeout: "5s" });
+    const people = new PgPeopleStore(testUrl.toString()), harness = setup({ store });
+    const web = createPublicApi({ store: people, otp: harness.provider, now: () => harness.clock.t,
+      env: { PLATFORM_ENV: "dev" }, minStartMs: 0, minVerifyMs: 0 });
+    const oauth = createMcpHandler({ store, now: () => harness.clock.t, minOtpStartMs: 0,
+      platform: platformHooks({ store: people, accounts: web.accounts, otp: web.otp, sessions: web.sessions,
+        app: id => APPS[id], cookieName: id => `sid_${id}` }) });
+    const env = { ...harness, fetch: async (req: Request) => (await oauth.fetch(req))! };
+    const phone = "+12125550183", otherPhone = "+12125550184";
+    try {
+      const person = await web.accounts.createPerson(phone, "otp_sms", 32);
+      const issued = await connect(env, "friends.help", phone);
+      const other = await connect(env, "friends.help", otherPhone);
+      const client = await register(env, "peon.biz");
+      const approval = await browserFlow(env, "peon.biz", client.body.client_id, phone);
+      const code = new URL(approval.location!).searchParams.get("code")!;
+      expect(issued.tokenRes.status).toBe(200);
+      // spec/oauthGrantIssuance.md, "Authority is checked before the consent request is consumed"
+      await people.ban({ id: randomUUID(), scope: "person", personId: person.id, phoneHash: null,
+        reason: "staff safety decision", reportId: null, bannedBy: "safety", at: env.clock.t });
+      expect((await call(env, "https://friends.help/mcp", "check_status", {}, { token: issued.token.access_token })).res.status).toBe(401);
+      const refresh = await tokenRequest(env, "friends.help", { grant_type: "refresh_token",
+        refresh_token: issued.token.refresh_token, client_id: issued.client.client_id });
+      expect(refresh.body.error).toBe("invalid_grant");
+      const exchange = await tokenRequest(env, "peon.biz", { grant_type: "authorization_code",
+        code, code_verifier: VERIFIER, client_id: client.body.client_id, redirect_uri: "https://client.example/callback" });
+      expect(exchange.body.error).toBe("invalid_grant");
+      expect((await call(env, "https://friends.help/mcp", "check_status", {}, { token: other.token.access_token })).res.status).toBe(200);
+    } finally { await people.close(); }
+  }, 120_000);
 
   test("a code is taken once under a race; rate windows count and reset", async () => {
     const env = setup({ store });

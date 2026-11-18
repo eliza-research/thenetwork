@@ -21,7 +21,7 @@ const accounts = new Accounts(people, { hashKey, apps: id => (APPS as Record<str
 const handler = createMcpHandler({
   platform: platformHooks({
     store: people, otp: new OtpService(people, new DevConsoleProvider(), { hashKey }), accounts,
-    sessions: new SessionService(people, { secret: "dev-only-session-secret" }), app: appOf, cookieName: id => `sid_${id}`, secureCookie: false,
+    sessions: new SessionService(people, { secret: "dev-only-session-secret", phoneHash: e164 => accounts.phoneHash(e164) }), app: appOf, cookieName: id => `sid_${id}`, secureCookie: false,
   }),
   issuer: x => (x.id === app ? local : `https://${x.domain}`),
   hostMap: { [`127.0.0.1:${port}`]: app, [`localhost:${port}`]: app },
