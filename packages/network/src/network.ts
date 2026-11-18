@@ -2439,14 +2439,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** The answer to a plan probe. "Can't make that time" is a no, and a time this member is not free (availability evidence). */
   private onPlanProbeAnswer(m: MemberState, o: Opp, yes: boolean, body: string) {
-    if (!o.planRun || o.planRun.answers[m.id] !== "pending") return;
-    m.answered++;
-    this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
-    if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
-    const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
-    if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-40);
-    this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
-    this.planAnswer(o, m.id, yes);
+    const outcome = this.planAnswer(o, m.id, yes, false, () => {
+      m.answered++;
+      this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
+      if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
+      const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
+      if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-40);
+      this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
+    });
+    if (outcome === "expired" && yes) this.noteFor(m.id, copy.planNotTogether);
   }
 
   /**
@@ -3122,14 +3123,19 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** A plan probe answer (or silence, or a seat that is no longer possible): the quorum run decides what happens next. */
-  private planAnswer(o: Opp, id: MemberId, yes: boolean, silent = false) {
+  private planAnswer(o: Opp, id: MemberId, yes: boolean, silent = false, onRecorded?: () => void) {
     if (!o.planRun) return;
     const now = this.now();
     const { run, action } = plans.recordPlanAnswer(o.planRun, id, yes, now, this.pcfg);
     if (run === o.planRun) return;
     o.planRun = run;
-    if (yes) { this.plansCounters.planYes++; o.status.set(id, "available"); } else { if (!silent) this.plansCounters.planNo++; o.status.set(id, silent ? "unavailable" : "no"); }
+    const recorded = run.answers[id] !== "pending";
+    if (recorded) {
+      if (yes) { this.plansCounters.planYes++; o.status.set(id, "available"); } else { if (!silent) this.plansCounters.planNo++; o.status.set(id, silent ? "unavailable" : "no"); }
+      onRecorded?.();
+    }
     this.planAct(o, action);
+    return recorded ? "recorded" : "expired";
   }
 
   private planAct(o: Opp, action: plans.PlanAction) {
@@ -3174,10 +3180,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       seated.push(id);
     }
     keep = seated;
-    const hasConsent = keep.length >= plan.quorum || (keep.length >= 2 && a.groupSize[0] <= 2);
+    const hasConsent = plan.partner ? keep.length >= plan.quorum
+      : keep.length >= 3 && (keep.length >= plan.quorum || a.groupSize[0] <= 2);
     const next = stepOpportunity(opportunityLifecycle(o), { type: "book", hasConsent });
     if (next.phase !== "Scheduled") {
       o.planRun = { ...o.planRun!, stage: "closed" };
+      if (!plan.partner && keep.length === 2) return this.planFallback(o, keep);
       if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
       return this.planFallback(o);
     }
@@ -3224,16 +3232,23 @@ export class ConsentNetwork implements NetworkUnderTest {
    * next planner runs). Yes-sayers hear "that plan didn't come together" in their next message, and
    * never who declined.
    */
-  private planFallback(o: Opp): void {
+  private planFallback(o: Opp, eligible?: readonly MemberId[]): void {
     const now = this.now();
     this.plansCounters.planFallbacks++;
     const run: plans.PlanRun = { ...o.planRun!, stage: "closed" };
     o.planRun = run;
     const w = this.planWorld(now);
-    const { fallback, carry } = plans.planFallback(run, now, w.events, this.pcfg);
+    const candidates = eligible ? { ...run, answers: Object.fromEntries(eligible.map(id => [id, run.answers[id]!])) } : run;
+    const { fallback, carry } = plans.planFallback(candidates, now, w.events, this.pcfg);
     this.planCarry.push(...carry);
     this.ctx.log("plan_fallback", { oppId: o.id, kind: fallback.kind, members: fallback.kind === "none" ? 0 : fallback.members.length });
-    if (fallback.kind === "smaller") return this.bookPlan(o, fallback.members, true);
+    if (fallback.kind === "smaller") {
+      if (!fallback.partnerPlan) return this.bookPlan(o, fallback.members, true);
+      this.close(o, "plan did not come together");
+      for (const id of fallback.members) this.noteFor(id, copy.planNotTogether);
+      this.submitPlan(fallback.partnerPlan, now);
+      return;
+    }
     this.close(o, "plan did not come together");
     if (fallback.kind === "solo_event") {
       const ev = w.events.find(e => e.id === fallback.eventId);
