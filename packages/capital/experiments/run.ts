@@ -104,7 +104,10 @@ export function measure(r: SimResult): Metrics {
     if (good(i)) byType[t].quality++;
   }
   for (const v of Object.values(byType)) v.quality = v.quality / v.invites;
-  const vouch = { invites: inv.length, qualityAll: inv.filter(good).length / Math.max(1, inv.length), byType, badAdmitted: r.invites.filter(i => i.quality === "bad" && i.joined).length };
+  // A positive join decision near the cutoff can precede an arrival outside the run.
+  const badAdmitted = r.invites.filter(i => i.quality === "bad" && i.joined
+    && (P.get(i.invitee)?.joinDay ?? Infinity) < r.days).length;
+  const vouch = { invites: inv.length, qualityAll: inv.filter(good).length / Math.max(1, inv.length), byType, badAdmitted };
 
   const tiers = [0, 0, 0, 0];
   for (const p of honest) tiers[effortTier(nc(p.id), L.cfg)]!++;
