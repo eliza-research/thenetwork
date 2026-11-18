@@ -88,8 +88,12 @@ const STYLE_BY_ARCH: Partial<Record<Archetype, WritingStyle[]>> = {
 const otherCity = (c: City): City => (c === "sf" ? "nyc" : "sf");
 
 export function generatePersonas(opts: GeneratorOptions): Persona[] {
-  const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
+  // A population size is a count, not a duration: a fractional, non-finite or negative n used to fail
+  // deep inside allocation with a generic "Array length must be a positive integer" RangeError (2.5, -1,
+  // NaN, Infinity) or, for a blank CLI value that Number turns into 0, quietly produced an empty world.
   const n = opts.n;
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`personas must be a non-negative safe integer, got ${String(n)}`);
+  const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const prefix = opts.idPrefix ?? "m";
   const cityW = { sf: 0.5, nyc: 0.5, ...opts.cityWeights };
   const mix = { ...ARCHETYPE_MIX, ...opts.archetypeMix };
