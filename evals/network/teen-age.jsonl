@@ -250,3 +250,17 @@
 {"text":"In 9th grade. I did competitive swimming then.","teen":false}
 {"text":"12th grade teacher, here.","teen":false}
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
+{"text":"I'm still 17","teen":true,"age":17}
+{"text":"im still 16","teen":true,"age":16}
+{"text":"I'm still fifteen","teen":true,"age":15}
+{"text":"I'm currently 17","teen":true,"age":17}
+{"text":"I'm now 16","teen":true,"age":16}
+{"text":"I'm still 12","teen":true,"age":12}
+{"text":"I am still 14","teen":true,"age":14}
+{"text":"I'm still 25","teen":false,"age":25}
+{"text":"I'm currently 30","teen":false,"age":30}
+{"text":"I'm now 40","teen":false,"age":40}
+{"text":"I'm still 5 minutes away","teen":false}
+{"text":"I'm still waiting on my 10 dollars","teen":false}
+{"text":"I'm now in 2 minds","teen":false}
+{"text":"I'm currently in a meeting until 3","teen":false}
