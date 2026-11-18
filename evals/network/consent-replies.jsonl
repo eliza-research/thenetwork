@@ -419,3 +419,9 @@
 {"text":"I'm free on weekend evenings","label":"unclear"}
 {"text":"weekend mornings, not evenings","label":"unclear"}
 {"text":"mornings on weekends work","label":"unclear"}
+{"text":"I had a great weekend","label":"unclear"}
+{"text":"this weekend was great","label":"unclear"}
+{"text":"had a great weekend, see you Thursday","label":"unclear"}
+{"text":"I had a great weekday","label":"unclear"}
+{"text":"had a great weeknight","label":"unclear"}
+{"text":"weekends are great","label":"yes","keys":["b","c"]}

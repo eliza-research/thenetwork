@@ -753,6 +753,9 @@ function clauseAt(t: string, i: number, len: number): string {
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
+/** A group word in a past-tense clause ("I had a great weekend", "this weekend was great") talks about the past, not about a future slot: it must not expand to its days. */
+const PAST_TENSE = /\b(had|was|were|did)\b/;
+const pastTenseAt = (t: string, i: number, len: number): boolean => PAST_TENSE.test(clauseAt(t, i, len));
 
 /** Evening by label hour: 5pm and later, before 5am. Same boundaries as the daypart mapping in #159. */
 const isEveningHour = (h: number): boolean => h >= 17 || h < 5;
@@ -867,6 +870,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   let unofferedWeekend = false;
   let unofferedWeekendPart = false;
   for (const m of t.matchAll(/\bweekends?\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
     const parts = partsInClause(m.index!);
     if (!parts.size) {
       if (weekendKeys.length) mark(weekendKeys, m.index!, m[0].length);
@@ -898,6 +902,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // not evenings") does not count. Only matchAll is used on the shared daypart regexes:
   // a .test() on them would leave lastIndex behind and make later calls order-dependent.
   for (const m of t.matchAll(/\bweekdays?\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
     const parts = new Set<"morning" | "afternoon" | "evening">();
     for (const [re, part] of DAYPART_WORDS) {
       for (const pm of t.matchAll(re)) {
@@ -923,6 +928,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }).map(o => o.key);
   let unofferedWeeknight = false;
   for (const m of t.matchAll(/\bweeknights?\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
     if (weeknightKeys.length) mark(weeknightKeys, m.index!, m[0].length);
     else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeeknight = true;
   }
@@ -933,6 +939,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const duringWeekKeys = options.filter(o => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].some(d => o.label.startsWith(d))).map(o => o.key);
   let unofferedDuringWeek = false;
   for (const m of t.matchAll(/\bduring the week\b/g)) {
+    if (pastTenseAt(t, m.index!, m[0].length)) continue;
     if (duringWeekKeys.length) mark(duringWeekKeys, m.index!, m[0].length);
     else if (!negatedAt(t, m.index!, m[0].length)) unofferedDuringWeek = true;
   }
