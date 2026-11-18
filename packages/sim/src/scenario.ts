@@ -195,8 +195,9 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         const outcome = recs.find(r => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice) as Extract<RunRecord, { type: "outcome" }> | undefined;
         if (!outcome) return ok(false, "no drop happened");
         const others = Object.keys(outcome.attendance).filter(id => id !== e.persona && (outcome.attendance[id]!.showed || !outcome.attendance[id]!.cancelledWithNotice));
-        const notified = others.filter(id => msgs.some(x => x.direction === "outbound" && x.memberId === id && x.meta?.proposalId === outcome.proposalId && x.meta?.type === "cancellation"));
-        return ok(notified.length > 0 && notified.length >= others.filter(id => outcome.attendance[id]!.showed).length, `${notified.length}/${others.length} notified`);
+        const notified = others.filter(id => msgs.some(x => x.direction === "outbound" && x.status === "delivered" && x.memberId === id && x.meta?.proposalId === outcome.proposalId && x.meta?.type === "cancellation"));
+        // A later no-show does not excuse missing their notice, or substitute for another recipient.
+        return ok(others.length > 0 && notified.length === others.length, `${notified.length}/${others.length} notified`);
       }
       case "silent_after": {
         const t = start + e.day * DAY;
