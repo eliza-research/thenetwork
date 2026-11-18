@@ -737,13 +737,32 @@ const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'
 const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
+/** Words that may stand between an exclusion "but" and the day or clock it excludes ("anything but
+ * this Saturday", "anything but Saturday 11am", "anything but Saturday at 11am"): a determiner, a
+ * clock, the day itself, a daypart, or "at". */
+const BUT_FILLER = "(?:this|that|next|at|\\d{1,2}(?::\\d\\d)?\\s*(?:am|pm)|sundays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sun|mon|tues?|weds?|thu|thur|thurs|fri|sat|mornings?|afternoons?|evenings?|nights?|lunch|eve)";
+/** A "but" right before the mention, with only filler between it and the mention. */
+const BUT_EXCL = new RegExp(`\\bbut\\b(?:\\s+${BUT_FILLER})*\\s*$`);
+/** A universal word leading an exclusion: "anything but Saturday", "any day but this Saturday",
+ * "all days but Saturday", "whatever but Saturday". */
+const UNIVERSAL = /\b(?:any|every|all|everything|anything|whatever|whichever|each)\b/;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
-/** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
+/** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, a refusal right after them, or an exclusion lead ("anything but Saturday works") right before them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
   for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
-  return NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len));
+  if (NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len))) return true;
+  // "anything but Saturday works": "but" is a clause start above, so the exclusion lead ("anything",
+  // "any day", "everything" ...) is invisible to NEG_CUE. A "but" right before the mention, led by a
+  // universal word in the same clause, refuses the mention. A bare "but" is contrast, not exclusion
+  // ("Sorry, but Saturday works" still picks Saturday), and "no day but Saturday" is "only Saturday".
+  const before = t.slice(0, i);
+  const butAt = before.search(BUT_EXCL);
+  if (butAt < 0) return false;
+  let segStart = 0;
+  for (const m of before.slice(0, butAt).matchAll(CLAUSE_START)) segStart = m.index! + m[0].length;
+  return UNIVERSAL.test(before.slice(segStart, butAt));
 }
 /** The clause (between punctuation) around position i. */
 function clauseAt(t: string, i: number, len: number): string {
