@@ -473,6 +473,23 @@ const SKILL_LEX: Record<string, RegExp> = {
 /** The sender's own skill is said in the first person; "looking for a bassist" is a want, not a skill. */
 const FIRST_PERSON = /\b(i|i'm|im|i've|ive|i am|my|me)\b/;
 const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/;
+/**
+ * A first-person clause after a seeking phrase re-asserts the skill as the member's own only
+ * when it says so directly: "I play", "I'm a …", "my work as a …". A bare "I" does not —
+ * "I can learn" and "I struggle" are the seeker describing the need, not owning the skill.
+ */
+const OWN_AFTER_SEEKING = /\b(?:i\s+(?:can\s+)?(?:play|plays|sing|sings|teach|teaches|work|works|do|does|make|makes|build|builds|write|writes|code|codes|paint|paints|cook|cooks|dance|dances|perform|performs|host|hosts)|(?:i\s+am|i'm|im)\s+(?:a|an)\b|(?:i've|i\s+have)\s+been\s+(?:a|an)\b|my\s+(?:work|job|role|career|profession)\s+as\s+(?:a\s+|an\s+)?)/;
+/**
+ * A seeking phrase before a skill label claims it, unless a first-person clause between them
+ * re-asserts it as the member's own ("... and I play bass" still owns the skill). A fixed
+ * lookback let a long seeking preamble through ("... ideally a senior product designer").
+ */
+function soughtBefore(before: string): boolean {
+  const re = new RegExp(SEEKING.source, "g");
+  let m: RegExpExecArray | null; let end = -1;
+  while ((m = re.exec(before))) end = m.index + m[0].length;
+  return end >= 0 && !OWN_AFTER_SEEKING.test(before.slice(end));
+}
 
 /** Aliases people use for the neighborhoods the Network knows (geo.ts names are canonical). */
 const AREA_ALIASES: [RegExp, string][] = [
@@ -560,13 +577,13 @@ export function extractProfile(body: string): Profile {
         const m = rx.exec(part);
         if (!m || m.index > negAt) continue;
         const before = part.slice(0, m.index);
-        if (SEEKING.test(before.slice(-40))) continue;
+        if (soughtBefore(before)) continue;
         skills.add(tag);
       }
       // Taxonomy labels also occur in short profile answers such as "Senior product designer."
       for (const k of SKILLS) {
         const at = part.indexOf(k.label.toLowerCase());
-        if (at >= 0 && at < negAt && !SEEKING.test(part.slice(Math.max(0, at - 40), at))) skills.add(k.tag);
+        if (at >= 0 && at < negAt && !soughtBefore(part.slice(0, at))) skills.add(k.tag);
       }
     }
   }
