@@ -146,22 +146,37 @@ export class World {
     }
 
     // --- interactions ----------------------------------------------------------------------
-    this.interactions = (input.interactions ?? []).map(r => ({
-      ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
-    }));
+    this.interactions = (input.interactions ?? []).map(r => {
+      const declinedAt: Record<MemberId, number> = {};
+      for (const [id, at] of Object.entries(r.declinedAt ?? {})) declinedAt[C(id)] = Math.max(declinedAt[C(id)] ?? -Infinity, at);
+      return { ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+        ...(r.declinedAt ? { declinedAt } : {}) };
+    });
     for (const r of this.interactions) {
-      for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
-        const k = pairKey(r.participants[i]!, r.participants[j]!);
+      // Separate refusal events are explicit metadata. Preserve legacy cancellation and
+      // response semantics for callers that do not supply those events.
+      const declined = new Set(r.declinedAt ? r.declinedBy ?? [] : []);
+      const ids = declined.size ? [...new Set([...r.participants, ...declined, ...(r.acceptedBy ?? []).map(C), ...(r.noResponse ?? []).map(C)])] : r.participants;
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const a = ids[i]!, b = ids[j]!, refused = [a, b].filter(id => declined.has(id));
+        if (!refused.length && (!r.participants.includes(a) || !r.participants.includes(b))) continue;
+        // A group can meet while an invitee refuses. Only pairs involving that invitee inherit
+        // the refusal; this index does not add another interaction or count their answer twice.
+        const pairRecord: InteractionRecord = refused.length ? { ...r, participants: [a, b], outcome: "declined", declinedBy: refused,
+          at: Math.max(...refused.map(id => r.declinedAt?.[id] ?? r.at)) } : r;
+        const k = pairKey(a, b);
         if (!this.pairInteractions.has(k)) this.pairInteractions.set(k, []);
-        this.pairInteractions.get(k)!.push(r);
-        if ((r.outcome === "pending" || r.outcome === "accepted") && now - r.at < cfg.cooldowns.activeProposalDays * DAY * 4) this.activePairs.add(k);
+        this.pairInteractions.get(k)!.push(pairRecord);
+        if ((pairRecord.outcome === "pending" || pairRecord.outcome === "accepted") && now - pairRecord.at < cfg.cooldowns.activeProposalDays * DAY * 4) this.activePairs.add(k);
       }
-      if (r.outcome === "declined" || r.outcome === "expired") {
-        const who = r.outcome === "declined" ? (r.declinedBy?.length ? r.declinedBy : r.participants) : r.participants;
+      if (declined.size || r.outcome === "declined" || r.outcome === "expired") {
+        const unresolved = r.outcome === "declined" ? (r.declinedBy?.length ? r.declinedBy : r.participants)
+          : r.outcome === "expired" ? r.participants : [];
+        const who = new Set([...declined, ...unresolved]);
         for (const m of who) {
           if (!this.memberCategoryDeclines.has(m)) this.memberCategoryDeclines.set(m, new Map());
           const mm = this.memberCategoryDeclines.get(m)!;
-          mm.set(r.category, Math.max(mm.get(r.category) ?? -Infinity, r.at));
+          mm.set(r.category, Math.max(mm.get(r.category) ?? -Infinity, r.declinedAt?.[m] ?? r.at));
         }
       }
     }
