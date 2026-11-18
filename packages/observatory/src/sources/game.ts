@@ -17,7 +17,7 @@ import { appBanner, APPS, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHo
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
-import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard } from "../health.ts";
+import { ALERT_WINDOW, growthStats, healthAlerts, hours, safetyInfo, scorecard } from "../health.ts";
 import { Projector } from "../projector.ts";
 import { evaluateMissions, POINTS, scoreboard } from "../scoring.ts";
 import { emptyCounters, Store } from "../store.ts";
@@ -557,7 +557,8 @@ export class GameSource implements DataSource {
       now: this.world.clock.now(), cases, members: [...this.store.members.values()], opps,
       watch: trust.filter(([, t]) => t.level === "watch").map(([id]) => id), hold: trust.filter(([, t]) => t.level === "hold").map(([id]) => id), canAct: !!n,
       // Hold and ban by phone or person act on the platform's people: the simulated world has none.
-      reports: reportsFromCases(cases, opps), canBan: false,
+      reports: n?.safetyReports().map(({ id, kind, reporterId, subjectId, opportunityId, at, status }) =>
+        ({ id, kind, reporterId, subjectId, opportunityId, at, status })) ?? [], canBan: false,
     });
   }
 
