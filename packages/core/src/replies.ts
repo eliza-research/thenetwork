@@ -103,6 +103,10 @@ const RULES: Rule[] = [
   // words ("Great!", "oh perfect", "but friday works"), not inside a statement ("it was nice",
   // "honestly this is great timing").
   r("yes", "(?<=(?:^|[.,!?;:]\\s*)(?:(?:not|never|i'm|im|but|and|so|oh|ah|ok|okay|yeah|yes|that|that's|thats|sounds|very|really|super|totally|then|also|pero|y|muy|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|tonight|today|tomorrow|lunes|martes|miercoles|jueves|viernes|sabado|domingo) ){0,2})(?:works|perfect|great|awesome|cool|deal|bet|nice|fine|down|interested|va|perfecto|genial|bueno|listo)\\b"),
+  // "but friday works" after a refused day ("not thursday but friday works"). Strong so the
+  // "not" on that day does not erase it. extract() drops it unless a time refusal precedes it,
+  // so "it was bad but friday works" and "no, but Friday works" are not a yes.
+  r("yes", "\\bbut\\s+(?:mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?|tonight|today|tomorrow|this weekend|next week|this week)\\s+works\\b", true),
   r("yes", "^in[!. ]*$"),
   r("no", "^pass[!. ]*$", true),
   // "si" is "yes" when it stands alone; "si + verb" is "if".
@@ -173,6 +177,12 @@ function extract(t: string): Signal[] {
     if (BENIGN_COND.test(rest)) { s.kind = "neutral"; continue; }
     s.text = rest;
     s.condTime = TIME_WORD.test(rest);
+  }
+  // "but <day> works" is a later yes only after a time refusal. A refusal, a STOP, or
+  // "it was bad but friday works" has no refused day in front of it, so this yes is dropped.
+  for (let i = out.length - 1; i >= 0; i--) {
+    const s = out[i]!;
+    if (s.kind === "yes" && /^but\s+/.test(s.text) && !out.some(n => n.kind === "timeNeg" && n.end <= s.at)) out.splice(i, 1);
   }
   // A "no" sentence with nothing else in it (bare refusal) can reverse an earlier yes.
   for (const s of out) {

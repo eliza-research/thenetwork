@@ -156,6 +156,10 @@
 {"text":"can we do another time?","label":"unsure"}
 {"text":"rain check?","label":"unsure"}
 {"text":"Not Thursday, but Friday works","label":"unsure"}
+{"text":"Not Thursday but Friday works","label":"unsure"}
+{"text":"no, but Friday works","label":"no"}
+{"text":"please stop but tomorrow works","label":"no"}
+{"text":"it was bad but friday works","label":"unsure"}
 {"text":"sí","label":"yes"}
 {"text":"si","label":"yes"}
 {"text":"Sí, claro","label":"yes"}
