@@ -15,9 +15,11 @@ const { values: a } = parseArgs({ options: {
   days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" },
   network: { type: "string", default: "consent" }, review: { type: "string", default: "auto" },
 } });
+const seed = Number(a.seed);
+if (!a.seed?.trim() || !Number.isFinite(seed)) { console.error("--seed must be a finite number"); process.exit(2); }
 const days = Number(a.days);
 const g = new GameSource({
-  seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
+  seed, days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
   network: a.network as "consent" | "stub", review: a.review as "auto" | "human",
 });
 const t0 = performance.now();
@@ -31,7 +33,7 @@ const opps = s.opportunities.filter(o => o.source !== "shadow");
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const unsafe = opps.filter(o => o.oracle?.unsafe);
 const report = {
-  world: { seed: Number(a.seed), days, engine: a.engine, network: a.network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
+  world: { seed, days, engine: a.engine, network: a.network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
   review: s.network?.review,
   judge: s.stats.judge,
   proposals: {
