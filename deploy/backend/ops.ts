@@ -116,7 +116,7 @@ export interface NetworkMetrics {
   /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
   biasAlerts24h?: number;
   /**
-   * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): review items a person
+   * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): engine proposals a person
    * decided (approve or reject; the simulated reviewer left out) and those approved without an edit.
    */
   precision7d?: { decided: number; clean: number };
@@ -244,11 +244,13 @@ export function runtimeProbe(rt: {
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
       const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
-      // Shadow precision: person decisions of the last 7 days (an edit before approving is not "without edits").
+      // Shadow precision: person decisions on engine proposals, as in the console scorecard.
+      // Member requests and staff-composed proposals do not measure the engine's precision.
       const [prec] = (await tx`select count(*)::int as decided,
-          count(*) filter (where decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(edits) = 'array' then edits end), 0) = 0)::int as clean
-        from network.review_items where app_id = ${rt.app.id} and decision in ('approve', 'reject') and decided_at > ${new Date(t - 6 * DAY)}
-          and reviewer is not null and reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
+          count(*) filter (where r.decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(r.edits) = 'array' then r.edits end), 0) = 0)::int as clean
+        from network.review_items r join network.opportunities o on o.app_id = r.app_id and o.id = r.opportunity_id
+        where r.app_id = ${rt.app.id} and o.source = 'engine' and r.decision in ('approve', 'reject') and r.decided_at > ${new Date(t - 6 * DAY)}
+          and r.reviewer is not null and r.reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
       return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
         precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
