@@ -33,10 +33,29 @@ const emptyState = (pop: PeonPopulation, week = 0): PeonNetworkState => ({
 export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> {
   const spec = o.quick ? { seeds: [13], weeks: 4 } : PEON_PINNED;
   const all: Record<"pack" | "keyword" | "oracle", PeonMetrics[]> = { pack: [], keyword: [], oracle: [] };
+  const exits = { candidates: 0, reviews: 0, interviews: 0, offers: 0, hires: 0 };
   for (const arm of ["pack", "keyword", "oracle"] as const) for (const seed of spec.seeds) {
-    all[arm].push(peonMetrics(await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, matcher: ARMS[arm]!.matcher, realism: REALISM_V2 })));
+    // Observe the first round after a search exit without changing the real matcher's decisions.
+    const inactiveFrom = new Map<string, number>();
+    const r = await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, realism: REALISM_V2, matcher: world => {
+      const configured = ARMS[arm]!.matcher;
+      const matcher = typeof configured === "function" ? configured(world) : configured;
+      return { ...matcher, propose(ctx) {
+        for (const id of world.state.exited) if (!inactiveFrom.has(id)) inactiveFrom.set(id, ctx.week);
+        return matcher.propose(ctx);
+      } };
+    } });
+    const afterExit = (id: string, week: number | undefined) => week !== undefined && week >= (inactiveFrom.get(id) ?? Infinity);
+    exits.candidates += inactiveFrom.size;
+    exits.reviews += r.flows.filter(f => f.reviewed && afterExit(f.cand, f.reviewWeek)).length;
+    exits.interviews += r.flows.filter(f => f.interviewed && afterExit(f.cand, f.interviewWeek)).length;
+    exits.offers += r.flows.filter(f => f.offered && afterExit(f.cand, f.interviewWeek! + 1)).length;
+    exits.hires += r.hires.filter(h => afterExit(h.cand, h.week)).length;
+    all[arm].push(peonMetrics(r));
   }
   b.track("fingerprint: pack, keyword and oracle arms", true, digest(all));
+  b.gate("world: candidates who exit search receive no later reviews, interviews, offers or hires",
+    exits.candidates > 0 && exits.reviews + exits.interviews + exits.offers + exits.hires === 0 && all.pack.every(m => m.hires > 0), JSON.stringify(exits));
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   b.gate("positive control: the keyword board reaches unverified, no-range and scam jobs", all.keyword.some(m => m.safety.unverifiedIntros > 0) && all.keyword.some(m => m.safety.noRangeIntros > 0) && all.keyword.some(m => m.safety.scamIntros > 0));
 
