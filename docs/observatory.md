@@ -15,7 +15,7 @@ One app that shows everything happening between members of The Network: every pe
 | Engine | engine-v1 runs once a day for NYC inside the Network; every run log is captured | Shadow mode: run engine-v1 on the current snapshot and show proposals as ghosts; nothing is written |
 | Review (PRD 32.8) | Every opportunity the Network composes waits for review. A simulated reviewer approves it (`--review auto`, the default), or staff are the reviewer (`--review human`): approve, reject, edit or re-roll. | `network.review_items` is shown. Decisions go to the Network service's staff API when it is set (`NETWORK_SERVICE_URL`, section 5); the Observatory never writes the table. |
 | Staff actions | Review, the matching switch, and safety lift and close act on the simulated Network | The same actions, sent to the Network service's staff API (`NETWORK_SERVICE_URL` and `NETWORK_SERVICE_TOKEN`). Without the service, none: real mode is read-only. |
-| Apps | One simulated world per app (ntwrk, slop, peon, friends), started when the app is first opened. Personas below the app's join age do not join. slop and peon run with matching off. | Each app's rows only: the app's read login (`OBSERVATORY_DATABASE_URL_<APP>`, row-level security), or the shared login with an `app_id` filter |
+| Apps | One simulated world per app (ntwrk, slop, peon, friends), started when the app is first opened. Personas below the app's join age do not join. Peon runs with matching off in every network and engine mode. | Each app's rows only: the app's read login (`OBSERVATORY_DATABASE_URL_<APP>`, row-level security), or the shared login with an `app_id` filter |
 | Hidden truth | Available behind a "truth lens" (desires, romance prefs, flakiness, private disclosures, adversarial flags) | Does not exist |
 | Writes | The player acts on the simulated world | None through the database. The connection is read-only (`default_transaction_read_only=on`), PII is scrubbed by default. Staff actions go through the service, which writes. |
 
@@ -235,7 +235,7 @@ The server writes an audit row before it returns data or acts. If the row cannot
 
 ### 9.6 Simulation lab
 
-The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app; the list shows the app's runs only. Every app runs The Network's NYC world; slop and peon runs get `--max-new 0` (matching off). The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
+The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app; the list shows the app's runs only. Every app runs The Network's NYC world; Peon runs get `--matching-off` to disable new opportunities in every arm. The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
 
 ```bash
 bun run packages/network/harness/experiment.ts --only consent --days 1 --seed 1

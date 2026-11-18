@@ -70,13 +70,13 @@ export function resultsOf(out: string): { results?: Record<string, any>[] } | un
 }
 
 /**
- * The child's arguments. An app whose pack has not shipped (slop, peon) runs with no new
- * opportunities (--max-new 0): joins, onboarding and safety only. The experiment world is The
+ * The child's arguments. An app whose matching is disabled runs with no new
+ * opportunities (--matching-off): joins, onboarding and safety only. The experiment world is The
  * Network's NYC world for every app; it has no per-app join age yet.
  */
 export function labArgs(r: LabRequest, seed: number): string[] {
   const app = isAppId(r.app) ? r.app : DEFAULT_APP;
-  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed), ...(matchingAllowed(app) ? [] : ["--max-new", "0"])];
+  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed), ...(matchingAllowed(app) ? [] : ["--matching-off"])];
 }
 
 export class Lab {
