@@ -6,7 +6,7 @@
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { ageAnswer, classify, extractProfile, feedbackOf, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -127,6 +127,11 @@ export async function evalsBlock(b: Block): Promise<void> {
   const again = await jsonl<{ text: string; label: "yes" | "no" | "unclear" }>("network/plan-again.jsonl");
   const againMiss = again.filter(l => planAgainOf(l.text) !== l.label).map(l => `${JSON.stringify(l.text)} -> ${planAgainOf(l.text)} (want ${l.label})`);
   b.gate(`plan again answers (n ${again.length}): every row read as labelled`, again.length >= 40 && againMiss.length === 0, againMiss.slice(0, 5).join("; "));
+
+  const feedback = await jsonl<{ text: string; self: boolean; other: boolean }>("network/feedback.jsonl");
+  const feedbackMiss = feedback.filter(l => { const f = feedbackOf(l.text); return f.selfNoShow !== l.self || f.otherNoShow !== l.other; })
+    .map(l => { const f = feedbackOf(l.text); return `${JSON.stringify(l.text)} -> self=${f.selfNoShow} other=${f.otherNoShow} (want self=${l.self} other=${l.other})`; });
+  b.gate(`feedback no-shows (n ${feedback.length}): every row read as labelled`, feedback.length >= 20 && feedbackMiss.length === 0, feedbackMiss.slice(0, 5).join("; "));
 
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");
