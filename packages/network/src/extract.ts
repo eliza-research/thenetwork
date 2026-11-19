@@ -128,11 +128,13 @@ export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: numb
 /**
  * The answer to a probe: the offline reading, with the LLM's yes taken only where the rules found no
  * signal at all ("none"). A refusal, a conditional, a hedge or a mixed reply is never turned into a yes.
+ * None of those times fits stays a yes with no pick: never the offered times the member did not name.
  */
 export function mergeConsent(
-  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy },
+  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean; refused?: string[] },
   u: Understood | undefined, options: readonly TimeOption[],
 ): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm" } {
+  if (offline.unoffered) return { ...offline, keys: [] };
   // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
   const reading = probeReplyReading(offline.answer === "unclear", offline.why === "none", u?.consent ?? "");
   if (reading === "KeepOffline") return offline;
