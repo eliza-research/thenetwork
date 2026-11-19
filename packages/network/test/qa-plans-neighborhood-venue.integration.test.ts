@@ -34,6 +34,13 @@ test("a named venue is answered near that venue, never with home venues", async 
     [UWS, "Any plans near McCarren Park this weekend?", "McCarren Park", HOME_UWS],
     [WBURG, "Any plans near Central Park this weekend?", "Central Park, Sheep Meadow", HOME_WBURG],
     [WBURG, "Any plans in The Battery this weekend?", "The Battery", HOME_WBURG],
+    // A specific venue name beats a shorter name of another venue: "Central Park
+    // Reservoir loop" (Upper East Side) must not resolve via the "Central Park" short
+    // name of "Central Park, Sheep Meadow" (Upper West Side). "Central Park, Sheep
+    // Meadow" legitimately still appears — Upper East Side borders Central Park — so
+    // the discriminator is Riverside Park, an Upper West Side venue that only the
+    // wrong anchor suggests.
+    [WBURG, "Any plans near Central Park Reservoir loop this weekend?", "Central Park Reservoir loop", [...HOME_WBURG, "Riverside Park"]],
   ] as const) {
     const msgs = await replies(member, request);
     const body = msgs.find(m => m.meta.type === "concierge")?.body;

@@ -571,6 +571,11 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       ["Any plans in The Battery this weekend?", "Upper West Side", "The Battery", homeUws],
       ["Any plans near Prospect Park this weekend?", "Upper West Side", "Prospect Park, Long Meadow", homeUws],
       ["Any plans near Central Park this weekend?", "Williamsburg", "Central Park, Sheep Meadow", homeWburg],
+      // A specific venue name beats a shorter name of another venue: "Central Park
+      // Reservoir loop" is Upper East Side, not the Upper West Side of the "Central
+      // Park" short name. Riverside Park is the discriminator — only the wrong
+      // anchor suggests it (Sheep Meadow borders both, so it still appears).
+      ["Any plans near Central Park Reservoir loop this weekend?", "Williamsburg", "Central Park Reservoir loop", [...homeWburg, "Riverside Park"]],
     ] as const) {
       const w = new Mini([{ id: "a", name: "Anna Reed", age: 30, area }], { matchingEnabled: false });
       await w.onboard("a");

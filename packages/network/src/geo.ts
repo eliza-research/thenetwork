@@ -148,14 +148,19 @@ export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 
 
 /**
  * The neighborhood of a venue named in a plans request: a named place anchors the answer,
- * never the member's home (spec F10: recommendations based on location). Full venue names,
- * or the part before "," / " (" / " at " ("Central Park" for "Central Park, Sheep Meadow").
+ * never the member's home (spec F10: recommendations based on location). Full venue names
+ * first, then the part before "," / " (" / " at " ("Central Park" for "Central Park, Sheep
+ * Meadow") — so a specific name beats a prefix of another venue ("Central Park Reservoir
+ * loop" is Upper East Side, not the Upper West Side of "Central Park, Sheep Meadow").
  */
 export function venueAreaOf(text: string | undefined): string | undefined {
   if (!text) return undefined;
   for (const v of VENUES) {
+    if (text.includes(v.name)) return v.neighborhood;
+  }
+  for (const v of VENUES) {
     const short = v.name.split(/,| \(| at /)[0]!;
-    if (text.includes(v.name) || text.includes(short)) return v.neighborhood;
+    if (text.includes(short)) return v.neighborhood;
   }
   return undefined;
 }
