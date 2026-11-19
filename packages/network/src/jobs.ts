@@ -224,7 +224,8 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
     f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}nyc`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
     ...p.must.map(m => f(`must-${m.skill}`, "skill", `Must have ${human(m.skill)}`, [`${T.must}${m.skill}:${m.level}`])),
     ...p.nice.map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
-    f("open", "fact", "Openings", [`${T.openings}${p.status === "active" ? p.openings : 0}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
+    // Retain the posted headcount for edits/reopening; peonSeats gives closed intents zero availability.
+    f("open", "fact", "Openings", [`${T.openings}${p.openings}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
   ];
   const intent: Intent = { id: p.id, memberId: p.managerId, objective: `Hire: ${p.title}`, category: "professional" as Category, details: JOB_INTENT, horizonDays: 90, status: p.status, createdAt: p.createdAt };
   return { intent, facets };
