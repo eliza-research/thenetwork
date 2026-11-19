@@ -74,6 +74,20 @@ const staff = (s: NetworkService, token: string, method: string, path: string, b
   s.fetch(new Request(`http://127.0.0.1:4848${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(b ? { "content-type": "application/json" } : {}), ...headers }, ...(b ? { body: JSON.stringify(b) } : {}) }));
 const memberOf = async (app: AppId, e164: string) =>
   (await sql`select m.id, m.account_status from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = ${app} and ph.e164 = ${e164}`)[0] as { id: string; account_status: string } | undefined;
+const openCodes = async (e164: string) => (await sql`select count(*)::int as n from platform.otp_challenges where e164 = ${e164}`)[0].n as number;
+const liveSessions = async (e164: string) => (await sql`select count(*)::int as n from platform.sessions where e164 = ${e164} and revoked_at is null`)[0].n as number;
+/** The newest open login code, so a test can put it back after a ban deletes it. */
+async function savedCode(e164: string) {
+  const [row] = await sql`select app_id, e164, provider, provider_ref, provider_chat_id, code_hash, created_at, expires_at
+    from platform.otp_challenges where e164 = ${e164} order by created_at desc, id desc limit 1`;
+  return row as { app_id: string; e164: string; provider: string; provider_ref: string | null; provider_chat_id: string | null; code_hash: string | null; created_at: Date; expires_at: Date } | undefined;
+}
+/** Put a live cookie and a live login code back, as a cleanup that stopped after the ban row would leave them. */
+async function reviveAuth(row: NonNullable<Awaited<ReturnType<typeof savedCode>>>) {
+  await sql`update platform.sessions set revoked_at = null where e164 = ${row.e164}`;
+  await sql`insert into platform.otp_challenges (app_id, e164, provider, provider_ref, provider_chat_id, code_hash, attempts, created_at, expires_at)
+    values (${row.app_id}, ${row.e164}, ${row.provider}, ${row.provider_ref}, ${row.provider_chat_id}, ${row.code_hash}, 0, ${row.created_at}, ${row.expires_at})`;
+}
 
 /** The public API as a site calls it, with a cookie per app. */
 function site(s: NetworkService, clock: SimClock, otp: FakeOtp) {
@@ -165,6 +179,16 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await level("slop", b)).toBe("hold");
     expect(await level("friends", bf)).toBe("hold");
 
+    // A cookie and a login code from before the ban. The code is not used yet.
+    clock.advance(31_000);
+    expect((await web.json("friends", "POST", "/api/auth/otp/start", { phone: ben })).status).toBe(200);
+    const benCode = otp.codes.get(ben)!;
+    const benCodeRow = await savedCode(ben);
+    expect(benCodeRow).toBeTruthy();
+    expect(await openCodes(ben)).toBeGreaterThan(0);
+    expect(await liveSessions(ben)).toBeGreaterThan(0);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(200);
+
     // Ban by phone.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "number", note: "confirmed by staff" })).status).toBe(400);
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed by staff", reportId })).json()).toEqual({ ok: true });
@@ -177,6 +201,13 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect([(await memberOf("slop", ben))!.account_status, (await memberOf("friends", ben))!.account_status]).toEqual(["restricted", "restricted"]);
     const after = await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any;
     expect(after.reports[0].status).toBe("banned");
+
+    // The cookie and the login code from before the ban both fail (phone ban).
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
+    expect(await openCodes(ben)).toBe(0);
+    expect(await liveSessions(ben)).toBe(0);
+    expect((await web.json("friends", "POST", "/api/auth/otp/verify", { phone: ben, code: benCode })).body).toEqual({ ok: false, error: "invalid_code" });
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
 
     // The banned number cannot join any other app, by text or on the web; nothing is stored and nothing is answered.
     const before = directs.length;
@@ -198,12 +229,29 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(hold).toEqual(["requested", "result"]);
     expect(ban).toEqual(["requested", "result", "refused"]);
     expect(rows.filter(r => r.action === "read_safety_reports").length).toBe(2);
+
+    // A cleanup that stopped after the ban row leaves the old cookie and the old code live.
+    // The repeat stays already_banned, writes no second ban, and ends both.
+    const banRows = (await sql`select count(*)::int as n from platform.bans`)[0].n as number;
+    await reviveAuth(benCodeRow!);
+    expect(await openCodes(ben)).toBe(1);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(200);
+    const again = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed again" });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ ok: false, reason: "already_banned" });
+    expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(banRows);
+    expect(await openCodes(ben)).toBe(0);
+    expect(await liveSessions(ben)).toBe(0);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
+    expect((await web.json("friends", "POST", "/api/auth/otp/verify", { phone: ben, code: benCode })).body).toEqual({ ok: false, error: "invalid_code" });
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
   }, T);
 
-  test("ban by person; dismiss a report", async () => {
+  test("ban by person; dismiss a report; the old cookie and the old login code fail", async () => {
     await fresh();
     const clock = new SimClock(START);
-    const { s } = service(clock);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
     const cy = newPhone(), di = newPhone();
     for (const [p, who] of [[cy, "Cy, 40"], [di, "Di, 38"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
     await text(s, clock, cy, "report Di, she asked me for money on venmo");
@@ -212,9 +260,46 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const aboutCy = q.find(r => r.kind === "harassment")!, aboutDi = q.find(r => r.kind === "scam")!;
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/dismiss", { reportId: aboutCy.id, note: "a retaliation report" })).status).toBe(200);
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/dismiss", { reportId: "nope", note: "no such report" })).json()).toEqual({ ok: false, reason: "unknown_report" });
+
+    // A cookie and a login code from before the person ban. Di is not a friends member yet,
+    // so the later "friends" text is still a join that the ban holds.
+    await web.login("friends", di);
+    clock.advance(31_000);
+    expect((await web.json("friends", "POST", "/api/auth/otp/start", { phone: di })).status).toBe(200);
+    const diCode = otp.codes.get(di)!;
+    const diCodeRow = await savedCode(di);
+    expect(diCodeRow).toBeTruthy();
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(200);
+
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" })).json()).toEqual({ ok: true });
     expect((await sql`select scope from platform.bans`).map((r: any) => r.scope)).toEqual(["person"]);
     expect(await text(s, clock, di, "friends")).toBe("held");
+
+    // The cookie and the login code from before the ban both fail (person ban).
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
+    expect(await openCodes(di)).toBe(0);
+    expect(await liveSessions(di)).toBe(0);
+    expect((await web.json("friends", "POST", "/api/auth/otp/verify", { phone: di, code: diCode })).body).toEqual({ ok: false, error: "invalid_code" });
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
+    const repeat = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" });
+    expect(repeat.status).toBe(409);
+    expect(await repeat.json()).toEqual({ ok: false, reason: "already_banned" });
+    expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);
+
+    // A missed cleanup leaves the old cookie and the old code live. The repeat ends both
+    // and still returns already_banned, with no second ban row.
+    await reviveAuth(diCodeRow!);
+    expect(await openCodes(di)).toBe(1);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(200);
+    const again = await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ ok: false, reason: "already_banned" });
+    expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);
+    expect(await openCodes(di)).toBe(0);
+    expect(await liveSessions(di)).toBe(0);
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
+    expect((await web.json("friends", "POST", "/api/auth/otp/verify", { phone: di, code: diCode })).body).toEqual({ ok: false, error: "invalid_code" });
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
   }, T);
 
   test("forget: a report or a minor report names neither party in network.events after that party leaves", async () => {

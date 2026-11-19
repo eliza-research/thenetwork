@@ -1784,15 +1784,22 @@ export class NetworkService implements RuntimeHost {
     const hashes = await this.people.phoneHashesOf(personId);
     if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
     const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
-    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    if (already) {
+      // The ban is already on file. Do not write another row or restrict the memberships again.
+      // Still end a session or a login code that an earlier cleanup left behind.
+      await this.people.endAuthForBan(personId, this.clock.now());
+      return this.refused(user, rt, "ban", target, "already_banned");
+    }
     return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
       const at = this.clock.now();
       const rows: Ban[] = by === "person"
         ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
           ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
-      for (const b of rows) await this.people.ban(b);
-      for (const h of hashes) await this.people.suppress(h, "banned", at);
+      // Ban rows, suppression, and auth cleanup commit together. A caller that lost the race
+      // gets already_banned and does not restrict the memberships a second time.
+      const written = await this.people.applyBan(rows, hashes, personId, at, by);
+      if (written === "already_banned") return { ok: false, reason: "already_banned" };
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
