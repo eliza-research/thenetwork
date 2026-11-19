@@ -203,11 +203,33 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2" })!;
     expect(noPay.ready).toBe(false);
     expect(noPay.text).toBe(POSTING_COPY.askPay);
+    // No mode and no place named yet: the pay answer still leaves an onsite post with
+    // no area, so the area question comes before the read-back.
     const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3" })!;
-    expect(fixed.ready).toBe(true);
-    expect(fixed.draft).toMatchObject({ id: "p-2", title: "barista", payMin: 40, payMax: 50 });
+    expect(fixed.ready).toBe(false);
+    expect(fixed.text).toBe(POSTING_COPY.askAreaMissing);
+    const placedBarista = readPostingText("Brooklyn", { draft: fixed.draft!, postings: [], newId: "p-3b" })!;
+    expect(placedBarista.ready).toBe(true);
+    expect(placedBarista.draft).toMatchObject({ id: "p-2", title: "barista", payMin: 40, payMax: 50, area: "brooklyn" });
     // Not a posting command, no draft waiting: not about a posting (the turn goes on as usual).
     expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4" })).toBeUndefined();
+    // No place named for an onsite or hybrid post: ask which neighborhood it is in,
+    // never silently post a job that can never match (locationOk needs a site area
+    // a candidate commutes to).
+    const noPlace = readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, onsite, must have SQL", { postings: [], newId: "p-noplace" })!;
+    expect(noPlace.ready).toBe(false);
+    expect(noPlace.text).toBe(POSTING_COPY.askAreaMissing);
+    expect(noPlace.draft).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "onsite" });
+    expect(noPlace.draft?.area).toBeUndefined();
+    // The answer names a neighborhood: the read-back shows it, and the post saves with it.
+    const placed = readPostingText("Brooklyn", { draft: noPlace.draft!, postings: [], newId: "p-noplace-2" })!;
+    expect(placed.ready).toBe(true);
+    expect(placed.text).toMatch(/onsite in Brooklyn/);
+    expect(placed.draft?.area).toBe("brooklyn");
+    // Boundaries: a remote job with no place still posts at once; no mode named yet
+    // defaults to onsite at save, so it is asked too.
+    expect(readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, remote, must have SQL", { postings: [], newId: "p-remote" })!.ready).toBe(true);
+    expect(readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, must have SQL", { postings: [], newId: "p-nomode" })!.ready).toBe(false);
   });
 
   const w = new SeatWorld();
