@@ -102,6 +102,9 @@ export function copyFor(b: CopyBrand) {
   plans: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Want me to see if anyone else is up for one of them?`,
   /** The same ideas with no offer to find company: for minors, members who cannot be matched, and while matching is off. */
   plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
+  /** The request names a place the Network does not know: ask, never guess (areaOf's rule for home). */
+  plansUnknownPlace: (place: string) =>
+    `I don't have ${place} on my list of neighborhoods — which neighborhood did you have in mind?`,
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
   /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */

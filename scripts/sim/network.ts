@@ -559,6 +559,28 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       }
     }
   });  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
+  // A plans request that names a place the Network does not know (a borough, an unlisted neighborhood,
+  // somewhere outside NYC) is asked about, never answered with home venues: the same "ask, never guess"
+  // rule areaOf applies to where someone lives (evals: "an unknown place is never defaulted").
+  await b.run("plans: an unknown named place is asked about, never answered with home venues", async () => {
+    const home = ["Central Park, Sheep Meadow", "Central Park Reservoir loop", "Riverside Park"];
+    const failures: string[] = [];
+    for (const [request, place] of [
+      ["Any plans in Queens this weekend?", "Queens"],
+      ["Any plans in Brooklyn Heights this weekend?", "Brooklyn Heights"],
+      ["Any plans in Jersey City this weekend?", "Jersey City"],
+    ] as const) {
+      const w = new Mini([{ id: "a", name: "Anna Reed", age: 30, area: "Upper West Side" }], { matchingEnabled: false });
+      await w.onboard("a");
+      const mark = w.mark();
+      await w.say("a", request);
+      const msgs = w.to("a", mark);
+      if (msgs.some(m => home.some(v => m.body.includes(v)))) failures.push(`${request}: home venues suggested`);
+      if (!msgs.some(m => m.meta.type === "question" && m.body.includes(`I don't have ${place} on my list of neighborhoods`))) failures.push(`${request}: no ask`);
+    }
+    expect(failures).toEqual([]);
+  });
+
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
 }
 

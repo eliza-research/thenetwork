@@ -11,7 +11,7 @@ import { parseReply, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { NEIGHBORHOODS } from "./geo.ts";
+import { NEIGHBORHOODS, VENUES } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
@@ -525,6 +525,62 @@ export function areaOf(text: string): { area?: string; unknown?: boolean } {
   // "I live in Brooklyn" or "based in Jersey City": a place, but not one neighborhood we know.
   if (HOME_CTX.test(t) && /\b(?:live|living|based|i'?m|im|i am|stay|from)\s+(?:mostly\s+)?(?:in|around|near|out of|over in|up in|out in|down in|by)\s+(?:the\s+)?[A-Z][\w'.-]+/.test(text)) return { unknown: true };
   return {};
+}
+
+/** A word that is not a place when it follows "in" in a plans request ("in June", "in the morning"). */
+const NOT_A_PLACE = new Set([
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+  "spring", "summer", "fall", "autumn", "winter",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "morning", "afternoon", "evening", "night", "tonight", "today", "tomorrow", "weekend", "weekday", "week",
+  "person", "town",
+]);
+
+/** Borough and out-of-town names people type lowercase ("in queens", "in jersey city"). */
+const LOWERCASE_PLACES = ["staten island", "long island", "new york", "jersey city", "queens", "brooklyn", "manhattan", "bronx", "hoboken", "jersey"];
+
+/** Lower case, hyphens and periods as spaces, single spaces: the form place names are compared in. */
+const normPlace = (s: string) => normText(s).replace(/[-.]/g, " ").replace(/\s+/g, " ").trim();
+
+/** The phrase names a neighborhood the Network knows (canonical name or alias, any case or separator). */
+const isKnownPlace = (phrase: string) => {
+  const n = normPlace(phrase);
+  if (NEIGHBORHOODS.some(x => normPlace(x.name) === n)) return true;
+  // "the Slope" is the Park Slope alias: the leading article belongs to the name, not the sentence.
+  return AREA_ALIASES.some(([rx]) => rx.test(n) || rx.test(`the ${n}`));
+};
+
+/**
+ * A venue name starts with this phrase ("Central Park" is a venue, not a neighborhood to ask about).
+ * Single words do not count: "Brooklyn" is a borough, even though venue names start with it.
+ */
+const VENUE_HEADS = VENUES.map(v => normPlace(v.name.split(",")[0]!));
+const isVenuePhrase = (phrase: string) =>
+  VENUE_HEADS.includes(phrase) || VENUE_HEADS.includes(`the ${phrase}`)
+  || (phrase.includes(" ") && VENUE_HEADS.some(h => h.startsWith(`${phrase} `)));
+
+/**
+ * The place a plans request names after "in" that the Network does not know ("in Queens", "in Brooklyn
+ * Heights", "in Jersey City"): a borough, an unlisted neighborhood, or somewhere outside NYC. Undefined
+ * when the request names a neighborhood we know, a venue ("in Central Park"), a time ("in June"), or no
+ * place at all. The caller asks which neighborhood was meant instead of answering with home venues:
+ * the same "ask, never guess" rule areaOf applies to where someone lives.
+ */
+export function unknownPlaceIn(text: string): string | undefined {
+  const titleCase = (s: string) => s.replace(/\b\w/g, c => c.toUpperCase());
+  for (const m of text.matchAll(/\bin\s+(?:the\s+)?/gi)) {
+    const rest = text.slice((m.index ?? 0) + m[0].length);
+    const cap = /^([A-Z][A-Za-z'’.&-]*(?:\s+[A-Z][A-Za-z'’.&-]*)*)/.exec(rest);
+    const low = !cap ? new RegExp(`^(${LOWERCASE_PLACES.join("|")})\\b`, "i").exec(rest) : null;
+    const found = cap?.[1] ?? low?.[1];
+    if (!found) continue;
+    const first = normPlace(found).split(" ")[0]!;
+    if (NOT_A_PLACE.has(first)) continue; // a time, not a place: keep looking
+    if (isKnownPlace(found)) return undefined; // the request is anchored to a known neighborhood
+    if (isVenuePhrase(normPlace(found))) continue; // a venue, not a neighborhood: keep looking
+    return cap ? found : titleCase(found);
+  }
+  return undefined;
 }
 
 /** Facet tags a member reveals when answering onboarding questions or asking for something. Never guesses. */

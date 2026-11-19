@@ -48,7 +48,7 @@ import {
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, unknownPlaceIn, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -1883,6 +1883,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     const known = this.knownProfiles().get(m.id);
     const tags = [...c.tags, ...(known ? [...known.interests] : [])].slice(0, 4);
     const named = NEIGHBORHOODS.find(n => c.text?.includes(n.name))?.name;
+    // The member named a place the Network does not know (a borough, an unlisted neighborhood,
+    // somewhere outside NYC): ask, never guess. Answering with home venues would send them to the
+    // wrong neighborhood with no signal (areaOf's rule for where they live; the evals gate "an
+    // unknown place is never defaulted"). No venues, no buddy offer: nothing is built on the guess.
+    const unknownPlace = !named ? unknownPlaceIn(c.text ?? "") : undefined;
+    if (unknownPlace) {
+      this.ctx.log("plans_unknown_place", { memberId: m.id });
+      this.send(m, this.copy.plansUnknownPlace(unknownPlace), { type: "question", proactive: false }, "reply");
+      return;
+    }
     // New ideas on a repeat ask: venues suggested in the last week are left out (nothing new: no list).
     const venues = nearbyVenues(named ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
     // The "see if anyone else is up" offer only where it can be kept: never to a minor, a member who
