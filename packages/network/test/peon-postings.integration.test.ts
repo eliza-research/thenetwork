@@ -68,6 +68,74 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
 
+  test("a replacement posting has its own question budget while the same draft keeps its limit across restart", async () => {
+    await svc?.close();
+    const clock = new SimClock(START + 5 * 24 * 60 * MINUTE);
+    let s = svc = service(clock);
+    await s.start();
+    const cases = [
+      { phone: "+12125550193", title: "barista" },
+      { phone: "+12125550194", title: "cashier" },
+      { phone: "+12125550195", title: "cook" },
+    ];
+    const samePhone = "+12125550196", completePhone = "+12125550197";
+    const managers = new Map<string, string>();
+    for (const phone of [...cases.map(c => c.phone), samePhone, completePhone]) {
+      await text(s, clock, phone, "peon");
+      await text(s, clock, phone, "Sam, 34");
+      const manager = (await memberId(phone))!;
+      managers.set(phone, manager);
+      await text(s, clock, phone, "Job posting: 2 openings, $90k-$120k, onsite in Brooklyn, must have SQL");
+      expect(await last(manager)).toBe(POSTING_COPY.askTitle);
+      await text(s, clock, phone, "hybrid");
+      expect(await last(manager)).toBe(POSTING_COPY.askTitle);
+      expect(await postings(manager)).toHaveLength(0);
+    }
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    const observations: { title: string; askedPay: boolean; readBack: boolean; saved: boolean }[] = [];
+    for (const row of cases) {
+      const manager = managers.get(row.phone)!;
+      await text(s, clock, row.phone, `We're hiring a ${row.title}, 1 opening`);
+      const askedPay = (await last(manager)) === POSTING_COPY.askPay;
+      expect(await postings(manager)).toHaveLength(0);
+      await text(s, clock, row.phone, "$40k-$50k");
+      const readBack = (await last(manager)).toLowerCase().startsWith(`here's your job post: ${row.title}, 1 opening, $40k-$50k a year`);
+      expect(await postings(manager)).toHaveLength(0);
+      observations.push({ title: row.title, askedPay, readBack, saved: false });
+    }
+    // The new ready drafts, and the controls' original question counts, both survive another restart.
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    for (const [i, row] of cases.entries()) {
+      const manager = managers.get(row.phone)!;
+      await text(s, clock, row.phone, "yes");
+      const saved = await postings(manager);
+      observations[i]!.saved = saved.length === 1 && saved[0].objective === `Hire: ${row.title}`;
+      if (!observations[i]!.saved) { expect(saved).toHaveLength(0); continue; }
+      const tags = ((await sql`select tags from network.facets where app_id = 'peon' and member_id = ${manager} and ${`peon:posting:${saved[0].id}`} = any(tags)`) as { tags: string[] }[]).flatMap(f => f.tags);
+      expect(tags).toContain("peon:openings:1");
+      expect(tags).toContain("peon:pay:40-50");
+      expect(tags).not.toContain("peon:pay:90-120");
+    }
+    const sameManager = managers.get(samePhone)!;
+    await text(s, clock, samePhone, "3 openings");
+    expect(await last(sameManager)).toBe(POSTING_COPY.dropped);
+    expect(await postings(sameManager)).toHaveLength(0);
+    const completeManager = managers.get(completePhone)!;
+    await text(s, clock, completePhone, "We're hiring a designer, 1 opening, $40k-$50k");
+    expect(await last(completeManager)).toMatch(/^Here's your job post: Designer, 1 opening, \$40k-\$50k a year/);
+    expect(await postings(completeManager)).toHaveLength(0);
+    await text(s, clock, completePhone, "yes");
+    expect((await postings(completeManager)).map(p => p.objective)).toEqual(["Hire: designer"]);
+    await s.close();
+    svc = undefined;
+    console.log(`  replacement drafts: ${JSON.stringify(observations)}`);
+    expect(observations.every(x => x.askedPay && x.readBack && x.saved)).toBe(true);
+  }, T);
+
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
     const clock = new SimClock(START);
     let s = svc = service(clock);
