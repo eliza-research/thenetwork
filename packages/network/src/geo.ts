@@ -146,6 +146,20 @@ export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }
 
+/**
+ * The neighborhood of a venue named in a plans request: a named place anchors the answer,
+ * never the member's home (spec F10: recommendations based on location). Full venue names,
+ * or the part before "," / " (" / " at " ("Central Park" for "Central Park, Sheep Meadow").
+ */
+export function venueAreaOf(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  for (const v of VENUES) {
+    const short = v.name.split(/,| \(| at /)[0]!;
+    if (text.includes(v.name) || text.includes(short)) return v.neighborhood;
+  }
+  return undefined;
+}
+
 /** Deterministic jitter so members in one neighborhood don't sit on one point (map display). */
 export function memberPoint(memberId: string, area: string | undefined): LatLng {
   const c = neighborhood(area);

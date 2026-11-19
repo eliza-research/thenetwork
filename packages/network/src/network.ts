@@ -52,7 +52,7 @@ import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, fee
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
+import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, venueAreaOf, type Venue } from "./geo.ts";
 import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
@@ -1882,7 +1882,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("request", { requestId: req.id, memberId: m.id, kind: "plans", category: "events" });
     const known = this.knownProfiles().get(m.id);
     const tags = [...c.tags, ...(known ? [...known.interests] : [])].slice(0, 4);
-    const named = NEIGHBORHOODS.find(n => c.text?.includes(n.name))?.name;
+    const named = NEIGHBORHOODS.find(n => c.text?.includes(n.name))?.name ?? venueAreaOf(c.text);
     // New ideas on a repeat ask: venues suggested in the last week are left out (nothing new: no list).
     const venues = nearbyVenues(named ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
     // The "see if anyone else is up" offer only where it can be kept: never to a minor, a member who
