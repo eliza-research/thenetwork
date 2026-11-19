@@ -208,6 +208,24 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     expect(fixed.draft).toMatchObject({ id: "p-2", title: "barista", payMin: 40, payMax: 50 });
     // Not a posting command, no draft waiting: not about a posting (the turn goes on as usual).
     expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4" })).toBeUndefined();
+    // An unknown site is asked about, never silently posted: a posting saved without an area
+    // can never match (locationOk needs a site area a candidate commutes to).
+    const unknown = readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, hybrid in Forest Hills, must have SQL", { postings: [], newId: "p-unknown" })!;
+    expect(unknown.ready).toBe(false);
+    expect(unknown.text).toBe(POSTING_COPY.askArea("Forest Hills"));
+    expect(unknown.draft).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", unknownSite: "Forest Hills" });
+    expect(unknown.draft?.area).toBeUndefined();
+    // The answer names a neighborhood: the read-back shows it, and the post saves with it.
+    const answered = readPostingText("Williamsburg", { draft: unknown.draft!, postings: [], newId: "p-unknown-2" })!;
+    expect(answered.ready).toBe(true);
+    expect(answered.text).toMatch(/hybrid in Williamsburg/);
+    expect(answered.draft?.area).toBe("williamsburg");
+    expect(answered.draft?.unknownSite).toBeUndefined();
+    // Boundaries: a known site still posts at once; the mode itself ("in the office") and a
+    // remote job with an unknown place are not asked about.
+    expect(readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL", { postings: [], newId: "p-known" })!.ready).toBe(true);
+    expect(readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, onsite in the office, must have SQL", { postings: [], newId: "p-office" })!.ready).toBe(true);
+    expect(readPostingText("We're hiring a data analyst, 2 openings, $90k-$120k, remote in Forest Hills, must have SQL", { postings: [], newId: "p-remote" })!.ready).toBe(true);
   });
 
   const w = new SeatWorld();
