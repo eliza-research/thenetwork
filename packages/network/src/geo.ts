@@ -146,6 +146,39 @@ export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }
 
+/**
+ * Every distinct neighborhood named in a plans request, in NEIGHBORHOODS order. A name
+ * contained in another matched name ("Harlem" in "East Harlem") is dropped, so one named
+ * neighborhood still answers as one.
+ */
+export function namedAreasOf(text: string | undefined): string[] {
+  if (!text) return [];
+  const found = NEIGHBORHOODS.filter(n => text.includes(n.name)).map(n => n.name);
+  return found.filter(a => !found.some(b => b !== a && b.includes(a)));
+}
+
+/**
+ * Public suggestions spread across several named areas: round-robin over each area's
+ * nearest venues, so a request naming two neighborhoods is answered near both, never one
+ * only (spec/product/stories.md F10: recommendations based on location). With more areas
+ * than options, the first areas in NEIGHBORHOODS order get one each.
+ */
+export function nearbyVenuesForAreas(areas: string[], tags: string[] = [], n = 3, exclude: ReadonlySet<string> = new Set()): Venue[] {
+  const picked: Venue[] = [];
+  const seen = new Set<string>(exclude);
+  const ranked = areas.map(a => nearbyVenues(a, tags, n, exclude));
+  for (let i = 0; picked.length < n; i++) {
+    let added = false;
+    for (const list of ranked) {
+      if (picked.length >= n) break;
+      const v = list[i];
+      if (v && !seen.has(v.id)) { picked.push(v); seen.add(v.id); added = true; }
+    }
+    if (!added) break;
+  }
+  return picked;
+}
+
 /** Deterministic jitter so members in one neighborhood don't sit on one point (map display). */
 export function memberPoint(memberId: string, area: string | undefined): LatLng {
   const c = neighborhood(area);

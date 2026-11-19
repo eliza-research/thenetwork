@@ -558,7 +558,30 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
         expect(r.p).toBe(r.prior);
       }
     }
-  });  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
+  });  // A plans request naming two neighborhoods ("Williamsburg or Park Slope") names two
+  // locations: the reply must name a venue near each side, never only the first
+  // NEIGHBORHOODS match (spec/product/stories.md F10: recommendations based on location).
+  await b.run("plans: two named neighborhoods are both answered, never one only", async () => {
+    const failures: string[] = [];
+    for (const [request, area, first, second] of [
+      ["Any plans in Williamsburg or Park Slope this weekend?", "Upper West Side", "Domino Park", "Grand Army Plaza Greenmarket"],
+      // Socrates Sculpture Park is the Astoria venue nearest the centroid, so it is the
+      // Astoria side's first pick — near Astoria Park, not the name itself.
+      ["Any plans in Astoria or Williamsburg this weekend?", "Upper West Side", "Socrates Sculpture Park", "Domino Park"],
+    ] as const) {
+      const w = new Mini([{ id: "a", name: "Anna Reed", age: 30, area }], { matchingEnabled: false });
+      await w.onboard("a");
+      const mark = w.mark();
+      await w.say("a", request);
+      const msgs = w.to("a", mark);
+      const body = msgs.find(m => m.meta.type === "concierge")?.body ?? "";
+      if (!body.includes(first)) failures.push(`${request}: no ${first} in reply`);
+      if (!body.includes(second)) failures.push(`${request}: no ${second} in reply`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
 }
 
