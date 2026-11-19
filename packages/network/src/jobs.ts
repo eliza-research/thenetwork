@@ -111,6 +111,8 @@ export const POSTING_COPY = {
   dropped: "OK, I didn't post anything.",
   askTitle: "What's the job title?",
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
+  /** No place named for an onsite or hybrid post: ask, never guess (the unknown-site rule, #552). */
+  askAreaMissing: "Which neighborhood is the job in? We only match onsite and hybrid jobs by neighborhood.",
   saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
@@ -179,6 +181,12 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   if (!command && !Object.keys(read).length) return undefined;
   const need = missing(merged);
   if (need.length) return { draft: merged, text: need[0] === "title" ? POSTING_COPY.askTitle : POSTING_COPY.askPay, ready: false };
+  // No place named for an onsite or hybrid post: ask which neighborhood the job is in
+  // instead of reading back a post that can never match (locationOk needs a site area
+  // a candidate commutes to), and the read-back would show no place for the manager to
+  // spot. A remote job needs no site; a close request never reaches here with a place
+  // to ask for. A known place, or a remote answer, clears the question.
+  if (!merged.close && !merged.area && merged.mode !== "remote") return { draft: merged, text: POSTING_COPY.askAreaMissing, ready: false };
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 
