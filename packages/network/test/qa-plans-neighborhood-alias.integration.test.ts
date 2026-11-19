@@ -25,5 +25,13 @@ test("separator variants of a named neighborhood take precedence over the member
   expect(await recommendations("Any plans in Long  Island  City this weekend?")).toContain("Gantry Plaza State Park");
   expect(await recommendations("Any plans in Long-Island-City this weekend?")).toContain("Gantry Plaza State Park");
   expect(await recommendations("Any plans in St George this weekend?")).toContain("Snug Harbor");
+  expect(await recommendations("Any plans in St.George this weekend?")).toContain("Snug Harbor");
   expect(await recommendations("Any plans in Bed Stuy this weekend?")).toContain("Maria Hernandez Park");
+});
+
+test("a person named Chelsea does not override the member's home", async () => {
+  const home = await recommendations("Any plans this weekend?");
+  expect(await recommendations("Any plans with Chelsea this weekend?")).toBe(home);
+  expect(await recommendations("any plans? chelsea is coming over")).toBe(home);
+  expect(await recommendations("Any plans in Chelsea this weekend?")).toContain("Chelsea Market");
 });
