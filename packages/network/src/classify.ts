@@ -474,6 +474,14 @@ const SKILL_LEX: Record<string, RegExp> = {
 const FIRST_PERSON = /\b(i|i'm|im|i've|ive|i am|my|me)\b/;
 const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/;
 
+/** Area-name matching text: lower case, hyphens and periods as spaces, one space between words. */
+const normAreaText = (s: string) => normText(s).replace(/[-–—]/g, " ").replace(/\./g, " ").replace(/\s+/g, " ").trim();
+
+/** "Chelsea" is also a first name: only a place when a preposition precedes it ("in Chelsea", "near Chelsea") or it stands alone. */
+const chelseaIsPlace = (before: string, after: string) =>
+  /\b(in|near|around|by|from|to|of|at)\s*$/.test(before) ||
+  (/^\W*$/.test(before) && /^\s*(?:$|[,.!]|area\b|near\b|by\b|side\b)/.test(after));
+
 /** Aliases people use for the neighborhoods the Network knows (geo.ts names are canonical). */
 const AREA_ALIASES: [RegExp, string][] = [
   [/\b(les|lower east side)\b/, "Lower East Side"], [/\b(uws|upper west side|upper west)\b/, "Upper West Side"], [/\b(ues|upper east side|upper east)\b/, "Upper East Side"],
@@ -509,7 +517,7 @@ export interface Profile {
 
 /** The neighborhood a text names as the sender's place, or { unknown } when it names a place the Network does not know. */
 export function areaOf(text: string): { area?: string; unknown?: boolean } {
-  const t = normText(text).replace(/\bst\.\s*/g, "st ");
+  const t = normAreaText(text);
   for (const s of sentencesOf(t)) {
     // The first neighborhood named as home in the sentence ("between Greenpoint and Williamsburg": Greenpoint).
     let best: { at: number; name: string } | undefined;
@@ -517,7 +525,7 @@ export function areaOf(text: string): { area?: string; unknown?: boolean } {
       const m = rx.exec(s.text);
       if (!m || NOT_HOME.test(s.text.slice(0, m.index)) || !AREA_NAMES.has(name)) continue;
       // "Chelsea" is also a first name: only as a place ("in Chelsea", "near Chelsea").
-      if (name === "Chelsea" && !/\b(in|near|around|by|from|to|of|at)\s*$/.test(s.text.slice(0, m.index)) && !(/^\W*$/.test(s.text.slice(0, m.index)) && /^\s*(?:$|[,.!]|area\b|near\b|by\b|side\b)/.test(s.text.slice(m.index + m[0].length)))) continue;
+      if (name === "Chelsea" && !chelseaIsPlace(s.text.slice(0, m.index), s.text.slice(m.index + m[0].length))) continue;
       if (!best || m.index < best.at) best = { at: m.index, name };
     }
     if (best) return { area: best.name };
@@ -525,6 +533,28 @@ export function areaOf(text: string): { area?: string; unknown?: boolean } {
   // "I live in Brooklyn" or "based in Jersey City": a place, but not one neighborhood we know.
   if (HOME_CTX.test(t) && /\b(?:live|living|based|i'?m|im|i am|stay|from)\s+(?:mostly\s+)?(?:in|around|near|out of|over in|up in|out in|down in|by)\s+(?:the\s+)?[A-Z][\w'.-]+/.test(text)) return { unknown: true };
   return {};
+}
+
+/** The neighborhood a request names ("Any plans in Wburg / the Slope / Long-Island-City?"), by alias or canonical name. Unlike areaOf this reads a request, not a home: no home-context guards. The Chelsea person-name guard still applies: a request naming a person ("plans with Chelsea") is not naming a place. */
+export function namedArea(text: string): string | undefined {
+  const t = normAreaText(text);
+  let best: { at: number; name: string } | undefined;
+  for (const [rx, name] of AREA_ALIASES) {
+    const m = rx.exec(t);
+    if (!m || !AREA_NAMES.has(name)) continue;
+    if (name === "Chelsea" && !chelseaIsPlace(t.slice(0, m.index), t.slice(m.index + m[0].length))) continue;
+    if (!best || m.index < best.at) best = { at: m.index, name };
+  }
+  if (best) return best.name;
+  // Canonical names the aliases miss, on the same normalized text.
+  let canon: { at: number; name: string } | undefined;
+  for (const n of NEIGHBORHOODS) {
+    const at = t.indexOf(normAreaText(n.name));
+    if (at < 0) continue;
+    if (n.name === "Chelsea" && !chelseaIsPlace(t.slice(0, at), t.slice(at + normAreaText(n.name).length))) continue;
+    if (!canon || at < canon.at) canon = { at, name: n.name };
+  }
+  return canon?.name;
 }
 
 /** Facet tags a member reveals when answering onboarding questions or asking for something. Never guesses. */
