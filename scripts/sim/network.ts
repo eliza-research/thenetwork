@@ -559,6 +559,36 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       }
     }
   });  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
+  // A plans request that names a known venue (The Battery, Prospect Park, Central Park) is
+  // answered with venues near that venue, never home venues (spec F10: recommendations
+  // based on location). The venue's neighborhood anchors the answer, as a named
+  // neighborhood does.
+  await b.run("plans: a named venue is answered near that venue, never with home venues", async () => {
+    const homeUws = ["Central Park, Sheep Meadow", "Central Park Reservoir loop", "Riverside Park"];
+    const homeWburg = ["McCarren Park", "Domino Park", "Transmitter Park"];
+    const failures: string[] = [];
+    for (const [request, area, near, home] of [
+      ["Any plans in The Battery this weekend?", "Upper West Side", "The Battery", homeUws],
+      ["Any plans near Prospect Park this weekend?", "Upper West Side", "Prospect Park, Long Meadow", homeUws],
+      ["Any plans near Central Park this weekend?", "Williamsburg", "Central Park, Sheep Meadow", homeWburg],
+      // A specific venue name beats a shorter name of another venue: "Central Park
+      // Reservoir loop" is Upper East Side, not the Upper West Side of the "Central
+      // Park" short name. Riverside Park is the discriminator — only the wrong
+      // anchor suggests it (Sheep Meadow borders both, so it still appears).
+      ["Any plans near Central Park Reservoir loop this weekend?", "Williamsburg", "Central Park Reservoir loop", [...homeWburg, "Riverside Park"]],
+    ] as const) {
+      const w = new Mini([{ id: "a", name: "Anna Reed", age: 30, area }], { matchingEnabled: false });
+      await w.onboard("a");
+      const mark = w.mark();
+      await w.say("a", request);
+      const msgs = w.to("a", mark);
+      const body = msgs.find(m => m.meta.type === "concierge")?.body ?? "";
+      if (!body.includes(near)) failures.push(`${request}: no ${near} in reply`);
+      if (home.some(v => body.includes(v))) failures.push(`${request}: home venues suggested`);
+    }
+    expect(failures).toEqual([]);
+  });
+
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
 }
 
