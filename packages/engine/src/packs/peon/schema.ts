@@ -51,6 +51,8 @@ export const T = {
   verified: "peon:verified",       // job: employer verified (domain, registry / EIN, a human call)
   openings: "peon:openings:",      // job: open headcount
   posting: "peon:posting:",        // service: a hiring manager's facet that belongs to one job posting (intent id); seats.ts
+  postingUpdatedAt: "peon:posting_updated_at:", // service-only revision metadata (epoch ms), stored agent_private
+  postingClosedReason: "peon:posting_closed_reason:", // service-only closure reason: closed | filled, stored agent_private
   seatCap: "peon:seat_cap:",       // job seat: openings left this run (seats.ts peonSeatCapacity); caps the slate
   urgency: "peon:urgency:",        // job: 1-3
   fillBy: "peon:fill_by:",         // job: the fill-by date the employer stated at intake (epoch day)

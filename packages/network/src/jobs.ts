@@ -219,6 +219,9 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
     id: `${p.id}-${suffix}`, memberId: p.managerId, kind, value, tags: [...tags, tag], scope, provenance: "said", confidence: 0.9, validFrom: p.createdAt, source: "chat", confirmedByMember: true,
   });
   const facets: Facet[] = [
+    // Revision metadata is per posting and private, not a matching or shareable job fact.
+    f("revision", "fact", "Posting revision", [`${T.postingUpdatedAt}${p.updatedAt}`,
+      ...(p.status === "closed" && p.closedReason ? [`${T.postingClosedReason}${p.closedReason}`] : [])], "agent_private"),
     f("role", "fact", `${p.title} role`, [`${T.family}${p.family}`, ...(p.seniority ? [`${T.seniority}${p.seniority}`] : [])]),
     f("pay", "fact", `Pay $${p.payMin}k-$${p.payMax}k`, [`${T.pay}${p.payMin}-${p.payMax}`]),
     f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}nyc`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
@@ -236,6 +239,8 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
   const one = (prefix: string) => tags.find(t => t.startsWith(prefix))?.slice(prefix.length);
   const [payMin, payMax] = (one(T.pay) ?? "0-0").split("-").map(Number) as [number, number];
   const seniority = one(T.seniority);
+  const updatedAt = Number(one(T.postingUpdatedAt));
+  const closedReason = one(T.postingClosedReason);
   return {
     id: intent.id, managerId: intent.memberId, title: intent.objective.replace(/^Hire:\s*/i, ""), family: one(T.family) ?? slug(intent.objective),
     ...(seniority ? { seniority: Number(seniority) } : {}),
@@ -243,7 +248,9 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
     must: tags.filter(t => t.startsWith(T.must)).map(t => { const [s, l] = t.slice(T.must.length).split(":"); return { skill: s!, level: Number(l ?? 2) }; }),
     nice: tags.filter(t => t.startsWith(T.nice)).map(t => t.slice(T.nice.length)),
     ...(one(T.sponsors) ? { sponsors: one(T.sponsors) === "yes" } : {}),
-    status: intent.status === "active" ? "active" : "closed", createdAt: intent.createdAt, updatedAt: intent.createdAt,
+    ...(intent.status !== "active" && (closedReason === "closed" || closedReason === "filled") ? { closedReason } : {}),
+    status: intent.status === "active" ? "active" : "closed", createdAt: intent.createdAt,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : intent.createdAt,
   };
 }
 
