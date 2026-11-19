@@ -215,6 +215,10 @@ export function postingProblem(p: JobPosting): string | undefined {
  */
 export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] } {
   const tag = `${T.posting}${p.id}`;
+  // Facet IDs name the skill, so repeated requirements must produce one row.
+  // Requiring the same skill at two levels is equivalent to requiring the stronger level.
+  const must = new Map<string, number>();
+  for (const m of p.must) must.set(m.skill, Math.max(must.get(m.skill) ?? m.level, m.level));
   const f = (suffix: string, kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"] = "shareable"): Facet => ({
     id: `${p.id}-${suffix}`, memberId: p.managerId, kind, value, tags: [...tags, tag], scope, provenance: "said", confidence: 0.9, validFrom: p.createdAt, source: "chat", confirmedByMember: true,
   });
@@ -222,8 +226,8 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
     f("role", "fact", `${p.title} role`, [`${T.family}${p.family}`, ...(p.seniority ? [`${T.seniority}${p.seniority}`] : [])]),
     f("pay", "fact", `Pay $${p.payMin}k-$${p.payMax}k`, [`${T.pay}${p.payMin}-${p.payMax}`]),
     f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}nyc`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
-    ...p.must.map(m => f(`must-${m.skill}`, "skill", `Must have ${human(m.skill)}`, [`${T.must}${m.skill}:${m.level}`])),
-    ...p.nice.map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
+    ...[...must].map(([skill, level]) => f(`must-${skill}`, "skill", `Must have ${human(skill)}`, [`${T.must}${skill}:${level}`])),
+    ...[...new Set(p.nice)].map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
     f("open", "fact", "Openings", [`${T.openings}${p.status === "active" ? p.openings : 0}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
   ];
   const intent: Intent = { id: p.id, memberId: p.managerId, objective: `Hire: ${p.title}`, category: "professional" as Category, details: JOB_INTENT, horizonDays: 90, status: p.status, createdAt: p.createdAt };
