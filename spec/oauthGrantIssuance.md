@@ -44,6 +44,26 @@ pure def checkGrantAuthority(issuance: Issuance, authority: AuthorityResult): Is
            else DeniedAuthority }
 ```
 
+### A staff ban refuses grant admission
+
+The shell asks this before it exchanges a code, refreshes a token, accepts a bearer, or records issuance authority. A known ban is invalid authority. An unknown ban read is unavailable and is never permission. A known clear ban leaves the authority the shell already checked.
+
+```quint
+pure def grantAdmission(banKnown: bool, banned: bool, authority: AuthorityResult): AuthorityResult =
+  if (not(banKnown)) AuthorityUnavailable
+  else if (banned) AuthorityInvalid
+  else authority
+
+pure def lawUnknownBanDoesNotAdmit(authority: AuthorityResult): bool =
+  grantAdmission(false, false, authority) == AuthorityUnavailable
+
+pure def lawBannedGrantIsInvalid(authority: AuthorityResult): bool =
+  grantAdmission(true, true, authority) == AuthorityInvalid
+
+pure def lawClearBanKeepsAuthority(authority: AuthorityResult): bool =
+  grantAdmission(true, false, authority) == authority
+```
+
 ### Consumed approval must still match the owner and both deadlines
 
 The store consumes the request once. The returned request must be for the same verified phone and person. Recheck the returned request's expiry and the proposed grant's expiry after consumption. An unavailable, changed or expired request issues no grant.
