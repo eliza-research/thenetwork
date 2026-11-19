@@ -21,7 +21,8 @@ import { isSeatId, postingIdOf, seatIdOf, seatOwnerOf } from "@thenetwork/engine
 import type { EngineInput } from "@thenetwork/engine";
 import { JOB_INTENT, T, type PeonMode } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { NEVER_ASKS } from "@thenetwork/engine/src/packs/peon/copy.ts";
-import { NEIGHBORHOODS } from "./geo.ts";
+import { AREA_ALIASES } from "./classify.ts";
+import { NEIGHBORHOODS, VENUES } from "./geo.ts";
 
 export interface JobPosting {
   id: string; managerId: MemberId; title: string;
@@ -42,6 +43,8 @@ export interface PostingDraft {
   id?: string; close?: boolean;
   title?: string; family?: string; seniority?: number; openings?: number; payMin?: number; payMax?: number;
   mode?: PeonMode; area?: string; must?: { skill: string; level: number }[]; nice?: string[]; sponsors?: boolean;
+  /** A site the manager named that the Network does not know ("Forest Hills"): asked about, never posted. */
+  unknownSite?: string;
   /** Questions asked for this draft (at most 2 before it is dropped). */
   asks?: number;
   /** Read back in full: the manager's yes saves it. */
@@ -111,6 +114,9 @@ export const POSTING_COPY = {
   dropped: "OK, I didn't post anything.",
   askTitle: "What's the job title?",
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
+  /** The post names a site the Network does not know: ask, never guess (the onPlans rule, #550). */
+  askArea: (place: string) =>
+    `I don't have ${place} on my list of neighborhoods — which neighborhood is the job in?`,
   saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
@@ -135,6 +141,81 @@ export function postingsOf(snap: Pick<WorldSnapshot, "members" | "intents" | "fa
     out.push({ id: postingIdOf(m.id), seat: m.id, title: (i?.objective ?? "").replace(/^Hire:\s*/i, "") || "your job", active: i?.status === "active", openings });
   }
   return out.sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/** A word that is not a place when it follows "in" ("in June", "in the morning"). */
+const NOT_A_PLACE = new Set([
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+  "spring", "summer", "fall", "autumn", "winter",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "morning", "afternoon", "evening", "night", "tonight", "today", "tomorrow", "weekend", "weekday", "week",
+  "person", "town",
+]);
+
+/** Borough and out-of-town names people type lowercase ("in queens", "in jersey city"). */
+const LOWERCASE_PLACES = ["staten island", "long island", "new york", "jersey city", "queens", "brooklyn", "manhattan", "bronx", "hoboken", "jersey"];
+
+/** Lower case, hyphens and periods as spaces, single spaces: the form place names are compared in. */
+const normPlace = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[-.]/g, " ").replace(/\s+/g, " ").trim();
+
+/** The phrase names a neighborhood the Network knows (canonical name or alias, any case or separator). */
+const isKnownPlace = (phrase: string) => {
+  const n = normPlace(phrase);
+  if (NEIGHBORHOODS.some(x => normPlace(x.name) === n)) return true;
+  // "the Slope" is the Park Slope alias: the leading article belongs to the name, not the sentence.
+  return AREA_ALIASES.some(([rx]) => rx.test(n) || rx.test(`the ${n}`));
+};
+
+/**
+ * A venue name starts with this phrase ("Central Park" is a venue, not a neighborhood to ask about).
+ * Single words do not count: "Brooklyn" is a borough, even though venue names start with it.
+ */
+const VENUE_HEADS = VENUES.map(v => normPlace(v.name.split(",")[0]!));
+const isVenuePhrase = (phrase: string) =>
+  VENUE_HEADS.includes(phrase) || VENUE_HEADS.includes(`the ${phrase}`)
+  || (phrase.includes(" ") && VENUE_HEADS.some(h => h.startsWith(`${phrase} `)));
+
+/**
+ * The place named after "in" that the Network does not know ("in Queens", "in Brooklyn Heights",
+ * "in Jersey City"): a borough, an unlisted neighborhood, or somewhere outside NYC. Undefined when
+ * the phrase names a neighborhood we know, a venue ("in Central Park"), a time ("in June"), or no
+ * place at all. Same rule as unknownPlaceIn (#550, classify.ts): that PR is unmerged, so the check
+ * lives here until it lands; unify then.
+ */
+function unknownPlaceAfterIn(text: string): string | undefined {
+  const titleCase = (s: string) => s.replace(/\b\w/g, c => c.toUpperCase());
+  for (const m of text.matchAll(/\bin\s+(?:the\s+)?/gi)) {
+    const rest = text.slice((m.index ?? 0) + m[0].length);
+    const cap = /^([A-Z][A-Za-z'’.&-]*(?:\s+[A-Z][A-Za-z'’.&-]*)*)/.exec(rest);
+    const low = !cap ? new RegExp(`^(${LOWERCASE_PLACES.join("|")})\\b`, "i").exec(rest) : null;
+    const found = cap?.[1] ?? low?.[1];
+    if (!found) continue;
+    const first = normPlace(found).split(" ")[0]!;
+    if (NOT_A_PLACE.has(first)) continue; // a time, not a place: keep looking
+    if (isKnownPlace(found)) return undefined; // the request is anchored to a known neighborhood
+    if (isVenuePhrase(normPlace(found))) continue; // a venue, not a neighborhood: keep looking
+    return cap ? found : titleCase(found);
+  }
+  return undefined;
+}
+
+/** A site named next to the work mode that the Network does not know ("hybrid in Forest Hills", "in Jersey City, onsite"). Undefined when the text names a neighborhood we know, a venue, a time, no place at all, or only the mode itself ("in the office", "in person"). The place must sit next to the mode: a capitalised word after "in" anywhere else ("fluent in English") is not a site. Lowercase unknown places outside the list above ("in forest hills") are still missed. */
+function unknownSitePlace(body: string): string | undefined {
+  const after = /\b(?:hybrid|onsite|on-?site|in-?office|remote)\s+in\s+(?:the\s+)?([A-Za-z][A-Za-z'’.&-]*(?:\s+[A-Za-z][A-Za-z'’.&-]*)?)/.exec(body);
+  const before = !after ? /\bin\s+(?:the\s+)?([A-Za-z][A-Za-z'’.&-]*(?:\s+[A-Za-z][A-Za-z'’.&-]*)?)\s*,?\s*(?:hybrid|onsite|on-?site|in-?office|remote)\b/.exec(body) : null;
+  const found = after?.[1] ?? before?.[1];
+  if (!found) return undefined;
+  if (/^(office|person)$/i.test(found.split(" ")[0]!)) return undefined;
+  return unknownPlaceAfterIn(`in ${found}`) ?? undefined;
+}
+
+/** A bare place-name reply to the area question ("Jersey City", "Forest Hills"): one to three capitalised words, nothing else. Acknowledgements ("yes", "ok") and ordinary sentences never count. */
+const NOT_A_PLACE_REPLY = new Set(["yes", "no", "ok", "okay", "sure", "yep", "nope", "thanks", "please"]);
+function barePlaceReply(body: string): string | undefined {
+  const t = body.trim().replace(/[,.;!]+$/, "");
+  if (!/^([A-Z][A-Za-z'’.&-]*)(?:\s+[A-Z][A-Za-z'’.&-]*){0,2}$/.test(t)) return undefined;
+  if (NOT_A_PLACE_REPLY.has(t.toLowerCase())) return undefined;
+  return unknownPlaceAfterIn(`in ${t}`) ?? undefined;
 }
 
 /** The intake result for one text: a draft and the message to send, or undefined (not about a posting). */
@@ -176,9 +257,22 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   }
   const merged: PostingDraft = { ...base };
   for (const [k, v] of Object.entries(read)) if (v !== undefined) (merged as Record<string, unknown>)[k] = v;
-  if (!command && !Object.keys(read).length) return undefined;
+  // A site the manager named that the Network does not know: this turn's text, a bare
+  // place-name reply to the area question, or the draft's remembered site. Ask which
+  // neighborhood the job is in instead of reading back a post with no place: a posting saved
+  // without an area can never match (locationOk needs a site area a candidate commutes to),
+  // and the read-back would show no place for the manager to spot. A known area, or a remote
+  // job (no site needed), clears the remembered site.
+  const freshSite = unknownSitePlace(body) ?? (ctx.draft ? barePlaceReply(body) : undefined);
+  const site = freshSite ?? merged.unknownSite;
+  if (merged.area || merged.mode === "remote") delete merged.unknownSite;
+  if (!command && !Object.keys(read).length && !freshSite) return undefined;
   const need = missing(merged);
-  if (need.length) return { draft: merged, text: need[0] === "title" ? POSTING_COPY.askTitle : POSTING_COPY.askPay, ready: false };
+  if (need.length) {
+    if (site && !merged.area && merged.mode !== "remote") merged.unknownSite = site;
+    return { draft: merged, text: need[0] === "title" ? POSTING_COPY.askTitle : POSTING_COPY.askPay, ready: false };
+  }
+  if (!merged.area && merged.mode !== "remote" && site) return { draft: { ...merged, unknownSite: site }, text: POSTING_COPY.askArea(site), ready: false };
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 

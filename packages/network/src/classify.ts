@@ -475,7 +475,7 @@ const FIRST_PERSON = /\b(i|i'm|im|i've|ive|i am|my|me)\b/;
 const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/;
 
 /** Aliases people use for the neighborhoods the Network knows (geo.ts names are canonical). */
-const AREA_ALIASES: [RegExp, string][] = [
+export const AREA_ALIASES: [RegExp, string][] = [
   [/\b(les|lower east side)\b/, "Lower East Side"], [/\b(uws|upper west side|upper west)\b/, "Upper West Side"], [/\b(ues|upper east side|upper east)\b/, "Upper East Side"],
   [/\b(fidi|financial district|wall st(reet)?)\b/, "Financial District"], [/\b(bed[- ]?stuy|bedford[- ]stuyvesant)\b/, "Bed-Stuy"], [/\bhell'?s kitchen\b/, "Hell's Kitchen"],
   [/\b(lic|long island city)\b/, "Long Island City"], [/\bdumbo\b/, "DUMBO"], [/\bsoho\b/, "SoHo"], [/\b(wash(ington)? heights)\b/, "Washington Heights"],
