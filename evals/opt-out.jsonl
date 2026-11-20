@@ -154,3 +154,17 @@
 {"text":"I said stop by at 7","label":"not_stop","lang":"en"}
 {"text":"I said cancel","label":"not_stop","lang":"en"}
 {"text":"stop slop stop slop","label":"not_stop","lang":"en"}
+{"text":"don't email me, just text me","label":"not_stop","lang":"en"}
+{"text":"stop emailing me, just text me","label":"not_stop","lang":"en"}
+{"text":"please don't email me, text me instead","label":"not_stop","lang":"en"}
+{"text":"stop calling me and text me instead","label":"not_stop","lang":"en"}
+{"text":"don't email me the photo","label":"not_stop","lang":"en"}
+{"text":"stop emailing me the flyer","label":"not_stop","lang":"en"}
+{"text":"please stop emailing me, just text me","label":"not_stop","lang":"en"}
+{"text":"don't email me","label":"stop","lang":"en"}
+{"text":"don't email me again","label":"stop","lang":"en"}
+{"text":"stop emailing me","label":"stop","lang":"en"}
+{"text":"stop emailing me please","label":"stop","lang":"en"}
+{"text":"stop emailing me now please","label":"stop","lang":"en"}
+{"text":"stop calling me","label":"stop","lang":"en"}
+{"text":"don't text me, email me instead","label":"stop","lang":"en"}

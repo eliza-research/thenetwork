@@ -41,3 +41,13 @@
 {"text":"Don't stop emailing me, but please stop texting me.","match":"likely"}
 {"text":"Don't stop texting me, I like the updates.","match":"none"}
 {"text":"You never stop texting me, leave me alone","match":"likely"}
+{"text":"don't email me, just text me","match":"none"}
+{"text":"stop emailing me, just text me","match":"none"}
+{"text":"please don't email me, text me instead","match":"none"}
+{"text":"stop calling me and text me instead","match":"none"}
+{"text":"don't email me the photo","match":"none"}
+{"text":"stop emailing me the flyer","match":"none"}
+{"text":"stop emailing me","match":"likely"}
+{"text":"stop emailing me please","match":"likely"}
+{"text":"stop emailing me now please","match":"likely"}
+{"text":"don't text me, email me instead","match":"likely"}

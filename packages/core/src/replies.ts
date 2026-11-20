@@ -301,7 +301,9 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
   const clauses = optOutClauses(text, norm);
   if (clauses.some(clause => LIKELY_EN.test(clause) || LIKELY_ES.test(clause) || /\bleave me alone\b/.test(clause))) return { match: "likely", scope: "all", lang };
-  if (clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
+  // A leading "stop emailing" or "stop calling" is likely only when that refusal ends the
+  // message ("stop emailing me", "stop calling me please"). A continuation is not.
+  if (clauses.length === 1 && clauses[0] === t && !openEmailOrCallRefusal(t) && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
 
@@ -339,20 +341,35 @@ export const keywordKey = (text: string) => foldKeywordText(text).replace(/[^\p{
 
 // Reasonable means (TCPA): a person may opt out in their own words, in English or Spanish. A short
 // message that clearly asks the sender to stop texting is a STOP. A sentence about something else
-// ("cancel the date", "can you stop by at 7", "don't stop texting me") is not. This is the strict
-// reading the consent ledger acts on; `parseOptOut` above is the conversational reading (it also
-// reports "likely" for looser phrasings the agent should confirm).
+// ("cancel the date", "can you stop by at 7", "don't stop texting me") is not. An email or call
+// refusal is a text STOP only when that refusal is the whole request ("stop emailing me",
+// "don't call me again"). "don't email me the photo" and "stop emailing me, just text me" are not:
+// the person did not ask to stop texts. This is the strict reading the consent ledger acts on;
+// `parseOptOut` above is the conversational reading (it also reports "likely" for looser phrasings
+// the agent should confirm).
 const ME = "(?:me|us|this number|my number)";
 const MSGS = "(?:texts?|texting|messages?|messaging|msgs?|sms|notifications?|spam)";
+const EMAIL_CALL_TAIL = "(?:right now|for real|thank you|any more|anymore|again|please|pls|plz|now|ok|okay|already|just|thanks|thx|ty|rn|asap|immediately)";
+const EMAIL_CALL_END = `(?=(?: ${EMAIL_CALL_TAIL})*$)`;
+const CLOSED_EMAIL_OR_CALL = new RegExp(`^(?:please |pls )?(?:stop|quit|cease) (?:emailing|calling) ${ME}${EMAIL_CALL_END}`);
+const OPEN_EMAIL_OR_CALL = /^(?:please |pls )?(?:stop|quit|cease) (?:emailing|calling)\b/;
+
+/** A leading "stop emailing" or "stop calling" that does not end the message. */
+function openEmailOrCallRefusal(text: string): boolean {
+  return OPEN_EMAIL_OR_CALL.test(text) && !CLOSED_EMAIL_OR_CALL.test(text);
+}
+
 const OPT_OUT_EN: RegExp[] = [
-  new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
+  new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to) ${ME}\\b`),
+  new RegExp(`\\b(?:stop|quit|cease) (?:emailing|calling) ${ME}${EMAIL_CALL_END}`),
   new RegExp(`\\bstop (?:sending (?:me |us |these |the |your |all )?|the |these |your |all |all the |all these |all of these )${MSGS}\\b`),
   new RegExp(`\\b(?:stop|no more|enough) ${MSGS}\\b`),
   /\bunsubscribe\b/,
   /\bopt (?:me )?out\b/,
   new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
   /\b(?:remove|delete|lose) my (?:number|phone number|info|contact)\b/,
-  new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to|email) ${ME}\\b`),
+  new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to) ${ME}\\b`),
+  new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:email|call) ${ME}${EMAIL_CALL_END}`),
   new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
   /\bleave me alone\b/,
   /\bwrong number\b/,
