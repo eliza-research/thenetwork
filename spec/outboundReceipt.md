@@ -48,6 +48,17 @@ pure def lawDeliveredIgnoresFailure(phase: ReceiptPhase): bool =
     not(canApplyReceipt({ phase: phase }, ProviderFailed))
 ```
 
+### Only a send the provider took counts toward the recipient's hourly cap
+
+An accepted, sent, delivered or read message counts toward the hourly cap of its recipient. A message that is still sending, has an unknown result, or failed does not count. A failure receipt after acceptance removes the message from the count.
+
+```quint
+pure def countsTowardRecipientCap(phase: ReceiptPhase): bool = receiptRank(phase) > 0
+
+pure def lawAFailedSendIsNotCounted(phase: ReceiptPhase): bool =
+  (phase == ProviderFailed or phase == Sending or phase == AcceptanceUnknown) implies not(countsTowardRecipientCap(phase))
+```
+
 ### An uncertain send waits for a receipt instead of sending again
 
 After an ambiguous provider response, wait for receipt lookup with the original idempotency key. If the provider confirms it never admitted the key, the queue can retry with that same key. If the lookup remains uncertain past the retention deadline, the queue fails the row without resending.

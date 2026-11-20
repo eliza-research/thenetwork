@@ -5,7 +5,7 @@
 export type ReceiptPhase = "Sending" | "LegacyQueued" | "ProviderAccepted" | "ProviderSent" | "ProviderDelivered" | "ProviderRead" | "ProviderFailed" | "AcceptanceUnknown" | "AcceptanceExpired" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "OutsideReceipt";
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
 export interface ReceiptLifecycle { phase: ReceiptPhase }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:83) */
 export type FailureKind = "UnknownResult" | "Retryable" | "NeedReply" | "BlockedNumber" | "TerminalError";
 
 /** One variant per transition in the spec. */
@@ -71,58 +71,71 @@ export function lawDeliveredIgnoresFailure(phase: ReceiptPhase): boolean {
   return !(phase === "ProviderDelivered" || phase === "ProviderRead") || !canApplyReceipt(({ phase: phase } as ReceiptLifecycle), "ProviderFailed");
 }
 
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / Only a send the provider took counts toward the recipient's hourly cap (spec/outboundReceipt.md:51) */
+//@ pure
+export function countsTowardRecipientCap(phase: ReceiptPhase): boolean {
+  return receiptRank(phase) > 0;
+}
+
+/** Story: Know whether a queued message reached the provider / Only a send the provider took counts toward the recipient's hourly cap (spec/outboundReceipt.md:51) */
+//@ pure
+export function lawAFailedSendIsNotCounted(phase: ReceiptPhase): boolean {
+  //@ ensures \result === true
+  return !(phase === "ProviderFailed" || phase === "Sending" || phase === "AcceptanceUnknown") || !countsTowardRecipientCap(phase);
+}
+
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:62) */
 //@ pure
 export function canConfirmNeverAdmitted(outbound: ReceiptLifecycle, neverAdmitted: boolean): boolean {
   return outbound.phase === "AcceptanceUnknown" && neverAdmitted;
 }
 
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:62) */
 //@ pure
 export function confirmNeverAdmitted(outbound: ReceiptLifecycle, neverAdmitted: boolean): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canConfirmNeverAdmitted(outbound, neverAdmitted)) ==> stepReceiptsDoNotRegress(outbound, "confirmNeverAdmitted", \result)
   return { phase: "RetryScheduled" };
 }
 
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:62) */
 //@ pure
 export function canExpireUnknown(outbound: ReceiptLifecycle, pastLimit: boolean): boolean {
   return outbound.phase === "AcceptanceUnknown" && pastLimit;
 }
 
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:62) */
 //@ pure
 export function expireUnknown(outbound: ReceiptLifecycle, pastLimit: boolean): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canExpireUnknown(outbound, pastLimit)) ==> stepReceiptsDoNotRegress(outbound, "expireUnknown", \result)
   return { phase: "AcceptanceExpired" };
 }
 
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:62) */
 //@ pure
 export function sometimesCanCheckUnknown(outbound: ReceiptLifecycle): boolean {
   return outbound.phase === "AcceptanceUnknown";
 }
 
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:62) */
 //@ pure
 export function sometimesCanRead(outbound: ReceiptLifecycle): boolean {
   return outbound.phase === "ProviderRead";
 }
 
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:83) */
 //@ pure
 export function canRecordProviderError(outbound: ReceiptLifecycle): boolean {
   return outbound.phase === "Sending";
 }
 
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:83) */
 //@ pure
 export function recordProviderError(outbound: ReceiptLifecycle, failure: FailureKind, hasAttemptsLeft: boolean): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canRecordProviderError(outbound)) ==> stepReceiptsDoNotRegress(outbound, "recordProviderError", \result)
   return { phase: failure === "UnknownResult" ? "AcceptanceUnknown" : (failure === "NeedReply" ? "WaitingForReply" : (failure === "BlockedNumber" ? "ProviderBlocked" : (failure === "Retryable" && hasAttemptsLeft ? "RetryScheduled" : "ProviderFailed"))) };
 }
 
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:83) */
 //@ pure
 export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft: boolean): boolean {
   //@ ensures \result === true

@@ -10,6 +10,7 @@ import { SQL } from "bun";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
+import { keyedHash } from "../../platform/src/phone.ts";
 import { OutboundQueue, type AppChecks, type QueueOptions } from "../src/outbound-queue.ts";
 import { ChannelSendError, type ChannelAdapter, type SendRequest, type StatusUpdate } from "../src/types.ts";
 
@@ -18,6 +19,7 @@ const db = `blooio_queue_${randomUUID().replaceAll("-", "")}`;
 const url = `postgres://${user}@127.0.0.1:${DEV_PG_PORT}/${db}`;
 const LINE = "+12125550100";
 const NY = "America/New_York";
+const HASH_KEY = "test-platform-hash-key";
 // 12:00 in New York: outside quiet hours.
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 
@@ -39,7 +41,8 @@ function recorder() {
 
 const checks = (extra: Partial<AppChecks> = {}): AppChecks => ({ live: () => true, ...extra });
 const queue = (sql: SQL, provider: ChannelAdapter, o: Partial<QueueOptions> = {}) =>
-  new OutboundQueue({ sql, clock, provider, line: LINE, app: "friends", checks: checks(), newChatsPerLinePerDay: 1000, perLinePerDay: 1000, ...o });
+  new OutboundQueue({ sql, clock, provider, line: LINE, app: "friends", checks: checks(), newChatsPerLinePerDay: 1000, perLinePerDay: 1000,
+    recipientKey: address => keyedHash(HASH_KEY, `phone:${address}`), ...o });
 
 describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
   beforeAll(async () => {
@@ -203,6 +206,54 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(await q.statusOf("thread-4")).toBe("parked_leak_review");
     expect(await q.decideLeak("thread-4", "drop", "safety@example.org")).toMatchObject({ status: "dropped_leak_review" });
     expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:thread-1", "tn:thread-3", "tn:thread-2"]);
+  });
+
+  test("the per-recipient hourly cap counts every send the provider took, to a non-member too, by a keyed recipient; failed sends do not count; purge() clears the window by time", async () => {
+    const { calls, provider } = recorder();
+    const q = queue(a, provider);
+    const key = (address: string) => keyedHash(HASH_KEY, `phone:${address}`);
+    const window = (address: string) => a`select outbound_id, line, recipient_key, sent_at from platform.outbound_recipient_sends where recipient_key = ${key(address)}`;
+    // One stranger's text (no member id) gets a reply, the reply goes out, and a receipt ends it.
+    const round = async (to: string, id: string, receipt: "delivered" | "failed") => {
+      await q.inbound(to);
+      await q.enqueue(a, [{ id, to, kind: "reply", text: `Text JOIN to start (${id}).`, timeZone: NY }]);
+      await q.drain();
+      await q.applyStatus({ kind: "status", channel: "sim", providerMessageId: `sim:tn:${id}`, status: receipt, at: clock.now() });
+    };
+    // A stranger who keeps writing (an auto-responder): each reply is delivered at once, and delivery ends the row.
+    const to = "+12125558001";
+    for (let i = 0; i < 11; i++) await round(to, `stranger-${i}`, "delivered");
+    // At most 10 sends to one recipient in a rolling hour (runaway-loop guard): the 11th waits.
+    expect(calls.filter(c => c.to === to).length).toBe(10);
+    const [r] = await a`select status, note from platform.outbound where id = 'stranger-10'`;
+    expect([r.status, r.note]).toEqual(["retry_scheduled", "per-recipient hourly cap"]);
+    // The window keeps a keyed hash only; the ended rows keep neither the address nor the text.
+    const counted = await window(to);
+    expect(counted.length).toBe(10);
+    expect(JSON.stringify(counted)).not.toContain(to.slice(2));
+    expect((await a`select id from platform.outbound where id like 'stranger-%' and status = 'delivered' and (to_address is not null or body is not null)`).length).toBe(0);
+    // A failure receipt takes the send out of the count: 11 sends that failed do not hold the 12th.
+    const to2 = "+12125558002";
+    for (let i = 0; i < 12; i++) await round(to2, `failing-${i}`, "failed");
+    expect(calls.filter(c => c.to === to2).length).toBe(12);
+    expect((await window(to2)).length).toBe(0);
+    // A send the provider refused is never counted.
+    const refusing = queue(a, { kind: "sim", async send() { throw new ChannelSendError("bad number", "invalid"); } });
+    const to3 = "+12125558003";
+    await refusing.inbound(to3);
+    await refusing.enqueue(a, [{ id: "refused-0", to: to3, kind: "reply", text: "Text JOIN to start.", timeZone: NY }]);
+    await refusing.drain();
+    expect(await refusing.statusOf("refused-0")).toBe("failed");
+    expect((await window(to3)).length).toBe(0);
+    // One hour after the sends, purge() deletes the window rows by time (no read of platform.outbound), and the waiting reply goes.
+    clock.advance(61 * 60_000);
+    await q.purge();
+    expect((await a`select outbound_id from platform.outbound_recipient_sends where line = ${LINE} and sent_at < ${new Date(clock.now() - 60 * 60_000)}`).length).toBe(0);
+    expect((await window(to)).length).toBe(0);
+    await q.inbound(to);
+    await q.drain();
+    expect(calls.filter(c => c.to === to).length).toBe(11);
+    expect(await q.statusOf("stranger-10")).toBe("sent");
   });
 
   test("replies another transport delivers (signed turns) get the leak guard and join the thread it reads", async () => {

@@ -30,12 +30,17 @@
 //    Blooio conversation limits hold the row until the person writes; number-level blocks end it (blocked).
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
 //  - A row to someone who is not a member keeps the address and the text only until it ends.
+//  - The per-recipient hourly cap counts platform.outbound_recipient_sends (migration 0042): one row per send
+//    the provider took, keyed by recipientKey(address) (a keyed hash, never the address), deleted by a failure
+//    receipt, and deleted by purge() one hour after the send.
 import { createHash } from "node:crypto";
 import {
   consentPolicy, conversationPolicy, duePolicy, lineCaps, linePolicy, livePolicy, personPolicy, quietPolicy,
   recipientPolicy, replyPolicy, textPolicy,
 } from "../../core/src/generated/outboundAdmission.ts";
-import { initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
+import {
+  countsTowardRecipientCap, initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase,
+} from "../../core/src/generated/outboundReceipt.ts";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
@@ -154,6 +159,11 @@ export interface QueueOptions {
   quiet?: QuietWindow;
   /** Sends of any kind to one recipient in a rolling hour (runaway-loop guard). Default 10. */
   perRecipientPerHour?: number;
+  /**
+   * The keyed identifier of a recipient in the hourly cap's window (the service passes the platform's keyed
+   * phone hash, PLATFORM_HASH_KEY). The window keeps only this, never the address.
+   */
+  recipientKey: (address: string) => string;
   /** Agent-initiated sends from the line in a rolling day (prototype P3 measures the real number). Default 200. */
   perLinePerDay?: number;
   /** Brand-new conversations from the line in a rolling day (Blooio: about 20-50 a number). Default 20. */
@@ -429,11 +439,12 @@ export class OutboundQueue {
     }
     if (!compliance) {
       const [counts] = await this.sql`select
-        count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
         count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
-      const decision = lineCaps(compliance, agent, isNew, counts.recipient >= this.opt("perRecipientPerHour", 10),
+      const [recipient] = await this.sql`select count(*)::int as n from platform.outbound_recipient_sends
+        where line = ${this.line} and recipient_key = ${this.o.recipientKey(row.to)} and sent_at > ${new Date(now - HOUR)}`;
+      const decision = lineCaps(compliance, agent, isNew, recipient.n >= this.opt("perRecipientPerHour", 10),
         counts.line >= this.opt("perLinePerDay", 200), counts.new_chats >= this.opt("newChatsPerLinePerDay", 20));
       if (decision === "RecipientCap") return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
       if (decision === "LineCap") return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
@@ -557,6 +568,12 @@ export class OutboundQueue {
       context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,...(row.approvedPhotos?.length?{approvedPhotos:row.approvedPhotos}:{})}};
   }
 
+  /** One send the provider took, in the hourly cap's window (keyed recipient; a replayed acceptance counts once). */
+  private async countSend(db: SQL, id: string, to: string, at: Date): Promise<void> {
+    await db`insert into platform.outbound_recipient_sends (outbound_id, line, recipient_key, sent_at)
+      values (${id}, ${this.line}, ${this.o.recipientKey(to)}, ${at}) on conflict (outbound_id) do nothing`;
+  }
+
   /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
   private async acceptReceipt(row: QueueRow, receipt: SendReceipt): Promise<StatusChange> {
     const from = { phase: row.status === "unknown_acceptance" ? "AcceptanceUnknown" : "Sending" } as const;
@@ -582,6 +599,8 @@ export class OutboundQueue {
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (!wrote.length) return false;
+      // spec/outboundReceipt.md, "Only a send the provider took counts toward the recipient's hourly cap"
+      if (countsTowardRecipientCap(accepted.phase)) await this.countSend(tx, row.id, row.to, at);
       if (status!=="failed") {
         const unanswered=row.kind==="compliance"?0:1;
         // A send accepted at the same instant as the person's last message counts toward the streak (a reply
@@ -661,11 +680,17 @@ export class OutboundQueue {
     if (next === from) return undefined;
     if (next.phase === "ProviderFailed") {
       const error = `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed";
-      const rows = await this.sql`update platform.outbound set status = 'failed',
-        transport = coalesce(${u.transport ?? null}, transport), note = 'receipt: failed', last_error = ${error},
-        ended_at = ${at}, updated_at = ${at}, lease_owner = null, lease_until = null,
-        to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
-        where id = ${row.id} and status = ${row.status} returning id`;
+      // One transaction: a crash between the status change and the cap release must not leave a failed send counted.
+      const rows = await this.sql.begin(async tx => {
+        const moved = await tx`update platform.outbound set status = 'failed',
+          transport = coalesce(${u.transport ?? null}, transport), note = 'receipt: failed', last_error = ${error},
+          ended_at = ${at}, updated_at = ${at}, lease_owner = null, lease_until = null,
+          to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
+          where id = ${row.id} and status = ${row.status} returning id`;
+        // spec/outboundReceipt.md, "Only a send the provider took counts toward the recipient's hourly cap"
+        if (moved.length && !countsTowardRecipientCap(next.phase)) await tx`delete from platform.outbound_recipient_sends where outbound_id = ${row.id}`;
+        return moved;
+      });
       if (!rows.length) return this.applyStatus(u);
       if (row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
       return { id: row.id, app: row.app, memberId: row.memberId, status: "failed" };
@@ -707,6 +732,8 @@ export class OutboundQueue {
    * Such an address counts as a new conversation again. Returns how many were removed.
    */
   async purge(): Promise<number> {
+    // The hourly cap's window: an index range delete on (line, sent_at); it never reads the send history.
+    await this.sql`delete from platform.outbound_recipient_sends where line = ${this.line} and sent_at < ${new Date(this.now - HOUR)}`;
     const before = new Date(this.now - DAY);
     const rows = await this.sql`delete from platform.line_conversations c where c.line = ${this.line}
       and coalesce(greatest(c.last_inbound_at, c.last_outbound_at), c.first_outbound_at) < ${before}
@@ -746,10 +773,12 @@ export class OutboundQueue {
   async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
     if (!ids.length) return;
     const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
-    await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
+    const rows = await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
       sent_at = case when ${outcome === "accepted"} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
       ended_at = case when ${outcome === "unknown"} then null else coalesce(ended_at, ${new Date(this.now)}) end
-      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')`;
+      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')
+      returning id, to_address, sent_at`;
+    if (outcome === "accepted") for (const r of rows as any[]) if (r.to_address) await this.countSend(tx, r.id, r.to_address, new Date(r.sent_at));
   }
 
   /** Rows of this app the leak guard parked for a person (GET /queue/leak-review), oldest first. */
