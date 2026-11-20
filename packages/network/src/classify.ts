@@ -998,23 +998,37 @@ export function availabilityTags(body: string): string[] {
   // A named refusal must not be restored when an offered day group is expanded.
   const refusedDays = new Set<number>();
   const refusedDayEnds: number[] = [];
+  // A part named on the refused day ("except Sunday mornings") refuses only that part.
+  const refused = new Map<number, Set<string>>();
+  const partExceptionAt = new Set<number>();
+  const refusePart = (day: number, part: string) => { (refused.get(day) ?? refused.set(day, new Set()).get(day)!).add(part); };
+  const partName = (word: string) => /^mornings?$/.test(word) ? "morning" : /^(?:afternoons?|lunch)$/.test(word) ? "afternoon" : "evening";
   DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) {
-    if (negatedAt(t, m.index!, m[0].length)) { refusedDays.add(i); refusedDayEnds.push(m.index! + m[0].length); }
-    else toks.push({ at: m.index!, days: [i] });
+    if (negatedAt(t, m.index!, m[0].length)) {
+      const attached = /^\s+((?:mornings?|afternoons?|lunch|evenings?|nights?|after work))\b/.exec(t.slice(m.index! + m[0].length));
+      if (attached) {
+        refusePart(i, partName(attached[1]!));
+        partExceptionAt.add(m.index! + m[0].length + attached[0].length - attached[1]!.length);
+      } else {
+        refusedDays.add(i); refusedDayEnds.push(m.index! + m[0].length);
+      }
+    } else toks.push({ at: m.index!, days: [i] });
   } });
   for (const m of t.matchAll(/\bweekends?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [0, 6].filter(d => !refusedDays.has(d)) });
   for (const m of t.matchAll(/\bweekdays?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) });
   for (const m of t.matchAll(/\bweeknights?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) }, { at: m.index!, part: "evening" });
   for (const [re, part] of [[/\bmornings?\b/g, "morning"], [/\bafternoons?\b|\blunch\b/g, "afternoon"], [/\b(?:evenings?|nights?|after work)\b/g, "evening"]] as const) {
     for (const m of t.matchAll(re)) {
-      // "Except Sunday mornings" qualifies the named-day exception, not every morning.
+      // "Except Sunday mornings" is that part of Sunday, not a morning for every other day.
+      if (partExceptionAt.has(m.index!)) continue;
+      // "Except Sunday, mornings" qualifies the named-day exception, not every morning.
       const namedException = refusedDayEnds.some(end => end <= m.index! && /^\s*$/.test(t.slice(end, m.index!)));
       toks.push({ at: m.index!, part, refused: !namedException && negatedAt(t, m.index!, m[0].length) });
     }
   }
   toks.sort((a, b) => a.at - b.at || (a.days ? -1 : 1));
   const out = new Map<number, Set<string>>();
-  const refused = new Map<number, Set<string>>(), refusedLead = new Set<string>();
+  const refusedLead = new Set<string>();
   const defaults = new Set<number>();
   const give = (ds: number[], p: string) => ds.forEach(d => (out.get(d) ?? out.set(d, new Set()).get(d)!).add(p));
   let pending: number[] = [], group: number[] = [], prevPart = false;
