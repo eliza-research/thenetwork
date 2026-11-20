@@ -157,6 +157,21 @@ const G_NB = "non[- ]?binary|nonbinary|nonbinery|nb|enby|genderqueer|gender ?que
 const ADJ_LITE = "straight|gay|bi|queer|trans|cis|single|lesbian|pan";
 
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then|"|')\s*$/;
+/**
+ * The number is someone else's age, not the sender's.
+ * "my sister is 16 years old", "she's 14", "they are 13 years old", "the company is 5 years old".
+ * "my mom, 45" names the mom. "I am 16 years old", "my age is 16" and "16 years old" stay the sender's age.
+ */
+function anotherPersonsAge(text: string, at: number): boolean {
+  const clause = text.slice(0, at).split(/,|\bbut\b|\bhowever\b|\bthough\b/).pop() ?? "";
+  if (/\b(?:is|are)\s*$/.test(clause) || /'s\s*$/.test(clause)) {
+    // "my age is 16" and a bare "age is 16" are the sender. "her age is 16" is not.
+    const ownAge = /^(?:.*\bmy\s+)?age\s+is\s*$/.test(clause) && !/\b(?:his|her|their|our|your|the|its)\s+age\s+is\s*$/.test(clause);
+    if (!ownAge) return true;
+  }
+  if (/\b(?:is|are)\s+an?\s+$/.test(clause)) return true;
+  return /\b(?:my|his|her|their|our)\s+$/.test(clause);
+}
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
 const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|and\\b|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
@@ -194,6 +209,7 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
       if (NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
+      if (anotherPersonsAge(s.text, m.index + lead)) continue;
       if (KIN_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
       const a = r.age(m);
       if (!Number.isFinite(a) || a < 1 || a > 99) continue;

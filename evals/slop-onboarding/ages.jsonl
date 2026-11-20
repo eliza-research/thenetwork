@@ -68,3 +68,23 @@
 {"text":"i'm 13","minor":true,"age":13}
 {"text":"im in middle school","minor":true}
 {"text":"my mom wont let me date yet","minor":true}
+{"text":"my sister is 16 years old","minor":false}
+{"text":"I'm 32 and my sister is 16 years old","minor":false,"age":32}
+{"text":"my daughter is 8 years old","minor":false}
+{"text":"she is 14 years old","minor":false}
+{"text":"she's 14 years old","minor":false}
+{"text":"they are 13 years old","minor":false}
+{"text":"ben is 15 years old","minor":false}
+{"text":"the company is 5 years old","minor":false}
+{"text":"my kid is 4 yrs old","minor":false}
+{"text":"I'm 28. my kid is 4 years old","minor":false,"age":28}
+{"text":"I am 32. She is 14 years old.","minor":false,"age":32}
+{"text":"who is 16 years old","minor":false}
+{"text":"her age is 16 years old","minor":false}
+{"text":"his age is 12 years old","minor":false}
+{"text":"their age is 15 years old","minor":false}
+{"text":"so my age is 16 years old","minor":true,"age":16}
+{"text":"my age is 16 years old","minor":true,"age":16}
+{"text":"age is 16 years old","minor":true,"age":16}
+{"text":"16 years old","minor":true,"age":16}
+{"text":"yes, 16 years old","minor":true,"age":16}
