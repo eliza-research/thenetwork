@@ -13,7 +13,7 @@ accepted merges and pays after maintainer review. There is no escrow.
 ## Before you start
 
 1. Star and fork the repository with the contributor's own GitHub account.
-   For normal contributions, open a PR from your fork into `vibestack`.
+   Open every PR from your fork into `vibestack`, the repository's main branch.
 2. Read the [product specification](spec/product/README.md) and the affected
    Vibestack stories and rules. The product specification owns launch scope.
    The [founder decision history](spec/product/source/founder-decisions.md)
@@ -40,8 +40,11 @@ accepted merges and pays after maintainer review. There is no escrow.
   `packages/core/src/vibe/`. Commit emitted JavaScript and declarations
   with each shell and spec. Keep generated code free of manual edits.
 - Change the model and implementation together. Compare their states, guards,
-  writes, retries, leases, limits, and invariants. State which seams and proof
-  obligations were checked, and which remain open.
+  writes, retries, leases, limits, and invariants. Follow the
+  [top-level stories](spec/product/stories.md), executable rules, and
+  [whole-flow models](spec/models/README.md) exactly. Verify that the
+  approved behavior is fully implemented and integrated through the
+  application's real entry points.
 - The [signup handoff](spec/agentPhoneHandoff.md) gives the person one
   app-bound link to verify their phone and authorize profile access. The person
   enters the code on the app's site. Keep the code and browser session outside
@@ -59,22 +62,24 @@ accepted merges and pays after maintainer review. There is no escrow.
 - Stay within the launch scope in the [product specification](spec/product/README.md). Get written maintainer approval for new scope.
 - Accepted: reproduced bugs, matching-algorithm and simulation validation, measured hill-climbing, security, and tests that prove real behavior (CONTRIBUTING.md section 3).
 - Not accepted: UI, style or copy changes, preference refactors, speculative features, busywork tests, mock-only proof, placeholders or TODOs, unverified claims, duplicates and secrets.
-- No UI changes. The only exception is a fix for a broken user flow, with before and after video.
-- Reproduce the problem on the target branch before writing a fix. Show the
-  corrected result on the PR commit with the same inputs. Use real model
-  calls for changes to model-backed behavior.
+- A UI change must fix a broken user flow. Include before and after
+  screenshots and recordings.
+- For every code change, show before and after results with the same inputs.
+  Use real model calls for changes to model-backed behavior.
 - Test changed agent flows in the affected clients. Report the client,
   version, provider, model, and result for each (CONTRIBUTING.md section 8).
-- Simplify first: extend or merge what exists; remove dead code.
-- For application changes, validate with `pnpm run sim`,
-  `pnpm run test:integration` and `pnpm run test:e2e`. For a bug fix, add a sim gate,
-  scenario, corpus row, integration case, or e2e case that fails before the
-  fix. See [the test policy](docs/tests-policy.md).
+- Keep the diff focused. Remove low-quality output, unnecessary files, dead
+  or redundant code, and superseded implementations.
+- Run the [full validation suite](CONTRIBUTING.md#6-the-validation-layer)
+  for every PR. Quint, Dafny, Bombadil, and all other required checks must
+  pass before merge. For a bug fix, add a sim gate, scenario, corpus row,
+  integration case, or e2e case that fails before the fix.
 - Defend the design: give two other implementations.
 - Before opening or marking a PR ready, complete its `## Evidence` section.
   Include change types, test results and proof of the change. Add before and
-  after UI video, redacted non-UI logs, benchmarks, or on-device results when
-  the change affects those paths. Follow the [evidence policy](CONTRIBUTING.md#evidence).
+  after UI screenshots and recordings, redacted non-UI logs, benchmarks, or
+  on-device results for the affected paths. Follow the
+  [evidence policy](CONTRIBUTING.md#evidence).
 - Maintainers close submissions that fail to prove a useful change or add
   complexity to unlikely paths without proof of reachability and material impact.
   Eligible Slop.cash submissions incur a Points debit under the published policy.
@@ -253,10 +258,10 @@ callers. The product owner runs `pnpm run accept` to record review.
 - **Reuse.** Extend existing components, types, services and tests.
 - **Boundaries.** Parse external input at entry. Let the generated types
   and guards constrain internal transitions.
-- **Clarity.** Use domain names and readable structure. Keep comments for
-  tool directives, spec citations, and information the code cannot express.
-- **Speed.** Keep checks focused while working. Use the Network evidence
-  commands required for the change before claiming full validation.
+- **Clarity.** Use domain names and readable structure. Keep code free of
+  comments. Put explanations in the spec or documentation. Use comment
+  syntax only for required tool directives such as `//@` proof contracts.
+- **Speed.** Keep checks focused while working. Run the full suite before merge.
 - **Review.** Reread the wiring and its corresponding rule on a second pass.
 
 ## Principles
@@ -417,10 +422,11 @@ indicators. Review the content and layout across two or three passes.
 
 ## Definition of done
 
-Check the generated snapshots against the source specs and compare the
-affected model with the running behavior. Report open proof, review, and
-application validation separately with the evidence for each. Refer to the
-[sync skill](.agents/skills/sync/SKILL.md) for what to report and to
-[CONTRIBUTING.md](CONTRIBUTING.md#122-evidence-checklist) for pull request
-evidence. The product owner records sign-off after reading the changed
-requirements and their formal meaning.
+Verify the generated snapshots against the source specs. Verify that the
+running application fully implements and integrates the approved stories,
+rules, and models. Every required check must pass. Resolve open proof
+obligations before merge. Meet all [Vibestack requirements](SPEC.md) and
+[TypeScript conventions](#typescript-best-practices). Submit the
+[PR evidence](CONTRIBUTING.md#122-evidence-checklist). The product owner
+records sign-off after reviewing the changed requirements and their formal
+meaning.
