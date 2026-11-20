@@ -216,6 +216,9 @@ module plan_run {
         val y = yesOf(a1)
         // No deadline check here (plans.ts:577-578): the network runs planDeadline before the answer (SD-423).
         if (y.size() >= e.quorum) ({ ...o1, runStage: "booked" }, { kind: "book", member: "", going: y })
+        // The last pending answer is a yes and quorum is out of reach: close, as after a last no
+        // (planDecision.md "An unanswered plan closes when its deadline passes", unmetPlanQuorum).
+        else if (pendingOf(a1).size() == 0) ({ ...o1, runStage: "closed" }, { kind: "fallback", member: "", going: Set() })
         else (o1, NONE)
       }
     } else recordNo(e, o1)
@@ -346,7 +349,8 @@ module plan_run {
   /**
    * planAnswer (network.ts:3008) for a yes: recordPlanAnswer, then planAct. "book" runs bookPlan (finishBook);
    * a yes after booking joins; a yes after the late-join cutoff is out and hears so in the next message
-   * (network.ts:3047, Q-plan_run-1 fixed). A yes never backfills or falls back (recordPlanAnswer).
+   * (network.ts:3047, Q-plan_run-1 fixed). A yes never backfills. A last pending yes below quorum falls back
+   * (recordPlanAnswer, unmetPlanQuorum), as a last no does: the fallback is the next step.
    */
   pure def planYesF(e: Env, o: Opp, m: str): Res =
     if (not(recordable(o, m))) done(o)
@@ -357,6 +361,7 @@ module plan_run {
       if (o2.answers.get(m) == "late") done(note(setStatus(o2, m, "unavailable"), Set(m)))
       else if (r._2.kind == "book") { o: o2, next: "book", going: r._2.going }
       else if (r._2.kind == "join") done(planJoin(e, o2, m))
+      else if (r._2.kind == "fallback") thenFallback(o2)
       else done(o2)
     }
 
@@ -970,6 +975,20 @@ module plan_run {
       .then(goWatch("c"))
       .then(prb("d"))
       .expect(plan.contacted.contains("d") and plan.answers.get("d") == "pending" and noStaleRefusal and safety)
+
+  /**
+   * The order of the answers does not matter: the bench is used up by a's and e's no, d says no, then b and
+   * c say yes. The last pending answer is a yes and quorum (3) is out of reach: the plan falls back at that
+   * answer, before any tick, as it does when the last answer is a no. Both yes-sayers hear the note.
+   */
+  run lastYesOutOfReachTest =
+    initWith(3).then(approve)
+      .then(prb("a")).then(prb("b")).then(prb("c")).then(prb("d"))
+      .then(ans("a", false)).then(prb("e")).then(ans("e", false)).then(ans("d", false))
+      .then(ans("b", true))
+      .expect(plan.stage == "probing")
+      .then(ans("c", true))
+      .expect(plan.stage == "closed" and plan.runStage == "closed" and Set("b", "c").subseteq(plan.told) and yesSayerTold and safety)
 
   /** SD-423 fixed: two yes before the deadline; the third yes after it, before the tick, closes the plan with a note. */
   run sd423LateYesTest =

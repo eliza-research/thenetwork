@@ -571,8 +571,9 @@ const planStage: Record<PlanRun["stage"], PlanStage> = { probing: "Probing", boo
 /**
  * Record a probe answer. Yes: quorum reached -> "book" (the reveal is the booked plan); after
  * booking, a late yes -> "join" until lateJoinHours before the start. Partner plans: the first yes
- * -> "probe_partner". No (or silence): the next alternate -> "backfill" while before the deadline;
- * when nobody is pending and quorum can no longer be reached -> "fallback". Never says who declined.
+ * -> "probe_partner". No (or silence): the next alternate -> "backfill" while before the deadline.
+ * After a yes or a no, when nobody is pending and quorum can no longer be reached -> "fallback", so the
+ * order of the answers does not matter. Never says who declined.
  */
 export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS, opts: PlanRunOpts = {}): { run: PlanRun; action: PlanAction } {
   const phase = planStage[run.stage];
@@ -608,7 +609,7 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
       break;
     }
   }
-  if (!yes && r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
+  if (r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
     r.stage = "closed";
     return { run: r, action: { kind: "fallback" } };
   }

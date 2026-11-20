@@ -48,9 +48,20 @@ pure def lawBookingNeedsQuorum(phase: PlanStage, pendingMember: bool, accepted: 
     (phase == Probing and pendingMember and accepted and yesAfter >= needed)
 ```
 
+### The first acceptance of a partner plan asks the partner
+
+In a partner plan before the deadline, the first member's acceptance below quorum asks the partner. It does not close the plan. The engine closes the plan only when no eligible partner is left.
+
+```quint
+pure def lawFirstPartnerAcceptanceAsksPartner(yesAfter: int, needed: int, lateJoinOpen: bool): bool =
+  val facts = { phase: Probing, pendingMember: true, accepted: true, yesAfter: yesAfter, needed: needed,
+    partnerPlan: true, firstMember: true, beforeDeadline: true, lateJoinOpen: lateJoinOpen }
+  yesAfter < needed implies planReplyChoice(facts) == AskPartner
+```
+
 ### An unanswered plan closes when its deadline passes
 
-When the deadline arrives, an unbooked plan closes. If a decline leaves no one pending and quorum is still unmet after the engine checks available alternates, the plan can also close before the deadline.
+When the deadline arrives, an unbooked plan closes. If a reply leaves no one pending and quorum is still unmet after the engine checks available alternates and the partner, the plan can also close before the deadline. The reply can be an acceptance or a decline. An acceptance below quorum that does not ask a partner is recorded, and the plan then closes when no one is pending. Thus the order of the replies does not change when the plan closes.
 
 ```quint
 pure def planProbeExpired(phase: PlanStage, deadlineReached: bool): bool =
@@ -61,6 +72,13 @@ pure def unmetPlanQuorum(pendingCount: int, yesCount: int, needed: int): bool =
 
 pure def lawOnlyProbingPlansExpire(phase: PlanStage): bool =
   planProbeExpired(phase, true) implies phase == Probing
+
+pure def lawLastAcceptanceBelowQuorumCloses(yesAfter: int, needed: int, partnerPlan: bool, firstMember: bool,
+    beforeDeadline: bool, lateJoinOpen: bool): bool =
+  val facts = { phase: Probing, pendingMember: true, accepted: true, yesAfter: yesAfter, needed: needed,
+    partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen }
+  (yesAfter < needed and not(partnerPlan and beforeDeadline)) implies
+    (planReplyChoice(facts) == RecordAnswer and unmetPlanQuorum(0, yesAfter, needed))
 ```
 
 ## Story: Choose a fallback for a plan that cannot proceed
