@@ -98,3 +98,35 @@ test("a check-in expires at its booking's start before a later cancellation is r
   expect(w.net.opps.get(id)?.stage).toBe("scheduled");
   expect(w.net.opps.get(later)?.stage).toBe("closed");
 });
+
+test("the near reminder uses the last open hour at or before the three-hour mark", async () => {
+  // spec/meetingSettlement.md, "A day-before reminder has its own send window"
+  // Quiet hours cover 16:00-18:00. The three-hour aim (17:00) is closed, and 18:00 is open.
+  // The reminder must go at 15:00, the last open tick that is still at or before 17:00.
+  const w = new Mini(["a", "b"].map((id, i) => ({
+    id, name: i ? "Ben Ito" : "Ana Diaz", age: 30, area: "Greenpoint",
+    interests: ["climbing", "hiking"], skills: ["belaying"], quietHours: [0, 0],
+  })), { review: "auto", plans: false, growth: false });
+  await w.onboard("a", "b");
+  const id = w.propose(["a", "b"]);
+  await w.answerProbes(["a", "b"]);
+  const meetingAt = Date.UTC(2026, 9, 10, 0); // Friday 20:00 in New York.
+  const state = w.net.exportState();
+  const booked = state.opps.find(o => o.id === id)!;
+  expect(booked.stage).toBe("scheduled");
+  expect(booked.bookedTold).toEqual(expect.arrayContaining(["a", "b"]));
+  booked.meetingAt = meetingAt;
+  const openAt = meetingAt - 6 * HOUR; // 14:00, before the closed hours.
+  state.lastTick = openAt - HOUR;
+  state.tickGap = HOUR;
+  w.net.importState(state);
+  for (const member of w.members) member.prefs!.quietHours = [16, 18];
+  w.clock.set(openAt - HOUR);
+  const before = w.mark();
+  await w.run(6 * HOUR);
+  const reminders = w.sent.slice(before).filter(s => s.meta.type === "reminder" && s.meta.proposalId === id);
+  expect(reminders.map(s => [s.to, s.t])).toEqual([
+    ["a", meetingAt - 5 * HOUR],
+    ["b", meetingAt - 5 * HOUR],
+  ]);
+});

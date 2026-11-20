@@ -1754,7 +1754,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const attendance = kind === "GatheringAttendancePrompt";
     if (attendance && (this.askOpen(member, now) || member.awaiting?.kind === "probe" || member.awaiting?.kind === "booked")) return false;
-    if (kind === "GatheringNearStart" && startsAt - now > nearMeetingReminderLeadMs && this.laterAllowedTick(member, now, startsAt - HOUR)) return false;
+    if (kind === "GatheringNearStart" && startsAt - now > nearMeetingReminderLeadMs
+      && this.laterAllowedTick(member, now, startsAt - nearMeetingReminderLeadMs)) return false;
     this.dirty = true;
     return this.send(member, body, { type: attendance ? "feedback_request" : "reminder" }, attendance ? "feedback" : "reminder", {
       key: id, noDefer: true, immutableBody: true, gatheringRsvpLogistics: true,
@@ -5304,8 +5305,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (silentConfirmationDue(o.status.get(id) === "yes", at !== undefined, (o.confirmed ?? []).includes(id),
           now - (at ?? 0), now >= o.meetingAt)) this.confirmPlan(o, id, false);
       }
-      // Send a day-before reminder in its own window. Aim for a near reminder at T-3h,
-      // otherwise at the last allowed tick before the meeting.
+      // Send a day-before reminder in its own window. Aim for a near reminder at T-3h.
+      // If that hour is closed, use the last open tick at or before T-3h.
       // A job intro has no meeting the Network booked: no reminder (the two arrange it through the agent).
       const remaining = o.meetingAt - now;
       const sameLocalDay = nyParts(now).day === nyParts(o.meetingAt).day;
@@ -5318,7 +5319,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!booked) continue;
         const early = dayBeforeReminderDue(true, true, earlySent, remaining);
         if (!early && (o.reminded.has(id) || !nearMeetingReminderWindow(remaining))) continue;
-        if (!early && remaining > nearMeetingReminderLeadMs && this.laterAllowedTick(m, now, o.meetingAt - HOUR)) continue;
+        if (!early && remaining > nearMeetingReminderLeadMs && this.laterAllowedTick(m, now, o.meetingAt - nearMeetingReminderLeadMs)) continue;
         // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
         const replySlotAvailable = !m.awaiting || (m.awaiting.kind === "booked" && m.awaiting.oppId === o.id);
         const checkIn = !early && dayOfCheckInDue(sameLocalDay, replySlotAvailable, remaining);
@@ -5371,9 +5372,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
-  /** Is there a later tick before `limit` when this member may be texted? */
-  private laterAllowedTick(m: MemberState, now: number, limit: number): boolean {
-    for (let t = now + this.tickGap; t < limit; t += this.tickGap) if (this.timingOk(m, "logistics", t)) return true;
+  /** Is there a later tick at or before `deadline` when this member may be texted? */
+  private laterAllowedTick(m: MemberState, now: number, deadline: number): boolean {
+    for (let t = now + this.tickGap; t <= deadline; t += this.tickGap) if (this.timingOk(m, "logistics", t)) return true;
     return false;
   }
 
