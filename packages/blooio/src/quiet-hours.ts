@@ -1,7 +1,7 @@
 // Quiet hours in the recipient's local time zone (PRD 32.2, 32.9, 36.1).
 // Default window 21:00-09:00 local: the PRD's "not after 9pm" example, inside Blooio's suggested 8am-8pm-ish
 // sending window for new conversations. Replies to a member's own message and compliance replies are exempt.
-import { withinQuietHours } from "@thenetwork/core";
+import { CITY_TZ as CORE_CITY_TZ, withinQuietHours } from "@thenetwork/core";
 
 export interface QuietWindow {
   /** Local hour (0-23) quiet hours start. */
@@ -48,8 +48,19 @@ export function nextAllowedAt(ms: number, tz: string, w: QuietWindow = DEFAULT_Q
   return t;
 }
 
-/** Fallback zone when a member's zone is unknown: derive from the city they joined in. */
-export const CITY_TZ: Record<string, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
+/**
+ * Fallback zone when a member's zone is unknown: derive from the city they joined in.
+ *
+ * Derived from the one city table in `@thenetwork/core` instead of being written out again. The
+ * local copy had only `sf` and `nyc`, so it lost `la` when that market was added to `City`, and a
+ * table that silently misses a market has two consequences. A member whose `home_city` is missing
+ * here resolves no zone and gets the network's city instead of their own, so quiet hours run in the
+ * wrong zone. And because the outbound queue treats `agent && !zone` as `parked_invalid_timezone`
+ * (a terminal status, never retried), a network whose own city were missing here would park every
+ * agent-initiated text to it rather than send it. The index signature stays loose because callers
+ * pass a stored `home_city` string.
+ */
+export const CITY_TZ: Record<string, string> = { ...CORE_CITY_TZ };
 
 /** True if `tz` is an IANA zone this runtime understands. Never throws. */
 export function isValidTimeZone(tz: string | undefined | null): tz is string {
