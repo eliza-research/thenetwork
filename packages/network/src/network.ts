@@ -3610,6 +3610,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (next.phase !== "Scheduled") return;
     const t = published
       ? published.start >= now + MIN_NOTICE && !o.declinedTimes?.includes(published.start) && this.calendarAllows(o.participants, published, now)
+        && o.participants.every(id => !this.bookedNear(id, published.start, o.id))
         ? { at: published.start, how: "public_event" } : undefined
       : this.meetingTime(o, now);
     if (!t) return this.closeNoCommonTime(o, o.participants[0]!);
@@ -3657,10 +3658,11 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * The meeting time: the earliest slot every member who answered with times picked (at least 6 hours
-   * out, never a time anyone turned down), else the best joint slot for everyone from what the
-   * Network knows (attention.chooseTimeOptions), else the old default (a weekend late morning for
-   * activities, a weeknight at 7pm otherwise). Undefined when members named times and none is common:
-   * the plan is never set at a time nobody picked.
+   * out, never a time anyone turned down, and never within 4 hours of a meeting they already have),
+   * else the best joint slot for everyone from what the Network knows (attention.chooseTimeOptions),
+   * else the old default (a weekend late morning for activities, a weeknight at 7pm otherwise).
+   * Undefined when members named times and none is common, or the only times left clash with a
+   * booking: the plan is never set at a time nobody picked, and never on top of another meeting.
    */
   private meetingTime(o: Opp, now: number): { at: number; how: "picked" | "partly_picked" | "estimated" | "default" } | undefined {
     const picks = Object.entries(o.picks ?? {}).filter(([id]) => o.participants.includes(id)).map(([, xs]) => xs);
@@ -3670,8 +3672,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     const offered = Object.values(o.offered ?? {}).flat();
     const slotFor = (start: number) => offered.find(slot => slot.start === start) ?? { start, end: start + DEFAULT_ATTENTION.availability.slotHours * HOUR };
     const calendarAllows = (slot: attention.TimeSlot) => evidence.every(ev => attention.calendarAvailability(ev.calendar, slot, now) !== "busy");
+    // bookPlan already leaves out anyone booked within BOOKING_GAP. An intro must use the same gap.
+    const clear = (t: number) => o.participants.every(id => !this.bookedNear(id, t, o.id));
     if (named.length) {
-      const all = named.reduce((acc, xs) => acc.filter(t => xs.includes(t))).filter(t => t >= now + MIN_NOTICE && !declined.has(t) && calendarAllows(slotFor(t))).sort((a, b) => a - b);
+      const all = named.reduce((acc, xs) => acc.filter(t => xs.includes(t)))
+        .filter(t => t >= now + MIN_NOTICE && !declined.has(t) && calendarAllows(slotFor(t)) && clear(t))
+        .sort((a, b) => a - b);
       if (all.length && named.length === picks.length) return { at: all[0]!, how: "picked" };
       // "partly": someone said none of their times worked. The time comes from the others' picks: the
       // one the Network's evidence says suits them best (their turned-down times count against a daypart).
@@ -3683,12 +3689,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       return undefined;
     }
-    const candidates = attention.candidateSlots(NY, now).filter(x => !declined.has(x.start));
+    const candidates = attention.candidateSlots(NY, now).filter(x => !declined.has(x.start) && clear(x.start));
     const r = attention.chooseTimeOptions(evidence, now, { tz: NY, candidates });
-    const best = [...r.slots].filter(x => x.slot.start >= now + MIN_NOTICE).sort((a, b) => (b.joint - a.joint) || (a.slot.start - b.slot.start))[0];
+    const best = [...r.slots].filter(x => x.slot.start >= now + MIN_NOTICE && clear(x.slot.start)).sort((a, b) => (b.joint - a.joint) || (a.slot.start - b.slot.start))[0];
     if (best) return { at: best.slot.start, how: "estimated" };
     const fallback = this.slot(o, now);
-    return calendarAllows(slotFor(fallback)) ? { at: fallback, how: "default" } : undefined;
+    return calendarAllows(slotFor(fallback)) && clear(fallback) ? { at: fallback, how: "default" } : undefined;
   }
 
   /** A slot at least ~20 hours out: Saturday late morning for activities, otherwise a weeknight at 7pm. */
