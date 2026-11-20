@@ -162,3 +162,13 @@
 {"text":"Within 50 miles, I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC. My distance limit is 50 miles.","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"]}}}
+{"text":"I don't want anyone over 40","expect":{"ageRange":[18,40]}}
+{"text":"I don't want anyone under 30","expect":{"ageRange":[30,99]}}
+{"text":"not into anyone older than 45","expect":{"ageRange":[18,45]}}
+{"text":"never dating anyone under 25","expect":{"ageRange":[25,99]}}
+{"text":"I don't want anyone under 30 or over 45","expect":{"ageRange":[30,45]}}
+{"text":"I won't date anyone below 28","expect":{"ageRange":[28,99]}}
+{"text":"no one under 25","expect":{"ageRange":[25,99]}}
+{"text":"looking for women over 30","expect":{"seeks":["woman"],"ageRange":[31,99]}}
+{"text":"not below 28","expect":{"ageRange":[28,99]}}
+{"text":"nobody younger than 32","expect":{"ageRange":[32,99]}}

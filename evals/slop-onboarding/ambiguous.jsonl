@@ -69,3 +69,7 @@
 {"text":"my sister is about 30","asked":"ageRange","unset":["ageRange"]}
 {"text":"I am around 30 and want someone older","asked":"ageRange","unset":["ageRange"]}
 {"text":"late to early thirties","asked":"ageRange","unset":["ageRange"]}
+{"text":"I'm 32 and up for meeting women","unset":["ageRange"]}
+{"text":"I'm over 40","unset":["ageRange"]}
+{"text":"I'm under 30","unset":["ageRange"]}
+{"text":"I'm not over 40","unset":["ageRange"]}

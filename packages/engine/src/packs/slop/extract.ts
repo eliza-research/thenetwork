@@ -393,6 +393,27 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
 // ------------------------------------------------------------------------------------------ age range
 
 const RANGE_UNIT_AFTER = /^\s*(?:mi\b|mis\b|miles?|mile|km|kms|min|mins|minutes|pm|am|p\.m|a\.m|hours?|hrs?|blocks|k\b|%|ft|feet|years? (?:ago|sober)|lbs?|dollars|bucks|o'?clock)/;
+/**
+ * A refusal of one bound ("I don't want anyone over 40", "not into anyone under 30").
+ * "no problem with anyone over 40" is not a refusal. Words between the refusal and the bound are
+ * only the ones a person uses to name who they mean, plus an earlier bound joined by "or" or "and"
+ * ("under 30 or over 45" is one refusal of both bounds).
+ */
+const BOUND_FILLER = "want|wanna|date|dating|see|meet|meeting|really|to|into|interested|interest|in|anyone|someone|somebody|people|guys|men|women|girls|folks|person|who|is|go|out|with|a|an|the|fan|of";
+const BOUND_REFUSAL = new RegExp(`\\b(?:don'?t|do not|dont|never|won'?t|wont|cannot|can'?t|cant|not|no|hate|avoid)(?:\\s+(?:${BOUND_FILLER})){0,6}\\s*$`);
+/** "no one under", "nobody younger than", "not below", "no one who is over": the phrase already states the minimum or the ceiling. */
+const STATED_MINIMUM = /\b(?:no one|nobody|noone|not|no)(?:\s+(?:who|that)(?:'s|\s+is))?\s+$/;
+function boundRefused(text: string, at: number): boolean {
+  const clause = text.slice(0, at).split(/,|\bbut\b|\bhowever\b|\bthough\b/).pop() ?? "";
+  const tail = clause.replace(/\b(?:under|over|older than|younger than|below|above|at least|up to)\s+\d{1,2}\s+(?:or|and)\s+/gi, " ").slice(-80);
+  if (/\bno\s+(?:problem|prob|worries|worry|issue|biggie)\b/.test(tail)) return false;
+  return BOUND_REFUSAL.test(tail);
+}
+/** "I'm over 40" and "I'm not under 30" state the sender's own age, not the age of a partner. */
+function aboutSelf(text: string, at: number): boolean {
+  const before = text.slice(0, at).split(/,|\bbut\b|\bhowever\b|\bthough\b/).pop() ?? "";
+  return /\b(?:i'?m|im|i am)\s+(?:not\s+|no\s+)?$/.test(before);
+}
 const DECADE_WORD: Record<string, number> = { twenties: 20, thirties: 30, forties: 40, fifties: 50, sixties: 60 };
 /** A decade token: "30s", "30's", "thirties" -> 30. */
 const decadeOf = (token: string): number => DECADE_WORD[token] ?? Number(token.replace(/'?s$/, ""));
@@ -477,11 +498,45 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       range = cand([Math.max(18, v - 3), Math.min(99, v + 3)] as [number, number], s, m, 0.8);
     }
     // Open bounds: "30+", "25 and up", "over 30", "under 40", "40 max".
+    // A refusal points the other way. "I don't want anyone over 40" is a ceiling of 40, not a floor
+    // of 41, and "I don't want anyone under 30" is a floor of 30, not a ceiling of 29. "no one under
+    // 25" is only a floor: the inner "under" is not also a ceiling (those two bounds used to cancel).
+    // "I'm 32 and up for a date" is willingness, not an age floor. "I'm over 40" is the sender's age.
     let lo: { v: number; m: RegExpExecArray } | undefined, hi: { v: number; m: RegExpExecArray } | undefined;
-    for (const m of all(/(?<![\d.$])(\d{2})\s*(?:\+|and (?:up|older|over|above)|or older)(?![\d])/, s.text)) if (!RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) lo = { v: Number(m[1]), m };
-    for (const m of all(/(?<!\b(?:no one|nobody|noone|not|no) )\b(over|older than|at least|no younger than|nobody under|no one under|noone under|not under|minimum|min)\s+(\d{2})\b/, s.text)) if (!RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) lo = { v: Number(m[2]) + (/^(?:over|older than)$/.test(m[1]!) ? 1 : 0), m };
-    for (const m of all(/\b(under|younger than|no older than|max|up to|nobody over|no one over|noone over|not over|below)\s+(\d{2})\b/, s.text)) if (!RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) hi = { v: Number(m[2]) - (/^(?:under|younger than|below)$/.test(m[1]!) ? 1 : 0), m };
-    for (const m of all(/(?<![\d.$])(\d{2})\s*(?:max|tops|at most|or younger)\b/, s.text)) hi = { v: Number(m[1]), m };
+    const raiseFloor = (v: number, m: RegExpExecArray) => { if (!lo || v > lo.v) lo = { v, m }; };
+    const lowerCeiling = (v: number, m: RegExpExecArray) => { if (!hi || v < hi.v) hi = { v, m }; };
+    for (const m of all(/(?<![\d.$])(\d{2})\s*(?:\+|and (?:up|older|over|above)|or older)(?![\d])/, s.text)) {
+      if (RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
+      // "32 and up for meeting" is "up for", not "N and up". "30 and up for sure" stays a floor.
+      if (/and (?:up|over|above)$/.test(m[0]) && /^\s+for\b(?!\s+(?:sure|real|me|now)\b)/.test(s.text.slice(m.index + m[0].length))) continue;
+      lo = { v: Number(m[1]), m };
+    }
+    const exclusiveFloor = /^(?:over|older than)$/;
+    const positiveFloor = /^(?:over|older than|at least|minimum|min)$/;
+    for (const m of all(/(?<!\b(?:no one|nobody|noone|not|no) )\b(over|older than|at least|no younger than|nobody under|no one under|noone under|not under|minimum|min)\s+(\d{2})\b/, s.text)) {
+      if (RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length)) || aboutSelf(s.text, m.index)) continue;
+      const n = Number(m[2]);
+      const refused = positiveFloor.test(m[1]!) && (boundRefused(s.text, m.index) || (exclusiveFloor.test(m[1]!) && STATED_MINIMUM.test(s.text.slice(0, m.index))));
+      if (refused) { lowerCeiling(exclusiveFloor.test(m[1]!) ? n : n - 1, m); continue; }
+      lo = { v: n + (exclusiveFloor.test(m[1]!) ? 1 : 0), m };
+    }
+    const exclusiveCeiling = /^(?:under|younger than|below)$/;
+    for (const m of all(/\b(under|younger than|no older than|max|up to|nobody over|no one over|noone over|not over|below)\s+(\d{2})\b/, s.text)) {
+      if (RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length)) || aboutSelf(s.text, m.index)) continue;
+      const n = Number(m[2]);
+      if (exclusiveCeiling.test(m[1]!) && STATED_MINIMUM.test(s.text.slice(0, m.index))) { raiseFloor(n, m); continue; }
+      if ((exclusiveCeiling.test(m[1]!) || /^(?:max|up to)$/.test(m[1]!)) && boundRefused(s.text, m.index)) {
+        raiseFloor(exclusiveCeiling.test(m[1]!) ? n : n + 1, m);
+        continue;
+      }
+      hi = { v: n - (exclusiveCeiling.test(m[1]!) ? 1 : 0), m };
+    }
+    for (const m of all(/(?<![\d.$])(\d{2})\s*(?:max|tops|at most|or younger)\b/, s.text)) {
+      if (aboutSelf(s.text, m.index)) continue;
+      const n = Number(m[1]);
+      if (boundRefused(s.text, m.index)) raiseFloor(n + 1, m);
+      else hi = { v: n, m };
+    }
     const shortOk = (asked === undefined || asked === "ageRange") && s.text.trim().split(/\s+/).length <= 4 && !/\b(?:mi|miles?|km|max|tops|blocks|min|mins)\b/.test(s.text);
     if ((lo || hi) && (isBare || RANGE_CTX.test(s.text) || shortOk) && !(range && range.start >= s.start && range.end <= s.start + s.text.length)) {
       const l = Math.max(18, lo?.v ?? 18), h = Math.min(99, hi?.v ?? 99);

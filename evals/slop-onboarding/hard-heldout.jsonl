@@ -38,3 +38,5 @@
 {"text":"i date both men and women","expect":{"seeks":["man","woman"]}}
 {"text":"im lookin 4 a man","expect":{"seeks":["man"]}}
 {"text":"seeking men 30 to 40ish","expect":{"seeks":["man"],"ageRange":[30,40]}}
+{"text":"not interested in anyone over 50","expect":{"ageRange":[18,50]}}
+{"text":"do not want anyone younger than 27","expect":{"ageRange":[27,99]}}
