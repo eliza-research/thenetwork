@@ -126,3 +126,7 @@
 {"text":"1,11211","asked":"location","unset":["location"],"from":"slop/zip"}
 {"text":"Williamsburg","asked":"location","expect":{"location":"Williamsburg"},"from":"slop/zip"}
 {"text":"25-35","asked":"location","unset":["location"],"from":"slop/zip"}
+{"text":"I don't live in Park Slope, I live in Williamsburg","expect":{"location":"Williamsburg"},"from":"slop/zip"}
+{"text":"I live in Park Slope, not Williamsburg","expect":{"location":"Park Slope"},"from":"slop/zip"}
+{"text":"I'm not only in Williamsburg","expect":{"location":"Williamsburg"},"from":"slop/zip"}
+{"text":"I don't live in 11211 or Williamsburg","unset":["location"],"from":"slop/zip"}

@@ -577,6 +577,27 @@ const BOROUGH = /\b(?:brooklyn|bk|queens|manhattan|the bronx|bronx|staten island
 const HOME_CTX = /\b(?:i live|i'?m living|im living|living in|live in|based in|based out of|i'?m in|im in|i am in|i'?m over in|i'?m out in|i'?m up in|i'?m down in|i'?m by|i'?m near|i'?m around|from|near|around|by|my place is|my apt is|my apartment is|my neighborhood is|my hood is|i stay in|located in|in|out of|zip|of)\b/;
 const NOT_HOME_CLAUSE = /\b(?:went|was|were|visited|used to|grew up|work|works|working|office|commute|trip|vacation|dinner|drinks|brunch|date|party|show|concert)\b/;
 const NOT_HOME = /\b(?:(?:minutes|mins|min|hours?|hrs?|blocks|stops)\s+(?:away\s+)?(?:from|of|to)|used to live(?: in)?|grew up in|work(?:ing)? in|office (?:is )?in|commute to|visiting|moving from|moved from|went to|going to|date in|dinner in|drinks in|not in|far from|never been to|trip to|vacation in|family in|parents in)(?:\s+the)?\s*$/;
+/** A refusal directly before the place. "not only" and "no, <place>" still name it. */
+const PLACE_DENIED_TAIL = [
+  /\bnot\s+(?:(?:in|from|near|around|by)\s+)?(?:the\s+)?$/,
+  /\bnot\s+(?:actually\s+|really\s+|currently\s+)?(?:living|lived)\s+in\s+(?:the\s+)?$/,
+  /\b(?:do not|don'?t|dont|never|haven'?t|have not)\s+(?:actually\s+|really\s+|ever\s+)?(?:lived|live|living)\s+in\s+(?:the\s+)?$/,
+  /\b(?:isn'?t|is not|aren'?t|are not)\s+(?:in\s+)?(?:the\s+)?$/,
+  /\b(?:anywhere|everywhere|anyplace|any where)\s+but\s+(?:the\s+)?$/,
+  /\bexcept\s+(?:for\s+)?(?:the\s+)?$/,
+];
+/** A refusal that covers the rest of the clause ("I don't live in 11211 or Williamsburg"). */
+const PLACE_REFUSAL = /\b(?:do not|don'?t|dont|never|haven'?t|have not)\s+(?:actually\s+|really\s+|ever\s+)?(?:lived|live|living)\s+in\b|\bnot\s+(?:from|in)\b|\bnot\s+(?:actually\s+|really\s+|currently\s+)?(?:living|lived)\s+in\b|\b(?:anywhere|everywhere|anyplace|any where)\s+but\b|\bexcept\b/;
+/** A home claim after a refusal names that place ("I don't live in Park Slope, I live in Williamsburg"). */
+const PLACE_HOME = /\b(?:i live|i'?m living|im living|based in|i'?m in|im in|i am in|i'?m over in|i'?m out in|i'?m up in|i'?m down in)\b/;
+function placeDenied(before: string): boolean {
+  const tail = before.trimEnd() + " ";
+  if (PLACE_DENIED_TAIL.some(rx => rx.test(tail) || rx.test(before))) return true;
+  const clause = before.split(",").pop() ?? "";
+  const refusal = PLACE_REFUSAL.exec(clause);
+  if (!refusal) return false;
+  return !PLACE_HOME.test(clause.slice(refusal.index + refusal[0].length));
+}
 
 function readLocation(t: string, asked: OnboardField | undefined, market?: City): Cand<Location> | undefined {
   let best: Cand<Location> | undefined;
@@ -584,7 +605,7 @@ function readLocation(t: string, asked: OnboardField | undefined, market?: City)
     for (const m of all(/(?<![\d$#.\-\/])(?<!\d,)(\d{5})(?:-\d{4})?(?![\d\/])/, s.text)) {
       if (/^\s*(?:mi\b|miles|dollars|bucks|steps|people|followers)/.test(s.text.slice(m.index + m[0].length))) continue;
       if (/\$\s*$/.test(s.text.slice(0, m.index))) continue;
-      if (/\bnot\s*$/.test(s.text.slice(0, m.index))) continue;
+      if (placeDenied(s.text.slice(0, m.index))) continue;
       const zip = m[1]!;
       best = cand<Location>({ zip, known: isKnownZip(zip) }, s, m, 0.95);
     }
@@ -596,7 +617,7 @@ function readLocation(t: string, asked: OnboardField | undefined, market?: City)
       const entries = AREA_INDEX.get(canon);
       if (!entries?.length) continue;
       const before = s.text.slice(0, m.index);
-      if (NOT_HOME.test(before.trimEnd() + " ") || NOT_HOME.test(before)) continue;
+      if (placeDenied(before) || NOT_HOME.test(before.trimEnd() + " ") || NOT_HOME.test(before)) continue;
       const clause = before.split(/,|\bbut\b|\band\b/).pop() ?? "";
       if (NOT_HOME_CLAUSE.test(clause) && !/\b(?:i live|live in|living in|based in|i'?m in|im in|my place|zip)\b/.test(clause)) continue;
       const ok = asked === "location" || asked === "distance" || HOME_CTX.test(before.split(/\bbut\b/).pop() ?? "") || short || /\b\d{2}\s*\/?\s*(?:f|m|nb)\b|\b[mwf]4[mwfa]\b|\b(?:i'?m|im|i am)\b/.test(before) || /^\s*(?:based|girl|guy|resident|native|here|area)\b/.test(s.text.slice(m.index + m[0].length));

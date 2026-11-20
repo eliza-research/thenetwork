@@ -69,3 +69,11 @@
 {"text":"my sister is about 30","asked":"ageRange","unset":["ageRange"]}
 {"text":"I am around 30 and want someone older","asked":"ageRange","unset":["ageRange"]}
 {"text":"late to early thirties","asked":"ageRange","unset":["ageRange"]}
+{"text":"i don't live in williamsburg","unset":["location"]}
+{"text":"i do not live in williamsburg","unset":["location"]}
+{"text":"i'm not from the east village","unset":["location"]}
+{"text":"i never lived in astoria","unset":["location"]}
+{"text":"not williamsburg","asked":"location","unset":["location"]}
+{"text":"i don't live in 11211","unset":["location"]}
+{"text":"zip isn't 11211","asked":"location","unset":["location"]}
+{"text":"anywhere but williamsburg","unset":["location"]}
