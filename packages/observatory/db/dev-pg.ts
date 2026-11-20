@@ -48,7 +48,8 @@ export async function devPgUp(): Promise<string> {
       const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-U", DEV_PG_USER, "-A", "trust", "-E", "UTF8", "--no-locale"], true);
       if (code !== 0) throw new Error("initdb failed");
     }
-    const code = await sh([pgBin("pg_ctl"), "-D", DEV_PG_DIR, "-o", `-p ${DEV_PG_PORT} -k /tmp`, "-l", join(DEV_PG_DIR, "server.log"), "-w", "start"], true);
+    const socketOption = process.platform === "win32" ? "" : " -k /tmp";
+    const code = await sh([pgBin("pg_ctl"), "-D", DEV_PG_DIR, "-o", `-p ${DEV_PG_PORT}${socketOption}`, "-l", join(DEV_PG_DIR, "server.log"), "-w", "start"], true);
     if (code !== 0) throw new Error(`pg_ctl start failed (see ${join(DEV_PG_DIR, "server.log")})`);
   }
   const admin = new SQL({ url: `${DEV_PG_SERVER}/postgres`, max: 1 });
