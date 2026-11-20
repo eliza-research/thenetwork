@@ -4,11 +4,40 @@
 //   blocking: (a) NC levers lower the bottom/top-decile V14 ratio by <= 0.02 (95% CI lower bound, paired
 //             against every NC lever off); gaming: each strategy's mean net gain <= 25% of a regular's NC.
 //   tracked:  (b) the absolute bottom/top ratio >= 0.80 (a network-health target).
-//   The vouch-period gate (vouchPeriodGate) runs in the default network block, not here.
-import { CapitalLedger, vouchCapacity } from "../../packages/capital/src/index.ts";
+//   The vouch-period and vouch-config gates (vouchPeriodGate, capitalConfigGate) run in the default
+//   network block, not here.
+import { CapitalLedger, resolveCapital, vouchCapacity, type CapitalConfigInput } from "../../packages/capital/src/index.ts";
 import { GATE_MIN_SEEDS, launchGates, runArm } from "../../packages/capital/experiments/run.ts";
 import { DAY } from "../../packages/core/src/clock.ts";
 import { Block, expect } from "./gate.ts";
+
+// A vouch window of zero days is not "no window": the check is half-open, so every entry falls
+// outside it and the lever goes inert with no error. The same window is positive in every other
+// lever and in antiGaming and detection, so resolveCapital must refuse zero here too.
+export async function capitalConfigGate(b: Block): Promise<void> {
+  await b.run("levers: a vouch period must be positive, so the lever cannot go inert", () => {
+    expect(resolveCapital().levers.vouch.periodDays).toBe(30);
+    const problem = (input: CapitalConfigInput): string => {
+      try { resolveCapital(input); return ""; } catch (e) { return e instanceof Error ? e.message : String(e); }
+    };
+    expect(problem({ levers: { vouch: { periodDays: 0 } } })).toMatch("levers.vouch.periodDays must be > 0");
+    expect(problem({ levers: { vouch: { periodDays: -1 } } })).toMatch("levers.vouch.periodDays must be > 0");
+    // Why zero must be refused: one good vouch raises capacity by perGood inside the window and
+    // raises nothing when the window is empty, so the lever would silently stop working.
+    const T0 = Date.UTC(2026, 0, 1);
+    const at = (d: number, n = 0) => T0 + d * DAY + n;
+    const L = new CapitalLedger();
+    for (const [i, who] of ["v", "x"].entries()) L.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
+    L.record({ id: "join-i", t: at(1), type: "member_joined", member: "i", age: 30, vouchedBy: "v" });
+    L.record({ id: "act-i", t: at(2), type: "member_activated", member: "i" });
+    L.record({ id: "value-i", t: at(3), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    const entries = L.internalEntries("v");
+    const inert = structuredClone(resolveCapital());
+    inert.levers.vouch.periodDays = 0;
+    expect(vouchCapacity(entries, at(20))).toBe(3); // base 2, plus the good vouch 1
+    expect(vouchCapacity(entries, at(20), inert)).toBe(2); // an empty window: the vouch no longer counts
+  });
+}
 
 // The vouch-period check is cheap and deterministic, so the default network block runs it
 // (scripts/sim/network.ts); ConsentNetwork reads `capital.vouchCapacity` at invite time.

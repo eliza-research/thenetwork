@@ -126,6 +126,10 @@ export function capitalConfigProblems(c: CapitalConfig): string[] {
     if (!(th[0] < th[1] && th[1] < th[2])) bad.push("levers.effortThresholds must increase");
   }
   for (const [k, v] of Object.entries(c.levers.vouch)) check(`levers.vouch.${k}`, v, nonNeg, ">= 0");
+  // A window, not an amount: at 0 days every entry falls outside it, so the lever would be inert
+  // with no error (spec/capitalLevers.md, "Vouch capacity counts only the vouches and stakes of
+  // its rolling period"). Every other window in this config is positive for the same reason.
+  check("levers.vouch.periodDays", c.levers.vouch.periodDays, pos, "> 0");
   for (const [k, v] of Object.entries(c.levers.reach)) check(`levers.reach.${k}`, v, nonNeg, ">= 0");
   check("levers.reach.perSessions", c.levers.reach.perSessions, pos, "> 0");
   return bad;
