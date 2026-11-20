@@ -101,6 +101,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
   });
+  svc.onBan(async ctx => {
+    // Eager revoke at ban time. Errors propagate, and NetworkService.ban returns failure.
+    // #173 refuses the same phoneKey at bearer use, code exchange, and refresh, including a grant this call missed.
+    for (const key of ctx.phoneHashes) await mcp.revokeAllForKey(key, undefined, { detail: "staff ban" });
+  });
   return mcp;
 }
 

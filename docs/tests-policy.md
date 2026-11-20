@@ -59,7 +59,7 @@ The integration and e2e suites need the dev Postgres (`bun run packages/observat
 | `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server | 70 pass |
 | `packages/network/test/mini.ts` | Helper (`START`, the small world) | |
 
-The security suite is part of the integration suite. `bun run security` runs it alone. AGENTS.md has the same list. The 11 files (2026-10-09):
+The security suite is part of the integration suite. `bun run security` runs it alone. AGENTS.md has the same list. The 12 files (2026-11-17):
 
 | File | What it checks |
 |---|---|
@@ -70,6 +70,7 @@ The security suite is part of the integration suite. `bun run security` runs it 
 | `packages/platform/test/notify-retention.pg.test.ts` | Account erasure and Notify retention |
 | `packages/mcp/test/oauth.test.ts` | MCP OAuth with PKCE |
 | `packages/mcp/test/pg.test.ts` | MCP OAuth on Postgres |
+| `packages/mcp/test/ban-revokes-grants.test.ts` | Staff ban revokes live MCP OAuth grants |
 | `deploy/backend/backend.test.ts` | The backend's "two logins" row-level security check |
 | `deploy/router.test.ts` | The site router strips client-sent proxy headers and signs its own |
 | `packages/network/test/shared-agent.integration.test.ts` | Signed `/internal/turn` calls: replay, isolation between people, STOP, deletion |
