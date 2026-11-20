@@ -88,12 +88,12 @@
 {"text":"yeah thursday evening is good","label":"yes","keys":["a"]}
 {"text":"I'd be up for it, but none of those times work.","label":"yes","keys":[]}
 {"text":"interested, but none of those days work for me","label":"yes","keys":[]}
-{"text":"neither works this week sorry","label":"yes","keys":[]}
-{"text":"none of those, but I'm up for it another day","label":"yes","keys":[]}
-{"text":"would love to, can we find another time?","label":"yes"}
-{"text":"Interested, but could we do a different day?","label":"yes"}
-{"text":"yes but next week would be better","label":"yes"}
-{"text":"Sounds fun! how about next week instead","label":"yes"}
+{"text":"neither works this week sorry","label":"unclear","keys":[]}
+{"text":"none of those, but I'm up for it another day","label":"unclear","keys":[]}
+{"text":"would love to, can we find another time?","label":"unclear"}
+{"text":"Interested, but could we do a different day?","label":"unclear"}
+{"text":"yes but next week would be better","label":"unclear"}
+{"text":"Sounds fun! how about next week instead","label":"unclear"}
 {"text":"yeah im in lol","label":"yes"}
 {"text":"ya im down","label":"yes"}
 {"text":"sure sure","label":"yes"}
@@ -320,3 +320,7 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"Saturday works instead","label":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, let's do Saturday instead","label":"yes","keys":["b"]}
+{"text":"How about Saturday 11am?","label":"yes","keys":["b"]}
+{"text":"What about Thursday 7pm instead?","label":"yes","keys":["a"]}
