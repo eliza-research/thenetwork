@@ -771,6 +771,26 @@ const DAY_SLOTS: [RegExp, Slot[]][] = [
 const WEEKNIGHTS: Slot[] = ["mon_eve", "tue_eve", "wed_eve", "thu_eve", "fri_eve"];
 const WEEKEND: Slot[] = ["sat_day", "sat_eve", "sun_day", "sun_eve"];
 const FREE_CTX = /\b(?:free|available|open|work(?:s)? for me|good for me|can do|best|usually|generally|mostly|easiest|prefer|off)\b/;
+/** A day or a day group the member can name as free or refused. Longer forms come first. */
+const FREE_DAY = "week ?nights?|weekends?|weekdays?|evenings?|nights?|mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:s|nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?";
+const FREE_DAYS = `(?:${FREE_DAY})(?:\\s*(?:,|and|or|&)\\s*(?:${FREE_DAY}))*`;
+const FREE_DAY_NAME = "mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:s|nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?";
+/**
+ * "but Monday" excludes Monday. "but Sundays do" does not: the day after "but" has its own yes.
+ * "but Mondays are not free" still excludes Monday.
+ */
+const BUT_DAY = `but(?=\\s+(?:${FREE_DAY_NAME})(?:(?:\\s+(?:mornings?|afternoons?|evenings?|nights?|eves?))?\\s*(?:$|[,.!]|(?:please|pls|lol|tbh|though|tho|only)\\b)|\\s+(?:(?:are|is|'re)\\s+not|aren'?t|isn'?t|(?:don'?t|dont|won'?t|wont|can'?t|cant|cannot)\\b)))`;
+
+/** Times a clause refuses ("Mondays are not free", "weekends don't work", "no Saturdays", "can't do Friday"). */
+function refusedFreeSlots(clause: string): Slot[] {
+  const out = new Set<Slot>();
+  const take = (phrase: string | undefined) => { if (phrase) for (const slot of slotsIn(phrase)) out.add(slot); };
+  const daysThen = new RegExp(`\\b(${FREE_DAYS})\\b(?:\\s+(?!(?:${FREE_DAY})\\b)\\w+){0,3}\\s+(?:(?:(?:are|is|'re)\\s+not|aren'?t|isn'?t)\\s+(?:free|available|open|good|possible)\\b|(?:are|is|'re)\\s+not\\s*(?:$|[,.])|(?:don'?t|dont|do not|won'?t|wont|will not|can'?t|cant|cannot|couldn'?t|doesn'?t|does not)\\s+(?:usually\\s+|really\\s+)?work\\b)`, "g");
+  const cantDo = new RegExp(`\\b(?:can'?t|cant|cannot|won'?t|wont|will not|don'?t|dont|do not|couldn'?t)\\s+(?:do|make)\\s+(?:the\\s+|on\\s+)?(${FREE_DAYS})\\b`, "g");
+  const noDay = new RegExp(`(?:^|[,;]\\s*|\\bbut\\s+)(?:no|never)\\s+(?:on\\s+|the\\s+)?(${FREE_DAYS})\\b`, "g");
+  for (const re of [daysThen, cantDo, noDay]) for (const m of clause.matchAll(re)) take(m[1]);
+  return [...out];
+}
 
 function slotsIn(text: string): Slot[] {
   const out = new Set<Slot>();
@@ -800,9 +820,12 @@ function readFree(t: string, asked: OnboardField | undefined): { add: Cand<Slot>
       const at = s.start + s.text.indexOf(clause, off);
       off = s.text.indexOf(clause, off) + clause.length;
       // The exception runs to the next comma: "weeknights except mondays, and saturdays", "any night but monday".
+      // "but Sundays do" is not an exception: that day is offered. A named refusal is removed even when
+      // the time sits before "not" ("Mondays are not free").
       let head = clause, rest = "";
-      const ex = /\b(?:except|but not|other than|besides|not|but(?=\s+(?:mon|tue|wed|thu|fri|sat|sun)))\b([^,]*)/.exec(clause);
+      const ex = new RegExp(`\\b(?:except|but not|other than|besides|not|${BUT_DAY})\\b([^,]*)`).exec(clause);
       if (ex) { head = clause.slice(0, ex.index) + " " + clause.slice(ex.index + ex[0].length); rest = ex[1]!; }
+      for (const slot of refusedFreeSlots(clause)) remove.push(slot);
       const busy = /\b(?:i work|working|busy|booked|slammed)\b/.test(head);
       if (busy) { remove.push(...slotsIn(head)); continue; }
       if (!(asked === "free" || FREE_CTX.test(head))) continue;

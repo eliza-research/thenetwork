@@ -1,0 +1,18 @@
+{"text":"mondays are not free","asked":"free","expect":{"free":[]}}
+{"text":"weekends don't work","asked":"free","expect":{"free":[]}}
+{"text":"i can't do saturdays","asked":"free","expect":{"free":[]}}
+{"text":"i cant do sunday","asked":"free","expect":{"free":[]}}
+{"text":"no weekends","asked":"free","expect":{"free":[]}}
+{"text":"never on fridays","asked":"free","expect":{"free":[]}}
+{"text":"weekends are not good for me","asked":"free","expect":{"free":[]}}
+{"text":"thursday is not free","asked":"free","expect":{"free":[]}}
+{"text":"not free on mondays","asked":"free","expect":{"free":[]}}
+{"text":"i'm not free on weekends","asked":"free","expect":{"free":[]}}
+{"text":"mondays are not free","expect":{"free":[]}}
+{"text":"i'm free most nights but mondays are not free","expect":{"free":["fri_eve","sat_eve","sun_eve","thu_eve","tue_eve","wed_eve"]}}
+{"text":"weeknights are free, weekends are not","asked":"free","expect":{"free":["fri_eve","mon_eve","thu_eve","tue_eve","wed_eve"]}}
+{"text":"saturdays don't work but sundays do","asked":"free","expect":{"free":["sun_day","sun_eve"]}}
+{"text":"tuesdays work, thursdays are not free","asked":"free","expect":{"free":["tue_eve"]}}
+{"text":"any night but monday","asked":"free","expect":{"free":["fri_eve","sat_eve","sun_eve","thu_eve","tue_eve","wed_eve"]}}
+{"text":"weeknights","asked":"free","expect":{"free":["fri_eve","mon_eve","thu_eve","tue_eve","wed_eve"]}}
+{"messages":["weeknights","mondays are not free"],"asked":"free","expect":{"free":["fri_eve","thu_eve","tue_eve","wed_eve"]}}

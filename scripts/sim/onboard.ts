@@ -194,6 +194,18 @@ async function corpusGates(b: Block, extract: (msgs: { text: string; asked?: Onb
   }
   gate(`${label}soft fields: accuracy >= 90% (n ${soft.length} rows, ${sN} fields)`, soft.length >= 60 && sOk / sN >= 0.9, `${pct(sOk / sN)} (${sOk}/${sN})${sMiss.length && sOk / sN < 0.9 ? `; misses: ${sMiss.slice(0, 6).join(" | ")}` : ""}`);
 
+  // A refusal of a time is not availability. The free question stays open when nothing free was named.
+  const refusals = await jsonl<Row>("free-refusals.jsonl");
+  const refusalMiss: string[] = [];
+  for (const r of refusals) {
+    const msgs = (r.messages ?? [r.text!]).map(t => ({ text: t, asked: r.asked }));
+    const p = await extract(msgs);
+    for (const [f, w] of Object.entries(r.expect ?? {})) if (!matches(p, f, w)) refusalMiss.push(`${f} ${JSON.stringify(msgs.map(m => m.text).join(" / "))} -> ${JSON.stringify(valueOf(p, f))}`);
+    for (const f of r.unset ?? []) if (isSet(p, f)) refusalMiss.push(`unset ${f} ${JSON.stringify(r.text)}`);
+    rbProblems.push(...readBackProblems(p, msgs.map(m => m.text)));
+  }
+  gate(`${label}refused free times are not stored as free (n ${refusals.length})`, refusals.length >= 12 && refusalMiss.length === 0, refusalMiss.slice(0, 6).join(" | "));
+
   gate(`${label}read-back: 0 sensitive or unstated facts over every corpus row`, rbProblems.length === 0, rbProblems.slice(0, 5).join(" | "));
   const total = (await jsonl<Row>("hard.jsonl")).length + (await jsonl<Row>("hard-heldout.jsonl")).length + amb.length + ages.length + corr.length + soft.length;
   if (!label) b.track(`corpus size: ${total} rows (target 300+)`, total >= 300, `hard ${(await jsonl<Row>("hard.jsonl")).length} + held-out ${(await jsonl<Row>("hard-heldout.jsonl")).length}, ambiguous ${amb.length}, ages ${ages.length}, corrections ${corr.length}, soft ${soft.length}`);
