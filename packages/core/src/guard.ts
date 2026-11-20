@@ -123,6 +123,21 @@ export function foldedVariants(s: string): string[] {
 }
 
 const TLDS = "com|co|io|ly|net|org|app|xyz|biz|me|link|gg|info|us|dev|ai|so|page|site|online|store|shop|club|live|tv|fm|to|cc|ca|uk|de|fr|es|it|nl|eu|au|in|mx|br|tech|life|world|blog|social|chat|zone|one|fun|art|bio|lol|wtf|vip|pro|nyc|la|sf|email|mail|cash|money|pay|bz|gl|im|is|ms|ws|fyi|space|website|top|icu|vercel|netlify|substack|onion";
+// A letter-spaced run ("g m a i l d o t c o m") used to collapse to one word ("gmaildotcom").
+// The spelled-dot pass then never saw "dot". Split "dot" or "punto" back out only when a real
+// label sits on the left and a known TLD sits on the right ("gmail dot com", not "dot in").
+const SPACED_LETTERS = /\b(?:[a-z][ \t]){2,63}[a-z]\b/g;
+const EMBEDDED_DOT = new RegExp(`(?<=[a-z])(dot|punto)(?=(?:${TLDS})(?=(?:dot|punto)|$))`, "g");
+
+function collapseSpacedLetters(v: string): string {
+  const trigger = /\b(?:at|dot)\b|@/.test(v);
+  return v.replace(SPACED_LETTERS, letters => {
+    const joined = letters.replace(/[ \t]/g, "");
+    const split = joined.replace(EMBEDDED_DOT, " $1 ");
+    if (split !== joined) return split;
+    return trigger ? joined : letters;
+  });
+}
 const PROVIDERS = "gmail|googlemail|yahoo|ymail|hotmail|outlook|icloud|protonmail|proton|aol|gmx|yandex|fastmail";
 // A dot glued to the previous word ("urbanism. Dev", "7. In", "Out. To") is sentence punctuation.
 // Those close only for TLDs that are not ordinary words. A space before the dot is defang spacing
@@ -211,7 +226,7 @@ export function contactVariants(s: string): string[] {
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
-    if (/\b(?:at|dot)\b|@/.test(v)) v = v.replace(/\b(?:[a-z][ \t]){2,63}[a-z]\b/g, letters => letters.replace(/[ \t]/g, ""));
+    v = collapseSpacedLetters(v);
     out.add(v);
     // Spelled "dot" only before a known TLD or another spelled dot; spelled "at" only before a domain.
     spelledDot.lastIndex = 0;

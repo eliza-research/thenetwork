@@ -188,6 +188,7 @@
 {"text":"i'll venmo $dinner later","want":"clean","note":"core-2 a $word after venmo is a note, not a handle"}
 {"text":"call five five five, zero one zero two","want":"contact","note":"core-2 spaced punctuation phone"}
 {"text":"my email is s a m at g m a i l dot c o m","want":"contact","note":"core-2 letter-spaced spelled email"}
+{"text":"my email is s a m at g m a i l d o t c o m","want":"contact","note":"core-2 letter-spaced dot stays a separate word"}
 {"text":"call five five five; zero one zero two","want":"contact","note":"core-2 semicolon-separated spelled phone"}
 {"text":"ring me at five five five/ zero one zero two","want":"contact","note":"core-2 slash-separated spelled phone"}
 {"text":"text j a y at p r o t o n dot c o m please","want":"contact","note":"core-2 letter-spaced spelled email proton"}
