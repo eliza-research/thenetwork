@@ -89,6 +89,33 @@ async function eligible(accounts: RsvpAccounts, owner: MemberCommandOwner, city:
   return gatheringRsvpAttendanceAllowed(true, canBeMatched(age), member.home_city === city, effectiveParticipation(member, now).state !== "paused");
 }
 
+/**
+ * Seats held by people who can still be matched. A stored yes from someone now under 18
+ * does not keep a place: the lowest age cannot rise, and a minor cannot attend.
+ */
+export async function gatheringReservedSeatCount(tx: SQL, accounts: RsvpAccounts, app: AppInfo, gatheringId: string, revision: number): Promise<number> {
+  if (app.id !== "ntwrk") return 0;
+  const rows = await tx<{ member_id: string; age: number | null; phones: string[] | null }[]>`select r.member_id,m.age,
+      coalesce(array_agg(p.e164 order by p.e164) filter (where p.e164 is not null), '{}') as phones
+    from network.monthly_gathering_rsvps r join network.members m on m.app_id=r.app_id and m.id=r.member_id
+    left join platform.phone_identities p on p.person_id=m.person_id and p.hold is null
+    where r.app_id=${app.id} and r.gathering_id=${gatheringId} and r.revision=${revision} and r.choice<>'withdrawn'
+    group by r.member_id,m.age`;
+  let reserved = 0;
+  for (const row of rows) {
+    let unmatchable = row.age !== null && !canBeMatched(row.age);
+    if (!unmatchable) for (const e164 of row.phones ?? []) {
+      if (!e164) continue;
+      const membership = await ownerMembership(tx, accounts, { app, memberId: row.member_id, e164 }, false);
+      if (!membership) continue;
+      const age = lowestAge(membership.member.age, await accounts.lowestAge(e164, membership.binding.person));
+      if (!canBeMatched(age)) { unmatchable = true; break; }
+    }
+    if (!unmatchable) reserved++;
+  }
+  return reserved;
+}
+
 /** Recheck a potential attendee against the same canonical scope used for RSVP and roster reads. */
 export async function currentGatheringMember(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner, city: string, now: number): Promise<boolean> {
   if (owner.app.id !== "ntwrk" || city !== "nyc") return false;
@@ -134,9 +161,8 @@ export async function saveGatheringRsvp(tx: SQL, accounts: RsvpAccounts, owner: 
   const reserved = !!saved && saved.revision === command.revision && saved.choice !== "withdrawn";
   if (!gatheringRsvpReplaces(!!saved, saved?.response_id === turn.id, saved?.responded_at.getTime() ?? 0, turn.at, withdrawing, reserved)) return;
   if (!withdrawing && !reserved) {
-    const [seat] = await tx<{ reserved: number }[]>`select count(*)::int as reserved from network.monthly_gathering_rsvps
-      where app_id=${owner.app.id} and gathering_id=${command.id} and revision=${command.revision} and choice<>'withdrawn'`;
-    if (!seat || !gatheringRsvpHasSeat(false, seat.reserved, event.capacity)) return;
+    const taken = await gatheringReservedSeatCount(tx, accounts, owner.app, command.id, command.revision);
+    if (!gatheringRsvpHasSeat(false, taken, event.capacity)) return;
   }
   await tx`insert into network.monthly_gathering_rsvps (app_id,gathering_id,member_id,revision,choice,response_id,responded_at)
     values (${owner.app.id},${command.id},${owner.memberId},${command.revision},${command.choice},${turn.id},${new Date(turn.at)})

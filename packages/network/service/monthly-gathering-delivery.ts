@@ -8,7 +8,7 @@ import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { gatheringEventPreference, storedGatheringInviteRecipientCurrent, type NetworkState } from "../src/network.ts";
 import { BlooioAdapter } from "./channel.ts";
-import { currentGatheringMember, gatheringRsvpReference, type GatheringRsvpKey } from "./monthly-gathering-rsvp.ts";
+import { currentGatheringMember, gatheringReservedSeatCount, gatheringRsvpReference, type GatheringRsvpKey } from "./monthly-gathering-rsvp.ts";
 import { gatheringVenueStillCurrent } from "./monthly-gatherings.ts";
 import { lockPublicEventCatalog } from "./public-events.ts";
 import type { NetworkRuntime } from "./runtime.ts";
@@ -47,18 +47,17 @@ function invitationCard(event: ReviewedInvite, id: string): string {
     + `RSVP GATHERING ${gatheringRsvpReference(id)} ${event.revision} YES`);
 }
 
-async function reviewedInvite(tx: SQL, app: AppInfo, key: GatheringRsvpKey, memberId: string): Promise<ReviewedInvite | undefined> {
-  const [event] = await tx<ReviewedInvite[]>`select g.*,r.reviewed_at as selection_reviewed_at,
+async function reviewedInvite(tx: SQL, accounts: GatheringAccounts, app: AppInfo, key: GatheringRsvpKey, memberId: string): Promise<ReviewedInvite | undefined> {
+  const [event] = await tx<Omit<ReviewedInvite, "reserved">[]>`select g.*,r.reviewed_at as selection_reviewed_at,
       exists (select 1 from network.monthly_gathering_rsvps s where s.app_id=g.app_id and s.gathering_id=g.id
-        and s.revision=g.revision and s.member_id=i.member_id) as has_rsvp,
-      (select count(*)::int from network.monthly_gathering_rsvps s where s.app_id=g.app_id and s.gathering_id=g.id
-        and s.revision=g.revision and s.choice<>'withdrawn') as reserved
+        and s.revision=g.revision and s.member_id=i.member_id) as has_rsvp
     from network.monthly_gatherings g join network.monthly_gathering_invitation_reviews r
       on r.app_id=g.app_id and r.gathering_id=g.id and r.revision=g.revision
     join network.monthly_gathering_invitees i on i.app_id=r.app_id and i.gathering_id=r.gathering_id and i.revision=r.revision
     where g.app_id=${app.id} and g.city='nyc' and g.id=${key.id} and g.revision=${key.revision}
       and i.member_id=${memberId} and i.position<=r.recipient_count and r.recipient_count<=g.capacity`;
-  return event;
+  if (!event) return;
+  return { ...event, reserved: await gatheringReservedSeatCount(tx, accounts, app, key.id, key.revision) };
 }
 
 async function reviewCurrent(tx: SQL, event: ReviewedInvite, revision: number, rollout: boolean, now: number): Promise<boolean> {
@@ -97,7 +96,7 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
       const notice = await rt.scoped(async tx => {
         const [stored] = await tx`select id from network.messages where app_id=${app.id} and id=${id}`;
         if (stored) return;
-        const event = await reviewedInvite(tx, app, candidate, memberId);
+        const event = await reviewedInvite(tx, accountsFor(tx), app, candidate, memberId);
         const at = now();
         if (event && await reviewCurrent(tx, event, candidate.revision, true, at) &&
           await recipientCurrent(tx, accountsFor(tx), app, event, memberId, address, true, at)) return invitationCard(event, candidate.id);
@@ -125,7 +124,7 @@ export async function gatheringInvitationAdmission(tx: SQL, app: AppInfo, runtim
   if (!key || !memberId || app.id !== "ntwrk" || row.app !== app.id || row.kind !== "proactive" || row.oppId ||
     row.mediaUrls.length || row.approvedPhotos?.length) return refused;
   const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${runtimeId} and app_id=${app.id}`;
-  const event = await reviewedInvite(tx, app, key, memberId);
+  const event = await reviewedInvite(tx, accounts, app, key, memberId);
   if (!saved || !event) return refused;
   const currentReview = await reviewCurrent(tx, event, key.revision, saved.state.matchingEnabled, now);
   const eligible = currentReview && await recipientCurrent(tx, accounts, app, event, memberId, row.to,

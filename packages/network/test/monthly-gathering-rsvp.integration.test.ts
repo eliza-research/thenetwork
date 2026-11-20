@@ -145,3 +145,68 @@ test.skipIf(!pgAvailable)("signed gathering RSVPs bind to the approved app and r
     await dropDb(url);
   }
 }, 120_000);
+
+test.skipIf(!pgAvailable)("a stored gathering RSVP no longer keeps a seat after the member is under 18", async () => {
+  // spec/monthlyGatheringRsvp.md, "Each member owns one RSVP and withdrawal wins a tie"
+  // spec/monthlyGatheringRsvp.md, "Only the exact approved gathering accepts a fresh RSVP"
+  const url = await migratedDb("network_gathering_minor_seat");
+  const sql = new SQL(url);
+  const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
+  const secret = "synthetic-gathering-minor-seat-signature";
+  const service = new NetworkService({ url, clock, log: () => {}, photoStorage: null,
+    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    tokens: "admin@ntwrk:ntwrk-admin",
+    networks: [{ id: "ntwrk:nyc", matchingEnabled: false }],
+  });
+  const base = "/apps/ntwrk/gatherings";
+  const staff = (path: string, body?: object) => service.fetch(new Request(`http://localhost${path}`, {
+    method: body ? "POST" : "GET",
+    headers: { authorization: "Bearer ntwrk-admin", "content-type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }));
+  try {
+    await service.start();
+    const app = APPS.ntwrk;
+    const people = [];
+    for (const [index, firstName] of ["Ada", "Bo", "Cy", "Dee", "Ev"].entries()) {
+      const e164 = `+1212555062${index}`;
+      const invitation = await service.accounts.invite(app, e164);
+      if (!invitation) throw new Error("Fixture invitation refused");
+      const joined = await service.accounts.join(app, { e164, personId: invitation.personId }, {
+        firstName, age: 30 + index, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+      });
+      if (!joined.ok) throw new Error(`Fixture join refused: ${joined.error}`);
+      people.push({ e164, ...joined.membership });
+    }
+    const [ada, bo, cy, dee, ev] = people;
+    const startsAt = Date.UTC(2026, 10, 21, 17);
+    const created = await staff(base, { month: "2026-11", venue: { kind: "curated", id: "mccarren-park" }, startsAt, endsAt: startsAt + HOUR, capacity: 3 });
+    expect(created.status).toBe(201);
+    const { gathering } = await created.json() as { gathering: { id: string } };
+    expect((await staff(`${base}/${gathering.id}/review`, { decision: "approve", revision: 0 })).status).toBe(200);
+    const send = async (person: { e164: string }, id: string) => {
+      clock.advance(MINUTE);
+      const input: TurnRequest = { app: "ntwrk", from: person.e164, messageId: id, text: `RSVP GATHERING ${gathering.id} 1 YES`,
+        channel: "blooio", transport: "imessage", receivedAt: clock.now(), to: null };
+      const body = JSON.stringify(input);
+      const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id, body, nowS: Math.floor(clock.now() / 1000) });
+      const response = await service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers, body }));
+      return response.json() as Promise<{ replies?: string[] }>;
+    };
+    const accepted = async (person: { e164: string }, id: string) => (await send(person, id)).replies?.length === 1;
+    expect(await accepted(ada!, "seat-ada")).toBe(true);
+    expect(await accepted(bo!, "seat-bo")).toBe(true);
+    expect(await accepted(cy!, "seat-cy")).toBe(true);
+    expect(await accepted(dee!, "seat-dee-full")).toBe(false);
+    await service.accounts.recordAge(ada!.e164, await service.accounts.personFor(ada!.e164), 16);
+    expect(await accepted(dee!, "seat-dee-after-minor")).toBe(true);
+    expect(await accepted(ev!, "seat-ev-still-full")).toBe(false);
+    expect(await accepted(ada!, "seat-ada-minor")).toBe(false);
+    const roster = await (await staff(`${base}/${gathering.id}/roster?revision=1`)).json() as { items: { memberId: string }[] };
+    expect(roster.items.map(item => item.memberId).sort()).toEqual([bo!.memberId, cy!.memberId, dee!.memberId].sort());
+  } finally {
+    await service.close();
+    await sql.close();
+    await dropDb(url);
+  }
+}, 120_000);
