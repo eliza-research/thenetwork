@@ -3556,6 +3556,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (groupMayRemainWithoutAlternate(group, o.participants.filter(p => o.status.get(p) !== "unavailable").length)) {
       o.participants = o.participants.filter(p => p !== out); o.status.delete(out);
       if (o.first === out) o.first = o.participants[0];
+      // The reason was built for the old roster. Rebuild it before anyone is introduced, the same
+      // way a swap does, so the booking does not describe the person who left.
+      delete o.explanations[out];
+      this.reexplain(o);
       return;
     }
     this.close(o, "no one available", { releasePartial: true });
