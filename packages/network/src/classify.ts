@@ -536,7 +536,7 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:maybe|perhaps|some|next) (?:other |another )?time\b(?!s)|^\s*(?:another|other) time\s*$/,
   /👎|🙅|❌/,
 ];
-/** "Can't", "won't" and "busy" refuse the offer unless a time follows (then they refuse that time). "Can't wait" is a yes. */
+/** "Can't", "won't", "busy" and "away" refuse the offer unless a time follows (then they refuse that time). "Can't wait" is a yes. */
 const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to|couldn'?t|won'?t)\b|(?:^\s*|\b(?:i'?m|im|i am|pretty|really|so|super|too|very|been|kinda)\s+)(?:busy|slammed|swamped|booked up)\b|\b(?:i'?m|im|i am|i'?ll be|i will be) (?:away|out of town|traveling|travelling)\b/g;
 /** "Busy now, ask me later": a deferral, not a refusal of the offer. */
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
@@ -625,7 +625,7 @@ const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|wh
 const ALL_WEAK = /\b(either|both)\b/;
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
- * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
+ * Thursday", "away Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
  */
 const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|away|out of town|travel(?:l)?ing|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
