@@ -272,14 +272,15 @@ export class PgStore implements NetworkStore {
       const prev = await tx`select coalesce(jsonb_path_query_array(state, '$.opps[*].id'), '[]'::jsonb) as opps, coalesce(jsonb_path_query_array(state, '$.requests[*].id'), '[]'::jsonb) as reqs
         from network.network_state where id = ${this.id}`;
       const ids = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : (v ?? [])) as string[];
-      const goneOpps = ids(prev[0]?.opps).filter(x => !state.opps.some(o => o.id === x));
-      const goneReqs = ids(prev[0]?.reqs).filter(x => !state.requests.some(r => r.id === x));
+      const oppIds = new Set(state.opps.map(o => o.id)), reqIds = new Set(state.requests.map(r => r.id));
+      const goneOpps = ids(prev[0]?.opps).filter(x => !oppIds.has(x));
+      const goneReqs = ids(prev[0]?.reqs).filter(x => !reqIds.has(x));
       if (goneOpps.length) await tx`delete from network.opportunities where id in ${tx(goneOpps)}`;
       if (goneReqs.length) await tx`delete from network.requests where id in ${tx(goneReqs)}`;
       // Participations are rewritten for every opportunity the state holds: a re-roll or a decline
       // (forget) changes who is in it. Gone opportunities lose theirs by the cascade.
-      const oppIds = state.opps.map(o => o.id);
-      for (let i = 0; i < oppIds.length; i += 500) await tx`delete from network.participations where opportunity_id in ${tx(oppIds.slice(i, i + 500))}`;
+      const held = [...oppIds];
+      for (let i = 0; i < held.length; i += 500) await tx`delete from network.participations where opportunity_id in ${tx(held.slice(i, i + 500))}`;
       let parts = rows.participations;
       // With the console schema, a participation needs its network.members row (foreign key): skip any member not there.
       const [{ members }] = await tx`select to_regclass('network.members') is not null as members`;
