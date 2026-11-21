@@ -1,5 +1,3 @@
-// A refusal that starts with "ok" or "sure" ("ok, not going", "sure I'm away that week") is a no to the
-// probe: no meeting is booked. A yes that only uses the same words ("sure, don't cancel it") still books.
 import { describe, expect, test } from "bun:test";
 import { Mini } from "./mini.ts";
 
@@ -28,8 +26,6 @@ describe("a probe answer that starts with ok or sure", () => {
   }
 });
 
-// Review on #204: "away", "traveling" and "out of town" before a day refuse that day only, the same as
-// "can't do Saturday": the meeting is booked on the other day the member named.
 describe("an away day in a probe answer", () => {
   for (const text of ["I'm away Saturday, Sunday works", "I'm traveling Saturday, Sunday works", "I'm away all of Saturday, Sunday works", "I'm away next Saturday, but Sunday works"]) {
     test(`"${text}" books Sunday only`, async () => {
@@ -40,7 +36,6 @@ describe("an away day in a probe answer", () => {
   }
 });
 
-// After a booking, a yes that uses the same words keeps the date; an ok/sure refusal calls it off.
 describe("a reply to a booked plan", () => {
   async function booked() {
     const w = await probeAnswer("yes");
