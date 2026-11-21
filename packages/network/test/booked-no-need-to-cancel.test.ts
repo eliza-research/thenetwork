@@ -1,5 +1,3 @@
-// After a booking, "no need to cancel" and "we don't need to cancel" are not a cancel: the date stays
-// and the other member hears nothing. "I need to cancel" and "I'm not comfortable meeting" call it off.
 import { describe, expect, test } from "bun:test";
 import { Mini } from "./mini.ts";
 
