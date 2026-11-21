@@ -2,7 +2,7 @@
 
 The [product stories](../product/stories.md) describe the member and staff flows. This directory holds their existing standalone Quint state machines. Each Markdown file contains the flow, its safety scope, and one executable `quint` block. Change the Markdown source when you update a model.
 
-The 31 modules came from `claude/quint-state-machines` at `30d950e1d6fa027a67b94cc6b03ba379dc923a63`. That source revision includes the latest local wave 4 model changes. Their comments document bounds, abstractions, code locations, excluded cases, and existing drift at that revision. The source revision also contains the research plan and findings referenced in comments. Code locations and results need a new comparison with the runtime on this branch.
+The 31 imported modules came from `claude/quint-state-machines` at `30d950e1d6fa027a67b94cc6b03ba379dc923a63`. That source revision includes the latest local wave 4 model changes. Their comments document bounds, abstractions, code locations, excluded cases, and existing drift at that revision. The source revision also contains the research plan and findings referenced in comments. Code locations and results need a new comparison with the runtime on this branch. The [candidate cache](candidate_cache.md) model is new on this branch; it has no source revision.
 
 ## Run the models
 
@@ -34,7 +34,8 @@ entire imported model.
 | [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification](../otpLimits.md), [web sessions](../webSession.md) |
 | [backup_restore](backup_restore.md) | Database restore | [Scratch restore lifecycle](../databaseRestore.md) |
 | [boot_config](boot_config.md) | Service start and proxy configuration | [Startup configuration](../bootPolicy.md) |
-| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Candidate screening](../candidateScreening.md), [bounded candidate search](../candidateSearch.md), [reciprocal pair value](../pairValue.md), [travel presence](../travelPresence.md), [signed travel journey](../travelPresenceJourney.md), [exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
+| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Candidate screening](../candidateScreening.md), [bounded candidate search](../candidateSearch.md), [candidate cache repair](../candidateCache.md), [reciprocal pair value](../pairValue.md), [travel presence](../travelPresence.md), [signed travel journey](../travelPresenceJourney.md), [exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
+| [candidate_cache](candidate_cache.md) | Cached candidate lists under joins, leaves and changes | [Candidate cache repair](../candidateCache.md) |
 | [chatjson_loop](chatjson_loop.md) | Structured model calls | [Structured request state machine](../chatRetry.md) |
 | [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | [Cloud callback and session issuance](../cloudSignIn.md), [session and grant validation](../cloudAuthority.md) |
 | [console_privacy](console_privacy.md) | Staff console data visibility | [Staff permissions and view scope](../staffPermissions.md) |
