@@ -209,8 +209,10 @@ export class Notifier {
     const d = await this.store.getDelivery(deliveryId);
     if (!d || deliveryIdFor(d.personId, d.itemIds) !== deliveryId) return false;
     const items = await this.store.getItems(d.itemIds);
-    if (items.length !== d.itemIds.length || items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)) return false;
-    return items.some(i => i.seenAt === undefined);
+    const needed = items.length === d.itemIds.length && !items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)
+      && items.some(i => i.seenAt === undefined);
+    if (!needed && d.outcome === undefined) await this.store.withdrawDelivery(deliveryId);
+    return needed;
   }
 
   private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
