@@ -237,13 +237,23 @@ The member conversation runs in Eliza, upstream in elizaOS/eliza (`plugins/plugi
 
 This repository is a [Slop](https://slop.cash) bounty repository with a monthly pool of 1,000 USDC. Maintainers accept outcomes on GitHub. Slop scores accepted merges and pays the pool in USDC after maintainer review. Nothing is guaranteed or held in escrow.
 
-Before you start, read [CONTRIBUTING.md](CONTRIBUTING.md). In short:
+## Contributing
 
-1. **First step: star and fork this repository** with your own GitHub account (required for project tracking). Work from your fork.
-2. The [product specification](spec/product/README.md) defines the MVP.
-3. Accepted: reproduced bug fixes, validation of the matching algorithm and the simulations, measured quality improvements (hill-climbing), security fixes, and tests that prove real behavior.
-4. Not accepted: UI, style or copy changes, preference refactors, speculative features, busywork tests, mock-only proof, placeholders and unverified claims.
-5. Evidence must use real LLM calls and real agent clients (Claude Code, Codex or ChatGPT, Hermes Agent, OpenClaw, Muse, Grok, elizaOS, Cursor and others).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before you start. Star and fork this
+repository with your own GitHub account. Open every PR from your fork into
+`vibestack`, the repository's main branch.
+
+- Follow the [top-level stories](spec/product/stories.md), executable
+  rules, and [flow models](spec/models/README.md) exactly. Verify that the
+  approved behavior is fully implemented and integrated in the running app.
+- Run the full validation suite for every PR. Quint, Dafny, Bombadil, and
+  all other required checks must pass before merge.
+- Show before and after results for code changes. For an allowed UI change,
+  include before and after screenshots and recordings.
+- Remove unnecessary files, low-quality output, dead or redundant code, and
+  superseded implementations. Keep the diff focused and code free of
+  comments. Meet all [Vibestack requirements](SPEC.md) and
+  [TypeScript conventions](AGENTS.md#typescript-best-practices) before merge.
 
 AI coding agents: read [AGENTS.md](AGENTS.md).
 

@@ -16,8 +16,8 @@ This repository is a Slop bounty repository with a monthly pool of 1,000 USDC. [
 
 1. Star this repository with your own GitHub account.
 2. Fork this repository to your own GitHub account.
-3. Do all work on a branch in your fork. Open your PR from the fork into `vibestack`.
-   For a maintainer-requested backport, follow the guide on the target branch.
+3. Do all work on a branch in your fork. Open every PR from your fork into
+   `vibestack`, the repository's main branch.
 
 You can use the GitHub web page, browser automation, computer use or the GitHub CLI:
 
@@ -43,11 +43,12 @@ needs approval. Link the specific story or rule when you propose a change.
   source spec and the published modules together. Generation and snapshot
   comparison reuse Quint runs under `.spec-cache/snapshots/` when their
   effective inputs match. Both commands compile the current VibeLang shells.
-- Keep the relevant [whole-flow model](spec/models/README.md) consistent
-  with the runtime. Compare the guards, outcomes, and invariants where
-  the generated rule enters the flow.
-- Run `pnpm run check` for the Vibestack spec and the project commands in
-  section 6 for the application. The product owner compares each changed
+- Fully implement and integrate the approved behavior in the
+  [top-level stories](spec/product/stories.md), executable rules, and
+  [whole-flow models](spec/models/README.md). Follow them exactly.
+  Verify behavior through the application's real entry points. Compare
+  guards, outcomes, and invariants where each rule enters the flow.
+- Run the full validation suite in section 6. The product owner compares each changed
   rule with its Quint and records approval with `pnpm run accept`.
   When every model is valid, the checker runs type checks and proofs alongside
   the simulations. It shares Node's compile cache with child processes and
@@ -151,10 +152,21 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 
 ## 6. The validation layer
 
-The validation layer is the simulations plus the integration and e2e tests ([docs/tests-policy.md](docs/tests-policy.md)). There are no unit tests and no smoke tests. Do not add any.
+Run the full validation suite for every PR. Every required test, proof, and
+check must pass before merge. Resolve all failures, skipped required
+checks, and open proof obligations. Verify that the running application
+meets the top-level stories and models.
+
+The suite includes formal checks, browser exploration, simulations,
+integration tests, and end-to-end tests. Follow the
+[test policy](docs/tests-policy.md). Do not add unit or smoke tests.
 
 | Command | What it does | Needs |
 |---|---|---|
+| `pnpm run check` | Run the Vibestack checks, including Quint simulations, TypeScript comparison, and Dafny proofs. | [Vibestack toolchain](README.md#quick-start) |
+| `pnpm run quint:check` | Check the whole-flow Quint models, traces, safety, and reachability. | [Quint toolchain](spec/models/README.md#run-the-models) |
+| `pnpm run spec:check-generated` | Verify the checked-in TypeScript and VibeLang outputs against their sources. | Vibestack toolchain |
+| `pnpm run spec:explore` | Run Bombadil on the Peon signup flow. | [Chromium and the local platform](SPEC.md#exploring-the-page) |
 | `pnpm run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline, pipeline-slop and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline, pipeline-slop and audit blocks (they skip without it) |
 | `pnpm run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
 | `pnpm run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
@@ -166,9 +178,9 @@ The validation layer is the simulations plus the integration and e2e tests ([doc
 | `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
 | `pnpm run sites:build` | The production build of the four sites. | |
 
-CI (`.github/workflows/ci.yml`) runs all of these with no secrets or model
-providers. For changes to model-backed behavior, show a real-LLM run
-(section 7.2).
+Use `REQUIRE_PG=1` for checks that depend on Postgres. Run any other required
+checks in the [command map](README.md#commands). For changes to model-backed
+behavior, show a real-LLM run (section 7.2).
 
 ## 7. Validate the matching algorithm
 
@@ -286,6 +298,7 @@ Do not change the UI, the visual design, styles or copy. This includes the sites
 
 The only exception: a change that fixes a broken user flow. That PR must include:
 
+- Screenshots of the same screen and state before and after the fix.
 - A video of the flow before the fix (broken) and after the fix (working).
 - Detailed test steps from a clean checkout: commands, URL and what to click, with the expected result of each step.
 
@@ -346,7 +359,14 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 ### 12.1 Rules
 
 - Link a reproduced issue, approved product story or rule, or maintainer request.
-- Use the code that exists. Remove dead code and merge duplicates. Add a new type, file, package or dependency only when it is necessary, and say why.
+- Keep the diff focused. Remove low-quality output, unnecessary files, dead
+  or redundant code, and superseded implementations. Reuse code that
+  serves the approved behavior. Explain each new type, file, package, or
+  dependency.
+- Keep code free of comments. Put explanations in the spec or documentation.
+  Use comment syntax only for required tool directives such as `//@` proof contracts.
+- Meet all [Vibestack requirements](SPEC.md) and
+  [TypeScript conventions](AGENTS.md#typescript-best-practices) before merge.
 - Explain the cause. Describe at least two other implementations and why yours is better.
 - A bug fix adds one sim gate, scenario, corpus row, or integration or e2e case that fails before the fix. That is enough. Do not add more.
 - For measured research or simulation changes, write results to
@@ -358,20 +378,23 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 Use the [evidence policy](#evidence) for the PR body. Include each applicable
 item below.
 
-- [ ] The repository is starred and the PR comes from your fork.
+- [ ] The repository is starred and the PR comes from your fork into `vibestack`.
 - [ ] Linked issue, approved product story or rule, or maintainer request.
 - [ ] The root cause, in plain words.
 - [ ] The fix, and two other implementations you did not use.
-- [ ] The before and after results, with the same command, seeds and data.
+- [ ] For code changes, before and after results with the same inputs,
+  commands, and seeds where used.
+- [ ] For UI changes, before and after screenshots and recordings.
 - [ ] For model-backed changes, real-LLM commands and output, provider, exact
   model ID, number of calls and cost.
 - [ ] For agent flow changes, client and version, provider, model and result
   for each applicable client (section 8).
-- [ ] For application changes, report `pnpm run sim`, `pnpm run typecheck`,
-  `pnpm run test:integration` and `pnpm run test:e2e`. Set `REQUIRE_PG=1` for
-  the Postgres-dependent checks. Paste the summary lines.
-- [ ] For spec changes, confirm that the spec, generated modules, and related
-  flow model agree. Include Vibestack check results and any open obligations.
+- [ ] Passing results for the full validation suite in section 6, including
+  Quint, Dafny, Bombadil, and the application checks.
+- [ ] Evidence that the affected stories, rules, generated modules, and flow
+  models agree and are fully integrated into the running application.
+- [ ] The diff follows Vibestack and TypeScript requirements. Code is free
+  of comments, and obsolete files and implementations are removed.
 - [ ] Test steps and the expected result of each step.
 - [ ] Risks and trade-offs.
 - [ ] No secrets, `.env`, `runs/` or member data in the diff.
@@ -399,7 +422,8 @@ Issue, approved specification and rule, or maintainer request.
 ## Evidence
 - Change types: comma-separated types
 - Test results: commands and observed outcomes or linked results
-- Proof of change: reproduction and before/after results or demonstrated outcome
+- Proof of change: before and after results for code changes, or the outcome of other changes
+- UI screenshots: before and after images, for UI changes
 - UI video: before and after recordings, for UI changes
 - Runtime logs: redacted service, simulator or agent output, for non-UI changes
 - Benchmarks: reproducible baseline and PR measurements, for performance changes
@@ -427,12 +451,14 @@ line. A Markdown bullet before the field name is optional.
   behavior, `ui` for a user interface, `performance` for a claimed
   optimization, and `hardware` for device-dependent behavior.
 - `Test results:` Give the exact commands and observed results or link the CI
-  jobs and summarize their outcome. Report failures and skips. For docs-only
-  work, show the applicable Markdown, link, example, or consistency check.
+  jobs and summarize their outcome. Report the full suite from section 6.
+  For docs-only work, also show the applicable Markdown, link, or example.
 - `Proof of change:` Show how to reproduce the issue on the target branch
-  and what happened on the PR commit with the same input. For an approved
-  capability, show the user journey and the expected outcome. For docs-only
-  work, show the contradiction or gap and the corrected instruction.
+  and what happened on the PR commit with the same input. For a new
+  capability, show the previous behavior and the completed journey.
+  For docs-only work, show the contradiction or gap and the corrected instruction.
+- `UI screenshots:` For UI changes, show the same screen and state before
+  and after the change.
 - `UI video:` For UI fixes, link recordings of the broken and fixed flow.
   Show the steps in the affected site, connector screen, or staff console.
   Use synthetic accounts. The broken-flow exception in section 9 applies.
