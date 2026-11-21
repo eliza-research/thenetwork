@@ -37,20 +37,13 @@ interface World {
 }
 
 export async function pipelineBlock(b: Block): Promise<void> {
-  // Every market the system declares must resolve a zone through the outbound queue's fallback.
-  // `resolveTimeZone(undefined, city)` is the single guard for "can I compute this member's local
-  // time", and the queue parks an agent-initiated text as `parked_invalid_timezone` when it fails.
-  // A local copy of the city table that missed a market therefore silenced every proactive text
-  // to that market instead of erroring, so the table is checked against `City` itself.
   await b.run("pipeline: every declared market has a quiet-hours zone, so no market is parked as an invalid timezone", () => {
     const cities = Object.keys(CORE_CITY_TZ);
     expect(cities.length).toBeGreaterThanOrEqual(3);
     for (const city of cities) {
       expect(resolveTimeZone(undefined, city)).toBe(CORE_CITY_TZ[city as keyof typeof CORE_CITY_TZ]);
-      // The queue's rule: a city it cannot resolve ends the row instead of sending it.
       expect(resolveTimeZone(undefined, city)).not.toBeNull();
     }
-    // A city outside the table still fails closed, so the check is not a blanket true.
     expect(resolveTimeZone(undefined, "nowhere")).toBeNull();
   });
   await b.run("pipeline: dry run stays the default: no live flag in this process, a real provider never gets a bypass of the flags", () => {
