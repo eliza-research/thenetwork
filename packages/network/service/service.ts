@@ -946,7 +946,7 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
+   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app, but an answer to a pending "what are you looking for?" goes to The Network;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
