@@ -44,11 +44,6 @@ export interface NotifyStore {
   pendingDeliveries(personId: string): Promise<DeliveryRecord[]>;
   /** Close deliveries sent before `before` with no outcome as ignored. Returns how many. */
   expireDeliveries(before: number, at: number): Promise<DeliveryRecord[]>;
-  /**
-   * Remove a delivery that was never sent: the queue dropped it at send time because it was no longer
-   * needed (stillNeeded). It no longer counts toward the weekly cap and never closes as ignored. A
-   * delivery that already has an outcome is kept. True when one was removed.
-   */
   withdrawDelivery(deliveryId: string): Promise<boolean>;
 
   /** False when the token already exists (the caller draws another). */

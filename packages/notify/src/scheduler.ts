@@ -212,8 +212,6 @@ export class Notifier {
     const items = await this.store.getItems(d.itemIds);
     const needed = items.length === d.itemIds.length && !items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)
       && items.some(i => i.seenAt === undefined);
-    // Seen, expiry and erasure never revert: the queue drops this text unsent. A text that was never
-    // sent spends no weekly-cap slot and is never an ignored outcome for the surface it pointed at.
     if (!needed && d.outcome === undefined) await this.store.withdrawDelivery(deliveryId);
     return needed;
   }
