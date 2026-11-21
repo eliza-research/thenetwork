@@ -946,8 +946,7 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app, unless
-   *     it answers The Network's pending "what are you looking for?" (then The Network enrolls them);
+   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
@@ -965,8 +964,6 @@ export class NetworkService implements RuntimeHost {
     const read = profileReadRequest(ev.text, this.apps);
     if (read?.kind === "read" && read.app) return { app: read.app, shared: true };
     const e164 = normalizePhone(ev.from);
-    // The answer to The Network's "what are you looking for?" that is an app's own word ("friends",
-    // "friends.help"): the question enrolls them (rule 3), never a keyword join that asks name and age again.
     if (e164 && lookingFor(ev.text).length && (await this.pendingOf(e164, "looking_for"))) return { app: "ntwrk", shared: true };
     const named = this.namedApp(ev.text);
     if (named) return { app: named, shared: true };

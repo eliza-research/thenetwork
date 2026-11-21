@@ -1,7 +1,3 @@
-// The answer to The Network's "what are you looking for?" that is one app's own word ("friends", "friends.help") enrolls the
-// person in that app (service.ts header: "with no keyword a stranger joins The Network ... then \"what are you looking for?\"
-// (friends, dating, work), which enrolls them"). It is not a keyword join that asks for name and age again.
-// Postgres in a database of its own per test process; dry-run adapters, nothing is sent.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
@@ -86,7 +82,6 @@ describe.skipIf(!pgAvailable)("the answer to \"what are you looking for?\" (Post
       expect((await outbound(nm.id)).map(m => m.body)).toContain(LOOKING_FOR_ASK);
       expect(await pending()).toEqual(["looking_for:ntwrk"]);
       const before = directs.length;
-      // Before the fix: "join_asked", friends asks for name and age, and pending_texts holds join:friends too.
       expect(await text(s, clock, mo, answer)).toBe("handled");
       expect(await memberships(mo)).toEqual(["friends:active", "ntwrk:active"]);
       expect((await outbound(nm.id)).at(-1).body).toBe(enrolledText([APPS.friends]));
