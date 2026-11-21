@@ -14,6 +14,7 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
     "Invitation required": { app: "Ntwrk", requiresInvitation: true },
     "Signup error": { error: "Check your details and try again." },
     "Prefilled from the agent": { prefill: { firstName: "Ari", homeCity: "sf" } },
+    "Rendered by ntwrk.party": { siteOrigin: "https://friends.help" },
   },
   play: {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -29,6 +30,14 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
       await expect(canvasElement.querySelector("input[name=phone], input[name=code]")).toBeNull();
       await expect((canvasElement.querySelector("input[name=invitation]") as HTMLInputElement).required).toBe(false);
       await expect(canvasElement.querySelector("input[name=consentVersion]")?.getAttribute("value")).toBe("example");
+      // On the app's own site, the legal links stay relative.
+      const hrefs = [...canvasElement.querySelectorAll("a")].map(a => a.getAttribute("href"));
+      await expect(hrefs).toEqual(["/", "/terms#sms", "/terms", "/privacy", "/privacy", "/terms"]);
+    },
+    "Rendered by ntwrk.party": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      // ntwrk.party renders the signup for friends.help, so every legal link opens friends.help's own pages.
+      const hrefs = [...canvasElement.querySelectorAll("a")].map(a => a.getAttribute("href"));
+      await expect(hrefs).toEqual(["https://friends.help/", "https://friends.help/terms#sms", "https://friends.help/terms", "https://friends.help/privacy", "https://friends.help/privacy", "https://friends.help/terms"]);
     },
     "Prefilled from the agent": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       // spec/authorizationPages.md, "The signup form shows the draft that the person approved in the agent".

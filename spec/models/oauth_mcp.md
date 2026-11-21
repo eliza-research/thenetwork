@@ -60,15 +60,38 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //    data, and no invariant needs it.
 //  - The platform number change records revocations in its own transaction. This move updates grants,
 //    tokens and drafts without running the assistant-link hook. The model retains its existing ban handling.
+//  - Hosts and apps (spec/connectorTools.md, "The ntwrk.party host serves every app at its own path"; H:1428-1475
+//    requestApp, apps.ts mcpPath and appAtPath). A client is registered on one host (client.app = the host, H:453,
+//    H:483). The friends and peon sites serve only their own app. The ntwrk.party hub (`HUB`, client cN) serves
+//    every app at /mcp/<app>, and the resource of the authorization link names the app (servedResource, H:118-128).
+//    The app of the request, and so of its grant, comes from that resource, not from the client. The model leaves
+//    out the grants for The Network app itself: APPS holds the memberships that the invariants need, and the hub
+//    client asks for friends or peon.
+//  - Each later page of a request (phone, code, signup, consent) is read by liveRequest (H:646-667): the browser
+//    cookie of the host and a resource that this host serves for the request's app. The model gives the host that
+//    receives the consent POST as a parameter of approveReadOn; the other pages keep the request id only.
+//  - The access token of a tool call must be for the resource of the path and for the app of the path
+//    (grantServesApp, H:1235-1240). The tool actions take the app of the path.
+//  - Signup prefill (spec/authorizationPages.md, "The signup form shows the draft that the person approved in the
+//    agent"; H:707-717 signupPrefillFor, store.ts useSignupPrefill, P:123-145). The model merges the signup step into
+//    the consent step: openSignup reads the request at step consent. The draft expiry has no clock (see above).
 module oauth_mcp {
 
   // ---------------------------------------------------------------- constants
   pure val PERSONS = Set("p1", "p2")
   pure val PHONES = Set("n1", "n2")
   pure val APPS = Set("friends", "peon")
-  pure val CLIENTS = Set("cF", "cP")
-  /** The app a client registered on (H:331; every grant of a client is for this app). */
-  pure def clientApp(c: str): str = if (c == "cF") "friends" else "peon"
+  /** cF and cP registered on the friends and peon sites; cN registered on the ntwrk.party hub. */
+  pure val CLIENTS = Set("cF", "cP", "cN")
+  /** The ntwrk.party host (connectorTools.md hubHost). */
+  pure val HUB = "ntwrk"
+  pure val HOSTS = Set("friends", "peon", HUB)
+  /** The host a client registered on (client.app, H:453 and H:483). */
+  pure def clientHost(c: str): str = if (c == "cF") "friends" else if (c == "cP") "peon" else HUB
+  /** connectorTools.md hostBindsApp: an app site serves only its own app; the hub serves every app. */
+  pure def hostBindsApp(host: str, app: str): bool = host == app or host == HUB
+  /** connectorTools.md grantServesApp: a token serves only the app of its grant. */
+  pure def grantServesApp(grantApp: str, pathApp: str): bool = grantApp == pathApp
   pure val REQS = Set(1, 2, 3)
   pure val ITEMS = Set(1, 2)
   pure val NONE = "none"
@@ -81,15 +104,17 @@ module oauth_mcp {
   pure val MAX_TOKENS = 8
 
   // ---------------------------------------------------------------- types
-  type Req = { live: bool, step: str, phone: str, person: str, client: str, age: int }
+  type Req = { live: bool, step: str, phone: str, person: str, client: str, app: str, age: int }
   type Grant = { st: str, expired: bool, phone: str, person: str, app: str, client: str, cloud: bool }
   type Code = { st: str, expired: bool }
   type Tok = { g: int, kind: str, origin: str, rotated: bool, revoked: bool, expired: bool }
   type Client = { exists: bool, old: bool }
-  type Draft = { exists: bool, phone: str, scrubbed: bool }
+  type Draft = { exists: bool, phone: str, scrubbed: bool, used: bool }
   type Quota = { count: int, accepted: int }
   type Item = { live: bool, person: str, app: str, kind: str, seen: bool, oppOpen: bool, leaky: bool }
-  type Effect = { kind: str, person: str, grant: int, ok: bool, status: str, items: Set[int] }
+  type Effect = { kind: str, person: str, grant: int, ok: bool, status: str, items: Set[int], app: str }
+  /** Ghost: one signup prefill, with the bindings that held when the draft was used. */
+  type Prefill = { req: int, grant: int, sameClient: bool, sameApp: bool, samePhone: bool, samePerson: bool }
 
   type OAuth = {
     reqs: int -> Req, grants: int -> Grant, codes: int -> Code, toks: int -> Tok, nextTok: int,
@@ -109,7 +134,7 @@ module oauth_mcp {
    */
   type Ghost = {
     audits: Set[(str, int)], granted: Set[int], denied: Set[int], everGranted: Set[str],
-    revokedEver: Set[int], oldKey: Set[str], last: Effect,
+    revokedEver: Set[int], oldKey: Set[str], last: Effect, prefills: Set[Prefill],
   }
 
   // ---------------------------------------------------------------- state
@@ -119,9 +144,9 @@ module oauth_mcp {
   var pc: Procs
   var gh: Ghost
 
-  pure val NO_EFFECT: Effect = { kind: "none", person: NONE, grant: 0, ok: true, status: "", items: Set() }
+  pure val NO_EFFECT: Effect = { kind: "none", person: NONE, grant: 0, ok: true, status: "", items: Set(), app: "" }
   pure def eff(kind: str, person: str, g: int, ok: bool): Effect =
-    { kind: kind, person: person, grant: g, ok: ok, status: "", items: Set() }
+    { kind: kind, person: person, grant: g, ok: ok, status: "", items: Set(), app: "" }
 
   // ---------------------------------------------------------------- helpers (platform reads)
   /** K:156-158 personForKey: null when the number is on hold or has no live person. */
@@ -198,13 +223,13 @@ module oauth_mcp {
   // ---------------------------------------------------------------- init
   action init = all {
     oa' = {
-      reqs: REQS.mapBy(r => { live: false, step: "none", phone: "", person: NONE, client: "", age: 0 }),
+      reqs: REQS.mapBy(r => { live: false, step: "none", phone: "", person: NONE, client: "", app: "", age: 0 }),
       grants: REQS.mapBy(g => { st: "none", expired: false, phone: "", person: NONE, app: "", client: "", cloud: false }),
       codes: REQS.mapBy(g => { st: "none", expired: false }),
       toks: Map(),
       nextTok: 1,
       clients: CLIENTS.mapBy(c => { exists: true, old: false }),
-      drafts: REQS.mapBy(g => { exists: false, phone: "", scrubbed: false }),
+      drafts: REQS.mapBy(g => { exists: false, phone: "", scrubbed: false, used: false }),
       quota: REQS.mapBy(g => { count: 0, accepted: 0 }),
     },
     pf' = {
@@ -218,16 +243,23 @@ module oauth_mcp {
       active: Set(),
     },
     pc' = { appr: REQS.mapBy(r => "idle"), deny: REQS.mapBy(r => "idle"), exch: REQS.mapBy(g => "idle"), refr: Map() },
-    gh' = { audits: Set(), granted: Set(), denied: Set(), everGranted: Set(), revokedEver: Set(), oldKey: Set(), last: NO_EFFECT },
+    gh' = { audits: Set(), granted: Set(), denied: Set(), everGranted: Set(), revokedEver: Set(), oldKey: Set(), last: NO_EFFECT, prefills: Set() },
   }
 
   // ---------------------------------------------------------------- oauth-auth-request
-  /** GET /oauth/authorize: one row, step phone. An unknown (swept) client gets an error page. */
-  action startAuth(r: int, c: str): bool = all {
+  /**
+   * GET /oauth/authorize on the client's host for app `a` (the app that the resource names, H:552-556 and H:541-549).
+   * One row, step phone, bound to the app. An unknown (swept) client gets an error page. A resource of an app that
+   * the host does not serve fails with invalid_target (canonicalResource, H:130-133) and stores nothing.
+   */
+  action startAuth(r: int, c: str, a: str): bool = all {
     not(oa.reqs.get(r).live), oa.reqs.get(r).step == "none", pc.appr.get(r) == "idle",
-    if (oa.clients.get(c).exists) all {
-      oa' = { ...oa, reqs: oa.reqs.set(r, { live: true, step: "phone", phone: "", person: NONE, client: c, age: 0 }) },
-      gh' = { ...gh, last: eff("authorize", NONE, r, true) },
+    if (oa.clients.get(c).exists and hostBindsApp(clientHost(c), a)) all {
+      oa' = { ...oa, reqs: oa.reqs.set(r, { live: true, step: "phone", phone: "", person: NONE, client: c, app: a, age: 0 }) },
+      gh' = { ...gh, last: { ...eff("authorize", NONE, r, true), app: a } },
+    } else if (oa.clients.get(c).exists) all {
+      oa' = oa,
+      gh' = { ...gh, last: { ...eff("invalidTarget", NONE, r, false), app: a } },
     } else all {
       oa' = oa,
       gh' = { ...gh, last: eff("clientUnknown", NONE, r, false) },
@@ -258,7 +290,7 @@ module oauth_mcp {
       } else all {
         oa' = { ...oa, reqs: oa.reqs.set(r, { ...q, person: who, step: "consent" }) },
         // Model bookkeeping: a person who connects again after a forget starts a new consent.
-        pf' = { ...pf, forgotten: pf.forgotten.exclude(Set((q.phone, clientApp(q.client)))) },
+        pf' = { ...pf, forgotten: pf.forgotten.exclude(Set((q.phone, q.app))) },
       },
       ib' = ib, pc' = pc, gh' = { ...gh, last: eff("code", who, r, who != "held") },
     }
@@ -266,13 +298,19 @@ module oauth_mcp {
 
   /**
    * H:513-537 approve, up to the transaction: liveRequest, session and owner checks, the Cloud oracle.
-   * The grant object is prepared in memory (no row yet; st stays "none").
+   * The grant object is prepared in memory (no row yet; st stays "none"). The consent POST arrives on host `h`.
+   * liveRequest (H:646-667) reads the request only on the host of its client and its resource: the browser cookie
+   * is the host's, and the request's resource must be one that `h` serves for the request's app. On another host
+   * the page reads "This page has expired" and nothing changes.
    */
-  action approveRead(r: int, cloud: bool): bool = all {
+  action approveRead(r: int, cloud: bool): bool = approveReadOn(r, clientHost(oa.reqs.get(r).client), cloud)
+  action approveReadOn(r: int, h: str, cloud: bool): bool = all {
     val q = oa.reqs.get(r)
     all {
       q.live, q.age < REQ_TTL, oa.clients.get(q.client).exists, q.step == "consent", pc.appr.get(r) == "idle",
-      if (login(pf, q.phone) == "held" or login(pf, q.phone) != q.person) all {
+      if (h != clientHost(q.client) or not(hostBindsApp(h, q.app))) all {
+        oa' = oa, pc' = pc, gh' = { ...gh, last: { ...eff("pageOtherHost", NONE, r, false), status: h, app: q.app } },
+      } else if (login(pf, q.phone) == "held" or login(pf, q.phone) != q.person) all {
         // H:518-527: the number is held or banned, or its person changed: the request is deleted
         // ("Connect again").
         oa' = { ...oa, reqs: oa.reqs.set(r, { ...q, live: false }) },
@@ -281,9 +319,9 @@ module oauth_mcp {
         // Cloud authority needs a current owner; legacy grants need nothing more.
         not(cloud) or q.person != NONE,
         oa' = { ...oa,
-          grants: oa.grants.setBy(r, x => { ...x, phone: q.phone, person: q.person, app: clientApp(q.client), client: q.client, cloud: cloud }) },
+          grants: oa.grants.setBy(r, x => { ...x, phone: q.phone, person: q.person, app: q.app, client: q.client, cloud: cloud }) },
         pc' = { ...pc, appr: pc.appr.set(r, "read") },
-        gh' = { ...gh, last: eff("approveRead", q.person, r, true) },
+        gh' = { ...gh, last: { ...eff("approveRead", q.person, r, true), status: h, app: q.app } },
       },
       pf' = pf, ib' = ib,
     }
@@ -413,7 +451,7 @@ module oauth_mcp {
     val dead = not(liveG(oa, g)) or not(oa.toks.keys().exists(t => oa.toks.get(t).g == g))
     revokeWithAudit(g, Set(("code_replay", g)),
       { kind: "replay", person: NONE, grant: g, ok: trueReplay or dead,
-        status: if (trueReplay) "true" else if (dead) "dead" else "false", items: Set() }),
+        status: if (trueReplay) "true" else if (dead) "dead" else "false", items: Set(), app: "" }),
     pf' = pf, pc' = pc,
   }
 
@@ -444,7 +482,7 @@ module oauth_mcp {
     val g = k.g
     val gr = oa.grants.get(g)
     val idle = { ...pc, refr: pc.refr.set(t, "idle") }
-    val replay = { kind: "replay", person: NONE, grant: g, ok: true, status: "true", items: Set() }
+    val replay = { kind: "replay", person: NONE, grant: g, ok: true, status: "true", items: Set(), app: "" }
     if (pc.refr.get(t) == "checkedRot") all {
       pc' = idle, revokeWithAudit(g, Set(("refresh_replay", g)), replay),
     } else if (gr.st != "live" or gr.expired) all {
@@ -489,16 +527,21 @@ module oauth_mcp {
   }
 
   // ---------------------------------------------------------------- mcp-request-gate and the tools
-  /** bearer: access token unrevoked, unexpired, grant live, ban and Cloud check (cloudGrantCurrent). */
-  def bearerOk(t: int): bool =
+  /**
+   * bearer (H:1232-1245) on the endpoint of app `a`: access token unrevoked, unexpired, minted for this resource and
+   * for the app of the path (grantServesApp), grant live, ban and Cloud check (cloudGrantCurrent). The token's
+   * resource is the grant's request resource, so a token of the hub's /mcp/peon fails on /mcp/friends.
+   */
+  def bearerOk(t: int, a: str): bool =
     oa.toks.keys().contains(t) and {
       val k = oa.toks.get(t)
       k.kind == "access" and not(k.revoked) and not(k.expired) and liveG(oa, k.g) and cloudValid(oa, pf, k.g)
+        and grantServesApp(oa.grants.get(k.g).app, a)
     }
 
   /** SD-394 fix, H:895-899: invalid_grant from a tool revokes the grant and writes consent_revoked when the revoke ended it. */
   action toolInvalidGrant(g: int, tool: str): bool = all {
-    revokeWithAudit(g, Set(), eff(tool, NONE, g, false)),
+    revokeWithAudit(g, Set(), { ...eff(tool, NONE, g, false), app: oa.grants.get(g).app }),
     pf' = pf, pc' = pc,
   }
 
@@ -507,35 +550,35 @@ module oauth_mcp {
    * marked seen). SD-430 fix: readUpdates marks every unseen item of the app seen; the leak gate and the
    * closed-opportunity filter then drop items.
    */
-  action getUpdates(t: int): bool = all {
-    bearerOk(t),
+  action getUpdates(t: int, a: str): bool = all {
+    bearerOk(t, a),
     val g = oa.toks.get(t).g
     val gr = oa.grants.get(g)
     val now = personForKey(pf, gr.phone)
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "getUpdates")
     else if (pf.minor.contains(now)) all {
-      gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: Set() } },
+      gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: Set(), app: gr.app } },
       oa' = oa, pf' = pf, ib' = ib, pc' = pc,
     } else {
       val mine = ITEMS.filter(i => ib.items.get(i).live and not(ib.items.get(i).seen) and ib.items.get(i).person == now and ib.items.get(i).app == gr.app and now != NONE)
       val shown = mine.filter(i => not(ib.items.get(i).leaky) and ib.items.get(i).oppOpen)
       all {
         ib' = { ...ib, items: ib.items.keys().mapBy(i => if (mine.contains(i)) { ...ib.items.get(i), seen: true } else ib.items.get(i)) },
-        gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: shown } },
+        gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: shown, app: gr.app } },
         oa' = oa, pf' = pf, pc' = pc,
       }
     }
   }
 
   /** T:293-301 check_status (rate limit left out). */
-  action checkStatus(t: int): bool = all {
-    bearerOk(t),
+  action checkStatus(t: int, a: str): bool = all {
+    bearerOk(t, a),
     val g = oa.toks.get(t).g
     val gr = oa.grants.get(g)
     val now = personForKey(pf, gr.phone)
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "status")
     else all {
-      gh' = { ...gh, last: { kind: "status", person: now, grant: g, ok: true, status: statusOf(pf, now, gr.app), items: Set() } },
+      gh' = { ...gh, last: { kind: "status", person: now, grant: g, ok: true, status: statusOf(pf, now, gr.app), items: Set(), app: gr.app } },
       oa' = oa, pf' = pf, ib' = ib, pc' = pc,
     }
   }
@@ -545,8 +588,8 @@ module oauth_mcp {
    * state), then (SD-395 fix) the per-grant profile bucket counts the call (T:312, H:889-891), then the
    * service's own ban check (SVC submitProfile).
    */
-  action submitProfile(t: int): bool = all {
-    bearerOk(t),
+  action submitProfile(t: int, a: str): bool = all {
+    bearerOk(t, a),
     val g = oa.toks.get(t).g
     val gr = oa.grants.get(g)
     val q = oa.quota.get(g)
@@ -556,16 +599,16 @@ module oauth_mcp {
     val oaQ = { ...oa, quota: oa.quota.set(g, { ...q, count: count }) }
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "profile")
     else if (now == NONE or st != "active") all {
-      oa' = oa, gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: false, status: st, items: Set() } },
+      oa' = oa, gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: false, status: st, items: Set(), app: gr.app } },
       pf' = pf, ib' = ib, pc' = pc,
     } else if (count > PROFILE_CAP) all {
-      oa' = oaQ, gh' = { ...gh, last: { kind: "quotaRefused", person: now, grant: g, ok: false, status: st, items: Set() } },
+      oa' = oaQ, gh' = { ...gh, last: { kind: "quotaRefused", person: now, grant: g, ok: false, status: st, items: Set(), app: gr.app } },
       pf' = pf, ib' = ib, pc' = pc,
     } else {
       val accepted = not(pf.banned.contains(now))
       all {
         oa' = if (accepted) { ...oaQ, quota: oaQ.quota.set(g, { count: count, accepted: q.accepted + 1 }) } else oaQ,
-        gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: accepted, status: st, items: Set() } },
+        gh' = { ...gh, last: { kind: "profile", person: now, grant: g, ok: accepted, status: st, items: Set(), app: gr.app } },
         pf' = pf, ib' = ib, pc' = pc,
       }
     }
@@ -578,8 +621,8 @@ module oauth_mcp {
    * grant, H:895-899), the status, then (SD-395 fix) the quota, then one draft row per grant, with the
    * grant's phone key.
    */
-  action prepareSignup(t: int): bool = all {
-    bearerOk(t),
+  action prepareSignup(t: int, a: str): bool = all {
+    bearerOk(t, a),
     val g = oa.toks.get(t).g
     val gr = oa.grants.get(g)
     val q = oa.quota.get(g)
@@ -592,10 +635,45 @@ module oauth_mcp {
       else all {
         count <= PROFILE_CAP, st == "not_joined" or st == "invited",
         oa' = { ...oa, quota: oa.quota.set(g, { ...q, count: count }),
-                drafts: if (oa.drafts.get(g).exists) oa.drafts else oa.drafts.set(g, { exists: true, phone: gr.phone, scrubbed: false }) },
-        gh' = { ...gh, last: eff("prepare", now, g, not(oa.drafts.get(g).exists)) },
+                drafts: if (oa.drafts.get(g).exists) oa.drafts else oa.drafts.set(g, { exists: true, phone: gr.phone, scrubbed: false, used: false }) },
+        gh' = { ...gh, last: { ...eff("prepare", now, g, not(oa.drafts.get(g).exists)), app: gr.app } },
         pf' = pf, ib' = ib, pc' = pc,
       },
+    }
+  }
+
+  /**
+   * H:707-717 signupPrefillFor and store useSignupPrefill (P:123-145): the signup form of request `r` (a person who
+   * has not joined the request's app) shows the one live draft of the same client, app, phone key and person, under
+   * the age policy (withSignupAgePolicy: an under-13 person gets no prefill). The draft is used once: its fields are
+   * scrubbed and consumed_at is set in the same transaction. No draft, two drafts or a refusal give an empty form.
+   */
+  action openSignup(r: int): bool = all {
+    val q = oa.reqs.get(r)
+    val st = statusOf(pf, q.person, q.app)
+    val usable = REQS.filter(g => {
+      val d = oa.drafts.get(g)
+      val gr = oa.grants.get(g)
+      d.exists and not(d.scrubbed) and not(d.used) and liveG(oa, g)
+        and gr.person == q.person and gr.client == q.client and gr.app == q.app and d.phone == q.phone
+    })
+    all {
+      q.live, q.age < REQ_TTL, oa.clients.get(q.client).exists, q.step == "consent",
+      st == "not_joined" or st == "invited",
+      if (usable.size() == 1 and not(pf.under13.contains(q.person))) {
+        nondet g = usable.oneOf()
+        val gr = oa.grants.get(g)
+        all {
+          oa' = { ...oa, drafts: oa.drafts.setBy(g, d => { ...d, used: true, scrubbed: true }) },
+          gh' = { ...gh,
+            prefills: gh.prefills.union(Set({ req: r, grant: g, sameClient: gr.client == q.client, sameApp: gr.app == q.app,
+              samePhone: oa.drafts.get(g).phone == q.phone, samePerson: gr.person == q.person })),
+            last: { ...eff("prefill", q.person, g, true), app: q.app } },
+        }
+      } else all {
+        oa' = oa, gh' = { ...gh, last: { ...eff("prefill", q.person, r, false), app: q.app } },
+      },
+      pf' = pf, ib' = ib, pc' = pc,
     }
   }
 
@@ -737,7 +815,7 @@ module oauth_mcp {
     ...o,
     grants: o.grants.keys().mapBy(g => { val x = o.grants.get(g); if ((x.st == "live" or x.st == "revoked") and ns.contains(x.phone) and x.app == a) { ...x, st: "deleted" } else x }),
     toks: o.toks.keys().filter(t => { val x = o.grants.get(o.toks.get(t).g); not(ns.contains(x.phone) and x.app == a) }).mapBy(t => o.toks.get(t)),
-    reqs: o.reqs.keys().mapBy(r => { val q = o.reqs.get(r); if (q.live and ns.contains(q.phone) and clientApp(q.client) == a) { ...q, live: false } else q }),
+    reqs: o.reqs.keys().mapBy(r => { val q = o.reqs.get(r); if (q.live and ns.contains(q.phone) and q.app == a) { ...q, live: false } else q }),
     drafts: o.drafts.keys().mapBy(g => { val x = o.grants.get(g); if (ns.contains(x.phone) and x.app == a) { ...o.drafts.get(g), exists: false } else o.drafts.get(g) }),
   }
   /** The grants that revokeAllFor revokes (and audits) before the delete: live and unexpired (grantsFor). */
@@ -834,7 +912,7 @@ module oauth_mcp {
         grants: ended.grants.keys().mapBy(g => { val x = ended.grants.get(g); if (movable.contains(g)) { ...x, phone: dst } else x }),
         drafts: ended.drafts.keys().mapBy(g => {
           val d = ended.drafts.get(g)
-          if (retiring.contains(g)) { exists: false, phone: "", scrubbed: true }
+          if (retiring.contains(g)) { ...d, exists: false, phone: "", scrubbed: true }
           else if (movable.contains(g) and d.exists and not(d.scrubbed) and d.phone == src) { ...d, phone: dst }
           else d
         }) },
@@ -861,11 +939,12 @@ module oauth_mcp {
     nondet b2 = Set(true, false).oneOf()
     nondet kind = Set("intro", "probe").oneOf()
     nondet t = oa.toks.keys().union(Set(0)).oneOf()
+    nondet h = HOSTS.oneOf()
     // The progress families are listed twice: the simulator picks among enabled branches, so this
     // doubles their weight against the environment. It adds no behaviour.
     any {
-      flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
-      flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
+      flowFamily(r, c, n, a, h, b, b2), clientFamily(r, t), toolFamily(t, a),
+      flowFamily(r, c, n, a, h, b, b2), clientFamily(r, t), toolFamily(t, a),
       // the environment: the person cancels or revokes, a process stops, clocks and the sweep,
       // the network and its inbox, staff and account changes
       any {
@@ -881,8 +960,8 @@ module oauth_mcp {
   }
 
   /** The person signs in and decides on the site. `fails` is a failed insert in the approval transaction. */
-  action flowFamily(r: int, c: str, n: str, b: bool, fails: bool): bool = any {
-    startAuth(r, c), enterPhone(r, n), enterCode(r), approveRead(r, b), approveCommit(r, fails), approveLink(r),
+  action flowFamily(r: int, c: str, n: str, a: str, h: str, b: bool, fails: bool): bool = any {
+    startAuth(r, c, a), enterPhone(r, n), enterCode(r), openSignup(r), approveReadOn(r, h, b), approveCommit(r, fails), approveLink(r),
   }
   /** The client: code exchange, refresh, revocation. */
   action clientFamily(r: int, t: int): bool = any {
@@ -890,7 +969,7 @@ module oauth_mcp {
     refrCheck(t), refrRotate(t), revokeEndpoint(t), revokeAccessToken(t),
   }
   /** The client calls a tool. */
-  action toolFamily(t: int): bool = any { getUpdates(t), checkStatus(t), submitProfile(t), prepareSignup(t) }
+  action toolFamily(t: int, a: str): bool = any { getUpdates(t, a), checkStatus(t, a), submitProfile(t, a), prepareSignup(t, a) }
 
   // ================================================================ invariants (from the rules)
 
@@ -1031,11 +1110,40 @@ module oauth_mcp {
     (oa.drafts.get(g).exists and not(oa.drafts.get(g).scrubbed) and oa.grants.get(g).st == "live")
       implies oa.drafts.get(g).phone == oa.grants.get(g).phone)
 
+  /**
+   * connectorTools.md lawAppSiteServesOnlyItsApp and lawHubServesEveryApp: a request and its grant are for an app
+   * that the client's host serves. An app site's client never holds a grant for another app.
+   */
+  val requestOnItsHost = REQS.forall(r => oa.reqs.get(r).live implies hostBindsApp(clientHost(oa.reqs.get(r).client), oa.reqs.get(r).app))
+  val grantOnItsHost = REQS.forall(g => Set("live", "revoked").contains(oa.grants.get(g).st)
+    implies hostBindsApp(clientHost(oa.grants.get(g).client), oa.grants.get(g).app))
+
+  /** connectorTools.md lawGrantNeverCrossesApps: a tool answer is always for the app of the grant that the token belongs to. */
+  val servedInGrantApp =
+    (Set("getUpdates", "status", "profile", "quotaRefused", "prepare").contains(gh.last.kind) and gh.last.grant > 0)
+      implies gh.last.app == oa.grants.get(gh.last.grant).app
+
+  /** liveRequest (H:646-667): a consent is read only on the host of the request's client, for the request's app. */
+  val consentOnItsHost = gh.last.kind == "approveRead" implies {
+    val gr = oa.grants.get(gh.last.grant)
+    gh.last.status == clientHost(gr.client) and gh.last.app == gr.app
+  }
+
+  /** authorizationPages.md lawPrefillAtMostOnce: a draft fills at most one signup form. */
+  val prefillAtMostOnce = REQS.forall(g => gh.prefills.filter(x => x.grant == g).size() <= 1)
+
+  /** authorizationPages.md lawPrefillOnlyForItsClientAppAndPhone, and the grant's person (signupDraftGrantAllowed). */
+  val prefillBound = gh.prefills.forall(x => x.sameClient and x.sameApp and x.samePhone and x.samePerson)
+
+  /** authorizationPages.md lawAgeGuardRefusesPrefill: an under-13 person never sees a prefilled form. */
+  val noPrefillUnder13 = gh.last.kind == "prefill" and gh.last.ok implies not(pf.under13.contains(gh.last.person))
+
   val safety = and {
     noBannedUse, replayIsTrue, codeOnce, oneRefreshHead, revokedTerminal, servedOnLiveOwnGrant,
     activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, noIntroToMinor, noStaleUpdate,
     everyRevocationAudited, oneOutcome, grantHasCodeAndAudit, requestRetention, clientKeptOnceGranted,
     quotaCountsAccepted, draftFollowsGrant, numberChangeWorks,
+    requestOnItsHost, grantOnItsHost, servedInGrantApp, consentOnItsHost, prefillAtMostOnce, prefillBound, noPrefillUnder13,
   }
 
   /** The invariants that the code kept before the fixes (no register defect). */
@@ -1062,24 +1170,34 @@ module oauth_mcp {
   val witness_denyLoses = not(gh.last.kind == "denyExpired" and gh.granted.contains(gh.last.grant))
   /** A held member reads on_hold (SD-428). */
   val witness_heldReadsOnHold = not(gh.last.kind == "status" and gh.last.status == "on_hold")
+  /** A grant made on the ntwrk.party hub serves a tool call for another app (/mcp/<app>). */
+  val witness_hubServesApp = not(gh.last.kind == "status" and gh.last.grant > 0
+    and oa.grants.get(gh.last.grant).client == "cN" and gh.last.app != HUB)
+  /** A signup form shows the agent's draft. */
+  val witness_prefillShown = not(gh.last.kind == "prefill" and gh.last.ok)
 
   // ================================================================ run tests (traces from the code and its tests)
   /** p1 connects client c on number n with request r and holds its token pair (legacy or Cloud grant). */
   run connectOn(r: int, c: str, n: str, cloud: bool): bool =
-    startAuth(r, c).then(enterPhone(r, n)).then(enterCode(r)).then(approveRead(r, cloud))
+    startAuth(r, c, clientHost(c)).then(enterPhone(r, n)).then(enterCode(r)).then(approveRead(r, cloud))
       .then(approveCommit(r, false)).then(approveLink(r))
       .then(exchCheck(r)).then(exchRedeem(r))
   run connect(r: int, c: str, cloud: bool): bool = connectOn(r, c, "n1", cloud)
+  /** p1 connects client c for app a (the resource names a) on number n1. */
+  run connectApp(r: int, c: str, a: str): bool =
+    startAuth(r, c, a).then(enterPhone(r, "n1")).then(enterCode(r)).then(approveRead(r, false))
+      .then(approveCommit(r, false)).then(approveLink(r))
+      .then(exchCheck(r)).then(exchRedeem(r))
 
   /** oauth.test.ts "full flow: sign in on the page, approve, exchange, check_status". */
   run fullFlowTest =
-    init.then(connect(1, "cF", false)).then(checkStatus(1))
+    init.then(connect(1, "cF", false)).then(checkStatus(1, "friends"))
       .expect(gh.last.kind == "status" and gh.last.status == "active" and safety and activeExactlyGrants)
 
   /** oauth.test.ts "a second use of the code revokes what the first issued". */
   run codeReplayTest =
     init.then(connect(1, "cF", false)).then(exchReplay(1))
-      .expect(oa.grants.get(1).st == "revoked" and not(bearerOk(1)) and gh.last.status == "true" and safety)
+      .expect(oa.grants.get(1).st == "revoked" and not(bearerOk(1, "friends")) and gh.last.status == "true" and safety)
 
   /** oauth.test.ts "access tokens expire; refresh rotates; a reused refresh token ends the grant". */
   run refreshReplayTest =
@@ -1094,22 +1212,22 @@ module oauth_mcp {
   run banEndsGrantUseTest =
     init.then(connect(1, "cF", false)).then(produceItem(1, "p1", "friends", "probe", false))
       .then(ban("p1"))
-      .expect(not(bearerOk(1)) and safety)
-      .then(getUpdates(1)).fail()
+      .expect(not(bearerOk(1, "friends")) and safety)
+      .then(getUpdates(1, "friends")).fail()
   run banEndsRefreshTest =
     init.then(connect(1, "cF", false)).then(ban("p1")).then(refrCheck(2)).fail()
   run banEndsExchangeTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
       .then(approveCommit(1, false)).then(approveLink(1)).then(ban("p1")).then(exchCheck(1)).fail()
 
   /** SD-184 fix (e2e "a failed token mint leaves the code unused, and the retry gets the tokens"). */
   run codeCrashRetryTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
       .then(approveCommit(1, false)).then(approveLink(1))
       .then(exchCheck(1)).then(crashExchange(1))
       .expect(oa.codes.get(1).st == "issued" and oa.toks.keys() == Set())
       .then(exchCheck(1)).then(exchRedeem(1))
-      .expect(oa.grants.get(1).st == "live" and bearerOk(1) and safety)
+      .expect(oa.grants.get(1).st == "live" and bearerOk(1, "friends") and safety)
 
   /** SD-185 fix: the grant expires while a refresh waits; rotateRefresh says "stale"; no revocation, no replay row. */
   run refreshExpiredTest =
@@ -1153,44 +1271,44 @@ module oauth_mcp {
 
   /** SD-397 fix (e2e "a deny that loses the race with an approve does not answer access_denied"). */
   run approveDenyRaceTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1))
       .then(denyRead(1)).then(approveRead(1, false)).then(approveCommit(1, false)).then(denyFinish(1))
       .expect(gh.last.kind == "denyExpired" and not(gh.audits.contains(("consent_denied", 1))) and oneOutcome and safety)
   /** The other order: the denial deletes the request first; the approval stores nothing. */
   run denyFirstTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1))
       .then(approveRead(1, false)).then(denyRead(1)).then(denyFinish(1)).then(approveCommit(1, false))
       .expect(gh.last.kind == "approveExpired" and oa.grants.get(1).st == "none" and oneOutcome and safety)
 
   /** SD-214 fix (e2e "a member who becomes a minor does not read an earlier item that names an adult"). */
   run minorIntroTest =
     init.then(connect(1, "cF", false)).then(produceItem(1, "p1", "friends", "intro", false))
-      .then(becomeMinor("p1")).then(getUpdates(1))
+      .then(becomeMinor("p1")).then(getUpdates(1, "friends"))
       .expect(gh.last.items == Set() and not(ib.items.get(1).seen) and noIntroToMinor and safety)
 
   /** SD-430 fix (e2e "get_updates does not return a probe whose opportunity closed"): reading still marks it seen. */
   run staleProbeTest =
     init.then(connect(1, "cF", false)).then(produceItem(1, "p1", "friends", "probe", false))
-      .then(closeOpp(1)).then(getUpdates(1))
+      .then(closeOpp(1)).then(getUpdates(1, "friends"))
       .expect(gh.last.items == Set() and ib.items.get(1).seen and noStaleUpdate and safety)
 
   /** SD-428 fix (e2e "a member on a staff hold reads on_hold and cannot submit a profile"). */
   run heldActiveTest =
-    init.then(connect(1, "cF", false)).then(staffHold("p1")).then(checkStatus(1))
+    init.then(connect(1, "cF", false)).then(staffHold("p1")).then(checkStatus(1, "friends"))
       .expect(gh.last.status == "on_hold" and heldIsHeld)
-      .then(submitProfile(1))
+      .then(submitProfile(1, "friends"))
       .expect(not(gh.last.ok) and oa.quota.get(1).count == 0 and heldIsHeld and safety)
 
   /** SD-394 fix (e2e "a tool call that ends the grant writes a consent_revoked row"); the hold stays final. */
   run silentRevokeTest =
-    init.then(connect(1, "cF", false)).then(holdNumber("n1")).then(checkStatus(1))
+    init.then(connect(1, "cF", false)).then(holdNumber("n1")).then(checkStatus(1, "friends"))
       .expect(oa.grants.get(1).st == "revoked" and gh.audits.contains(("revoked", 1)) and everyRevocationAudited)
       .then(clearHoldSame("n1"))
-      .expect(not(bearerOk(1)) and safety)
+      .expect(not(bearerOk(1, "friends")) and safety)
 
   /** SD-389 fix: a stop after the approval's commit leaves a grant with its code and its audit row. */
   run consentCrashTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
       .then(approveCommit(1, false)).then(crashApprove(1))
       .expect(liveG(oa, 1) and oa.codes.get(1).st == "issued" and grantHasCodeAndAudit and safety
         // SD-186 part (a), kept by the hook contract: linked(true) did not run.
@@ -1198,7 +1316,7 @@ module oauth_mcp {
 
   /** SD-389 fix (e2e "a failed code insert stores no grant, and the person can approve again"). */
   run consentInsertFailsTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
       .then(approveCommit(1, true))
       .expect(oa.grants.get(1).st == "none" and oa.reqs.get(1).live and safety)
       .then(approveRead(1, false)).then(approveCommit(1, false)).then(approveLink(1))
@@ -1206,7 +1324,7 @@ module oauth_mcp {
 
   /** SD-393 fix (e2e "a sign-in request with a number is swept 10 minutes after it starts, with no OAuth traffic"). */
   run requestRetentionTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1"))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1"))
       .then(tickRequests)
       .expect(oa.reqs.get(1).live and requestRetention)
       .then(tickRequests)
@@ -1216,7 +1334,7 @@ module oauth_mcp {
   run clientSweptTest =
     init.then(connect(1, "cF", false)).then(consentsRevoke(1)).then(clientAges("cF")).then(sweep)
       .expect(oa.grants.get(1).st == "deleted" and oa.clients.get("cF").exists and clientKeptOnceGranted)
-      .then(startAuth(2, "cF"))
+      .then(startAuth(2, "cF", "friends"))
       .expect(gh.last.kind == "authorize")
   /** A client that never got a grant is still swept after a day (README section 3). */
   run unusedClientSweptTest =
@@ -1226,14 +1344,14 @@ module oauth_mcp {
   /** SD-395 fix (e2e "refused profiles do not use up the daily profile quota"). */
   run quotaTest =
     init.then(connectOn(1, "cF", "n2", false))
-      .then(submitProfile(1)).then(submitProfile(1)).then(submitProfile(1))
+      .then(submitProfile(1, "friends")).then(submitProfile(1, "friends")).then(submitProfile(1, "friends"))
       .expect(gh.last.kind == "profile" and not(gh.last.ok) and oa.quota.get(1).count == 0 and safety)
   /** The quota still stops the third accepted profile of a joined member (cap 2 in the model). */
   run quotaAcceptedTest =
     init.then(connect(1, "cF", false))
-      .then(submitProfile(1)).then(submitProfile(1))
+      .then(submitProfile(1, "friends")).then(submitProfile(1, "friends"))
       .expect(oa.quota.get(1).accepted == 2)
-      .then(submitProfile(1))
+      .then(submitProfile(1, "friends"))
       .expect(gh.last.kind == "quotaRefused" and quotaCountsAccepted and safety)
 
   /** SD-108: a Cloud grant ends on its original number while a native grant carries forward. */
@@ -1252,7 +1370,7 @@ module oauth_mcp {
 
   /** Q-oauth_mcp-2 trace: the number moves while an approval waits; revoking the new (old-key) grant turns the signal off. */
   run moveDuringApprovalTest =
-    init.then(connect(1, "cF", false)).then(startAuth(2, "cP")).then(enterPhone(2, "n1")).then(enterCode(2))
+    init.then(connect(1, "cF", false)).then(startAuth(2, "cP", "peon")).then(enterPhone(2, "n1")).then(enterCode(2))
       .then(approveRead(2, false)).then(movePhone("p1", "n1", "n2")).then(approveCommit(2, false)).then(approveLink(2))
       .expect(oa.grants.get(1).phone == "n2" and oa.grants.get(2).phone == "n1")
       .then(consentsRevoke(2))
@@ -1265,7 +1383,7 @@ module oauth_mcp {
 
   /** SD-384 fix (e2e "a signup draft follows its grant to the new number"). */
   run draftMoveTest =
-    init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1))
+    init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1, "friends"))
       .expect(oa.drafts.get(2).exists)
       .then(movePhone("p1", "n1", "n2"))
       .expect(oa.grants.get(2).phone == "n2" and oa.drafts.get(2).phone == "n2" and draftFollowsGrant and safety)
@@ -1276,13 +1394,47 @@ module oauth_mcp {
    * nothing.
    */
   run consentDuringLeaveTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
       .then(leave("p1", "friends", false)).then(approveCommit(1, false))
       .expect(gh.last.kind == "approveExpired" and oa.grants.get(1).st == "none" and grantDiesWithPerson and safety)
   /** The other order: the approval commits first (the forget waits on its row lock); the leave deletes the grant. */
   run leaveAfterConsentTest =
-    init.then(startAuth(1, "cF")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
+    init.then(startAuth(1, "cF", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveRead(1, false))
       .then(approveCommit(1, false)).then(leave("p1", "friends", false))
       .expect(oa.grants.get(1).st == "deleted" and grantDiesWithPerson and safety)
+
+  /**
+   * hub-endpoint.integration.test.ts: a client registered on ntwrk.party connects /mcp/peon; the grant is for peon;
+   * its token serves /mcp/peon and is refused on /mcp/friends (grantServesApp).
+   */
+  run hubAppTest =
+    init.then(connectApp(1, "cN", "peon"))
+      .expect(oa.grants.get(1).app == "peon" and oa.grants.get(1).client == "cN" and bearerOk(1, "peon")
+        and not(bearerOk(1, "friends")) and safety)
+      .then(checkStatus(1, "peon"))
+      .expect(gh.last.kind == "status" and gh.last.app == "peon" and gh.last.status == "active" and safety)
+      .then(checkStatus(1, "friends")).fail()
+  /** An app site serves only its own app: the friends site refuses a resource of peon and stores nothing. */
+  run siteRefusesOtherAppTest =
+    init.then(startAuth(1, "cF", "peon"))
+      .expect(gh.last.kind == "invalidTarget" and not(oa.reqs.get(1).live) and safety)
+  /** liveRequest: the consent page of a hub request does not continue on the friends site. */
+  run consentOtherHostTest =
+    init.then(startAuth(1, "cN", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(approveReadOn(1, "friends", false))
+      .expect(gh.last.kind == "pageOtherHost" and pc.appr.get(1) == "idle" and oa.grants.get(1).st == "none" and safety)
+
+  /**
+   * signup-draft-prefill.test.ts: the agent saves a draft through prepare_signup; a new request of the same client,
+   * app and phone shows it once; a second open of the form and a request of another client show an empty form.
+   */
+  run prefillOnceTest =
+    init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1, "friends"))
+      .expect(oa.drafts.get(2).exists)
+      .then(startAuth(1, "cN", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(openSignup(1))
+      .expect(gh.last.kind == "prefill" and not(gh.last.ok) and not(oa.drafts.get(2).used))
+      .then(startAuth(3, "cF", "friends")).then(enterPhone(3, "n1")).then(enterCode(3)).then(openSignup(3))
+      .expect(gh.last.kind == "prefill" and gh.last.ok and oa.drafts.get(2).used and gh.prefills.size() == 1 and safety)
+      .then(openSignup(3))
+      .expect(gh.last.kind == "prefill" and not(gh.last.ok) and gh.prefills.size() == 1 and prefillAtMostOnce and safety)
 }
 ```

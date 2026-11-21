@@ -29,9 +29,9 @@ export type AuthSignupViewProps = Omit<AuthShellProps, "title" | "chrome" | "chi
  * Confirm this app's signup and text consent in the verified browser before allowing assistant access.
  * @model spec/authorizationPages.md
  */
-export function AuthSignupView({ rid, consent, requiresInvitation, signupView, error, prefill, ...props }: AuthSignupViewProps) {
+export function AuthSignupView({ rid, consent, requiresInvitation, signupView, error, prefill, siteOrigin = "", ...props }: AuthSignupViewProps) {
   return (
-    <AuthShell title="Confirm your signup" {...props}>
+    <AuthShell title="Confirm your signup" siteOrigin={siteOrigin} {...props}>
       <form method="post" action="/oauth/authorize/signup" className="flex flex-col gap-4" aria-describedby={error ? "signup-error" : undefined}>
         <input type="hidden" name="rid" value={rid} />
         <input type="hidden" name="decision" value="join" />
@@ -61,7 +61,7 @@ export function AuthSignupView({ rid, consent, requiresInvitation, signupView, e
           <Label htmlFor="signup-sms-consent" className="font-normal">{consent.text}</Label>
         </div>
         <p className="text-sm text-muted-foreground">
-          <Link href="/terms#sms">Text messaging terms</Link>, <Link href="/terms">terms</Link> and <Link href="/privacy">privacy policy</Link>.
+          <Link href={`${siteOrigin}/terms#sms`}>Text messaging terms</Link>, <Link href={`${siteOrigin}/terms`}>terms</Link> and <Link href={`${siteOrigin}/privacy`}>privacy policy</Link>.
         </p>
         <FieldError id="signup-error">{error}</FieldError>
         <Button type="submit" size="lg">Finish signup</Button>

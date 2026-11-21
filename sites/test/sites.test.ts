@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { APPS, keywordApp } from "../../packages/platform/src/apps.ts";
 import { TEXT_LINE } from "../skills.config.ts";
-import { SITES, SKILLS_DIR, TURNSTILE_ORIGIN, buildSite, walk, skillDescription, skillVersion, type Site } from "../sites.ts";
+import { SITES, SKILLS_DIR, TURNSTILE_ORIGIN, buildSite, fill, walk, skillDescription, skillVersion, type Site } from "../sites.ts";
 import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { serveSite } from "../../scripts/sites-dev.ts";
@@ -385,6 +385,23 @@ test("staging builds keep the served entry, skills and signed router on configur
   } finally { await server?.stop(true); await backend.stop(true); }
 });
 
+test("a local or test MCP_URL moves the ntwrk.party connector endpoints that the skills name", () => {
+  // spec/agentEntry.md: every skill names its app's endpoint on ntwrk.party (/mcp or /mcp/<app>, /openai in ChatGPT).
+  const env = { MCP_URL: "https://{domain}.dev.example.test/mcp", BACKEND_ORIGIN: "https://api.dev.example.test" };
+  for (const site of SITES) {
+    const source = readFileSync(join(SKILLS_DIR, site.skill, "SKILL.md"), "utf8");
+    const path = site.app === "ntwrk" ? "/mcp" : `/mcp/${site.app}`;
+    // Production keeps the canonical endpoints.
+    const production = fill(source, { ...env, MCP_URL: undefined, BACKEND_ORIGIN: undefined }, site.domain);
+    expect(production, site.domain).toContain(`https://ntwrk.party${path}`);
+    expect(production, site.domain).toContain(`https://ntwrk.party${path}/openai`);
+    const local = fill(source, env, site.domain);
+    expect(local, site.domain).not.toContain("https://ntwrk.party/mcp");
+    expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}`);
+    expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}/openai`);
+  }
+});
+
 test("the generated landing spec keeps the pinned agents, links, names and messages", () => {
   expect(agentOrder).toEqual(AGENTS.map((a) => a.id));
   for (const a of AGENTS) {
@@ -600,7 +617,9 @@ test("each plugin skill and its MCP dependency use its own app's ntwrk.party end
     // The connector server binds a connection to the app of its path: no skill names another app's endpoint.
     for (const other of SITES.filter(s => s.skill !== skill)) {
       expect(text, `${skill} names ${other.domain}`).not.toMatch(otherEndpoint(other.app));
-      expect(text, `${skill} names ${other.domain}`).not.toContain(`https://${other.domain}/mcp`);
+      // The site endpoint of another app (https://<domain>/mcp). On ntwrk.party that is The Network's own /mcp, checked above;
+      // its /mcp/<app> paths are the endpoints of the other apps.
+      if (other.app !== "ntwrk") expect(text, `${skill} names ${other.domain}`).not.toContain(`https://${other.domain}/mcp`);
     }
     expect(text, skill).toContain(url);
   }

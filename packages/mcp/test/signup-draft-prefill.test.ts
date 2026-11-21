@@ -123,9 +123,10 @@ test("a recorded age below 13 hides and scrubs the draft; an age below 13 on the
   // The draft is scrubbed and no page of the request shows it.
   expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
   const minor = await authorize(e, "friends.help", clientId, PHONE_A);
-  expect(minor.consent).not.toContain("Ari");
+  // The name as a word (the page CSS names the "Arial" font, which is not the draft).
+  expect(minor.consent).not.toMatch(/\bAri\b/);
   const opened = await (await minor.post("/oauth/authorize/signup", { decision: "open" })).text();
-  expect(opened).not.toContain("Ari");
+  expect(opened).not.toMatch(/\bAri\b/);
   expect(blank(opened)).toBe(true);
 
   const child = setup(), childClient = await draftFor(child, "friends.help", PHONE_A);
