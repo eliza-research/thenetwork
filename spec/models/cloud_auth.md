@@ -8,7 +8,7 @@ An Eliza Cloud member needs to authorize their own access to The Network.
 
 Check grant ownership and expiry, ban checks, auth mode, and validation cache behavior. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback permits up to 30 seconds of future issue time. The production delegation parser checks the issue time before the callback rule runs. It requires an issue time no later than the local clock, as do grant and profile proof checks. This standalone model compares a request's start with the latest cache invalidation to represent the runtime's in-flight validation rounds. It also covers app configuration and storage-level interactions.
+The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback and the production delegation parser permit up to 30 seconds of future issue time (`cloudIdentityTimesValid`). Grant and profile proof checks require an issue time no later than the local clock. This standalone model compares a request's start with the latest cache invalidation to represent the runtime's in-flight validation rounds. It also covers app configuration and storage-level interactions.
 
 Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -31,9 +31,9 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (no future issue time, one-hour proof life)
 //   packages/core/src/svc/profile-review-*.ts  owner, source, withdrawal and disconnect proof windows
 //   packages/platform/src/sessions.ts           create, authenticate (rotation after 24 h), revoke
-//   packages/platform/src/pg-store.ts           admitMembership: every person-less session of the number gets
-//                                               the new person (there is no bindSessions on this branch;
-//                                               DEFECT AE-3, see textJoin and textJoinCode)
+//   packages/platform/src/pg-store.ts           admitMembership and attachPerson: only the joining session
+//                                               gets the new person, every other person-less session of the
+//                                               number ends (AE-3 fixed on 2026-11-21; see textJoin)
 //
 // Proof states: issued (the callback stored it in a session), validated (a live `validated` cache entry,
 // api.ts), expired (now >= expiresAt), revoked (Cloud denies it: `denied`).
@@ -74,19 +74,15 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //    (staleSessionNoAct, AE-3). The step uses `recycle` (both assumptions). The assumption does NOT hold
 //    for staging-local (parseCloudIdentity has no one-hour cap, see the open drift above) or for a
 //    number that is handed over without aging: `recycleUnaged` and `recycleStale` drop it, and the
-//    traces w3_126NullGrantTest and ae3CodeBindsStaleSessionTest show what then breaks.
-//  - DEFECT AE-3 (open in the code, recorded in auth_edge): `textJoin` keeps the intended rule (every
-//    person-less session of the number ends, SD-054). The code (admitMembership) gives those sessions the
-//    new person instead; `textJoinCode` is that behaviour and is not in `step`. Without carrier aging a
-//    Cloud request that Cloud answered "valid" before the reassignment then acts for the new holder
-//    (ae3CodeBindsStaleSessionTest); with the intended rule the same trace is refused
-//    (ae3IntendedRevokesTest).
-//  - OPEN DRIFT AE-5 (spec and code disagree): in production parseNetworkDelegation allows 0 s of issue
-//    time ahead of the local clock; spec/cloudSignIn.md allows 30 s. This model follows the code
-//    (cloudProofClockRules); auth_edge keeps the spec rule (cloudSkewTolerated). One of them must change.
-//    DECISION (founder or the owner of spec/cloudSignIn.md, not made): either cloudSignIn.md takes 0 s
-//    for production, or parseNetworkDelegation takes 30 s. The code is the stricter side, so no safety
-//    rule is weaker; until the decision, the two models keep their two rules and both name AE-5.
+//    trace w3_126NullGrantTest shows what then breaks.
+//  - AE-3 (fixed on 2026-11-21, recorded in auth_edge): `textJoin` is the code: a text join has no joining
+//    session, so every person-less session of the number ends (SD-054; pg-store.ts attachPerson). Without
+//    carrier aging, a Cloud request that Cloud answered "valid" before the reassignment then acts for
+//    nobody (ae3IntendedRevokesTest). Before the fix the code gave those sessions the new person.
+//  - AE-5 (closed 2026-11-21): parseNetworkDelegation calls cloudIdentityTimesValid of
+//    spec/cloudSignIn.md, so the production exchange and validation allow the same 30 s of issue time
+//    ahead of the local clock as the staging callback (cloudProofClockRules, cloudSkewKind). The other
+//    proof kinds keep 0 s.
 //  - ASSUMPTION ASSUME_CLOUD_PHONE_CURRENT (W3-127, upstream, not confirmed): the phone that Cloud signs
 //    into a Network delegation names the current holder of the number. Cloud signs the account's
 //    "matching verified phone projection" (docs/results/2026-10-18-production-cloud-network-handoff.md),
@@ -115,9 +111,10 @@ module cloud_auth {
   pure val APPS = Set("slop", "ntwrk")
   pure val PHONES = Set("X", "Y")
   pure val HUMANS = Set("alice", "bob")
-  // Only the staging login identity omits the production delegation check before the callback.
   pure val PROOF_KINDS = Set("staging-login", "production-delegation", "grant", "owner", "source", "withdrawal", "disconnect")
-  pure def skewAllowed(kind: str): int = if (kind == "staging-login") CLOUD_SKEW else 0
+  // The Cloud sign-in identity (cloudIdentityTimesValid in spec/cloudSignIn.md) in staging and in production.
+  pure def cloudSkewKind(kind: str): bool = kind == "staging-login" or kind == "production-delegation"
+  pure def skewAllowed(kind: str): int = if (cloudSkewKind(kind)) CLOUD_SKEW else 0
   // Cloud issue time relative to the local time, in seconds.
   pure val OFFSETS = Set(-1, 0, 20, 30, 31)
 
@@ -523,25 +520,14 @@ module cloud_auth {
   action recycleStale(p: str, h: str): bool = recycleWith(p, h, false, false)
 
   // A text join (service.ts NetworkService.join, accounts.createPerson): the holder gets a person on p,
-  // and every person-less session of p ends (the intended rule, SD-054). OAuth grants are not touched.
-  // DEFECT AE-3: the code (pg-store.ts admitMembership: `update platform.sessions set person_id ...
-  // where e164 = ... and person_id is null`) gives those sessions the new person instead: textJoinCode.
+  // and every person-less session of p ends (SD-054; pg-store.ts admitMembership -> attachPerson with no
+  // joining session, AE-3 fixed). OAuth grants are not touched.
   action textJoin(p: str): bool = all {
     world.person.get(p) == "",
     not(world.banned.contains(p)),
     world' = { ...world, person: world.person.set(p, world.holder.get(p)) },
     sess' = { ...sess, rows: sess.rows.keys().mapBy(k => val r = sess.rows.get(k)
                                                      if (r.phone == p and r.person == "") { ...r, revoked: true } else r) },
-    now' = now, cfg' = cfg, cache' = cache, flight' = flight, ghost' = ghost,
-  }
-
-  // The code's text join today (AE-3, not in `step`): every person-less session of p gets the person.
-  action textJoinCode(p: str): bool = all {
-    world.person.get(p) == "",
-    not(world.banned.contains(p)),
-    world' = { ...world, person: world.person.set(p, world.holder.get(p)) },
-    sess' = { ...sess, rows: sess.rows.keys().mapBy(k => val r = sess.rows.get(k)
-                                                     if (r.phone == p and r.person == "") { ...r, person: world.holder.get(p) } else r) },
     now' = now, cfg' = cfg, cache' = cache, flight' = flight, ghost' = ghost,
   }
 
@@ -629,11 +615,11 @@ module cloud_auth {
   // api.ts and network-delegation.ts: an expired proof never authorizes a request.
   val expiredNeverAccepted = not(ghost.expiredAccept)
 
-  // The staging callback uses the 30-second window in cloudSignIn.md. Production exchange and
-  // validation parseNetworkDelegation first. The MCP grant envelope and profile proof windows
-  // also require a current issue time. The service signature window is a separate check.
+  // The staging callback and the production exchange and validation (parseNetworkDelegation) use the
+  // 30-second window in cloudSignIn.md. The MCP grant envelope and profile proof windows require a
+  // current issue time. The service signature window is a separate check.
   val cloudProofClockRules = ghost.proofClockChecks.forall(check =>
-    if (check.kind == "staging-login") check.accepted == (check.offset <= CLOUD_SKEW)
+    if (cloudSkewKind(check.kind)) check.accepted == (check.offset <= CLOUD_SKEW)
     else check.accepted == (check.offset <= 0))
 
   // W3-373 (the rotation write of api.ts): a Cloud session ends before sessions.ts would rotate it.
@@ -827,7 +813,7 @@ module cloud_auth {
       .then(grantBegin(1))
       .expect(flight.reqs == Map() and ghost.grantsValid == 0 and world.cloudPhone.get("bob") == "" and safety)
 
-  // AE-3, intended rule: bob's request on his person-less Cloud session on Y got Cloud's "valid" before
+  // AE-3: bob's request on his person-less Cloud session on Y got Cloud's "valid" before
   // the carrier gave Y to alice (no aging). Alice's text join ends bob's session, so the late answer
   // acts for nobody.
   run ae3IntendedRevokesTest =
@@ -839,18 +825,6 @@ module cloud_auth {
       .then(textJoin("Y"))
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and safety)
-
-  // AE-3, the code today (admitMembership): the same trace with textJoinCode. Bob's session stays live
-  // and gets alice's person, and the late "valid" acts for alice. `cloudActsForHolder` fails.
-  run ae3CodeBindsStaleSessionTest =
-    initWith("production")
-      .then(cloudLogin("bob", "slop"))
-      .then(reqBegin(1, "auth"))
-      .then(cloudAnswer(1, true))
-      .then(recycleUnaged("Y", "alice"))
-      .then(textJoinCode("Y"))
-      .then(reqEnd(1))
-      .expect(ghost.freshAccepts == 1 and ghost.foreignAct and not(cloudActsForHolder))
 
   // Bans by phone: a grant validation that begins after the ban is refused before the Cloud call; one
   // in flight when the ban commits can still answer valid (concurrent, like SD-013's remainder).
@@ -895,12 +869,13 @@ module cloud_auth {
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and expiredNeverAccepted)
 
-  // W3-134 / SD-308: only the staging callback allows a proof issued ahead of the local clock.
+  // W3-134 / SD-308 / AE-5: only the Cloud sign-in identity allows a proof issued ahead of the local clock.
   run w3_134SkewTest =
     initWith("off")
       .then(proofArrives("staging-login", 30))
       .then(proofArrives("staging-login", 31))
-      .then(proofArrives("production-delegation", 1))
+      .then(proofArrives("production-delegation", 30))
+      .then(proofArrives("production-delegation", 31))
       .then(proofArrives("grant", 1))
       .then(proofArrives("owner", 1))
       .then(proofArrives("source", 1))
@@ -908,6 +883,7 @@ module cloud_auth {
       .then(proofArrives("disconnect", 1))
       .then(proofArrives("production-delegation", 0))
       .then(proofArrives("grant", 0))
-      .expect(cloudProofClockRules and ghost.proofClockChecks.size() == 10)
+      .expect(cloudProofClockRules and ghost.proofClockChecks.size() == 11
+              and ghost.proofClockChecks.contains({ kind: "production-delegation", offset: 30, accepted: true }))
 }
 ```

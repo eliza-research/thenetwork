@@ -34,9 +34,9 @@ test.each(["delayed_receipt", "not_sent"] as const)("terminal probe and plan exp
   expect(w.net.review(intro, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => w.probed("a"), DAY)).toBe(true);
   const probe = w.to("a").find(message => message.meta.type === "probe")!;
-  await tickAt(probe.t + probeResponseMs - 1);
+  await tickAt(probe.t + probeResponseMs(false, false) - 1);
   expect(ledger().unanswered).toBe(0);
-  await tickAt(probe.t + probeResponseMs);
+  await tickAt(probe.t + probeResponseMs(false, false));
   expect(ledger()).toMatchObject({ unanswered: 1, onlyWhenAsked: false });
 
   const now = w.clock.now();
@@ -50,7 +50,7 @@ test.each(["delayed_receipt", "not_sent"] as const)("terminal probe and plan exp
   expect(w.net.review(item.id, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await w.runUntil(() => heldPlan !== undefined, DAY)).toBe(true);
   const sent = heldPlan!;
-  expect(plan.probeDeadline - sent.at).toBeLessThan(probeResponseMs);
+  expect(plan.probeDeadline - sent.at).toBeLessThan(probeResponseMs(false, false));
 
   w.restart();
   connect();

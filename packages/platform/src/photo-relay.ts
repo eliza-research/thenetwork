@@ -2,7 +2,7 @@
 // No production policy is supplied by default: uploading privately does not authorize item review.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { canClaimAction, permitsIntentBinding, photoDeliveryStillLive, photoFetchAllowed, providerFetchTtlMs, step as stepPhotoDelivery, type PhotoDelivery } from "../../core/src/generated/photoRelayItem.ts";
+import { canClaimAction, permitsIntentBinding, photoDeliveryStillLive, photoFetchAllowed, photoItemWithdrawable, providerFetchTtlMs, step as stepPhotoDelivery, type PhotoDelivery } from "../../core/src/generated/photoRelayItem.ts";
 import {
   canCheckParties, canCheckPhoto, canRecordSelection, canResolveNotice, initial as selectionInitial,
   photoHeldForReview, photoReviewable, photoReviewMayProceed, relayItemTtlMs, reviewAuthorizationCurrent,
@@ -44,7 +44,7 @@ function deliveryState(item: PhotoRelayItem): PhotoDelivery {
   };
 }
 export interface PhotoRelayStore {
-  create(item: PhotoRelayItem, requestId: string, requestHash: string): Promise<{ item?: PhotoRelayItem; conflict?: true }>;
+  create(item: PhotoRelayItem, requestId: string, requestHash: string, tx?: SQL): Promise<{ item?: PhotoRelayItem; conflict?: true }>;
   owned(app: AppId, personId: string): Promise<PhotoRelayItem[]>;
   list(app: AppId): Promise<PhotoRelayItem[]>;
   /** Callback and state transition share a durable item lock; throw rolls back. */
@@ -61,9 +61,9 @@ const itemRow = (r: Record<string, any>): PhotoRelayItem => ({
 });
 export class PgPhotoRelayStore implements PhotoRelayStore {
   constructor(private readonly sql: SQL) {}
-  async create(r: PhotoRelayItem, requestId: string, requestHash: string) {
+  async create(r: PhotoRelayItem, requestId: string, requestHash: string, transaction?: SQL) {
     let result: { item?: PhotoRelayItem; conflict?: true } = {};
-    await this.sql.begin(async tx => {
+    const perform = async (tx: SQL) => {
       const inserted = await tx`insert into platform.photo_relay_requests (sender_person_id,app_id,request_id,request_hash,item_id)
         values (${r.senderPersonId}::uuid,${r.app},${requestId},${requestHash},${r.id}) on conflict do nothing returning item_id`;
       const [request] = await tx`select * from platform.photo_relay_requests where sender_person_id=${r.senderPersonId}::uuid and app_id=${r.app} and request_id=${requestId}`;
@@ -79,7 +79,8 @@ export class PgPhotoRelayStore implements PhotoRelayStore {
        ${r.senderMemberId},${r.recipientMemberId},${r.sha256},${r.contentType},${r.bytes},${r.consentId},
        ${new Date(r.consentedAt)},${new Date(r.expiresAt)},${r.policyVersion},${r.policyNotice},${r.notice},${r.state})`;
       result = { item: r };
-    });
+    };
+    if (transaction) await perform(transaction); else await this.sql.begin(perform);
     return result;
   }
   async owned(app: AppId, personId: string) {
@@ -117,6 +118,8 @@ export interface PhotoRelayOptions {
   /** Only current authorized threads; returned labels must contain no private profile facts. */
   threads(app: AppId, senderPersonId: string): Promise<{ id: string; label: string }[]>;
 }
+export type PreparedSelection = { item: PhotoRelayItem; requestId: string; requestHash: string; selection: PhotoSelection };
+const openItem = (r: PhotoRelayItem, at: number) => (r.state === "pending" || r.state === "approved") && r.expiresAt > at;
 class SelectionConflict extends Error { constructor() { super("photo_selection_conflict"); } }
 export class PhotoRelayService {
   private readonly now: () => number;
@@ -131,6 +134,10 @@ export class PhotoRelayService {
     return photo;
   }
   async select(app: AppId, senderPersonId: string, threadId: string, photoId: string, noticeVersion: string, consent: boolean, requestId: string) {
+    const prepared = await this.prepareSelection(app, senderPersonId, threadId, photoId, noticeVersion, consent, requestId);
+    return prepared ? this.recordSelection(prepared) : undefined;
+  }
+  async prepareSelection(app: AppId, senderPersonId: string, threadId: string, photoId: string, noticeVersion: string, consent: boolean, requestId: string): Promise<PreparedSelection | undefined> {
     const inputValid = typeof requestId === "string" && /^[A-Za-z0-9_-]{16,80}$/.test(requestId)
       && this.enabled && /^ph_[a-f0-9]{24}$/.test(photoId) && !!threadId && threadId.length <= 200;
     let selection = stepPhotoSelection(selectionInitial, {
@@ -157,15 +164,27 @@ export class PhotoRelayService {
     const item: PhotoRelayItem = { ...parties, threadId, id: itemId, app, photoId, sha256: photo.sha256, bytes: photo.bytes,
       contentType: photo.contentType, consentId: `prc_${opaque()}`, consentedAt: at, expiresAt: at + PHOTO_RELAY_TTL,
       policyVersion: this.o.policy!.version, policyNotice: this.o.policy!.notice, notice, state: storedReview[selection.review], reviewId: null, reviewedAt: null, reviewerId: null, actionId: null, deliveryIntent: null, deliveryExpiresAt: null };
-    const created = await this.o.store.create(item, requestId, requestHash);
+    return { item, requestId, requestHash, selection };
+  }
+  async recordSelection(prepared: PreparedSelection, tx?: SQL) {
+    const created = await this.o.store.create(prepared.item, prepared.requestId, prepared.requestHash, tx);
     if (created.conflict) throw new SelectionConflict();
     const saved = created.item;
     if (!saved) return undefined;
-    selection = stepPhotoSelection(selection, { type: "recordSelection" });
+    const selection = stepPhotoSelection(prepared.selection, { type: "recordSelection" });
     if (selection.phase !== "StoredSelection") return;
-    // Replay returns the original immutable consent/deadline, never a fresh item.
-    if (!(await this.current(saved))) return { itemId: saved.id, state: saved.expiresAt <= this.now() ? "expired" : saved.state, expiresAt: saved.expiresAt };
+    if (!(await this.current(saved, tx))) return { itemId: saved.id, state: saved.expiresAt <= this.now() ? "expired" : saved.state, expiresAt: saved.expiresAt };
     return { itemId: saved.id, state: saved.state, expiresAt: saved.expiresAt };
+  }
+  async withdrawable(app: AppId, personId: string, threadId: string): Promise<string[]> {
+    return (await this.o.store.owned(app, personId))
+      .filter(r => photoItemWithdrawable(r.senderPersonId === personId && r.app === app, r.threadId === threadId, openItem(r, this.now())))
+      .map(r => r.id);
+  }
+  async withdraw(tx: SQL, app: AppId, personId: string, threadId: string, ids: readonly string[]): Promise<number> {
+    let withdrawn = 0;
+    for (const id of ids) if (await this.revoke(app, personId, id, { tx, threadId })) withdrawn++;
+    return withdrawn;
   }
   /** The current notice for one of the sender's current threads, as select() renders it (no private profile facts). */
   async noticeFor(app: AppId, senderPersonId: string, threadId: string): Promise<{ version: string; policyNotice: string; notice: string } | undefined> {
@@ -174,14 +193,16 @@ export class PhotoRelayService {
     if (!thread || !this.o.policy!.notice.includes("{{recipient}}")) return;
     return { version: this.o.policy!.version, policyNotice: this.o.policy!.notice, notice: this.o.policy!.notice.replaceAll("{{recipient}}", thread.label) };
   }
-  async revoke(app: AppId, personId: string, id: string): Promise<boolean> {
+  async revoke(app: AppId, personId: string, id: string, scope: { tx?: SQL; threadId?: string } = {}): Promise<boolean> {
     return this.o.store.locked(id, async (r, save) => {
       if (!r) return false;
+      const owner = r.app === app && r.senderPersonId === personId;
+      if (scope.threadId !== undefined && !photoItemWithdrawable(owner, r.threadId === scope.threadId, openItem(r, this.now()))) return false;
       const selection = selectionState(r);
-      const next = stepPhotoSelection(selection, { type: "revokeSelection", ownerMatches: r.app === app && r.senderPersonId === personId });
+      const next = stepPhotoSelection(selection, { type: "revokeSelection", ownerMatches: owner });
       if (next === selection) return false;
       await save({ ...r, state: storedReview[next.review] }); return true;
-    });
+    }, scope.tx);
   }
   /** Item-scoped review: never a fabricated report and never an appearance rating. Unknown stays pending. */
   async review(id: string, reviewerId: string, decision: "safe" | "unsafe" | "unknown", tx?: SQL): Promise<boolean> {

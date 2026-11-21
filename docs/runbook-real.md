@@ -232,7 +232,40 @@ Real mode never writes to the database. Review decisions, safety actions (lift a
 4. A refusal shows the Network's reason (for example `not_in_review`, `matching_paused`, `already_closed`). After each action, real mode reads the database again.
 5. The alerts strip shows the service's health: unreachable (bad), the last tick late (warn after 5 minutes, bad after 15), messages the channel refused or holds, and one line when all is well.
 
-**Caution:** the service records its own token as the reviewer of record, not the person. The Observatory sends the person in the `X-Network-Staff-Id` header, the app in `?app=` and `X-Network-App`, and its own audit row names them ([admin-console.md](admin-console.md) 4.6). The service does not read the staff header yet.
+The reviewer of record is the person. The Observatory sends the signed-in person in the `X-Network-Staff-Id` header, the app in `?app=` and `X-Network-App`, and its own audit row names them ([admin-console.md](admin-console.md) 4.6). The service takes the header only from a request with `NETWORK_SERVICE_CONSOLE_TOKEN` and records that person in `network.staff_audit`. It ignores the header from any other token.
+
+### 4.5 Gate and safety steps through the console
+
+These steps change a gate or a safety state, or read the queues behind them. Use the console for each of them. Do not call the staff port with a shared token: when `NETWORK_SERVICE_CONSOLE_TOKEN` is set, the service refuses every one of these steps without the console's named person (403 `named_reviewer_required`; [staff permissions](../spec/staffPermissions.md), "The staff API takes a console step only from a named person").
+
+| Step | Console route (`?app=<app>`) | Service route | Role |
+|---|---|---|---|
+| Read postings | `GET /api/staff/postings` (`managerId` optional) | `GET /postings` (peon) | reviewer or admin |
+| Save a posting | `POST /api/staff/postings` | `POST /postings` (peon) | admin |
+| Close a posting | `POST /api/staff/postings/:id/close` | `POST /postings/:id/close` (peon) | admin |
+| Verify an employer | `POST /api/staff/employers/:memberId/verify` `{company, note}` | `POST /employers/:id/verify` (peon) | admin |
+| Home-help queue | `GET /api/staff/home-help` | `GET /safety/home-help` | safety |
+| Home-help decision | `POST /api/staff/home-help/:planId` `{action, revision, helperIds?}` | `POST /safety/home-help/:planId` | safety |
+| Member invitation queue | `GET /api/staff/member-invitations` | `GET /review/member-invitations` | reviewer or safety |
+| Member invitation decision | `POST /api/staff/member-invitations` `{id, decision}` | `POST /review/member-invitations` | reviewer or safety |
+| Seed invitation batch | `POST /api/staff/invite/seed` (the seed batch) | `POST /apps/:app/invite/seed` | admin |
+| Verify a member | `POST /api/staff/members/:memberId/verify` `{check, result, note}` | `POST /members/:id/verify` | safety |
+| Staff invite | `POST /api/staff/invite` `{phone}` | `POST /invite` | admin |
+| Agent signals | `GET /api/staff/signals` | `GET /signals` | reviewer or safety |
+| Agent signal decision | `POST /api/staff/signals/:id` (the decision) | `POST /signals/:id` | safety |
+| Open a privacy request | `POST /api/staff/privacy/requests` `{reason, phone, operation, scope?, app}` | `POST /privacy/requests` | admin for all apps |
+| Confirm a privacy request | `POST /api/staff/privacy/requests/:id/confirm` `{reason, phone, personId, code}` | `POST /privacy/requests/:id/confirm` | admin for all apps |
+| Privacy replay after a restore | `POST /api/staff/privacy/replay` `{reason}` | `POST /privacy/replay` | admin for all apps |
+| Held relay items (with `deadline`) | `GET /api/held?queue=relay`, `POST /api/held` | `GET /staff/relay/held`, `POST /staff/relay/:id/release\|reject` | safety |
+
+Procedure:
+
+1. Sign in to the console as yourself (Cloudflare Access in staging and production). The console checks your own role for the app before it sends the step. A role for another app does not count, and a privacy step needs admin for all apps.
+2. The console writes its audit row first (`step_<name>`, a `requested` row and then a `result` row for a change), then sends the step with the console token and your id. A step whose audit row cannot be written is refused.
+3. The service answers with its own reason, which the console passes through (for example `company_and_note_required`, `plan_unavailable`, `invitation_review_unavailable`, `reason_required`). The service writes `network.staff_audit` with your id.
+4. If the console is down, wait or fix the console. A shared-token call is refused for these steps on a service with a console token. Only a development service without `NETWORK_SERVICE_CONSOLE_TOKEN` records the token as the actor.
+
+Checked by `packages/observatory/test/staff-steps.integration.test.ts`.
 
 Checked on 2026-10-07 (`packages/observatory/test/real-service.test.ts`): a two-day simulated run written to a test database; the real service on it; a reject from real mode reached the service with the staff id and was read back from `network.review_items`; a second decision on the same item came back `not_in_review`; a case closed and the matching switch went off through the service; with the service stopped, the strip showed `service_down` and actions answered `service_unavailable`.
 

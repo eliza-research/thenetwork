@@ -550,7 +550,7 @@ export type HeldQueue = "leak" | "relay";
  * left out for a member under 18 or with an unknown age (`textHidden`).
  */
 export interface HeldText {
-  id: string; queue: HeldQueue; kind?: string; to?: string; memberId?: string; createdAt?: number;
+  id: string; queue: HeldQueue; kind?: string; to?: string; memberId?: string; createdAt?: number; deadline?: number;
   /** Why it was held (the leak guard's labels, or the relay check's reason codes). */
   reasons: string[];
   text?: string;

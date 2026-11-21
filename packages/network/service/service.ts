@@ -50,7 +50,7 @@ import { canSaveCofounderIntent, cofounderIntentBlocksNew } from "../../core/src
 import { standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import { homeHelpOfferChangeAllowed } from "../../core/src/generated/boundedHelp.ts";
 import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
-import { profileAgeCounts, publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
+import { forgetEndsAppAccess, profileAgeCounts, publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
@@ -78,9 +78,9 @@ import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js
 import {
   checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
   namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
-  shouldReadPendingAnswer, step as stepTextJoin,
+  sendAgeDecline, shouldReadPendingAnswer, step as stepTextJoin, textJoinKeepsMemberId, type JoinMembership,
 } from "../../core/src/generated/textEnrollment.ts";
-import { checkLineAge, checkLineBan, checkLineInviteDecline, checkLineNumberHold, initial as lineGateStart, lineHeldNumberGetsHelp, lineNumberHoldReadNeeded, readLineCommand, type LineCommand } from "../../core/src/generated/lineRouting.ts";
+import { checkLineAge, checkLineBan, checkLineInviteDecline, checkLineNumberHold, initial as lineGateStart, leaveReply, lineHeldNumberGetsHelp, lineNumberHoldReadNeeded, readLineCommand, type LineCommand } from "../../core/src/generated/lineRouting.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
@@ -131,7 +131,7 @@ import {
   releaseMemberInvitationReview, storeMemberInvitation, type ReferralJoin,
 } from "../../platform/src/invite-links.ts";
 import { SeedInvitations } from "../../platform/src/seed-invitations.ts";
-import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
+import { canJoinApp, joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, type Keyword, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
@@ -148,7 +148,8 @@ import { PhotoUploadLinks } from "../../platform/src/photo-upload-link.ts";
 import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { memberExportFacetAllowed, memberExportGatheringsAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
-import { choosePhoto } from "./photoIntakeRelayChoice.ts";
+import { sweepPhotos } from "./photoSweep.ts";
+import { choosePhoto, withdrawPhoto } from "./photoIntakeRelayChoice.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
 import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
@@ -162,6 +163,7 @@ import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
 import { type ConnectorUpdateOutcome, connectorUpdateMarkedSeen, connectorUpdateOutcome } from "../../core/src/generated/connectorTools.ts";
+import { passesOutputGate } from "../../mcp/src/leaks.ts";
 import {
   appAllowsInboxItem, inboxOpportunityAllowsUpdate, mayShowThreadUpdate, networkTextCanProduceInboxItem,
   networkTextProjection, networkTextSummaryLimit, threadUpdatePageSize,
@@ -177,6 +179,8 @@ import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
 import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
+import { serviceStaffStep } from "../../observatory/src/staffSteps.ts";
+import { staffStepActorAccepted, type StepActor } from "../../core/src/generated/staffPermissions.ts";
 import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../observatory/src/types.ts";
 
 /** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
@@ -338,6 +342,24 @@ const NOT_NAMES = new Set(["hi", "hey", "hello", "yo", "sup", "im", "i'm", "i", 
 const JOIN_FILLER = new Set(["hi", "hey", "hello", "yo", "im", "i'm", "i", "am", "my", "name", "names", "name's", "is", "and", "age", "aged", "years", "year", "old", "yrs", "y", "o",
   "it's", "its", "call", "me", "just", "turned", "turning", "join", "please", "pls"]);
 
+const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembership =>
+  state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
+
+const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
+  const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
+  const others = text.replace(/\d+/g, " ").replace(/[^\p{L}' ]+/gu, " ").split(/\s+/).filter(Boolean).map(lower)
+    .filter(w => !JOIN_FILLER.has(w) && !appWords.includes(w));
+  return nums.length === 1 && others.length <= 1 && !/\d[^\d\s,.;:!)]|[^\d\s,.;:(]\d/.test(text) ? Number(nums[0]![1]) : undefined;
+};
+
+const joinSuffixKind = (segment: string, head: string, appWords: readonly string[]): "home" | "filler" | undefined => {
+  const words = segment.split(/\s+/).filter(Boolean).map(lower);
+  const headAge = agesStated(head).age ?? ageAnswer(head) ?? bareJoinAge(head, appWords);
+  if (/\d/.test(segment) || words.length === 0 || !words.every(w => /^\p{L}[\p{L}'.-]*$/u.test(w)) || headAge === undefined) return undefined;
+  if (words.every(w => NOT_NAMES.has(w) || JOIN_FILLER.has(w) || appWords.includes(w))) return "filler";
+  return ageAnswer(head) === undefined ? "home" : undefined;
+};
+
 /**
  * A join answer by text: an age ("29", "I'm 29", "Sam, 29") and, when `nameOk`, a first name. The
  * name is the first word that is not a filler word or the name of an app. A bare number is an age
@@ -352,18 +374,16 @@ export function parseJoinText(text: string, appWords: readonly string[], nameOk:
   // Remove only a known, delimited city before the conservative bare-age check.
   const suffix = /[,;]\s*([^,;.!?\n]+)[.!?]?\s*$/.exec(nameText);
   const suffixCity = suffix ? homeCityOf(suffix[1]) : undefined;
-  if (suffixCity) nameText = nameText.slice(0, suffix!.index);
-  const cities = [...homes.map(m => homeCityOf(m[1])), ...(suffixCity ? [suffixCity] : [])];
+  const head = suffix ? nameText.slice(0, suffix.index) : nameText;
+  const suffixKind = suffix && !suffixCity ? joinSuffixKind(suffix[1]!, head, appWords) : undefined;
+  const unknownSuffixHome = suffixKind === "home";
+  if (suffixCity || suffixKind) nameText = head;
+  const cities = [...homes.map(m => homeCityOf(m[1])), ...(suffixCity ? [suffixCity] : []), ...(unknownSuffixHome ? [undefined] : [])];
   const invalidHome = cities.some(c => !c) || new Set(cities).size > 1;
   const stated = agesStated(nameText);
   const ageOnly = ageAnswer(nameText);
   let age = stated.age ?? ageOnly;
-  if (age === undefined) {
-    const nums = [...nameText.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
-    const others = nameText.replace(/\d+/g, " ").replace(/[^\p{L}' ]+/gu, " ").split(/\s+/).filter(Boolean).map(lower)
-      .filter(w => !JOIN_FILLER.has(w) && !appWords.includes(w));
-    if (nums.length === 1 && others.length <= 1 && !/\d[^\d\s,.;:!)]|[^\d\s,.;:(]\d/.test(nameText)) age = Number(nums[0]![1]);
-  }
+  if (age === undefined) age = bareJoinAge(nameText, appWords);
   if (age !== undefined && !(age > 0 && age < 120)) age = undefined;
   if (!nameOk && age === undefined) return { ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
   const words = nameText.replace(/[^\p{L}' -]+/gu, " ").split(/[\s-]+/).filter(Boolean);
@@ -937,8 +957,10 @@ export class NetworkService implements RuntimeHost {
 
   /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
   async purge() {
+    await sweepPhotos({ photos: this.photos, runtimes: [...this.runtimes.values()], dropRatings: (personId, app) => this.dropRatings(personId, app), log: s => this.log(s) })
+      .catch(e => this.log(`[purge] photo sweep failed and waits for the next tick: ${(e as Error).message}`));
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
-      await this.profileSuggestions.expirePending(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
+      await this.profileSuggestions.applyRetention(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
     }
     await this.runtimeFor("peon")?.scoped(tx => purgePeonSearchDrafts(tx, this.clock.now()))
       .catch(() => this.log("[purge] Peon search draft expiry waits for retry"));
@@ -1015,19 +1037,25 @@ export class NetworkService implements RuntimeHost {
    */
   async updatesFor(personId: string, app: AppId, surface: Surface, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<Array<{ summary: string; at: string; kind: string }>> {
     if (!this.notify) return [];
-    let outcomes = new Map<string, ConnectorUpdateOutcome>();
     const items = await this.notify.readUpdates(personId, surface, this.clock.now(), token, {
       app,
-      visible: async items => {
-        outcomes = await this.sql.begin(async tx => {
-          await tx`select set_config('app.app_id',${app},true)`;
-          return this.inboxUpdateOutcomes(tx, personId, app, items, passesLeakGate);
-        });
-        return items.filter(item => outcomes.get(item.id) === "InboxUpdateShown");
-      },
-      withheld: items => items.filter(item => { const outcome = outcomes.get(item.id); return !!outcome && !connectorUpdateMarkedSeen(outcome); }),
+      ...this.gatedUpdateRead(items => this.sql.begin(async tx => {
+        await tx`select set_config('app.app_id',${app},true)`;
+        return this.inboxUpdateOutcomes(tx, personId, app, items, passesLeakGate);
+      })),
     });
     return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
+  }
+
+  private gatedUpdateRead(outcomesOf: (items: InboxItem[]) => Promise<Map<string, ConnectorUpdateOutcome>>) {
+    let outcomes = new Map<string, ConnectorUpdateOutcome>();
+    return {
+      visible: async (items: InboxItem[]) => {
+        outcomes = await outcomesOf(items);
+        return items.filter(item => outcomes.get(item.id) === "InboxUpdateShown");
+      },
+      withheld: (items: InboxItem[]) => items.filter(item => { const outcome = outcomes.get(item.id); return !!outcome && !connectorUpdateMarkedSeen(outcome); }),
+    };
   }
 
   private async currentInboxUpdates(tx: SQL, personId: string, app: AppId, items: InboxItem[]): Promise<InboxItem[]> {
@@ -1035,7 +1063,6 @@ export class NetworkService implements RuntimeHost {
     return items.filter(item => outcomes.get(item.id) === "InboxUpdateShown");
   }
 
-  // spec/connectorTools.md, "A reader who cannot be matched never reads an update about another member"
   private async inboxUpdateOutcomes(tx: SQL, personId: string, app: AppId, items: InboxItem[], passesLeakGate: (summary: string) => boolean): Promise<Map<string, ConnectorUpdateOutcome>> {
     if (!items.length) return new Map();
     const subjects = items.map(item => {
@@ -1055,7 +1082,6 @@ export class NetworkService implements RuntimeHost {
         and exists (select 1 from network.members member where member.app_id=${app} and member.id=message.member_id and member.person_id=${personId}::uuid)
       left join network.opportunities opportunity on opportunity.app_id=${app}
         and opportunity.id=coalesce(subject.opportunity_id, message.opportunity_id, subject.subject_id)`;
-    // The lowest age wins: the member row, the person and the phone's age floor (platform.matching_ages).
     const [reader] = await tx<{ age: number | null }[]>`select ages.age from network.members m
       join platform.matching_ages ages on ages.app_id=m.app_id and ages.member_id=m.id
       where m.app_id=${app} and m.person_id=${personId}::uuid`;
@@ -1296,15 +1322,16 @@ export class NetworkService implements RuntimeHost {
     return {
       findInvitation: (app, token, at, verifiedPhone) => this.referralFor(app, token, at, verifiedPhone),
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
+      memberExists: async ctx => (await this.runtimeFor(ctx.app.id)?.scoped(tx => tx`select 1 from network.members where app_id=${ctx.app.id} and id=${ctx.memberId} and account_status not in ('invited','removed')`) ?? []).length > 0,
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx, reason) => {
+        const endsAccess = forgetEndsAppAccess(reason === "join_failed");
         // The app's photos go first (leave, delete everything, a new owner of the number).
-        await this.photos.deleteFor(ctx.personId, ctx.app.id);
+        if (endsAccess) await this.photos.deleteFor(ctx.personId, ctx.app.id);
         await this.forget(ctx.app, ctx.memberId, reason === "leave" ? ctx.personId : undefined);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
-        // A failure stops the leave before the membership goes, so the request fails and a retry finishes it.
-        for (const f of this.forgetListeners) await f(ctx);
+        if (endsAccess) for (const f of this.forgetListeners) await f(ctx);
       },
       onEraseAccount: async personId => {
         for (const erase of this.accountEraseListeners) await erase(personId);
@@ -1399,7 +1426,7 @@ export class NetworkService implements RuntimeHost {
       if (memberReferral && verifiedRecipientHash === undefined) await accounts.store.unsuppress(accounts.phoneHash(ctx.e164));
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
-      await accounts.store.attachPerson(ctx.e164, ctx.person.id);
+      await accounts.store.attachPerson(ctx.e164, ctx.person.id, ctx.session ?? null, at);
       if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
@@ -1946,6 +1973,7 @@ export class NetworkService implements RuntimeHost {
     if (!banned && e164 && !kw && !profileRead && !intentCommand && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
     // spec/photoUploadLink.md, "A link is issued only to an adult live member of a photo app who is not banned or held"
     if (!banned && e164 && !kw && !profileRead && !intentCommand && !ev.mediaUrls?.length && (await this.photoIntake.addRequest(e164, ev.text, rowId, route.app))) return "handled";
+    if (!banned && e164 && !kw && !profileRead && !intentCommand && !ev.mediaUrls?.length && (await this.photoIntake.deleteRequest(e164, ev.text, rowId))) return "handled";
     if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
@@ -1958,14 +1986,19 @@ export class NetworkService implements RuntimeHost {
     if (leaving && e164) {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);
-      if (!lrt) return "handled";
+      const notInApp = async () => {
+        await this.direct(rt, ev.from, this.copyOf(leaving).notInApp, `sys:${rowId}`, "compliance");
+        return "handled" as const;
+      };
+      if (!lrt) return notInApp();
       if (lrt !== rt) await lrt.identities();
       const person = await this.accounts.personFor(e164);
       const routedId = lrt.memberOf(ev.from);
       // A retry can follow Network cleanup that finished before the membership tombstone was written.
       const membership = !routedId && person ? await this.people.getMembership(person.id, leaving.id) : undefined;
-      const lid = routedId ?? (membership && membership.state !== "invited" && membership.state !== "removed" ? membership.memberId : undefined);
-      if (!lid) return "handled";
+      const lid = routedId ?? membership?.memberId;
+      if (!lid) return notInApp();
+      if (leaveReply(!!routedId, membership?.state === "invited", membership?.state === "removed", !!membership) === "NotInAppReply") return notInApp();
       if (!person && !await lrt.scoped(async tx => (await tx`select id from network.members
         where app_id=${leaving.id} and id=${lid} and person_id is null`).length > 0)) return "held";
       const at = this.consentAt(ev);
@@ -2670,7 +2703,12 @@ export class NetworkService implements RuntimeHost {
     const existing = person ? await this.people.getMembership(person.id, app.id) : undefined;
     const invited = existing?.state === "invited";
     const sharedNetwork = route.shared && app.id === "ntwrk";
-    const invitation = stepTextJoin(ban, { type: "checkInvitation", inviteOnly: app.joinMode === "invite", invited, sharedNetwork });
+    const statedAge = parseJoinText(ev.text, this.appWords(), false).age;
+    let invitation = stepTextJoin(ban, { type: "checkInvitation", inviteOnly: app.joinMode === "invite", invited, sharedNetwork, hasAge: statedAge !== undefined });
+    if (invitation.phase === "AwaitingInviteAgeRecord" && statedAge !== undefined) {
+      await this.accounts.recordAge(e164, person, statedAge);
+      invitation = stepTextJoin(invitation, { type: "recordStatedAge" });
+    }
     if (invitation.phase === "InviteRequired") {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { ok } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t, { minGapMs: DAY });
@@ -2684,13 +2722,24 @@ export class NetworkService implements RuntimeHost {
     const age = lowestAge(said.age, p?.age), name = said.name ?? p?.name ?? undefined;
     const homeCity = said.homeCity ?? p?.homeCity;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
+    const floor = await this.accounts.lowestAge(e164, person);
     const answer = stepTextJoin(invitation, {
-      type: "readJoinAnswer", answerFacts: { hasAge: age !== undefined, hasName: !!name, invalidHome: !!said.invalidHome },
+      type: "readJoinAnswer", answerFacts: { hasAge: age !== undefined, hasName: !!name, invalidHome: !!said.invalidHome,
+        floorRefused: floor !== undefined && !canJoinApp(floor, app) },
     });
     const requestHome = async (): Promise<InboundOutcome> => {
       await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and age.", `sys:${rowId}`, "reply");
       return "join_asked";
     };
+    const declineAge = async (stated: boolean): Promise<InboundOutcome> => {
+      await this.people.deletePending(key, "join");
+      const { ok } = await this.people.hit(`under_age:${app.id}:${key}`, DAY, t, { minGapMs: DAY });
+      const send = sendAgeDecline(stated, !ok);
+      if (send) await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
+      this.log(`[inbound] under the join age for ${app.id}: ${send ? "declined" : "no reply (declined in the last day)"}, nothing stored`);
+      return "under_age";
+    };
+    if (answer.phase === "RefuseAge") return declineAge(false);
     if (answer.phase === "AskForHome") return requestHome();
     if (answer.phase === "AskForAge") {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity } : {}), at: t });
@@ -2698,18 +2747,12 @@ export class NetworkService implements RuntimeHost {
       if (count <= 3) await this.direct(rt, ev.from, ask, `sys:${rowId}`, "reply");
       return "join_asked";
     }
-    if (answer.phase !== "AwaitingJoinAge" || age === undefined) return "join_asked";
+    if (answer.phase !== "AwaitingAgeRecord" || age === undefined) return "join_asked";
+    await this.accounts.recordAge(e164, person, age);
+    const recorded = stepTextJoin(answer, { type: "recordStatedAge" });
     const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
-    const ageCheck = stepTextJoin(answer, { type: "checkTextJoinAge", ageAllowed: check.ok });
-    if (ageCheck.phase === "RefuseAge") {
-      // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
-      // so a second try with an older age is refused too.
-      await this.accounts.recordAge(e164, person, age);
-      await this.people.deletePending(key, "join");
-      await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
-      this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);
-      return "under_age";
-    }
+    const ageCheck = stepTextJoin(recorded, { type: "checkTextJoinAge", ageAllowed: check.ok });
+    if (ageCheck.phase === "RefuseAge") return declineAge(true);
     if (ageCheck.phase === "AskForHome") return requestHome();
     if (ageCheck.phase === "AskForName") {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, ...(homeCity ? { homeCity } : {}), at: t });
@@ -2723,11 +2766,11 @@ export class NetworkService implements RuntimeHost {
     await this.accounts.recordAge(e164, who, age);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
     const membership: Membership = {
-      app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
+      app: app.id, personId: who.id, memberId: textJoinKeepsMemberId(joinMembershipOf(existing?.state)) && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
     const admitted = await this.people.admitMembership(membership, { e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null,
-      state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) }, key);
+      state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) }, key, null);
     if (!admitted) return "held";
     const stored = stepTextJoin(ageCheck, { type: "recordTextMembership", membershipActive: membership.state === "active" });
     if (stored.phase !== "AwaitingWelcome") return "joined";
@@ -2777,7 +2820,7 @@ export class NetworkService implements RuntimeHost {
           state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: ntwrk.firstName, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
         };
         const admitted = await this.people.admitMembership(m, { e164, app: id, state: "opted_in", source: "looking_for",
-          wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key);
+          wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key, null);
         if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
         joined.push(app);
       }
@@ -3001,8 +3044,7 @@ export class NetworkService implements RuntimeHost {
       return 1;
     });
     const r: ActionResult = n ? { ok: true } : { ok: false, reason: "unknown_member" };
-    // A failed age check: no rating of looks may stay on this app (adults only, decision 9).
-    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) await this.dropRatings(pid, rt.app.id); }
+    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) { await this.photos.deleteFor(pid, rt.app.id); await this.dropRatings(pid, rt.app.id); } }
     await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { safety: "verify", check, result, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } }).catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
   }
@@ -3344,7 +3386,7 @@ export class NetworkService implements RuntimeHost {
             await lock(tx);
             const notifications = new Notifier(new PgNotifyStore(tx), {get: personId => this.notifyRecipient(personId)}, this.notify!.cfg);
             const items = await notifications.readUpdates(who.person.id, "web", this.clock.now(), undefined, {
-              app, visible: items => this.currentInboxUpdates(tx, who.person.id, app, items),
+              app, ...this.gatedUpdateRead(items => this.inboxUpdateOutcomes(tx, who.person.id, app, items, passesOutputGate)),
             });
             const result = {items:items.map(item => ({summary:item.summary}))};
             await complete(tx, result);
@@ -3353,7 +3395,7 @@ export class NetworkService implements RuntimeHost {
           return json(result);
         }
         if (this.routePolicy) return json({error:"canonical_updates_unavailable",retryable:false},503);
-        const result = {items:(await this.updatesFor(who.person.id,app,"web",undefined,()=>true)).map(item=>({summary:item.summary}))};
+        const result = {items:(await this.updatesFor(who.person.id,app,"web",undefined,passesOutputGate)).map(item=>({summary:item.summary}))};
         await this.sql.begin(async tx=>{await lock(tx);await complete(tx,result);});
         return json(result);
       }
@@ -3856,7 +3898,7 @@ export class NetworkService implements RuntimeHost {
     }
     if (url.pathname.startsWith(SUGGESTION_PATH)) return profileSuggestionEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, resolveIdentity: this.suggestionIdentity, authorizeSource: this.suggestionAuthorization }, req);
     if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
-    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photos:this.photoRelay, choosePhoto: input => choosePhoto({ sql: this.sql, photos: this.photos, relay: this.photoRelay, now: () => this.clock.now() }, input), runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
+    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photos:this.photoRelay, choosePhoto: input => choosePhoto({ sql: this.sql, photos: this.photos, relay: this.photoRelay, now: () => this.clock.now() }, input), withdrawPhoto: input => withdrawPhoto({ relay: this.photoRelay }, input), runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
@@ -3881,7 +3923,11 @@ export class NetworkService implements RuntimeHost {
       if (!rt) return json({ ok: false, error: "no_network" }, 404);
       const auth = this.tokens.size ? authenticate(req, { tokens: this.tokens }) : { status: 401 as const, error: "no staff tokens configured (NETWORK_SERVICE_TOKENS)" };
       if (!("user" in auth)) return json({ ok: false, error: auth.error }, auth.status);
-      const user = this.reviewerOfRecord(req, auth.user);
+      const { user, actor } = this.reviewerOfRecord(req, auth.user);
+      const consoleStep = serviceStaffStep(req.method, path);
+      if (consoleStep && !staffStepActorAccepted(this.consoleToken !== undefined, actor)) {
+        return json({ ok: false, code: "named_reviewer_required", error: `${consoleStep} needs the console token with the signed-in person in X-Network-Staff-Id` }, 403);
+      }
       // A role for this app (role@app or role@*); admin for the app passes every check.
       const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
       const gatheringRead = path.match(/^\/gatherings\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})\/(roster|priority)$/);
@@ -4011,8 +4057,8 @@ export class NetworkService implements RuntimeHost {
         const selected = (await this.photoRelay.held(rt.app.id)).filter(p=>p.threadId && p.app===rt.app.id);
         // The console's HeldText shape: `id` is the item, `memberId` the sender (whose words they are). No recipient id
         // (the console masks `to` as a phone number). relayHeld() already leaves out a sender's text once their age is in doubt.
-        return json({ ok: true, network: rt.id, items: held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at, deadline: h.deadline,
-          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })).concat(selected.map(p=>({id:p.id,itemId:p.id,app:p.app,kind:"photo",memberId:p.senderMemberId,from:p.senderMemberId,reasons:["photo:review"],createdAt:p.createdAt,deadline:null as number|null}))) });
+        return json({ ok: true, network: rt.id, items: [...held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at, deadline: h.deadline,
+          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })), ...selected.map(p => ({ id: p.id, itemId: p.id, app: p.app, kind: "photo", memberId: p.senderMemberId, from: p.senderMemberId, reasons: ["photo:review"], createdAt: p.createdAt, deadline: null }))] });
       }
       const relayPhotoPreview=path.match(/^\/(?:staff\/)?relay\/(pri_[a-zA-Z0-9_-]+)\/photo$/);
       if (req.method==="GET" && relayPhotoPreview) {
@@ -4228,7 +4274,7 @@ export class NetworkService implements RuntimeHost {
   };
 
   /** The console's token may name the signed-in staff member (X-Network-Staff-Id); any other token may not. */
-  private reviewerOfRecord(req: Request, user: StaffUser): StaffUser { return reviewerOfRecord(req, user, this.consoleToken); }
+  private reviewerOfRecord(req: Request, user: StaffUser): { user: StaffUser; actor: StepActor } { return reviewerOfRecord(req, user, this.consoleToken); }
 
   /** POST /webhooks/blooio[/:app]: verify the signature on the raw body (the prototype's rules), parse, handle. 401 never retries; 500 asks Blooio to retry. */
   private async webhook(req: Request, secret: string | undefined, app?: AppId): Promise<Response> {
@@ -4263,14 +4309,15 @@ export class NetworkService implements RuntimeHost {
  * console names in X-Network-Staff-Id, taken only from a request that carries the console's own token
  * (NETWORK_SERVICE_CONSOLE_TOKEN). From any other token the header is ignored and the token is the actor.
  */
-export function reviewerOfRecord(req: Request, user: StaffUser, consoleToken: string | undefined): StaffUser {
+export function reviewerOfRecord(req: Request, user: StaffUser, consoleToken: string | undefined): { user: StaffUser; actor: StepActor } {
+  const token = { user, actor: "SharedToken" as const };
   const named = req.headers.get("x-network-staff-id")?.trim();
-  if (!named || !consoleToken) return user;
+  if (!named || !consoleToken) return token;
   const given = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
   const a = Buffer.from(given), b = Buffer.from(consoleToken);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return user;
-  if (named.length > 200 || !/^([^\s@]+@[^\s@]+\.[^\s@]+|token:[a-z_+]+#[0-9a-f]{8})$/i.test(named)) return user;
-  return { ...user, id: named };
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return token;
+  if (named.length > 200 || !/^([^\s@]+@[^\s@]+\.[^\s@]+|token:[a-z_+]+#[0-9a-f]{8})$/i.test(named)) return token;
+  return { user: { ...user, id: named }, actor: "NamedReviewer" };
 }
 
 /**

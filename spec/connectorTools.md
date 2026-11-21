@@ -6,7 +6,7 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 - The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
 - The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval. The shell keeps a grant-bound keyed receipt for each exact profile ([profile submission](mcpProfileSubmission.md)) so retries do not repeat intake.
-- The day. The store counts the profile calls of one grant in a fixed window of 24 hours. The count of the earlier calls in the window is `sentToday`. A new window starts the count at zero, which is `startNewDay`. The store also counts a call that the limit refuses, but that call is in a window that is already at the limit, so the limit does not change.
+- The day. The store counts the profile and draft calls of one grant in a fixed window of 24 hours. The count of the earlier calls in the window is `sentToday`. A new window starts the count at zero, which is `startNewDay`. The store also counts a call that the limit refuses, but that call is in a window that is already at the limit, so the limit does not change.
 - The member status, the owner change and the updates. The platform reads the status on each call (`changeMemberStatus`). Credential admission checks ownership before applying scopes, argument checks or limits, so the first authenticated call after a change ends the grant (`callAfterOwnerChange`). The platform inbox keeps the unseen updates, reads them and marks them seen (`receiveUpdate`, `readUpdates`, `callGetUpdates`).
 
 ## Story: Use my app's connector from my agent
@@ -15,14 +15,14 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 ### Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date
 
-There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Changed: the Join draft tool is gone, because no page or form read the draft it saved (audit MCP16 and SIG46); a person who has not joined finishes signup on the connection page.
+There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool. Changed: the Join draft tool is back, because the Finish signup step of the connection page now reads the draft that it saves (audit MCP16 and SIG46).
 
 The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. A connection to a disabled OpenAI host is not available. The full surface applies the ordinary host rule. The shell refuses a request to a host that is not available before it lists or calls a tool, so the tool list of an available host uses the ordinary host rule.
 
 ```quint
 type AppId = Ntwrk | Slop | Peon | Friends
 type Surface = FullSurface | OpenAiSurface
-type ToolName = AppInfoTool | StartSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool
+type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool
 
 pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
 
@@ -35,7 +35,10 @@ pure def lawConfiguredOptOutBlocksOpenAiHost(host: AppId): bool =
   not(configuredHostServes(OpenAiSurface, host, false))
 
 pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
-  hostServes(surface, host)
+  hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk)
+
+pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
+  toolListed(host, surface, PrepareSignupTool) implies (host == Friends or host == Ntwrk)
 
 pure def lawOpenAiNeverOffersSlop(tool: ToolName): bool =
   not(appOffered(OpenAiSurface, Slop)) and not(toolListed(Slop, OpenAiSurface, tool))
@@ -45,7 +48,7 @@ pure def lawFullSurfaceOffersEveryApp(app: AppId): bool = appOffered(FullSurface
 
 ### Public tools need no sign-in, and member tools need the person's own grant
 
-`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` needs its own explicitly authorized profile read scope. `submit_profile` needs the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` needs its own explicitly authorized profile read scope. `submit_profile` and `prepare_signup` need the profile write scope. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
 
 ```quint
 type Scope = NoScope | MembershipRead | ProfileWrite | ProfileRead
@@ -72,7 +75,7 @@ pure def lawProfileReadScopeIsSeparate(hasRead: bool, hasWrite: bool): bool =
 
 ### The member status decides which member tool can act
 
-The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Each status has one next step that the agent tells the person: join or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status. Changed: the join step now names a path that works from a live connection (audit MCP15). On The Network, slop.date and friends.help, the person disconnects the app in their agent, connects it again and chooses Finish signup on the connection page; on peon.biz, the person opens the app's join page. The text keyword stays a second path where the app has one.
+The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status. Changed: the join step now names a path that works from a live connection (audit MCP15). On The Network, slop.date and friends.help, the person disconnects the app in their agent, connects it again and chooses Finish signup on the connection page; on peon.biz, the person opens the app's join page. The text keyword stays a second path where the app has one.
 
 ```quint
 type MemberStatus = NotJoined | Invited | Onboarding | Active | Stopped | OnHold
@@ -94,6 +97,7 @@ pure def lawStoppedMembershipCannotSubmitProfile(storedStatus: str, reviewRequir
 pure def toolAllowedFor(tool: ToolName, status: MemberStatus): bool =
   if (tool == SubmitProfileTool) liveMember(status)
   else if (tool == ReadProfileTool) status == Active
+  else if (tool == PrepareSignupTool) (status == NotJoined or status == Invited)
   else true
 
 pure def nextStepFor(status: MemberStatus, inviteOnly: bool): NextStep =
@@ -106,6 +110,9 @@ pure def nextStepFor(status: MemberStatus, inviteOnly: bool): NextStep =
 
 pure def lawSubmitOnlyForLiveMembers(status: MemberStatus): bool =
   toolAllowedFor(SubmitProfileTool, status) iff (status == Active or status == Onboarding)
+
+pure def lawDraftOnlyBeforeJoining(status: MemberStatus): bool =
+  toolAllowedFor(PrepareSignupTool, status) iff (status == NotJoined or status == Invited)
 
 pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
   toolAllowedFor(AppInfoTool, status) and toolAllowedFor(StartSignupTool, status) and
@@ -120,7 +127,7 @@ The agent first reaches one host on one surface. The host is fixed before any to
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
 type ToolResult =
   NoResult | PublicFacts | AppNotAvailable | SignInNeeded | StatusShown | ProfileAccepted |
-  ProfileNotForStatus | UpdatesShown | TooManyToday | SavedProfileShown | SavedProfileUnavailable
+  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday | SavedProfileShown | SavedProfileUnavailable
 type Connection = {
   phase: ConnectionPhase,
   host: AppId,
@@ -131,6 +138,7 @@ type Connection = {
   profileApproved: bool,
   profileSent: bool,
   sentToday: int,
+  draftPrepared: bool,
   tokenUnseen: bool,
   otherUnseen: bool,
   lastShown: int,
@@ -138,7 +146,7 @@ type Connection = {
 }
 pure val initial: Connection = {
   phase: Unbound, host: Ntwrk, surface: FullSurface, hasWrite: false, hasProfileRead: false, status: NotJoined,
-  profileApproved: false, profileSent: false, sentToday: 0,
+  profileApproved: false, profileSent: false, sentToday: 0, draftPrepared: false,
   tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: NoResult
 }
 
@@ -155,7 +163,7 @@ pure def lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): bool =
 pure def canAuthorize(c: Connection): bool = c.phase == Anonymous or c.phase == Revoked
 
 pure def authorize(c: Connection, withWrite: bool, withProfileRead: bool): Connection =
-  { ...c, phase: Connected, hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, lastResult: NoResult }
+  { ...c, phase: Connected, hasWrite: withWrite, hasProfileRead: withProfileRead, sentToday: 0, draftPrepared: false, lastResult: NoResult }
 
 pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
   (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
@@ -177,6 +185,9 @@ pure def alwaysOpenAiHidesSlop(c: Connection): bool =
 
 pure def alwaysWriteNeedsConnection(c: Connection): bool =
   c.hasWrite implies c.phase == Connected
+
+pure def alwaysUnboundHasNoDraft(c: Connection): bool =
+  c.phase == Unbound implies not(c.draftPrepared)
 ```
 
 ### A grant that no longer belongs to the phone's person ends the connection
@@ -201,8 +212,8 @@ pure def callAfterOwnerChange(c: Connection): Connection =
   { ...c, phase: Revoked, hasWrite: false, hasProfileRead: false, lastResult: SignInNeeded }
 
 pure def memberResult(r: ToolResult): bool =
-  r == StatusShown or r == ProfileAccepted or r == ProfileNotForStatus or
-  r == UpdatesShown or r == TooManyToday or r == SavedProfileShown or r == SavedProfileUnavailable
+  r == StatusShown or r == ProfileAccepted or r == ProfileNotForStatus or r == DraftSaved or
+  r == DraftRefused or r == UpdatesShown or r == TooManyToday or r == SavedProfileShown or r == SavedProfileUnavailable
 
 pure def alwaysMemberResultsNeedConnection(c: Connection): bool =
   memberResult(c.lastResult) implies c.phase == Connected
@@ -245,7 +256,7 @@ pure def sometimesSavedProfileShown(c: Connection): bool = c.lastResult == Saved
 
 ### The agent sends an approved profile once, only for a live member, within the daily limit
 
-The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once. The agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. Check the exact phone owner and any current opt-out again before forwarding a claimed profile to the app. A grant can make at most five well-formed profile calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
+The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once. The agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. Check the exact phone owner and any current opt-out again before forwarding a claimed profile to the app. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. The limit is reached when the grant made five such calls today. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
 
 ```quint
 pure val profileDailyCap = 5
@@ -281,9 +292,27 @@ pure def stepSubmitOnlyForLiveMember(before: Connection, via: str, after: Connec
      before.hasWrite and before.profileApproved)
 
 pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connection): bool =
-  (before.sentToday >= profileDailyCap and via == "callSubmitProfile") implies
+  (before.sentToday >= profileDailyCap and (via == "callSubmitProfile" or via == "callPrepareSignup")) implies
     (after.lastResult == TooManyToday and after.profileSent == before.profileSent and
-     after.sentToday == before.sentToday)
+     after.draftPrepared == before.draftPrepared and after.sentToday == before.sentToday)
+```
+
+### A Join draft holds only an approved first name and home city, once per grant
+
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. The reply asks the person to connect again and choose Finish signup on the connection page, which shows the draft for the person to approve or correct ([signup drafts](mcpSignupDraft.md)). Changed: the reply used to say that the draft does not prefill any flow, because no page read it; the Finish signup step now reads it (audit MCP16 and SIG46).
+
+```quint
+pure def canCallPrepareSignup(c: Connection): bool =
+  c.phase == Connected and c.hasWrite and (c.host == Friends or c.host == Ntwrk)
+
+pure def callPrepareSignup(c: Connection, joinAgeAllowed: bool): Connection =
+  if (profileLimitReached(c.sentToday)) { ...c, lastResult: TooManyToday }
+  else if (joinAgeAllowed and toolAllowedFor(PrepareSignupTool, c.status) and not(c.draftPrepared))
+    { ...c, sentToday: c.sentToday + 1, draftPrepared: true, lastResult: DraftSaved }
+  else { ...c, sentToday: c.sentToday + 1, lastResult: DraftRefused }
+
+pure def alwaysDraftOnlyOnFriendsOrNtwrk(c: Connection): bool =
+  c.draftPrepared implies (c.host == Friends or c.host == Ntwrk)
 ```
 
 ### Reading updates shows the person's own new updates and marks them seen
@@ -350,7 +379,7 @@ pure def lawShownUpdateIsCurrentSafeAndAllowed(stillCurrent: bool, readerMatchab
 
 ### A withheld update stays unseen
 
-A current update that the reader may read but whose summary fails the output leak gate (a phone number, an email address, an internal id or a machine timestamp) is withheld: it is not shown, and it is not marked seen. It stays in the inbox for staff and for a later safe render until it expires. The other updates of the same read are shown or retired as usual. Changed: the read used to mark every selected update seen before the gate dropped the summary, so a withheld update was lost on every surface (audit MCP55).
+A current update that the reader may read but whose summary fails the output leak gate (a phone number, an email address, an internal id or a machine timestamp) is withheld: it is not shown, and it is not marked seen. It stays in the inbox for staff and for a later safe render until it expires. The other updates of the same read are shown or retired as usual. Changed: the read used to mark every selected update seen before the gate dropped the summary, so a withheld update was lost on every surface (audit MCP55). The shared line's update read applies the same gate, so a withheld update is withheld on every surface. Changed: the shared line's read used to pass every summary, so an update that the connector withheld reached the text line unchecked (review of MCP55).
 
 ```quint
 pure def connectorUpdateMarkedSeen(updateOutcome: ConnectorUpdateOutcome): bool = updateOutcome != InboxUpdateWithheld
@@ -399,12 +428,14 @@ pure def lawAddressCeilingAboveEachPersonLimit(assistantRedirect: bool): bool =
 
 ### A connection can reach every tool result
 
-The supported paths include a sent profile, a refused profile, the daily limit, shown updates, a sign-in request, an unavailable host and an ended grant.
+The supported paths include a sent profile, a refused profile, the daily limit, a saved and a refused draft, shown updates, a sign-in request, an unavailable host and an ended grant.
 
 ```quint
 pure def sometimesProfileAccepted(c: Connection): bool = c.lastResult == ProfileAccepted
 pure def sometimesProfileNotForStatus(c: Connection): bool = c.lastResult == ProfileNotForStatus
 pure def sometimesTooManyToday(c: Connection): bool = c.lastResult == TooManyToday
+pure def sometimesDraftSaved(c: Connection): bool = c.lastResult == DraftSaved
+pure def sometimesDraftRefused(c: Connection): bool = c.lastResult == DraftRefused
 pure def sometimesTwoUpdatesShown(c: Connection): bool = c.lastResult == UpdatesShown and c.lastShown == 2
 pure def sometimesStatusShown(c: Connection): bool = c.lastResult == StatusShown
 pure def sometimesSignInNeeded(c: Connection): bool = c.lastResult == SignInNeeded

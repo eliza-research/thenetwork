@@ -65,31 +65,32 @@ Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.
 // The gate order, the statuses, LEASE, REPLY_WINDOW, UNKNOWN_TTL (from next_attempt_at), the TTLs, the
 // unanswered cap and re-engagement, the line safety exemption for compliance, the person cap, the leak gate,
 // the receipt lookup and the receipt rank rules agree with the code.
-// OPEN: the model keeps the fixed behavior of the source branch. The code on this branch does not have these
-// fixes, so these are code defects, not model drift (the invariant that each one breaks is in brackets):
-//  - NOT_SENT is /^(refused|suppressed|blocked|parked|failed|expired|dropped)/: failed_unknown releases its
-//    person-cap slot (reconcileUnknown calls capRelease) although the text may have gone out (SD-090)
-//    [capAtMost, notSentMeansNotOut].
-//  - The stale hook is wrapped in guarded(..., false): a throw reads as "not stale" and the row can be sent
-//    (SD-299) [noClaimWhenClosed].
-//  - drain()'s catch ends the row parked_error at once with end() (no status guard, no attempt count, no
-//    backoff) (SD-117 form); a throw of the admission transaction parks a row that only needed a retry.
-//  - dispatch writes held_awaiting_reply with no check that the person wrote after the conversation read
-//    (SD-147: inbound() runs without the line lock) [heldOnlyWhileUnanswered].
-//  - reconcileUnknown does not end "collected" or "send_unknown" replies after the TTL; nothing else does
-//    (SD-100) [collectedResolvable].
-//  - collectedReceipt does not update platform.line_conversations, so accepted collected replies do not count
-//    in the unanswered streak (SD-148) [unansweredAtMost].
-//  - drainQueue has no stateCurrent check and send() has no stored-state version fence; send() rechecks
-//    safety_held and account_status only for proactive rows (SD-020) [noClaimWhileHeld, noClaimWhenClosed].
-//  - send() rechecks consent only when the row has a member: a direct text to a non-member is admitted after a
-//    STOP that commits during dispatch (Q-outbound_queue-1) [noClaimAfterStop].
-//  - acceptReceipt writes sent_at for a receipt with status failed (SD-337) [sentAtOnlyIfOut].
-//  - Under Cloud, accepted is not terminal in acceptReceipt, so a row to a non-member keeps its address and
-//    text after acceptance (SD-091) [nonMemberBodyClearedAtEnd].
-//  - storeStatuses writes the drain's change with no condition (Q-outbound_queue-3) and drainQueue has no
-//    SD-336 repair (only projectNotifications repairs provider statuses); direct() does not store its changes
-//    (SD-136) [mirrorNotStuckWaiting, mirrorSettles].
+// CLOSED in the code on this branch (2026-11-21; the model describes the fixed code, and the integration test
+// that fails without each fix is named):
+//  - SD-090: failed_unknown keeps its person-cap slot (returnsPersonSlot; outbound-queue.test.ts "SD-090").
+//  - SD-299 / SD-117: a stale check that throws, or an error in the claim transaction, counts one attempt and waits
+//    with the backoff; only the last attempt parks the row; the write needs the status the check read
+//    (dispatchFailurePolicy; "SD-299 / SD-117").
+//  - SD-147: hold() makes the row due again when the person wrote after the check read the conversation
+//    (holdForReply; "SD-147").
+//  - SD-100: reconcileUnknown ends a collected or send_unknown reply failed_unknown when it was collected more than
+//    the unknown-acceptance deadline ago (gatewayReplyPhase; "SD-100").
+//  - SD-148: collectedReceipt counts an accepted reply in platform.line_conversations ("SD-148").
+//  - SD-020: the claim transaction locks network.network_state and claims only when the runtime's copy is the
+//    stored version; otherwise the row waits (retry_scheduled at once, no cap slot). A runtime drain whose copy is
+//    not current loads the stored state first, and drains once more when the copy is not current at the end
+//    (viewPolicy, StateView; outbound-state-fence.integration.test.ts).
+//  - Q-outbound_queue-1: send() rechecks the consent ledger for every non-compliance row ("Q-outbound_queue-1").
+//  - SD-337 / SD-091: no sent_at for a failed acceptance; under Cloud a row to a non-member ends at acceptance
+//    (acceptanceRecordsSend, acceptanceEndsRow; "SD-337 / SD-091").
+//  - Q-outbound_queue-3 / SD-336 / SD-136: storeStatuses writes the queue row's current status; every drain (the
+//    runtime's and direct()'s, through NetworkRuntime.drained) repairs a message that still shows a waiting status
+//    (outbound-state-fence.integration.test.ts).
+//  - Q-outbound_queue-4: that repair also reads messages that show collected or send_unknown (GATEWAY_WAIT), so a
+//    reply that the sweep ended while its drain lost the change is repaired (outbound-state-fence).
+// Abstraction: the lease owner is not a field. A claim by another worker always increments attempts, so
+// `row.attempts == wk.tries` with `row.lease` stands for lease_owner = this worker (recordClaimedFailure).
+// OPEN (needs a maintainer decision, not a code defect): Q-outbound_queue-5, see `unansweredAtMost`.
 // Not changed in the model: send() also rechecks quiet hours inside the admission transaction, parks an
 // agent-initiated row with an invalid zone (parked_invalid_timezone), and a ClaimedSendWriteError keeps the
 // lease for recover(). The model has no zones and no failing outcome write.
@@ -127,6 +128,10 @@ module outbound_queue {
     "expired", "dropped_forgotten", "dropped_leak_review")
   // network.messages statuses that still wait (ch WAITING_STATUSES = ["queued", ...WAITING]).
   pure val WAITING_MSG = WAITING.union(Set("queued"))
+  // Replies that wait for the gateway's turn receipt (oq GATEWAY_WAITING). The drain's repair reads messages in
+  // either set (rt drained, Q-outbound_queue-4 fix).
+  pure val GATEWAY_WAIT = Set("collected", "send_unknown")
+  pure val STUCK_MSG = WAITING_MSG.union(GATEWAY_WAIT)
   pure val PROVIDER = Set("accepted", "sent", "delivered", "read")
 
   pure def rank(st: str): int =
@@ -152,7 +157,7 @@ module outbound_queue {
   type Work = {
     phase: str,           // idle, reconcile, ttl, looked, locked, decided, calling, responded, flush
     row: str, dec: str, readStatus: str, readSeq: int, isNew: bool, reeng: bool, resp: str,
-    direct: bool,         // BlooioAdapter.direct: no stateCurrent check before it and no status repair after it
+    direct: bool,         // BlooioAdapter.direct: no state check before it; NetworkRuntime.drained runs after it
     net: str, seen: Set[str], pend: List[(str, str)],
     swept: bool,          // reconcileUnknown has ended the collected replies past the TTL (SD-100 fix b6ea5e1)
     tries: int            // the attempts value that this worker's claim wrote (recordClaimedFailure guard)
@@ -160,7 +165,7 @@ module outbound_queue {
   type Ghost = {
     maxRank: int, bad: Set[str], foreign: bool, receiptRefused: bool, projected: bool,
     heldSeq: int, deliveryFailed: bool, wasDeferred: bool, wasParked: bool,
-    lost: bool,           // a crash discarded this row's status change before storeStatuses; no runtime drain since
+    lost: bool,           // a crash discarded this row's status change before storeStatuses; no drain since
     resent: bool          // recover() put the row back to retry_scheduled (no receipt provider): the queue cannot know
                           // whether the provider took the earlier call (in_doubt = true)
   }
@@ -299,8 +304,9 @@ module outbound_queue {
 
   // ------------------------------------------------------------------ drain: recover and reconcileUnknown (no line lock)
   // drain() (oq:287-336): recover() first. A sending row whose lease ran out goes to unknown_acceptance under a
-  // receipt provider (Cloud), else to retry_scheduled (oq:277-285). The runtime's drainQueue starts only when the
-  // stored Network state is the one this replica loaded (stateCurrent, SD-020 fix); direct() drains at once.
+  // receipt provider (Cloud), else to retry_scheduled (oq:277-285). The runtime's drainQueue first loads the stored
+  // Network state when its copy is not the stored version (StateView.isCurrent; here the `refresh` action, so a
+  // runtime drain starts only from a current view); direct() drains at once on the view it has.
   action drainStart(w: str, net: str, direct: bool): bool = {
     val recovered = ROWS.filter(r => rows.get(r).status == "sending" and rows.get(r).leaseUntil < env.now)
     val target = if (env.mode == "cloud") "unknown_acceptance" else "retry_scheduled"
@@ -500,17 +506,17 @@ module outbound_queue {
   action holdAct(w: str, why: str, doubt: bool, seq: int): bool =
     if (env.engSeq != seq) waitAct(w, "pending", env.now, why, doubt, seq)
     else waitAct(w, "held_awaiting_reply", env.now, why, doubt, seq)
-  // drain()'s catch (SD-117 fix 2d901dd, SD-299 fix 8495b7a): attempts + 1; the row waits with a backoff, and is
-  // parked for a person only when the attempts are used up. Every write is guarded on the status that dispatch read
-  // or a status the send owns (oq drain: from = [row.status, ...OWNED], fix 8ca695b): a row that left them while the
-  // dispatch ran (erasure, a receipt lookup) is not written, and the drain records no change for it.
+  // drain()'s catch (SD-117, SD-299): attempts + 1; the row waits with a backoff, and is parked for a person only
+  // when the attempts are used up. The write is guarded on the status that dispatch read (oq drain: from =
+  // [row.status]): a row that left it while the dispatch ran (erasure, another worker) is not written, and the drain
+  // records no change for it. An error after the claim is a ClaimedSendWriteError and never reaches this path.
   action dispatchErr(w: str): bool = {
     val wk = work.get(w)
     val r = wk.row
     val row = rows.get(r)
     val tries = row.attempts + 1
     val row1 = { ...row, attempts: tries }
-    val guardOk = row.status == wk.readStatus or row.status == "sending" or row.status == "unknown_acceptance"
+    val guardOk = row.status == wk.readStatus
     all {
       if (not(guardOk)) all {
         work' = work.set(w, { ...wk, phase: "locked" }),
@@ -556,13 +562,16 @@ module outbound_queue {
     // Admission: the state fence (lockAdmission: the stored Network state is the one this worker read, SD-020 fix),
     // the member and its binding, the consent ledger for every non-compliance row (Q-outbound_queue-1 fix 1f86525),
     // then the CAS claim.
+    // The member, its binding and the consent ledger come first; then the stored checks (roster) and the state
+    // fence (channel.ts admit: a decision the stored checks allow waits when the copy is not the stored version);
+    // the fence's wait and the claim are both the CAS write on the status that dispatch read.
+    val casOk = row.status == wk.readStatus and not(row.lease) and row.hasBody
     val adm =
       if (dbErr) "dispatch_error"
-      else if (views.get(w).ver != env.ver) "stale_view"
       else if (row.member and env.erased) "dropped_forgotten"
       else if (not(compliance) and codeOptedOut(env.ledger)) "refused_opted_out"
       else if (blockedContact or restrictedContact) "suppressed_ineligible"
-      else if (row.status == wk.readStatus and not(row.lease) and row.hasBody) "admitted"
+      else if (casOk) (if (views.get(w).ver != env.ver) "stale_view" else "admitted")
       else if (row.status != wk.readStatus or row.lease) "busy"
       else "dropped_forgotten"
     // Ghost: what the claim admitted against the database at this instant. "afterStop" is the rule over the
@@ -590,9 +599,12 @@ module outbound_queue {
       else if (wk.dec == "parked_leak_review") endAct(w, "parked_leak_review", "leak")
       else if (adm == "dispatch_error") dispatchErr(w)
       else if (adm == "stale_view") all {
-        // The row is left as it is for a later drain (send() returns no change).
-        work' = work.set(w, { ...wk, phase: "locked" }),
-        rows' = rows, ghost' = ghost, slots' = slots, conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
+        // send(): retry_scheduled at once with person_cap = false, then capRelease (the slot goes back).
+        rows' = rows.set(r, { ...waitRow(row, "retry_scheduled", env.now, "network_state_changed"), personCap: false }),
+        slots' = slots.exclude(Set(r)),
+        ghost' = bump(ghost, r, "retry_scheduled"),
+        work' = work.set(w, { ...wk, phase: "locked", pend: push(wk, r, row.member, "retry_scheduled") }),
+        conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
       else if (adm == "admitted") all {
         rows' = rows.set(r, { ...row, status: "sending", attempts: row.attempts + 1, lease: true, leaseUntil: env.now + LEASE }),
@@ -694,10 +706,11 @@ module outbound_queue {
     rows' = rows, ghost' = ghost, conv' = conv, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
 
-  // storeStatuses: the changes of member rows go to network.messages in order. A message of a forgotten member was
-  // deleted: nothing to update. direct() stores them too (SD-136 fix eb5a589). After a runtime drain, a message that
-  // still shows a waiting status takes the status of its queue row once that row left the waiting statuses
-  // (SD-336 fix efb98a0: a drain that stopped after the queue commit lost its changes in memory).
+  // NetworkRuntime.drained, after every drain (the runtime's and direct()'s, SD-136): storeStatuses sends the
+  // changes of member rows to network.messages in order (a message of a forgotten member was deleted: nothing to
+  // update). Then a message that still shows a waiting or gateway-waiting status takes the status of its queue row
+  // once that row left both sets (SD-336, Q-outbound_queue-4: a drain that stopped after the queue commit lost its
+  // changes in memory).
   action flush(w: str): bool = {
     val wk = work.get(w)
     // storeStatuses writes the queue row's status at the time of the write, not the drain's change (Q-outbound_queue-3
@@ -705,12 +718,13 @@ module outbound_queue {
     val stored = wk.pend.foldl(mirror, (m, c) => if (env.erased or m.get(c._1) == "none") m else m.set(c._1, rows.get(c._1).status))
     val repaired = stored.keys().mapBy(r => {
       val st = rows.get(r).status
-      if (WAITING_MSG.contains(stored.get(r)) and not(WAITING.contains(st)) and st != "none") st else stored.get(r)
+      if (STUCK_MSG.contains(stored.get(r)) and not(WAITING.contains(st)) and not(GATEWAY_WAIT.contains(st)) and st != "none") st
+      else stored.get(r)
     })
     all {
       wk.phase == "flush",
-      mirror' = if (wk.direct) stored else repaired,
-      ghost' = if (wk.direct) ghost else ghost.keys().mapBy(r => { ...ghost.get(r), lost: false }),
+      mirror' = repaired,
+      ghost' = ghost.keys().mapBy(r => { ...ghost.get(r), lost: false }),
       work' = work.set(w, IDLE),
       rows' = rows, env' = env, conv' = conv, views' = views, slots' = slots, admitted' = admitted, hooks' = hooks,
     }
@@ -1154,33 +1168,26 @@ module outbound_queue {
   // oq:2 "One queue object serves one app"; runtime.ts:1-5: a network's checks are for its own members.
   // Failed before fix 5a6cf8e: SD-132 (the drain selected by app and line; memberOf missed, network.ts:4848).
   val ownNetworkDecides = ROWS.forall(r => not(ghost.get(r).foreign))
-  // ch:49 and rt drainQueue (rt:694-708): once nobody holds unsaved changes, a settled row's message status equals the queue's,
-  // or the notify projection can still repair it, or a crash lost the change and no runtime drain ran since (the
-  // next one copies it: sd336CrashLosesStatusTest).
-  // Failed before fixes eb5a589, efb98a0, 255a42d: SD-136 (direct() dropped the changes), SD-336 (a crash before
-  // storeStatuses was never repaired), SD-334.
-  // NOT IN `safety`: one new defect that this model found on the fixed code still makes it fail (findings file):
-  //  - Q-outbound_queue-3 (fixed): storeStatuses wrote a drain's change with no condition, so a staff leak-review
-  //    decision or a receipt that came after the queue commit was overwritten. It now writes the queue row's status
-  //    (q3StaleStoreTest, q3ReleaseSentTest; packages/network/test/cloud-outbound.integration.test.ts).
-  //  - Q-outbound_queue-4: the SD-336 repair copies only to messages in a waiting status. A collected reply that
-  //    the sweep ends failed_unknown keeps the message status "collected" when the process stops before
-  //    storeStatuses (q4SweepLostTest).
-  // `mirrorNotStuckWaiting` below (in `safety`) is the part that the SD-136 and SD-336 fixes give.
+  // ch:49 and rt drained: once nobody holds unsaved changes, a settled row's message status equals the queue's,
+  // or the notify projection can still repair it, or a crash lost the change and no drain ran since (the next one
+  // copies it: sd336CrashLosesStatusTest, q4SweepLostTest).
+  // Failed before the fixes of SD-136 (direct() dropped the changes), SD-336 (a crash before storeStatuses was never
+  // repaired), SD-334, Q-outbound_queue-3 (storeStatuses wrote a drain's older change: q3StaleStoreTest,
+  // q3ReleaseSentTest) and Q-outbound_queue-4 (the repair did not read collected or send_unknown messages).
   val mirrorSettles = quiescent implies ROWS.forall(r => {
     val row = rows.get(r)
     val settled = not(WAITING.contains(row.status)) and row.status != "none" and row.status != "collected" and row.status != "send_unknown"
     val repairable = PROVIDER.contains(row.status) and row.sentAt and row.hasBody and not(ghost.get(r).projected)
-    val lostLag = ghost.get(r).lost and WAITING_MSG.contains(mirror.get(r))
+    val lostLag = ghost.get(r).lost and STUCK_MSG.contains(mirror.get(r))
     (row.member and not(env.erased) and settled) implies (mirror.get(r) == row.status or repairable or lostLag)
   })
   // The SD-136 / SD-336 rule: once nobody holds unsaved changes, no settled member row's message shows a waiting
-  // status, unless the projection can still repair it or a crash lost the change and no runtime drain ran since.
+  // status, unless the projection can still repair it or a crash lost the change and no drain ran since.
   val mirrorNotStuckWaiting = quiescent implies ROWS.forall(r => {
     val row = rows.get(r)
     val settled = not(WAITING.contains(row.status)) and row.status != "none" and row.status != "collected" and row.status != "send_unknown"
     val repairable = PROVIDER.contains(row.status) and row.sentAt and row.hasBody and not(ghost.get(r).projected)
-    (row.member and not(env.erased) and settled and WAITING_MSG.contains(mirror.get(r))) implies (repairable or ghost.get(r).lost)
+    (row.member and not(env.erased) and settled and STUCK_MSG.contains(mirror.get(r))) implies (repairable or ghost.get(r).lost)
   })
   // Caps and thread history count sent_at (oq:444-448, oq:530-533): sent_at only for a text the provider took.
   // Failed before fix aba939e: SD-337 (a send receipt with status failed wrote sent_at).
@@ -1190,7 +1197,7 @@ module outbound_queue {
     noClaimAfterStop, noClaimWithBlockedRoster, noClaimWithRestrictedRoster, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
     notSentMeansNotOut, capAtMost, slotOnlyForLiveRow, noStatusRegressLive,
     complianceAlwaysGoes, nonMemberBodyClearedAtEnd, guardFailedReachesStaff, collectedResolvable, noHistoryReceiptRecorded,
-    heldOnlyWhileUnanswered, ownNetworkDecides, mirrorNotStuckWaiting, sentAtOnlyIfOut,
+    heldOnlyWhileUnanswered, ownNetworkDecides, mirrorSettles, mirrorNotStuckWaiting, sentAtOnlyIfOut,
   }
 
   // ------------------------------------------------------------------ run tests (concrete traces)
@@ -1349,9 +1356,9 @@ module outbound_queue {
         and rows.get("r2").status == "refused_person_cap" and capAtMost and safety)
 
   // SD-020 (fix 6cc9d1b; "a replica whose Network state is older than the stored one never claims a row; it leaves
-  // the row until it loads the new state"). A hold commits on replica w2. Replica w1's runtime drain does not start
-  // (stateCurrent); a direct() drain on w1 decides "send" on its old view, and the admission fence leaves the row.
-  // After w1 loads the new state, its drain suppresses the row for the held member.
+  // the row until it loads the new state"). A hold commits on replica w2. Replica w1's runtime drain loads the stored
+  // state before its checks (refresh, then drainStart); a direct() drain on w1 decides "send" on its old view, and
+  // the admission fence lets the row wait. After w1 loads the new state, its drain suppresses the row for the held member.
   run sd020StaleReplicaTest =
     initWith("cloud", true, false)
       .then(enqueue("r1", "transactional", true, "nyc", false))
@@ -1361,7 +1368,7 @@ module outbound_queue {
       .then(decide("w1", "r1", false, false))
       .expect(work.get("w1").dec == "send")
       .then(applyDecision("w1", false))
-      .expect(rows.get("r1").status == "pending" and noClaimWhileHeld and safety)
+      .expect(rows.get("r1").status == "retry_scheduled" and noClaimWhileHeld and safety)
       .then(unlockLine("w1")).then(flush("w1"))
       .then(refresh("w1"))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
@@ -1369,7 +1376,7 @@ module outbound_queue {
       .expect(rows.get("r1").status == "suppressed_ineligible" and safety)
 
   // SD-020, the race inside one dispatch: w1's view is current when it decides; a hold commits on w2 before w1's
-  // admission transaction; the fence sees the newer stored version and leaves the row.
+  // admission transaction; the fence sees the newer stored version and the row waits.
   run sd020HoldDuringDispatchTest =
     initWith("cloud", true, false)
       .then(enqueue("r1", "transactional", true, "nyc", false))
@@ -1377,7 +1384,7 @@ module outbound_queue {
       .then(decide("w1", "r1", false, false))
       .then(holdToggle("w2"))
       .then(applyDecision("w1", false))
-      .expect(rows.get("r1").status == "pending" and env.held and noClaimWhileHeld and safety)
+      .expect(rows.get("r1").status == "retry_scheduled" and env.held and noClaimWhileHeld and safety)
 
   // SD-299 (fix 8495b7a; "when the stale check of a notification throws, the row is not sent; it waits and goes once
   // the check reads it as current"). Here the item closed: the throw lets the row wait; the next drain expires it.
@@ -1645,9 +1652,6 @@ module outbound_queue {
       .then(flush("w1"))
       .expect(mirror.get("r1") == "accepted" and mirrorNotSentMeansNotOut and safety)
 
-  // Q-outbound_queue-4 (new, not fixed): the sweep ends a collected reply failed_unknown and the process stops before
-  // storeStatuses. The message stays "collected"; the SD-336 repair reads only waiting statuses, so the next drain
-  // does not copy it.
   // Q-outbound_queue-5 (open): turn 1 collects a reply and is handled; the gateway has not sent it when the person
   // writes again (turn 2); the queue sends a reply in turn 2; then the gateway sends turn 1's reply.
   run q5LateTurnReplyTest =
@@ -1676,16 +1680,19 @@ module outbound_queue {
       .then(decide("w2", "r1", false, false)).then(applyDecision("w2", false)).then(providerCall("w2", "ok"))
       .expect(env.trueUnans == 2 and not(unansweredAtMost) and safety)
 
+  // Q-outbound_queue-4 (fixed; outbound-state-fence.integration.test.ts): the sweep ends a collected reply
+  // failed_unknown and the process stops before storeStatuses. The message shows "collected" until the next drain,
+  // whose repair copies the row's status.
   run q4SweepLostTest =
     initWith("cloud", true, false)
       .then(turnStart(true)).then(collect("r1", "reply", false)).then(turnFinish(false))
       .then(tick(72)).then(tick(1))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
       .then(crash("w1"))
-      .expect(rows.get("r1").status == "failed_unknown" and mirror.get("r1") == "collected" and not(mirrorSettles) and safety)
+      .expect(rows.get("r1").status == "failed_unknown" and mirror.get("r1") == "collected" and ghost.get("r1").lost and safety)
       .then(drainStart("w2", "nyc", false)).then(sweepCollected("w2")).then(lockLine("w2"))
       .then(unlockLine("w2")).then(flush("w2"))
-      .expect(mirror.get("r1") == "collected" and not(mirrorSettles))
+      .expect(mirror.get("r1") == "failed_unknown" and mirrorSettles and safety)
 
   // Fix 8ca695b ("keep a recorded row outcome when a send fails after it"): the deliver answer is lost and the lease
   // runs out; another replica recovers the row and its receipt lookup records the acceptance. The first worker's late

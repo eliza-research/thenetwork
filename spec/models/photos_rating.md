@@ -10,7 +10,7 @@ Check photo limits, adult eligibility, erasure, private scores, and consent for 
 
 Production uses the generated [photo eligibility and limits](../photoPolicy.md), [storage and removal transitions](../photoRetention.md), and [rating attempt transitions](../photoRating.md).
 
-Imported from `quint/photos_rating.qnt` at `30d950e`. Compared again with the code of branch `vibestack-matching` on 2026-11-18. See [model index](README.md) for scope, commands and the known defects.
+Imported from `quint/photos_rating.qnt` at `30d950e`. Compared again with the code of branch `vibestack-matching` on 2026-11-21. See [model index](README.md) for scope, commands and the known defects.
 
 ```quint
 // quint-check: max-steps=40 max-samples=10000 verify-steps=6
@@ -18,9 +18,11 @@ Imported from `quint/photos_rating.qnt` at `30d950e`. Compared again with the co
 // Photos and the Clef rating of one slop.date member. Machines: photo-object, photo-consent, clef-rating,
 // slop-probe-photo.
 //
-// The model follows the code of branch vibestack-matching (compared 2026-11-18). Code locations are names:
+// The model follows the code of branch vibestack-matching (compared 2026-11-21). Code locations are names:
 //   packages/platform/src/photos.ts            PhotoService: upload, rate, ratingRefusal, ratingSelectionRefusal,
-//                                              remove, deleteFor, erasePhoto, finishPhotoChange, staffLinks, view
+//                                              remove, deleteFor, erasePhoto, finishPhotoChange, staffLinks, view,
+//                                              holdAllowed, ratingAllowed, sweep; PgPhotoStore reserve, confirm, hide
+//   packages/network/service/photoSweep.ts     sweepPhotos (run by NetworkService.purge each tick)
 //   packages/platform/src/photo-upload-link.ts PhotoUploadLinks.redeem (the link page and its consent box)
 //   packages/network/service/service.ts        NetworkService: hooks().onForget, ageLowered, verifiedAdult,
 //                                              dropRatings, writeRating, verify, the staff ban, exportMember
@@ -32,28 +34,42 @@ Imported from `quint/photos_rating.qnt` at `30d950e`. Compared again with the co
 //
 // Scope: 1 person, 1 app (slop), 3 upload request ids, a photo limit of 2 (the code has 6: the race does
 // not depend on the value), 1 crash. Every `await` between two writes is one action. Each request runs in
-// memory: a crash ends every request in flight. This branch has no automatic recovery: no sweep of photo
-// rows or bytes, and no reconcile of ages in the purge. A later age statement runs the age hook again
-// (Accounts.recordAge "Reconcile on retry"; ageRetry here). A staff retry of a ban resumes it (banResume).
+// memory: a crash ends every request in flight. The retention tick (purge: sweepPhotos and PhotoService.sweep)
+// finishes what a crash or a race left: `sweep` is one pass of it, merged into one step. Its fifteen-minute
+// wait (unfinishedPhotoDue) is modelled as "the request that owns the change has ended": a reserved row is
+// swept only when no upload of it is in flight, and a hidden row only when no eraser holds it. A later age
+// statement runs the age hook again (Accounts.recordAge "Reconcile on retry"; ageRetry here). A staff retry
+// of a ban resumes it (banResume).
 // The rater (Clef) is an oracle: it returns a score, a refusal (null) or an error. One rate() runs at a
 // time here; in the code two can overlap, and writeRating's version-bound discard keeps the newer one.
 //
-// KNOWN CODE DEFECTS (2026-11-18; see the run tests and spec/models/README.md). The full rules are kept
-// below; `safety` holds each rule except the residue that a named defect leaves, and that residue is a ghost:
-//   PR-D1 (SD-052 class) upload writes its row with no recheck and no lock against deleteFor (missedRows).
-//   PR-D2 (SD-372 class) upload counts the rows without a lock, so two uploads pass the limit (overLimit).
-//   PR-D3 (SD-176 class) bytes are stored before the row and erased before the row, and nothing sweeps
-//         (orphanBytes, bytelessRows, ratingLeft for a crash between the row delete and dropRatings).
-//   PR-D4 (SD-053 class) a failed staff age check drops the rating but keeps the photos.
-//   PR-D5 (Q-photos_rating-1 class) a crash after noteAge and before the age hook ends keeps a minor's
-//         photos until the person states an age again (ageLeftRows, ageRatingLeft).
-//   PR-D6 (SD-017 class) FIXED 2026-11-18. YES PHOTOS (consentAnswer) and the upload link (redeem) wrote
-//         back the whole membership they read (putMembership), so a ban, a leave or an erasure that landed
-//         meanwhile was undone. Both now write the consent by one guarded statement (writePhotoConsent:
-//         profile keys only, where the state is live): the write changes no state, and a membership that is
-//         no longer live gets no consent and the link closes refused. linkWrite and consentYesWrite model
-//         that; leaveSticks and banSticks hold with no exception. Covered by the e2e cases "a ban that commits
-//         during a link use" and "during YES PHOTOS" (tests/e2e/photo-upload-link.e2e.test.ts).
+// The state rules (photoOnlyForAdult, photoNotKeptAfterFailedAgeCheck, noPhotoAfterForget,
+// noPhotoForForgottenMember, bytesMatchRow, noRatingForMinor, ratingOnlyForEligible) are checked in every
+// quiescent state (no request in flight) of a trace with no crash, except while raceResidue is set: an upload
+// that reserved its row after the photo erasure of a leave or of delete everything and before that request
+// forgot the member (the membership is live until then, so the reservation passes). Those two exceptions,
+// a crash and that window, are eventual: the next retention tick repairs them. sweepRepairs checks that in
+// every quiescent state, with or without a crash or the window, one sweep pass (sweepResult) leaves a state
+// where every state rule holds. witness_sweepNeeded shows that such quiescent states are reachable, so
+// sweepRepairs is not vacuous. countLimit, bytesAlwaysHaveARow and storedRowHasBytes hold in every state.
+//
+// CODE DEFECTS FOUND BY THIS MODEL (spec/models/README.md), all fixed on 2026-11-21:
+//   PR-D1 the upload wrote its row with no recheck and no lock against deleteFor. Now uploadReserve checks
+//         ratingRefusal again and inserts a reserved row under the person lock, deleteFor hides the reserved
+//         rows too, and a confirm that finds its row hidden discards the bytes (uploadRow, uploadDiscard).
+//         A reserve between a leave's deleteFor and its forgetMembership still passes (the membership is live
+//         until then); the sweep erases that photo (photoHoldAllowed).
+//   PR-D2 the count was read without a lock. Now uploadReserve counts the reserved and stored rows under the lock.
+//   PR-D3 the bytes came before the row and nothing swept. Now the row is reserved before the bytes, a removal
+//         hides the row, then deletes the bytes, the rating and the row, and the sweep finishes either.
+//   PR-D4 a failed staff age check kept the photos. Now verify erases them (verifyList) before dropRatings.
+//   PR-D5 a crash after noteAge kept a minor's photos and rating. Now the sweep erases photos and drops a
+//         rating that photoHoldAllowed and ratingHoldAllowed no longer allow.
+//   PR-D6 FIXED 2026-11-18. YES PHOTOS (consentAnswer) and the upload link (redeem) wrote back the whole
+//         membership they read; both now write the consent by one guarded statement (writePhotoConsent).
+//         linkWrite and consentYesWrite model that; leaveSticks and banSticks hold with no exception.
+// The one exception left, ratingLeft, is not a defect of this flow: a crash in a staff ban after its
+// commit keeps the rating until the staff retry (banResume) drops it.
 //
 // OUTSIDE THE MODEL
 //   ageLowered's first branch: a confirmed age under 13 (confirmedUnderage) runs finishUnderageCleanup
@@ -68,7 +84,7 @@ module photos_rating {
   /** uploadMaxPerPerson (spec/photoPolicy.md is 6; 2 here). */
   pure val MAX_PHOTOS: int = 2
   /** PHOTO_CONSENT.version (photos.ts): a constant of the build. */
-  pure val CONSENT: str = "2026-10-08"
+  pure val CONSENT: str = "2026-11-21"
   pure val HEADERS: Set[str] = Set(CONSENT, "old", "")
   pure val ADULT_AGE: int = 25
   pure val MINOR_AGE: int = 15
@@ -112,7 +128,7 @@ module photos_rating {
   pure val MEMBER_LIST_FIELDS: Set[str] = Set("id", "createdAt", "bytes", "contentType")
   pure val STAFF_LINK_FIELDS: Set[str] = Set("id", "url", "expiresAt")
   /** The callers of erasePhoto: the member's remove, and deleteFor in the age hook, a leave and delete everything. */
-  pure val ERASERS: Set[str] = Set("rm", "age", "leave", "del")
+  pure val ERASERS: Set[str] = Set("rm", "age", "leave", "del", "verify")
 
   // ---------------------------------------------------------------- state
   type State = {
@@ -128,7 +144,10 @@ module photos_rating {
     profileConsent: bool,   // memberships.profile.photoConsent == CONSENT
     // photo-object
     objects: Set[int],      // object storage keys (the upload id stands for the random key)
-    rows: Set[int],         // platform.photos rows (no row is ever hidden on this branch)
+    rows: Set[int],         // platform.photos rows that are stored and not hidden (stored_at set, deleted_at null)
+    reserved: Set[int],     // rows reserved by an upload (stored_at null, deleted_at null)
+    hidden: Set[int],       // stored rows that a removal hid (deleted_at set) until bytes, rating and row are gone
+    abandoned: Set[int],    // reserved rows that a removal hid: the upload or the sweep erases them
     uplHeader: int -> str,  // the consent version the upload request carried (upload consentVersion)
     // clef-rating
     rating: bool,           // facet <member>:appearance
@@ -138,15 +157,15 @@ module photos_rating {
     rateIds: Set[int],      // the selected photos whose bytes were read
     rateSelection: Set[int],// the selected rows (the model fits every row in one selection)
     // requests in flight
-    upl: int -> str,        // idle | checked | counted | bytes   (upload)
+    upl: int -> str,        // idle | checked | counted | reserved | bytes | discard   (upload)
     used: Set[int],         // request ids already spent
-    // erasePhoto runs per caller: deleteFor lists the rows first (erTodo), then each row: bytes, row, dropRatings
+    // erasePhoto runs per caller: deleteFor hides the rows first (erTodo), then each row: bytes, dropRatings, row
     erTodo: str -> Set[int],
     erCur: str -> int,
-    erPc: str -> str,       // idle | bytesGone | rowGone
+    erPc: str -> str,       // idle | bytesGone | ratingGone
     rmPhase: str,           // idle | erasing                         (remove; then rate again)
     ageSaga: str,           // idle | committed | erasing | dropped   (recordAge noteAge, ageLowered)
-    verifySaga: str,        // idle | committed                       (verify fail; then dropRatings for the app)
+    verifySaga: str,        // idle | committed | erasing             (verify fail; deleteFor, then dropRatings for the app)
     banSaga: str,           // idle | banned | dropped                (the staff ban)
     leaveSaga: str,         // idle | consent | erasing | netGone     (Accounts.leave, onForget)
     leaveSrc: str,          // text (the sender's own turn) | staff (privacy-staff.ts:221, api.ts POST /api/me/delete)
@@ -180,18 +199,10 @@ module photos_rating {
     turnPhotoDropped: bool,
     countRefused: bool,
     ageRetried: bool,
-    // ghosts that name the residue of a known defect (see the header)
-    missedRows: Set[int],   // PR-D1: rows written after a deleteFor listed, or for a person no longer eligible
-    overLimit: Set[int],    // PR-D2: rows written when the limit was already full
-    orphanBytes: Set[int],  // PR-D3: bytes a crash left with no row
-    bytelessRows: Set[int], // PR-D3: rows a crash left with no bytes
-    // The three rating flags name the residue rating only: each step that drops the rating (or a new write
-    // under the lock that replaces it) clears them, so the exception never covers a later rating.
-    ratingLeft: bool,       // PR-D3 and sagas: a rating live when a crash stopped the step that drops it
-    ageLeftRows: Set[int],  // PR-D5: rows live when a crash stopped the age hook before deleteFor ended
-    ageRatingLeft: bool,    // PR-D5: a rating live when a crash stopped the age hook before dropRatings
-    rateWriteCrash: bool,   // a crash after a committed score write and before its post-write check
-    failedCheckRows: Set[int], // PR-D4: rows live when a staff age check failed (verify keeps them)
+    swept: bool,            // the last sweep changed something
+    raceResidue: bool,      // ghost: an upload reserved inside the leave or delete-everything window, and a photo is left
+    // ghost: the rating a crash in a staff ban left until the staff retry (see the header)
+    ratingLeft: bool,
     rowBeforeBytes: bool,   // a row written before its bytes (must stay false: stepRowWriteRequiresBytes)
     now: int,
     crashes: int,
@@ -220,17 +231,28 @@ module photos_rating {
   }
   /** A step that drops the rating (dropRatings, forget, discard) also ends the residue that the flags name. */
   def noRating(s: State): State =
-    { ...s, rating: false, ratingFrom: Set(), ratingLeft: false, ageRatingLeft: false, rateWriteCrash: false }
-  def settled(s: State): bool = quiescent(s)
-  /** A deleteFor that has listed and not finished: a row written now is not in its list. */
-  def listTaken(s: State): bool =
-    Set("erasing", "dropped").contains(s.ageSaga) or Set("erasing", "netGone").contains(s.leaveSaga) or Set("erasing", "netGone").contains(s.delSaga)
+    { ...s, rating: false, ratingFrom: Set(), ratingLeft: false }
+  /** PhotoService.holdAllowed: photoHoldAllowed (spec/photoRetention.md) with the app's own check (verifiedAdult). */
+  def holdOk(s: State): bool = adultNow(s)
+  /** PhotoService.ratingAllowed: ratingHoldAllowed. */
+  def ratingHoldOk(s: State): bool = holdOk(s) and s.rows != Set()
+  def sweepDue(s: State): bool = or {
+    s.hidden != Set(), s.abandoned != Set(), s.reserved != Set(),
+    s.rows != Set() and not(holdOk(s)), s.rating and not(ratingHoldOk(s)),
+  }
+  def settled(s: State): bool = quiescent(s) and not(sweepDue(s))
+  /** The states where the state rules must already hold: quiescent, no crash, and not inside the leave window residue. */
+  def checked(s: State): bool = quiescent(s) and s.crashes == 0 and not(s.raceResidue)
+  /** deleteFor's hide: one transaction under the person lock; reserved rows are left to their upload. */
+  def hideAll(s: State, e: str): State =
+    { ...s, erTodo: s.erTodo.set(e, s.rows), hidden: s.hidden.union(s.rows), rows: Set(),
+            abandoned: s.abandoned.union(s.reserved), reserved: Set() }
 
   // ---------------------------------------------------------------- init
   action initWith(probeFlag: bool): bool = st' = {
     age: ADULT_AGE, netAge: ADULT_AGE, ageFail: false, banned: false, banDone: false, deleted: false, membership: "active", netMember: true,
     profileConsent: false,
-    objects: Set(), rows: Set(), uplHeader: UPLOADS.mapBy(u => ""),
+    objects: Set(), rows: Set(), reserved: Set(), hidden: Set(), abandoned: Set(), uplHeader: UPLOADS.mapBy(u => ""),
     rating: false, ratingFrom: Set(), rateDue: false, ratePc: "idle", rateIds: Set(), rateSelection: Set(),
     upl: UPLOADS.mapBy(u => "idle"), used: Set(),
     erTodo: ERASERS.mapBy(e => Set()), erCur: ERASERS.mapBy(e => 0), erPc: ERASERS.mapBy(e => "idle"),
@@ -241,8 +263,7 @@ module photos_rating {
     probeWithPhotos: false, exportedRated: false,
     shown: Set(), usedInMatching: false, hadPhotos: false, leftDone: false, textStored: false, linkStored: false,
     turnPhotoDropped: false, countRefused: false, ageRetried: false,
-    missedRows: Set(), overLimit: Set(), orphanBytes: Set(), bytelessRows: Set(), ratingLeft: false,
-    ageLeftRows: Set(), ageRatingLeft: false, rateWriteCrash: false, failedCheckRows: Set(),
+    swept: false, raceResidue: false, ratingLeft: false,
     rowBeforeBytes: false, now: 0, crashes: 0, last: "init",
   }
   action init = { nondet f = Set(true, false).oneOf() initWith(f) }
@@ -256,53 +277,64 @@ module photos_rating {
     else
       st' = { ...st, last: "uploadRefused" },
   }
-  /** checkSlots: meta.list(personId) and photoSlotsFull, with no lock (PR-D2). */
+  /** checkSlots: meta.list(personId) and photoSlotsFull: an early answer only (uploadReserve counts again). */
   action uploadCount(u: int): bool = all {
     st.upl.get(u) == "checked",
     if (st.rows.size() >= MAX_PHOTOS) st' = { ...st, upl: st.upl.set(u, "idle"), countRefused: true, last: "uploadTooMany" }
     else st' = { ...st, upl: st.upl.set(u, "counted"), last: "uploadCount" },
   }
-  /** storage.put of the stripped bytes under a new random key (recordUploadBytes). */
-  action uploadBytes(u: int): bool = all {
+  /**
+   * reserveRow: PgPhotoStore.reserve under the person row lock: ratingRefusal again, the reserved and stored
+   * rows counted, and the row inserted as reserved.
+   */
+  action uploadReserve(u: int): bool = all {
     st.upl.get(u) == "counted",
+    if (not(ratingOk(st, Set()))) st' = { ...st, upl: st.upl.set(u, "idle"), last: "uploadReserveRefused" }
+    else if (st.rows.union(st.reserved).size() >= MAX_PHOTOS) st' = { ...st, upl: st.upl.set(u, "idle"), countRefused: true, last: "uploadReserveFull" }
+    else st' = { ...st, upl: st.upl.set(u, "reserved"), reserved: st.reserved.union(Set(u)),
+                 raceResidue: st.raceResidue or st.leaveSaga == "erasing" or st.delSaga == "erasing", last: "uploadReserve" },
+  }
+  /** storage.put of the stripped bytes under the row's random key (recordUploadBytes). */
+  action uploadBytes(u: int): bool = all {
+    st.upl.get(u) == "reserved",
     st' = { ...st, upl: st.upl.set(u, "bytes"), objects: st.objects.union(Set(u)), last: "uploadBytes" },
   }
-  /**
-   * meta.put: the row is live at once (recordUploadRow), then finishPhotoChange runs rate(). No lock, no
-   * second mayTake and no second count (PR-D1, PR-D2): the ghosts record the rows that miss a deleteFor or
-   * pass the limit.
-   */
+  /** recordUploadRow: PgPhotoStore.confirm sets stored_at only while the row is reserved and not hidden. */
   action uploadRow(u: int): bool = all {
     st.upl.get(u) == "bytes",
-    val missed = listTaken(st) or not(mayTakeNow(st))
-    st' = { ...st, upl: st.upl.set(u, "idle"), rows: st.rows.union(Set(u)), rateDue: true, hadPhotos: true,
-            missedRows: if (missed) st.missedRows.union(Set(u)) else st.missedRows,
-            overLimit: if (st.rows.size() >= MAX_PHOTOS) st.overLimit.union(Set(u)) else st.overLimit,
-            rowBeforeBytes: st.rowBeforeBytes or not(st.objects.contains(u)), last: "uploadRow" },
+    if (st.reserved.contains(u))
+      st' = { ...st, upl: st.upl.set(u, "idle"), reserved: st.reserved.exclude(Set(u)), rows: st.rows.union(Set(u)), rateDue: true,
+              hadPhotos: true, rowBeforeBytes: st.rowBeforeBytes or not(st.objects.contains(u)), last: "uploadRow" }
+    else st' = { ...st, upl: st.upl.set(u, "discard"), last: "uploadHidden" },
+  }
+  /** recordUploadDiscard: the row was hidden meanwhile; the upload deletes its bytes, then its row. */
+  action uploadDiscard(u: int): bool = all {
+    st.upl.get(u) == "discard",
+    st' = { ...st, upl: st.upl.set(u, "idle"), objects: st.objects.exclude(Set(u)), abandoned: st.abandoned.exclude(Set(u)), last: "uploadDiscard" },
   }
 
-  // ---------------------------------------------------------------- erasePhoto (bytes, row, dropRatings)
-  /** storage.delete for the next listed row (recordRemovedBytes). */
+  // ---------------------------------------------------------------- erasePhoto (hidden row: bytes, dropRatings, row)
+  /** storage.delete for the next hidden row (recordRemovedBytes). */
   action eraseBytes(e: str, p: int): bool = all {
     st.erPc.get(e) == "idle", st.erTodo.get(e).contains(p),
     st' = { ...st, objects: st.objects.exclude(Set(p)), erTodo: st.erTodo.set(e, st.erTodo.get(e).exclude(Set(p))),
             erCur: st.erCur.set(e, p), erPc: st.erPc.set(e, "bytesGone"), last: "eraseBytes" },
   }
-  /** meta.delete (recordRemovedRow). */
-  action eraseRow(e: str): bool = all {
-    st.erPc.get(e) == "bytesGone",
-    st' = { ...st, rows: st.rows.exclude(Set(st.erCur.get(e))), erPc: st.erPc.set(e, "rowGone"), last: "eraseRow" },
-  }
   /** onRemoved: dropRatings for the app (recordRatingClear). */
   action eraseDrop(e: str): bool = all {
-    st.erPc.get(e) == "rowGone",
-    st' = { ...noRating(st), erPc: st.erPc.set(e, "idle"), erCur: st.erCur.set(e, 0), last: "eraseDrop" },
+    st.erPc.get(e) == "bytesGone",
+    st' = { ...noRating(st), erPc: st.erPc.set(e, "ratingGone"), last: "eraseDrop" },
+  }
+  /** meta.delete of the hidden row (recordRemovedRow). */
+  action eraseRow(e: str): bool = all {
+    st.erPc.get(e) == "ratingGone",
+    st' = { ...st, hidden: st.hidden.exclude(Set(st.erCur.get(e))), erPc: st.erPc.set(e, "idle"), erCur: st.erCur.set(e, 0), last: "eraseRow" },
   }
 
   // ---------------------------------------------------------------- the member deletes one photo (PhotoService.remove)
   action removeStart(p: int): bool = all {
     st.rmPhase == "idle", st.rows.contains(p),
-    st' = { ...st, rmPhase: "erasing", erTodo: st.erTodo.set("rm", Set(p)), last: "removeStart" },
+    st' = { ...st, rmPhase: "erasing", rows: st.rows.exclude(Set(p)), hidden: st.hidden.union(Set(p)), erTodo: st.erTodo.set("rm", Set(p)), last: "removeStart" },
   }
   /** finishRerate: rate() again from what is left. */
   action removeDone: bool = all {
@@ -340,7 +372,7 @@ module photos_rating {
   action rateWrite: bool = all {
     st.ratePc == "passed",
     if (ratingSelectionOk(st)) st' = { ...st, ratePc: "written", rating: true, ratingFrom: st.rateIds,
-                                         ratingLeft: false, ageRatingLeft: false, rateWriteCrash: false, last: "rateWrite" }
+                                         ratingLeft: false, last: "rateWrite" }
     else st' = { ...st, ratePc: "idle", rateIds: Set(), last: "rateWriteRefused" },
   }
   /** checkWrittenScore: the third ratingSelectionRefusal; a refusal discards the written version. */
@@ -366,10 +398,10 @@ module photos_rating {
     st.ageSaga == "idle", st.age < 18, not(st.deleted),
     st' = { ...st, ageSaga: "committed", ageRetried: true, last: "ageRetry" },
   }
-  /** ageLowered: photos.deleteFor(person) lists every row of the person. */
+  /** ageLowered: photos.deleteFor(person) hides every row of the person. */
   action ageList: bool = all {
     st.ageSaga == "committed",
-    st' = { ...st, ageSaga: "erasing", erTodo: st.erTodo.set("age", st.rows), last: "ageList" },
+    st' = { ...hideAll(st, "age"), ageSaga: "erasing", last: "ageList" },
   }
   /** ageLowered: dropRatings(person) after deleteFor. */
   action ageDropRatings: bool = all {
@@ -386,11 +418,16 @@ module photos_rating {
   /** The verify:age:fail facet (a staff retry writes it again: on conflict do update). */
   action verifyFail: bool = all {
     st.verifySaga == "idle", st.netMember, st.membership != "removed",
-    st' = { ...st, verifySaga: "committed", ageFail: true, failedCheckRows: st.failedCheckRows.union(st.rows), last: "verifyFail" },
+    st' = { ...st, verifySaga: "committed", ageFail: true, last: "verifyFail" },
   }
-  /** dropRatings(person, app). No photo is deleted (PR-D4). */
-  action verifyDrop: bool = all {
+  /** photos.deleteFor(person, app) hides every row of the app. */
+  action verifyList: bool = all {
     st.verifySaga == "committed",
+    st' = { ...hideAll(st, "verify"), verifySaga: "erasing", last: "verifyList" },
+  }
+  /** dropRatings(person, app) after deleteFor. */
+  action verifyDrop: bool = all {
+    st.verifySaga == "erasing", not(erasing(st, "verify")),
     st' = { ...noRating(st), verifySaga: "idle", last: "verifyDrop" },
   }
 
@@ -427,10 +464,10 @@ module photos_rating {
     st.leaveSaga == "idle", st.delSaga == "idle", src == "staff" or st.caPc == "idle", st.membership != "removed",
     st' = { ...st, leaveSaga: "consent", leaveSrc: src, last: "leaveConsent" },
   }
-  /** onForget: photos.deleteFor(person, app) first: it lists the rows. */
+  /** onForget: photos.deleteFor(person, app) first: it hides the rows. */
   action leaveList: bool = all {
     st.leaveSaga == "consent",
-    st' = { ...st, leaveSaga: "erasing", erTodo: st.erTodo.set("leave", st.rows), last: "leaveList" },
+    st' = { ...hideAll(st, "leave"), leaveSaga: "erasing", last: "leaveList" },
   }
   /** onForget: forget (the network member and its facets, the rating included). */
   action leaveNetForget: bool = all {
@@ -456,7 +493,7 @@ module photos_rating {
   }
   action delList: bool = all {
     st.delSaga == "floor",
-    st' = { ...st, delSaga: "erasing", erTodo: st.erTodo.set("del", st.rows), last: "delList" },
+    st' = { ...hideAll(st, "del"), delSaga: "erasing", last: "delList" },
   }
   action delNetForget: bool = all {
     st.delSaga == "erasing", not(erasing(st, "del")),
@@ -570,23 +607,40 @@ module photos_rating {
     st' = { ...st, usedInMatching: true, last: "matchRead" },
   }
 
+  // ---------------------------------------------------------------- the retention tick (sweepPhotos, PhotoService.sweep)
+  def eraserHolds(s: State, p: int): bool = ERASERS.exists(e => s.erTodo.get(e).contains(p) or (s.erPc.get(e) != "idle" and s.erCur.get(e) == p))
+  /**
+   * One pass: the due unfinished rows (a reserved or hidden row whose request has ended) lose their bytes and
+   * their row, a hidden stored row also its rating, and a new rate() is asked; then the holders that
+   * photoHoldAllowed refuses are erased by deleteFor (hide, bytes, rating, row), and a rating that
+   * ratingHoldAllowed refuses is dropped.
+   */
+  def sweepResult(s: State): State = {
+    val doneReserved = s.reserved.union(s.abandoned).filter(u => s.upl.get(u) == "idle")
+    val doneHidden = s.hidden.filter(p => not(eraserHolds(s, p)))
+    val s1 = { ...s, objects: s.objects.exclude(doneReserved.union(doneHidden)), reserved: s.reserved.exclude(doneReserved),
+               abandoned: s.abandoned.exclude(doneReserved), hidden: s.hidden.exclude(doneHidden),
+               rateDue: s.rateDue or doneHidden != Set() }
+    val s2 = if (doneHidden != Set()) noRating(s1) else s1
+    val unheld = s2.rows.union(s2.reserved) != Set() and not(holdOk(s2))
+    val s3 = if (unheld) { ...noRating(s2), objects: s2.objects.exclude(s2.rows), rows: Set(),
+                           abandoned: s2.abandoned.union(s2.reserved), reserved: Set() } else s2
+    val s4 = if (s3.rating and not(ratingHoldOk(s3))) noRating(s3) else s3
+    { ...s4, swept: s4 != { ...s, rateDue: s4.rateDue },
+             raceResidue: s4.raceResidue and s4.rows.union(s4.reserved).union(s4.objects) != Set(), last: "sweep" }
+  }
+  action sweep: bool = st' = sweepResult(st)
+
   // ---------------------------------------------------------------- environment
   action tick: bool = all { st.now < MAX_TICK, st' = { ...st, now: st.now + 1, last: "tick" } }
   /** A process crash ends every request in memory; committed rows, objects and facets stay. */
   action crash: bool = all {
     st.crashes < MAX_CRASHES, not(quiescent(st)),
-    val gone = ERASERS.filter(e => st.erPc.get(e) == "bytesGone").map(e => st.erCur.get(e))
-    val rowGoneNoDrop = ERASERS.exists(e => st.erPc.get(e) == "rowGone")
     st' = { ...st, crashes: st.crashes + 1, upl: UPLOADS.mapBy(u => "idle"), rateDue: false, ratePc: "idle", rateIds: Set(),
             erTodo: ERASERS.mapBy(e => Set()), erCur: ERASERS.mapBy(e => 0), erPc: ERASERS.mapBy(e => "idle"),
             rmPhase: "idle", ageSaga: "idle", verifySaga: "idle", banSaga: "idle", leaveSaga: "idle", delSaga: "idle", caPc: "idle",
             lrPc: "idle", lrU: 0,
-            orphanBytes: st.orphanBytes.union(UPLOADS.filter(u => st.upl.get(u) == "bytes")),
-            bytelessRows: st.bytelessRows.union(gone),
-            ratingLeft: st.ratingLeft or (st.rating and (rowGoneNoDrop or st.banSaga == "banned" or st.verifySaga == "committed")),
-            ageLeftRows: st.ageLeftRows.union(if (Set("committed", "erasing").contains(st.ageSaga)) st.rows else Set()),
-            ageRatingLeft: st.ageRatingLeft or (st.rating and Set("committed", "erasing").contains(st.ageSaga)),
-            rateWriteCrash: st.rateWriteCrash or (Set("written", "dropping").contains(st.ratePc) and not(ratingSelectionOk(st))),
+            ratingLeft: st.ratingLeft or (st.rating and st.banSaga == "banned"),
             last: "crash" },
   }
 
@@ -603,12 +657,12 @@ module photos_rating {
     // a request in flight goes on, and a stored rating is read (probe, export, matching).
     if (focus and UPLOADS.exists(x => st.upl.get(x) != "idle")) {
       nondet uf = UPLOADS.filter(x => st.upl.get(x) != "idle").oneOf()
-      any { uploadCount(uf), uploadBytes(uf), uploadRow(uf) }
+      any { uploadCount(uf), uploadReserve(uf), uploadBytes(uf), uploadRow(uf), uploadDiscard(uf) }
     }
     else if (focus and ERASERS.exists(x => erasing(st, x))) {
       nondet ef = ERASERS.filter(x => erasing(st, x)).oneOf()
       nondet pf = UPLOADS.oneOf()
-      any { eraseBytes(ef, pf), eraseRow(ef), eraseDrop(ef) }
+      any { eraseBytes(ef, pf), eraseDrop(ef), eraseRow(ef) }
     }
     else if (focus and (st.ratePc != "idle" or st.rateDue))
       any { rateStart, rateRead, rateReturn(score), rateCheck2, rateWrite, rateCheck3, rateDrop }
@@ -616,10 +670,10 @@ module photos_rating {
       any { consentYesCheck, consentYesWrite, linkWrite, banCommit, banDrop, banRestrict, leaveConsent("staff"), delFloor("staff") }
     else if (focus and st.rating) any { probe(ADULT_AGE), probe(MINOR_AGE), exportMember, matchRead }
     else any {
-      any { uploadStart(u, h), uploadCount(u), uploadBytes(u), uploadRow(u) },
-      any { removeStart(u), removeDone, eraseBytes(e, u), eraseRow(e), eraseDrop(e) },
+      any { uploadStart(u, h), uploadCount(u), uploadReserve(u), uploadBytes(u), uploadRow(u), uploadDiscard(u) },
+      any { removeStart(u), removeDone, eraseBytes(e, u), eraseDrop(e), eraseRow(e), sweep },
       any { rateStart, rateRead, rateReturn(score), rateCheck2, rateWrite, rateCheck3, rateDrop },
-      any { ageList, ageDropRatings, ageMembers, verifyDrop, banDrop, banRestrict,
+      any { ageList, ageDropRatings, ageMembers, verifyList, verifyDrop, banDrop, banRestrict,
             leaveList, leaveNetForget, leaveForgetMembership, delList, delNetForget, delStore },
       any { textPhoto(u, path), linkRead(u, box), linkWrite, consentYesRead, consentYesCheck, consentYesWrite, consentNo },
       any { probe(ADULT_AGE), probe(MINOR_AGE), memberList, staffLinks, exportMember, matchRead },
@@ -628,55 +682,51 @@ module photos_rating {
   }
 
   // ---------------------------------------------------------------- invariants
-  // The state rules are checked when no request is in flight (quiescent). Each full rule is a named val; the
-  // `_exceptKnown` form leaves out only the residue that a named code defect leaves (see the header).
-  /**
-   * Rule: photos are for adults only, never for members aged 13-17; a person whose lowest age drops under 18
-   * loses them all (AGENTS.md platform decision 9; photos.ts header). Fails on PR-D1 and PR-D5.
-   */
+  // The state rules are checked in the `checked` states; sweepRepairs checks one sweep pass from every quiescent state.
+  /** Rule: photos are for adults only; a person whose lowest age drops under 18 loses them all (decision 9). */
   def photoOnlyForAdultIn(rows: Set[int], s: State): bool = rows != Set() implies (s.age >= 18 and not(s.deleted))
-  val photoOnlyForAdult: bool = quiescent(st) implies photoOnlyForAdultIn(st.rows, st)
-  val photoOnlyForAdult_exceptKnown: bool =
-    quiescent(st) implies photoOnlyForAdultIn(st.rows.exclude(st.missedRows.union(st.ageLeftRows)), st)
-  /** Rule: no photo stays after a failed staff age check (decision 9; the app's own check is part of "adult"). Fails on PR-D4. */
+  val photoOnlyForAdult: bool = checked(st) implies photoOnlyForAdultIn(st.rows, st)
+  /** Rule: no photo stays after a failed staff age check (decision 9; the app's own check is part of "adult"). */
   def photoNotKeptAfterFailedAgeCheckIn(rows: Set[int], s: State): bool = rows != Set() implies not(s.ageFail)
-  val photoNotKeptAfterFailedAgeCheck: bool = quiescent(st) implies photoNotKeptAfterFailedAgeCheckIn(st.rows, st)
-  val photoNotKeptAfterFailedAgeCheck_exceptKnown: bool =
-    quiescent(st) implies photoNotKeptAfterFailedAgeCheckIn(st.rows.exclude(st.failedCheckRows.union(st.missedRows)), st)
-  /** Rule: leaving the app or deleting everything deletes every photo and its bytes. Fails on PR-D1 and PR-D3. */
+  val photoNotKeptAfterFailedAgeCheck: bool = checked(st) implies photoNotKeptAfterFailedAgeCheckIn(st.rows, st)
+  /** Rule: leaving the app or deleting everything deletes every photo and its bytes. */
   def noPhotoAfterForgetIn(rows: Set[int], objects: Set[int], s: State): bool =
     (s.membership == "removed" or s.deleted) implies (rows == Set() and objects == Set())
-  val noPhotoAfterForget: bool = quiescent(st) implies noPhotoAfterForgetIn(st.rows, st.objects, st)
-  val noPhotoAfterForget_exceptKnown: bool = quiescent(st) implies
-    noPhotoAfterForgetIn(st.rows.exclude(st.missedRows), st.objects.exclude(st.missedRows.union(st.orphanBytes)), st)
-  /** Rule: a person whom the Network forgot (leave, delete everything) has no photo. Fails on PR-D1 and PR-D3. */
+  val noPhotoAfterForget: bool = checked(st) implies noPhotoAfterForgetIn(st.rows, st.objects, st)
+  /** Rule: a person whom the Network forgot (leave, delete everything) has no photo. */
   def noPhotoForForgottenMemberIn(rows: Set[int], objects: Set[int], s: State): bool =
     not(s.netMember) implies (rows == Set() and objects == Set())
-  val noPhotoForForgottenMember: bool = quiescent(st) implies noPhotoForForgottenMemberIn(st.rows, st.objects, st)
-  val noPhotoForForgottenMember_exceptKnown: bool = quiescent(st) implies
-    noPhotoForForgottenMemberIn(st.rows.exclude(st.missedRows), st.objects.exclude(st.missedRows.union(st.orphanBytes)), st)
-  /** Rule: at most uploadMaxPerPerson live photos, in every state. Fails on PR-D2. */
-  val countLimit: bool = st.rows.size() <= MAX_PHOTOS
-  val countLimit_exceptKnown: bool = st.rows.exclude(st.overLimit).size() <= MAX_PHOTOS
-  /** Rule: bytes and row live and die together; no orphan bytes, no row without bytes. Fails on PR-D3. */
-  val bytesMatchRow: bool = quiescent(st) implies st.objects == st.rows
-  val bytesMatchRow_exceptKnown: bool = quiescent(st) implies st.objects.exclude(st.orphanBytes) == st.rows.exclude(st.bytelessRows)
-  /** stepRowWriteRequiresBytes (spec/photoRetention.md) across the whole flow: a row is written only after its bytes. */
+  val noPhotoForForgottenMember: bool = checked(st) implies noPhotoForForgottenMemberIn(st.rows, st.objects, st)
+  /** Rule: at most uploadMaxPerPerson reserved or stored photos, in every state (uploadReserve counts under the lock). */
+  val countLimit: bool = st.rows.union(st.reserved).size() <= MAX_PHOTOS
+  /** Rule: no bytes without a row, in every state: bytes are written after the reservation and the row is deleted after the bytes. */
+  val bytesAlwaysHaveARow: bool = st.objects.subseteq(st.rows.union(st.reserved).union(st.hidden).union(st.abandoned))
+  /** Rule: a stored photo always has its bytes, in every state (the row is hidden before its bytes go). */
+  val storedRowHasBytes: bool = st.rows.subseteq(st.objects)
+  /** Rule: bytes and row live and die together once the sweep has nothing left. */
+  def bytesMatchRowIn(s: State): bool = s.objects == s.rows
+  val bytesMatchRow: bool = checked(st) implies bytesMatchRowIn(st)
+  /** stepRowWriteRequiresBytes (spec/photoRetention.md) across the whole flow: a row is stored only after its bytes. */
   val rowWriteRequiresBytes: bool = not(st.rowBeforeBytes)
-  /**
-   * Rule: no rating for a minor (decision 13; "Adults only, scores never shown"). writeRating checks the age
-   * under the person lock, so only a crash residue can break it.
-   */
-  val noRatingForMinor: bool = quiescent(st) implies (st.rating implies (st.age >= 18 and not(st.deleted)))
-  val noRatingForMinor_exceptKnown: bool = not(st.rateWriteCrash or st.ageRatingLeft) implies noRatingForMinor
+  /** Rule: no rating for a minor (decision 13; "Adults only, scores never shown"). */
+  def noRatingForMinorIn(s: State): bool = s.rating implies (s.age >= 18 and not(s.deleted))
+  val noRatingForMinor: bool = checked(st) implies noRatingForMinorIn(st)
   /**
    * Rule: a rating only for a verified adult with a live membership who is not banned, from photos that still
-   * exist (ratingRefusal; verify; the ban). Fails after a crash before the step that drops it.
+   * exist (ratingRefusal; verify; the ban; the sweep). The ban residue (ratingLeft) ends at the staff retry.
    */
-  val ratingOnlyForEligible: bool = quiescent(st) implies
-    (st.rating implies (not(st.ageFail) and not(st.banned) and LIVE.contains(st.membership) and st.ratingFrom.subseteq(st.rows)))
-  val ratingOnlyForEligible_exceptKnown: bool =
-    not(st.rateWriteCrash or st.ageRatingLeft or st.ratingLeft) implies ratingOnlyForEligible
+  def ratingOnlyForEligibleIn(s: State): bool =
+    s.rating implies (not(s.ageFail) and not(s.banned) and LIVE.contains(s.membership) and s.ratingFrom.subseteq(s.rows))
+  val ratingOnlyForEligible: bool = checked(st) implies ratingOnlyForEligibleIn(st)
+  val ratingOnlyForEligible_exceptKnown: bool = not(st.ratingLeft) implies ratingOnlyForEligible
+  /** Every state rule, in one state. */
+  def stateRulesIn(s: State): bool = and {
+    photoOnlyForAdultIn(s.rows, s), photoNotKeptAfterFailedAgeCheckIn(s.rows, s), noPhotoAfterForgetIn(s.rows, s.objects, s),
+    noPhotoForForgottenMemberIn(s.rows, s.objects, s), bytesMatchRowIn(s), noRatingForMinorIn(s),
+    not(s.ratingLeft) implies ratingOnlyForEligibleIn(s),
+  }
+  /** Rule: the retention tick repairs every quiescent state, also after a crash or inside the leave window. */
+  val sweepRepairs: bool = quiescent(st) implies stateRulesIn(sweepResult(st))
   /** Rule: scores are never shown to anyone (decisions 9 and 13). The export runs the code's own filter. */
   val scoresNeverShown: bool = not(st.shown.contains("score"))
   /** Rule: a photo is stored only from an upload that carried the current consent version (beginUpload). */
@@ -695,11 +745,10 @@ module photos_rating {
     st.banned and st.banSaga == "idle" and st.banDone and st.membership != "removed" implies st.membership == "restricted"
 
   val safety: bool = and {
-    photoOnlyForAdult_exceptKnown, noPhotoAfterForget_exceptKnown, noPhotoForForgottenMember_exceptKnown,
-    countLimit_exceptKnown, bytesMatchRow_exceptKnown, rowWriteRequiresBytes,
-    noRatingForMinor_exceptKnown, ratingOnlyForEligible_exceptKnown,
+    photoOnlyForAdult, noPhotoAfterForget, noPhotoForForgottenMember, photoNotKeptAfterFailedAgeCheck,
+    countLimit, bytesAlwaysHaveARow, storedRowHasBytes, bytesMatchRow, rowWriteRequiresBytes,
+    noRatingForMinor, ratingOnlyForEligible_exceptKnown, sweepRepairs,
     scoresNeverShown, rowHasConsent, textPhotoNeedsConsent, probeClaimMatches, leaveSticks, banSticks,
-    photoNotKeptAfterFailedAgeCheck_exceptKnown,
   }
 
   // ---------------------------------------------------------------- witnesses (each must be violated)
@@ -717,11 +766,15 @@ module photos_rating {
   val witness_countRefused: bool = not(st.countRefused)
   val witness_memberRemove: bool = not(st.last == "removeDone")
   val witness_ageRetried: bool = not(st.ageRetried)
+  val witness_sweepFinishes: bool = not(st.swept and st.crashes > 0)
+  val witness_uploadDiscarded: bool = not(st.last == "uploadDiscard")
+  val witness_sweepNeeded: bool = not(quiescent(st) and not(stateRulesIn(st)))
+  val witness_raceResidue: bool = not(st.raceResidue and quiescent(st))
 
   // ---------------------------------------------------------------- run tests (concrete traces)
   run adultUploadRatedTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
       .then(matchRead)
       .expect(st.rating and st.rows == Set(1) and st.objects == Set(1) and st.usedInMatching and bytesMatchRow and safety)
@@ -732,9 +785,9 @@ module photos_rating {
   /** An age change after the write ends the attempt at the post-write check. */
   run lateRatingDroppedTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite)
-      .then(ageCommit).then(ageList).then(eraseBytes("age", 1)).then(eraseRow("age")).then(eraseDrop("age"))
+      .then(ageCommit).then(ageList).then(eraseBytes("age", 1)).then(eraseDrop("age")).then(eraseRow("age"))
       .then(ageDropRatings).then(ageMembers)
       .then(rateCheck3).then(rateDrop)
       .expect(not(st.rating) and st.rows == Set() and settled(st) and photoOnlyForAdult and safety)
@@ -742,9 +795,9 @@ module photos_rating {
   /** A completed age change refuses the write. */
   run rateWriteRefusedAfterAgeChangeTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2)
-      .then(ageCommit).then(ageList).then(eraseBytes("age", 1)).then(eraseRow("age")).then(eraseDrop("age"))
+      .then(ageCommit).then(ageList).then(eraseBytes("age", 1)).then(eraseDrop("age")).then(eraseRow("age"))
       .then(ageDropRatings).then(ageMembers)
       .then(rateWrite)
       .expect(not(st.rating) and st.age < 18 and settled(st) and noRatingForMinor and safety)
@@ -752,98 +805,110 @@ module photos_rating {
   /** A newly uploaded photo supersedes an in-flight score even when the earlier photo still exists. */
   run changedPhotoSelectionTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead)
-      .then(uploadStart(2, CONSENT)).then(uploadCount(2)).then(uploadBytes(2)).then(uploadRow(2))
+      .then(uploadStart(2, CONSENT)).then(uploadCount(2)).then(uploadReserve(2)).then(uploadBytes(2)).then(uploadRow(2))
       .then(rateReturn(true)).then(rateCheck2)
       .expect(not(st.rating) and st.rows == Set(1, 2) and st.rateDue and st.last == "rateDiscarded")
 
   /** The member deletes a photo: bytes, row, rating; then rate() runs again from what is left. */
   run memberRemoveTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(removeStart(1)).then(eraseBytes("rm", 1)).then(eraseRow("rm")).then(eraseDrop("rm")).then(removeDone)
+      .then(removeStart(1)).then(eraseBytes("rm", 1)).then(eraseDrop("rm")).then(eraseRow("rm")).then(removeDone)
       .then(rateStart).then(rateRead)
       .expect(st.rows == Set() and st.objects == Set() and not(st.rating) and settled(st) and bytesMatchRow and safety)
 
   /** Leave with no upload in flight deletes every photo and the rating. */
   run leaveClearsTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
-      .then(leaveConsent("text")).then(leaveList).then(eraseBytes("leave", 1)).then(eraseRow("leave")).then(eraseDrop("leave"))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(leaveConsent("text")).then(leaveList).then(eraseBytes("leave", 1)).then(eraseDrop("leave")).then(eraseRow("leave"))
       .then(leaveNetForget).then(leaveForgetMembership).then(rateStart)
       .expect(st.membership == "removed" and st.rows == Set() and st.objects == Set() and settled(st)
               and noPhotoAfterForget and noPhotoForForgottenMember and safety)
 
-  /** PR-D1 (open): the row lands after the age hook listed the rows, so a minor keeps the photo. */
-  run d1RowAfterAgeListKeptTest =
+  /** PR-D1 fixed: the age hook hides the reserved row of an upload in flight; its confirm discards the bytes. */
+  run d1AgeHidesReservedUploadTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1))
       .then(ageCommit).then(ageList)
-      .then(uploadRow(1)).then(rateStart)
+      .then(uploadRow(1)).then(uploadDiscard(1))
       .then(ageDropRatings).then(ageMembers)
-      .expect(st.rows == Set(1) and st.age < 18 and settled(st) and not(photoOnlyForAdult) and st.missedRows == Set(1) and safety)
+      .expect(st.rows == Set() and st.objects == Set() and st.age < 18 and settled(st) and photoOnlyForAdult and safety)
 
-  /** PR-D1 (open): an upload by link lands while a text leave erases, so the removed member keeps the photo. */
-  run d1RowDuringLeaveKeptTest =
+  /** PR-D1 fixed: after the lower age commits, the reservation refuses the upload under the lock. */
+  run d1ReserveAfterAgeRefusedTest =
     init
-      .then(linkRead(1, true)).then(linkWrite).then(uploadCount(1)).then(uploadBytes(1))
-      .then(leaveConsent("text")).then(leaveList)
-      .then(uploadRow(1))
-      .then(leaveNetForget).then(leaveForgetMembership).then(rateStart)
-      .expect(st.membership == "removed" and st.rows == Set(1) and settled(st) and not(noPhotoAfterForget) and safety)
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1))
+      .then(ageCommit).then(uploadReserve(1))
+      .expect(st.reserved == Set() and st.upl.get(1) == "idle" and st.last == "uploadReserveRefused")
 
-  /** PR-D2 (open): two uploads both pass the unlocked count; the person keeps more than the limit. */
+  /** PR-D1 fixed: a link upload reserves between the leave's deleteFor and forgetMembership; the sweep erases it. */
+  run d1LeaveWindowSweptTest =
+    init
+      .then(linkRead(1, true)).then(linkWrite).then(uploadCount(1))
+      .then(leaveConsent("text")).then(leaveList)
+      .then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(leaveNetForget).then(leaveForgetMembership).then(rateStart)
+      .expect(st.membership == "removed" and st.rows == Set(1) and quiescent(st) and not(settled(st)) and safety)
+      .then(sweep)
+      .expect(st.rows == Set() and st.objects == Set() and settled(st) and noPhotoAfterForget and safety)
+
+  /** PR-D2 fixed: two uploads pass the early count; the reservation under the lock refuses the second. */
   run d2CountRaceTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(uploadStart(2, CONSENT)).then(uploadStart(3, CONSENT)).then(uploadCount(2)).then(uploadCount(3))
-      .then(uploadBytes(2)).then(uploadBytes(3)).then(uploadRow(2)).then(uploadRow(3))
-      .expect(st.rows == Set(1, 2, 3) and not(countLimit) and st.overLimit == Set(3) and safety)
+      .then(uploadReserve(2)).then(uploadReserve(3))
+      .expect(st.reserved == Set(2) and st.countRefused and st.last == "uploadReserveFull" and countLimit and safety)
 
-  /** PR-D3 (open): a crash after storage.put and before meta.put leaves bytes that nothing deletes. */
-  run d3OrphanBytesTest =
+  /** PR-D3 fixed: a crash after storage.put leaves a reserved row with its bytes; the sweep deletes both. */
+  run d3CrashAfterBytesSweptTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(crash)
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(crash)
       .then(delFloor("text")).then(delList).then(delNetForget).then(delStore)
-      .expect(st.objects == Set(1) and st.rows == Set() and st.deleted and settled(st)
-              and not(bytesMatchRow) and not(noPhotoAfterForget) and safety)
+      .expect(st.objects == Set(1) and st.abandoned == Set(1) and st.deleted and quiescent(st) and not(settled(st)) and bytesAlwaysHaveARow and safety)
+      .then(sweep)
+      .expect(st.objects == Set() and st.abandoned == Set() and settled(st) and bytesMatchRow and noPhotoAfterForget and safety)
 
-  /** PR-D3 (open): a crash after the row delete and before dropRatings keeps a rating of a deleted photo. */
-  run d3StaleRatingTest =
+  /** PR-D3 fixed: a crash after the bytes and before dropRatings leaves a hidden row; the sweep drops the rating. */
+  run d3StaleRatingSweptTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(removeStart(1)).then(eraseBytes("rm", 1)).then(eraseRow("rm")).then(crash)
-      .expect(st.rating and st.rows == Set() and settled(st) and not(ratingOnlyForEligible) and st.ratingLeft and safety)
+      .then(removeStart(1)).then(eraseBytes("rm", 1)).then(crash)
+      .expect(st.rating and st.hidden == Set(1) and st.rows == Set() and not(settled(st)) and safety)
+      .then(sweep)
+      .expect(not(st.rating) and st.hidden == Set() and settled(st) and ratingOnlyForEligible and safety)
 
-  /** PR-D4 (open): a failed staff age check drops the rating and keeps the photos. */
-  run d4FailedAgeCheckKeepsPhotosTest =
+  /** PR-D4 fixed: a failed staff age check erases the photos, then drops the rating. */
+  run d4FailedAgeCheckErasesPhotosTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(verifyFail).then(verifyDrop)
-      .expect(st.rows == Set(1) and not(st.rating) and st.ageFail and settled(st) and not(photoNotKeptAfterFailedAgeCheck)
-              and st.failedCheckRows == Set(1) and safety)
+      .then(verifyFail).then(verifyList).then(eraseBytes("verify", 1)).then(eraseDrop("verify")).then(eraseRow("verify")).then(verifyDrop)
+      .expect(st.rows == Set() and st.objects == Set() and not(st.rating) and st.ageFail and settled(st)
+              and photoNotKeptAfterFailedAgeCheck and safety)
 
-  /** PR-D5 (open): a crash after noteAge keeps a minor's photos until a later age statement runs the hook again. */
-  run d5CrashAfterAgeCommitTest =
+  /** PR-D5 fixed: a crash after noteAge leaves a minor's photo and rating; the sweep erases both. */
+  run d5CrashAfterAgeCommitSweptTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
       .then(ageCommit).then(crash)
-      .expect(st.rows == Set(1) and st.age < 18 and settled(st) and not(photoOnlyForAdult) and st.ageLeftRows == Set(1) and safety)
-      .then(ageRetry).then(ageList).then(eraseBytes("age", 1)).then(eraseRow("age")).then(eraseDrop("age"))
-      .then(ageDropRatings).then(ageMembers)
-      .expect(st.rows == Set() and st.netAge == MINOR_AGE and settled(st) and photoOnlyForAdult and safety)
+      .expect(st.rows == Set(1) and st.rating and st.age < 18 and quiescent(st) and not(settled(st)) and safety)
+      .then(sweep)
+      .expect(st.rows == Set() and st.objects == Set() and not(st.rating) and settled(st) and photoOnlyForAdult and noRatingForMinor and safety)
 
   /** A crash after the ban commit keeps the rating; the staff retry resumes the ban and drops it. */
   run banCrashResumedTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
       .then(banCommit).then(crash)
-      .expect(st.rating and st.banned and settled(st) and not(ratingOnlyForEligible) and st.ratingLeft and safety)
+      .expect(st.rating and st.banned and settled(st) and not(ratingOnlyForEligibleIn(st)) and st.ratingLeft and safety)
       .then(banResume).then(banDrop).then(banRestrict)
       .expect(not(st.rating) and not(st.ratingLeft) and st.membership == "restricted" and st.rows == Set(1)
               and ratingOnlyForEligible and banSticks and safety)
@@ -898,7 +963,7 @@ module photos_rating {
   /** After a crash residue is dropped, the exception ends: a new eligible rating is checked by the full rule. */
   run residueEndsAfterDropTest =
     init
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
       .then(banCommit).then(crash)
       .expect(st.ratingLeft)
@@ -907,14 +972,14 @@ module photos_rating {
 
   run probeFlagOnTest =
     initWith(true)
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
       .then(probe(ADULT_AGE))
       .expect(st.probeSent and not(st.probeClaims) and probeClaimMatches and safety)
 
   run exportHidesScoreTest =
     initWith(false)
-      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadBytes(1)).then(uploadRow(1))
+      .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
       .then(exportMember)
       .expect(st.rating and st.shown.contains("fact") and st.shown.contains("interest") and scoresNeverShown and safety)
@@ -923,8 +988,8 @@ module photos_rating {
   run textAndLinkPhotoTest =
     initWith(false)
       .then(textPhoto(1, "webhook")).then(consentYesRead).then(consentYesCheck).then(consentYesWrite)
-      .then(textPhoto(2, "webhook")).then(uploadCount(2)).then(uploadBytes(2)).then(uploadRow(2))
-      .then(linkRead(3, false)).then(linkWrite).then(uploadCount(3)).then(uploadBytes(3)).then(uploadRow(3))
+      .then(textPhoto(2, "webhook")).then(uploadCount(2)).then(uploadReserve(2)).then(uploadBytes(2)).then(uploadRow(2))
+      .then(linkRead(3, false)).then(linkWrite).then(uploadCount(3)).then(uploadReserve(3)).then(uploadBytes(3)).then(uploadRow(3))
       .expect(st.rows == Set(2, 3) and rowHasConsent and textPhotoNeedsConsent and safety)
 
   /** A link without the stored consent and without the box takes nothing. */

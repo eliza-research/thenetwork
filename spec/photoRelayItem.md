@@ -88,7 +88,7 @@ pure def photoFetchAllowed(photo: PhotoDelivery, deadline: int, at: int): bool =
 
 ### A photo request delivers an approved choice, lists the photos, or records the named photo
 
-The relay endpoint reads the member's own message for the current match. An approved, unclaimed item for this match is delivered first. Otherwise, when selected-photo relay is configured, a request without a number lists the member's photos by number with the current notice, and the shell stores that list for this match. A request that names a number records that one offered photo as one pending item for review, which is the member's consent for that item only. The number counts only within fifteen minutes of the list and under the same notice. A member without photos is told how to add them. Added after the audit (OPP22): before this rule no member surface could choose a photo, so photo relay could never start.
+The relay endpoint reads the member's own message for the current match. An approved, unclaimed item for this match is delivered first. Otherwise, when selected-photo relay is configured, a request without a number lists the member's photos by number with the current notice, and the shell stores that list for this match. A request that names a number records that one offered photo as one pending item for review, which is the member's consent for that item only. The number counts only within fifteen minutes of the list and under the same notice. A member without photos is told how to add them. The shell checks the choice before the reply and writes the item in the same transaction that completes the relay action, so an action that fails keeps no item the member was not told about. Added after the audit (OPP22): before this rule no member surface could choose a photo, so photo relay could never start. Changed after the audit (PRI-D1): before this change the item was written in its own transaction before the action completed.
 
 ```quint
 type PhotoRelayEntry = DeliverApprovedPhoto | OfferPhotoChoices | RecordPhotoChoice | AskForPhotosFirst | PhotoRelayOff | PhotoChoiceUnknown
@@ -117,4 +117,27 @@ pure def lawNothingChosenWhenRelayIsOff(photoCount: int, choice: int, offerLive:
 
 pure def lawStaleListIsNotLive(offeredAt: int, sameNotice: bool): bool =
   not(photoRelayOfferLive(offeredAt, offeredAt + photoRelayOfferTtlMs, sameNotice))
+```
+
+### A withdrawal by text revokes the member's open photo items for the match
+
+A member who says not to send their photo (for example "don't send my photo") withdraws it in the conversation. For the current match, the shell revokes each item that the member owns for this match and that is still pending or approved, also an approved item that a delivery has claimed but not fetched, in the transaction that completes the relay action. A revoked item is never delivered. The reply says that the photo will not be sent, or that no photo was waiting for this match. Added after the audit (PRI-D1): before this rule only a site route could revoke an item, and there is no account portal, so a member who chose a photo by text could not take it back before delivery. When an item that the reply counted is no longer withdrawable at the commit (a delivery or another revoke took it first), the relay action fails and the reply is not sent, so the member is never told that a photo will not be sent when it was. The site revoke and the text withdrawal use the same revoke step. Changed after review: the reply first counted the items before the commit and was sent even when the commit revoked fewer.
+
+```quint
+type PhotoWithdrawal = PhotoWithdrawn | NoPhotoToWithdraw
+
+pure def photoItemWithdrawable(ownItem: bool, sameMatch: bool, open: bool): bool =
+  ownItem and sameMatch and open
+
+pure def photoWithdrawalFor(withdrawn: int): PhotoWithdrawal =
+  if (withdrawn > 0) PhotoWithdrawn else NoPhotoToWithdraw
+
+pure def lawOnlyOwnItemsAreWithdrawn(sameMatch: bool, open: bool): bool =
+  not(photoItemWithdrawable(false, sameMatch, open))
+
+pure def lawOnlyThisMatchIsWithdrawn(ownItem: bool, open: bool): bool =
+  not(photoItemWithdrawable(ownItem, false, open))
+
+pure def lawNothingWithdrawnSaysSo(withdrawn: int): bool =
+  withdrawn <= 0 implies photoWithdrawalFor(withdrawn) == NoPhotoToWithdraw
 ```

@@ -47,11 +47,17 @@ pure def lawMissingRecipientCancels(plannedCount: int, remainingCount: int, dest
 
 ### The sink receives only a recorded digest
 
-Record the final plan before asking the sink to enqueue it. The store locks the selected items and requires every item to belong to the recipient and remain unseen, unnotified and unexpired at recording. It rejects repeated IDs and overlapping claims. A recording rejection cancels that plan, using its final delivery ID. Count the plan as queued only after the sink accepts it.
+Record the final plan before asking the sink to enqueue it. The store locks the selected items and requires every item to belong to the recipient and remain unseen, unnotified and unexpired at recording. It rejects repeated IDs and overlapping claims. A recording rejection cancels that plan, using its final delivery ID. Count the plan as queued only after the sink accepts it. A digest that counts toward the weekly cap is recorded only while the person's counted messages of the last seven days, read under a lock of that person, are under the cap; otherwise the plan is cancelled and its items stay pending. Changed 2026-11-21: the cap was checked only when the plan was made, so two overlapping scheduler replicas could each record a counting digest and pass the cap (SD-150, found by the notify_capital model).
 
 ```quint
 pure def digestItemSetCanBeRecorded(itemCount: int, pendingOwnedCount: int): bool =
   itemCount > 0 and itemCount == pendingOwnedCount
+
+pure def digestWithinWeeklyCap(countsTowardCap: bool, countedSends: int, weeklyCap: int): bool =
+  not(countsTowardCap) or countedSends < weeklyCap
+
+pure def lawRecordedCountingDigestStaysUnderCap(countedSends: int, weeklyCap: int): bool =
+  digestWithinWeeklyCap(true, countedSends, weeklyCap) implies countedSends + 1 <= weeklyCap
 
 pure def canRecordDigest(digest: DigestFlow): bool =
   digest.phase == ReusingDigest or digest.phase == RebuildingDigest

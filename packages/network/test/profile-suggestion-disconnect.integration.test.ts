@@ -31,8 +31,8 @@ beforeEach(async () => {
 });
 afterAll(async () => { await sql.close(); const admin = new SQL(`${base}/postgres`); await admin.unsafe(`drop database ${db}`); await admin.close(); });
 
-async function seed(retain: boolean, accepted: boolean, createdAt = now - 2000) {
-  const store = new ProfileSuggestions(sql, async () => true);
+async function seed(retain: boolean, accepted: boolean, createdAt = now - 2000, issuedAt = createdAt) {
+  const store = new ProfileSuggestions(sql, async () => ({ issuedAt }));
   const suggestion: SourceSuggestion = { connectionId, source: "gmail", observedAt: createdAt - 1000,
     kind: "interest", value: "I enjoy climbing", tags: ["climbing"], confidence: .8, scope: "agent_private" };
   const batch = (await store.propose(owner, { windowStart: createdAt - 5000, windowEnd: createdAt,
@@ -108,6 +108,20 @@ test("revoked cleanup uses real SQL with active-source authorization false and l
     expect(await sql`select id from network.facets`).toHaveLength(1);
     expect((await sql`select status from platform.profile_suggestions where batch_id=${newer.id}`)[0].status).toBe("accepted");
     expect(JSON.stringify(deleted.body)).not.toContain(connectionId);
+  } finally { await f.close(); }
+});
+
+// spec/profileSuggestionSource.md, "Cleanup uses current owner authority and any required stored withdrawal turn"
+test("the revocation cutoff compares Cloud times only, so Network clock skew neither keeps a revoked fact nor removes a reconnect fact", async () => {
+  const revoked = await seed(false, true, now - 500, now - 1500);
+  const reconnected = await seed(false, true, now - 1500, now - 500);
+  const f = await fixture();
+  try {
+    const result = await f.post();
+    expect(result.body).toEqual({ kind: "connection_cleanup", operation: "disconnect", counts: { pending: 0, retainedAccepted: 0, linkedFacts: 0 } });
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${revoked.id}`)[0].status).toBe("withdrawn");
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${reconnected.id}`)[0].status).toBe("accepted");
+    expect(await sql`select id from network.facets`).toHaveLength(1);
   } finally { await f.close(); }
 });
 

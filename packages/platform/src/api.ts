@@ -480,7 +480,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const withSession = async (fn: (who: Who, a: NonNullable<Awaited<ReturnType<typeof auth>>>) => Promise<Response>): Promise<Response> => {
       const a = await auth();
       if (!a) return json(401, { ok: false, error: "unauthorized" });
-      const res = await fn({ e164: a.session.e164, personId: a.session.personId }, a);
+      const res = await fn({ e164: a.session.e164, personId: a.session.personId, session: a.session.tokenHash }, a);
       if (!res.headers.has("set-cookie")) rotatedCookies(res, a);
       return res;
     };
@@ -578,10 +578,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (otpStartNeedsBrowserCheck(phoneOtpOnlyApps.has(appId), !!o.turnstile) && !(await o.turnstile!.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
-          // A banned number gets the same answer as any other, and no code is sent (PRD 40.3; the MCP
-          // path does the same in startOtp).
-          if (await accounts.banned(e164)) return json(200, { ok: true });
-          const r = await otp.start(app, e164, ip, phoneOtpOnlyApps.has(appId));
+          const r = await otp.start(app, e164, ip, phoneOtpOnlyApps.has(appId), await accounts.banned(e164));
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
         } finally {
@@ -759,7 +756,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           return await withSession(async (who, a) => {
             const e164 = normalizePhone(b.phone);
             if (!e164) return json(400, { ok: false, error: "invalid_phone" });
-            const r = await accounts.startNumberChange(app, who, e164, sessions.fresh(a.session), async () => (await otp.start(app, e164, ip)).ok);
+            const r = await accounts.startNumberChange(app, who, e164, sessions.fresh(a.session), async () => (await otp.start(app, e164, ip, false, await accounts.banned(e164))).ok);
             if (!r.ok) {
               const status = r.error === "rate_limited" ? 429 : r.error === "review" || r.error === "reauth" ? 403 : 400;
               const message = r.error === "review" ? REVIEW_MESSAGE : r.error === "reauth" ? REAUTH_CHANGE_MESSAGE : undefined;

@@ -50,7 +50,7 @@ pure def sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): bool = flow.ph
 
 Commit a successful staff hold for a linked person with the primary runtime decision. An app-scoped actor sets a hold for the requested app. An all-app actor can place a global hold. An authorized lift clears the requested app only. An app-scoped actor can lift a local hold but cannot release global coverage. An all-app actor can release one app from global coverage while the other apps retain it. A new global hold covers all apps again. Recheck ownership and the exact current decision when committing a lift or projecting a related runtime. Keep the scope and decision data private. When migrating older records, preserve an active, identifiable prior staff hold in the app that recorded it.
 
-An ordinary leave removes the app membership and personal data while retaining the scoped restriction. The person can join again and receive permitted replies and safety notices. The matching snapshot and final contact claims check the current app's restriction even if its runtime projection is pending. Whole-account erasure removes the hold record with the other personal data under the existing account privacy procedure.
+An ordinary leave removes the app membership and personal data while retaining the scoped restriction. The person can join again and receive permitted replies and safety notices. The matching snapshot and final contact claims check the current app's restriction even if its runtime projection is pending. Whole-account erasure keeps the hold record, as it keeps a ban and the person's tombstone, so a later join by the same number revives the person with the hold. Only the staff release of a held number to a new holder removes it. Changed on 2026-11-21 (audit SIG70): erasure removed the hold, so a held person who erased the account and joined again was matched without staff review of the hold.
 
 ```quint
 pure def durableStaffHoldScope(allAppsAuthority: bool, currentApp: str): str =
@@ -64,6 +64,11 @@ pure def durableStaffHoldLiftAllowed(globallyCovered: bool, allAppsAuthority: bo
 
 pure def durableStaffHoldSnapshotStatus(accountStatus: str, staffHeld: bool): str =
   if (staffHeld) "restricted" else accountStatus
+
+pure def erasureKeepsStaffHold(releasedToNewHolder: bool): bool = not(releasedToNewHolder)
+
+pure def lawErasedThenRejoinedNumberStaysHeld(accountStatus: str): bool =
+  durableStaffHoldSnapshotStatus(accountStatus, erasureKeepsStaffHold(false)) == "restricted"
 
 pure def lawLocalStaffCannotReleaseGlobalHold(globallyCovered: bool): bool =
   globallyCovered implies not(durableStaffHoldLiftAllowed(globallyCovered, false))

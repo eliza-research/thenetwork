@@ -45,10 +45,10 @@ import {
 } from "../../core/src/generated/photoRating.ts";
 import {
   canCheckSlots, canCleanImage, canFinishRerate, canRecordRatingClear, canRecordRemovedBytes, canRecordRemovedRow,
-  canRecordUploadBytes, canRecordUploadRow, canScreenFile,
-  initial as photoChangeInitial, type PhotoChange, step as stepPhotoChange,
+  canRecordUploadBytes, canRecordUploadDiscard, canRecordUploadRow, canReserveRow, canScreenFile,
+  initial as photoChangeInitial, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
 } from "../../core/src/generated/photoRetention.ts";
-import { canBeMatched } from "../../core/src/policy.ts";
+import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
@@ -107,8 +107,8 @@ export const PHOTO_MAX_PER_PERSON = uploadMaxPerPerson;
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
 /** The photo consent a site shows next to the upload button (draft copy: needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_CONSENT = {
-  version: "2026-10-08",
-  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them anytime.",
+  version: "2026-11-21",
+  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
 } as const;
 
 /**
@@ -380,45 +380,144 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
 }
 
 // ------------------------------------------------------------------------------------ rows
+export type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
+export interface UnfinishedPhoto { row: PhotoRow; reserved: boolean; hidden: boolean; changedAt: number }
+export interface PhotoHolder { personId: string; app: AppId }
 export interface PhotoStore {
-  put(r: PhotoRow): Promise<void>;
+  reserve(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
+  confirm(id: string, at: number): Promise<boolean>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
+  hide(personId: string, at: number, scope: { app?: AppId; id?: string }): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
+  unfinished(limit: number): Promise<UnfinishedPhoto[]>;
+  holders(limit: number): Promise<PhotoHolder[]>;
 }
+interface MemoryPhotoRow extends PhotoRow { storedAt: number | null; hiddenAt: number | null }
 export class MemoryPhotoStore implements PhotoStore {
-  readonly rows = new Map<string, PhotoRow>();
-  async put(r: PhotoRow) { this.rows.set(r.id, { ...r }); }
-  async get(id: string) { const r = this.rows.get(id); return r && { ...r }; }
-  async list(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app)).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => ({ ...r })); }
+  readonly rows = new Map<string, MemoryPhotoRow>();
+  private readonly locks = new Map<string, Promise<unknown>>();
+  private async locked<T>(personId: string, fn: () => Promise<T>): Promise<T> {
+    const before = this.locks.get(personId) ?? Promise.resolve();
+    const run = before.then(fn, fn);
+    this.locks.set(personId, run.catch(() => undefined));
+    return run;
+  }
+  private live(r: MemoryPhotoRow) { return r.storedAt !== null && r.hiddenAt === null; }
+  private copy(r: MemoryPhotoRow): PhotoRow { const { storedAt: _s, hiddenAt: _h, ...row } = r; return { ...row }; }
+  async reserve(r: PhotoRow, admit: PhotoAdmission) {
+    return this.locked(r.personId, async () => {
+      const refused = await admit();
+      if (refused) return refused;
+      const held = [...this.rows.values()].filter(x => x.personId === r.personId && x.hiddenAt === null).length;
+      if (photoSlotsFull(held)) return "too_many";
+      this.rows.set(r.id, { ...r, storedAt: null, hiddenAt: null });
+      return undefined;
+    });
+  }
+  async confirm(id: string, at: number) {
+    const r = this.rows.get(id);
+    if (!r || r.storedAt !== null || r.hiddenAt !== null) return false;
+    r.storedAt = at;
+    return true;
+  }
+  async get(id: string) { const r = this.rows.get(id); return r && this.live(r) ? this.copy(r) : undefined; }
+  async list(personId: string, app?: AppId) {
+    return [...this.rows.values()].filter(r => this.live(r) && r.personId === personId && (!app || r.app === app))
+      .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => this.copy(r));
+  }
+  async hide(personId: string, at: number, scope: { app?: AppId; id?: string }) {
+    return this.locked(personId, async () => {
+      const hidden: PhotoRow[] = [];
+      for (const r of this.rows.values()) {
+        if (r.personId !== personId || r.hiddenAt !== null || (scope.app && r.app !== scope.app) || (scope.id && r.id !== scope.id)) continue;
+        r.hiddenAt = at;
+        if (r.storedAt !== null) hidden.push(this.copy(r));
+      }
+      return hidden;
+    });
+  }
   async delete(id: string) { this.rows.delete(id); }
+  async unfinished(limit: number) {
+    return [...this.rows.values()].filter(r => r.storedAt === null || r.hiddenAt !== null).slice(0, limit)
+      .map(r => ({ row: this.copy(r), reserved: r.storedAt === null, hidden: r.hiddenAt !== null, changedAt: r.hiddenAt ?? r.createdAt }));
+  }
+  async holders(limit: number) {
+    const seen = new Map<string, PhotoHolder>();
+    for (const r of this.rows.values()) if (r.hiddenAt === null) seen.set(`${r.personId}:${r.app}`, { personId: r.personId, app: r.app });
+    return [...seen.values()].slice(0, limit);
+  }
 }
 const photoRow = (r: Record<string, any>): PhotoRow => ({
   id: r.id, personId: r.person_id, app: r.app_id, storageKey: r.storage_key, contentType: r.content_type, bytes: r.bytes, sha256: r.sha256,
   consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(),
 });
-/** platform.photos (migration 0011). A deleted photo's row is removed (the bytes first). */
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
-  async put(r: PhotoRow) {
-    await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
-      values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+  async reserve(r: PhotoRow, admit: PhotoAdmission) {
+    return this.sql.begin(async tx => {
+      const [person] = await tx`select id from platform.people where id = ${r.personId}::uuid and deleted_at is null for update`;
+      if (!person) return "adults_only" as const;
+      await tx`select set_config('app.app_id', ${r.app}, true)`;
+      const refused = await admit(tx);
+      if (refused) return refused;
+      const [held] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
+      if (photoSlotsFull(held?.n ?? 0)) return "too_many" as const;
+      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, stored_at)
+        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)}, null)`;
+      return undefined;
+    });
   }
-  async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
+  async confirm(id: string, at: number) {
+    return (await this.sql`update platform.photos set stored_at = ${new Date(at)} where id = ${id} and stored_at is null and deleted_at is null returning id`).length === 1;
+  }
+  async get(id: string) {
+    const [r] = await this.sql`select * from platform.photos where id = ${id} and stored_at is not null and deleted_at is null`;
+    return r ? photoRow(r) : undefined;
+  }
   async list(personId: string, app?: AppId, lock = false) {
     const rows = app
-      ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null
+      ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and stored_at is not null and deleted_at is null
         order by created_at, id ${lock ? this.sql`for share` : this.sql``}`
-      : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and deleted_at is null order by created_at, id`;
+      : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and stored_at is not null and deleted_at is null order by created_at, id`;
     return (rows as Record<string, any>[]).map(photoRow);
   }
+  async hide(personId: string, at: number, scope: { app?: AppId; id?: string }) {
+    return this.sql.begin(async tx => {
+      await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      const rows = await tx`update platform.photos set deleted_at = ${new Date(at)}
+        where person_id = ${personId}::uuid and deleted_at is null
+          ${scope.app ? tx`and app_id = ${scope.app}` : tx``} ${scope.id ? tx`and id = ${scope.id}` : tx``}
+        returning *`;
+      return (rows as Record<string, any>[]).filter(r => r.stored_at !== null).map(photoRow)
+        .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    });
+  }
   async delete(id: string) { await this.sql`delete from platform.photos where id = ${id}`; }
+  async unfinished(limit: number) {
+    const rows = await this.sql`select * from platform.photos where stored_at is null or deleted_at is not null
+      order by coalesce(deleted_at, created_at), id limit ${limit}`;
+    return (rows as Record<string, any>[]).map(r => ({
+      row: photoRow(r), reserved: r.stored_at === null, hidden: r.deleted_at !== null,
+      changedAt: new Date(r.deleted_at ?? r.created_at).getTime(),
+    }));
+  }
+  async holders(limit: number) {
+    const rows = await this.sql<{ person_id: string; app_id: AppId }[]>`select distinct ph.person_id::text as person_id, ph.app_id from platform.photos ph
+      left join platform.people p on p.id = ph.person_id
+      left join platform.memberships m on m.person_id = ph.person_id and m.app_id = ph.app_id
+      where ph.deleted_at is null and (p.deleted_at is not null or p.lowest_age is null or p.lowest_age < ${ADULT_AGE}
+        or m.state is null or m.state not in ('active', 'paused', 'onboarding'))
+      order by 1, 2 limit ${limit}`;
+    return rows.map(r => ({ personId: r.person_id, app: r.app_id }));
+  }
 }
 
 // ------------------------------------------------------------------------------------ service
 export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
 /** Membership states in which a member may be rated (left or removed: never). */
 const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
+const SWEEP_BATCH = 64;
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
 
 function ratingRows(rows: PhotoRow[]): PhotoRow[] {
@@ -500,14 +599,24 @@ export class PhotoService {
     let bytes: Uint8Array | undefined;
     try { bytes = stripMetadata(input, type); } catch { /* The image did not pass parsing. */ }
     change = stepPhotoChange(change, { type: "cleanImage", cleaned: bytes !== undefined });
-    if (!bytes || !canRecordUploadBytes(change)) return { ok: false, reason: "bad_image" };
+    if (!bytes || !canReserveRow(change)) return { ok: false, reason: "bad_image" };
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
+    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now() };
+    const reserved = await this.o.meta.reserve(row, tx => this.ratingRefusal(personId, app, undefined, tx));
+    change = stepPhotoChange(change, { type: "reserveRow", admitted: reserved === undefined });
+    if (!canRecordUploadBytes(change)) return { ok: false, reason: reserved ?? "not_member" };
     await this.o.storage.put(key, bytes, type);
     change = stepPhotoChange(change, { type: "recordUploadBytes" });
     if (!canRecordUploadRow(change)) throw new Error("photo bytes did not advance the upload");
-    await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now() });
-    change = stepPhotoChange(change, { type: "recordUploadRow" });
+    const confirmed = await this.o.meta.confirm(id, this.now());
+    change = stepPhotoChange(change, { type: "recordUploadRow", confirmed });
+    if (canRecordUploadDiscard(change)) {
+      await this.o.storage.delete(key);
+      await this.o.meta.delete(id);
+      change = stepPhotoChange(change, { type: "recordUploadDiscard" });
+      return { ok: false, reason: change.phase === "ChangeRefused" ? (await this.ratingRefusal(personId, app)) ?? "not_member" : "not_member" };
+    }
     if (!(await this.finishPhotoChange(change, personId, app))) throw new Error("photo upload did not complete");
     return { ok: true, value: { id } };
   }
@@ -605,15 +714,13 @@ export class PhotoService {
   /** The member's own photos (no bytes, no score). */
   async list(personId: string, app: AppId) { return (await this.o.meta.list(personId, app)).map(r => ({ id: r.id, createdAt: r.createdAt, bytes: r.bytes, contentType: r.contentType })); }
 
-  /** The member deletes one of their photos: the rating goes with it and is made again from what is left. */
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
-    const r = await this.o.meta.get(id);
-    return r?.id === id ? this.erasePhoto(r, personId, app, true) : false;
+    const [row] = await this.o.meta.hide(personId, this.now(), { app, id });
+    return row?.id === id ? this.erasePhoto(row, personId, app, true) : false;
   }
 
-  /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a ban. Bytes first, then rows. */
   async deleteFor(personId: string, app?: AppId): Promise<number> {
-    const rows = await this.o.meta.list(personId, app);
+    const rows = await this.o.meta.hide(personId, this.now(), app ? { app } : {});
     let removed = 0;
     for (const r of rows) if (await this.erasePhoto(r, personId, app, false)) removed++;
     if (removed) this.o.log?.(`[photos] deleted ${removed} photo(s)${app ? ` on ${app}` : ""}`);
@@ -627,13 +734,52 @@ export class PhotoService {
     if (!canRecordRemovedBytes(change)) return false;
     await this.o.storage?.delete(row.storageKey);
     change = stepPhotoChange(change, { type: "recordRemovedBytes" });
-    if (!canRecordRemovedRow(change)) return false;
-    await this.o.meta.delete(row.id);
-    change = stepPhotoChange(change, { type: "recordRemovedRow" });
     if (!canRecordRatingClear(change)) return false;
     await this.o.onRemoved?.(personId, row.app, row.id);
     change = stepPhotoChange(change, { type: "recordRatingClear" });
+    if (!canRecordRemovedRow(change)) return false;
+    await this.o.meta.delete(row.id);
+    change = stepPhotoChange(change, { type: "recordRemovedRow" });
     return this.finishPhotoChange(change, personId, row.app);
+  }
+
+  async holdAllowed(personId: string, app: AppId): Promise<boolean> {
+    const p = await this.o.people.getPerson(personId);
+    const m = await this.o.people.getMembership(personId, app);
+    const appAdultCheckPassed = await (this.o.eligible?.(personId, app) ?? Promise.resolve(false));
+    return photoHoldAllowed(!!p && p.deletedAt === null, !!p && canBeMatched(p.lowestAge), appAdultCheckPassed, !!m && LIVE_MEMBERSHIP.includes(m.state));
+  }
+
+  async ratingAllowed(personId: string, app: AppId): Promise<boolean> {
+    return ratingHoldAllowed(await this.holdAllowed(personId, app), (await this.o.meta.list(personId, app)).length);
+  }
+
+  async sweep(candidates: readonly PhotoHolder[] = []): Promise<{ finished: number; erased: number; failed: number }> {
+    const at = this.now(), rerate = new Map<string, PhotoHolder>();
+    let finished = 0, erased = 0, failed = 0;
+    const attempt = async (what: string, step: () => Promise<void>) => {
+      try { await step(); } catch (e) { failed++; this.o.log?.(`[photos] sweep: ${what} failed and waits for the next tick: ${(e as Error).message}`); }
+    };
+    for (const u of await this.o.meta.unfinished(SWEEP_BATCH)) {
+      if (!unfinishedPhotoDue(u.reserved, u.hidden, u.changedAt, at)) continue;
+      await attempt(`photo ${u.row.id}`, async () => {
+        await this.o.storage?.delete(u.row.storageKey);
+        if (!u.reserved) await this.o.onRemoved?.(u.row.personId, u.row.app, u.row.id);
+        await this.o.meta.delete(u.row.id);
+        if (!u.reserved) rerate.set(`${u.row.personId}:${u.row.app}`, { personId: u.row.personId, app: u.row.app });
+        finished++;
+      });
+    }
+    for (const h of rerate.values()) await this.rate(h.personId, h.app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
+    const holders = new Map<string, PhotoHolder>();
+    for (const h of [...(await this.o.meta.holders(SWEEP_BATCH)), ...candidates]) holders.set(`${h.personId}:${h.app}`, h);
+    for (const h of holders.values()) {
+      await attempt(`holder ${h.personId} on ${h.app}`, async () => {
+        if (!(await this.holdAllowed(h.personId, h.app))) erased += await this.deleteFor(h.personId, h.app);
+      });
+    }
+    if (finished || erased || failed) this.o.log?.(`[photos] sweep finished ${finished} change(s), erased ${erased} photo(s), ${failed} failed`);
+    return { finished, erased, failed };
   }
 
   private async finishPhotoChange(change: PhotoChange, personId: string, app: AppId): Promise<boolean> {

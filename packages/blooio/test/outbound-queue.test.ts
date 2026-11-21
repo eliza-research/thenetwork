@@ -456,4 +456,31 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     const [c] = await a`select status, ended_at, to_address, body, sent_at from platform.outbound where id = 'sd091-invite'`;
     expect([c.status, c.ended_at === null, c.to_address, c.body, c.sent_at === null]).toEqual(["accepted", false, null, null, false]);
   });
+
+  test("SD-100: a gateway reply whose turn receipt never comes, or comes as unknown, ends failed_unknown after the receipt deadline", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 14, 16));
+    const { calls, provider } = recorder();
+    const alerts: string[] = [];
+    const q = queue(a, provider, { clock: now, onAlert: (id, alert) => { alerts.push(`${id}:${alert}`); } });
+    const to = "+12125558100";
+    const reply = (id: string) => ({ id, memberId: "sd100-member", to, kind: "reply" as const, text: "Here is the plan for Saturday." });
+    await a.begin(tx => q.recordCollected(tx, [reply("sd100-collected"), reply("sd100-unknown")]));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-unknown"], "unknown", now.now()));
+    now.advance(5 * 60 * 60_000);
+    await q.drain();
+    expect([await q.statusOf("sd100-collected"), await q.statusOf("sd100-unknown")]).toEqual(["collected", "send_unknown"]);
+    now.advance(2 * 60 * 60_000);
+    const changes = await q.drain();
+    expect(changes).toContainEqual(expect.objectContaining({ id: "sd100-collected", memberId: "sd100-member", status: "failed_unknown" }));
+    expect(changes).toContainEqual(expect.objectContaining({ id: "sd100-unknown", memberId: "sd100-member", status: "failed_unknown" }));
+    const rows = await a`select id, status, ended_at, body from platform.outbound where id in ('sd100-collected', 'sd100-unknown') order by id`;
+    expect(rows.map((r: any) => [r.id, r.status, r.ended_at !== null, r.body])).toEqual([
+      ["sd100-collected", "failed_unknown", true, "Here is the plan for Saturday."],
+      ["sd100-unknown", "failed_unknown", true, "Here is the plan for Saturday."],
+    ]);
+    expect(alerts).toEqual(expect.arrayContaining(["sd100-collected:gateway_receipt_expired", "sd100-unknown:gateway_receipt_expired"]));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-collected"], "accepted", now.now()));
+    expect(await q.statusOf("sd100-collected")).toBe("failed_unknown");
+    expect(calls).toEqual([]);
+  });
 });

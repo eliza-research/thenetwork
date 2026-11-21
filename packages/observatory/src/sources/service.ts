@@ -216,6 +216,10 @@ export class ServiceClient {
 
   matching(staff: string, on: boolean): Promise<ControlResult> { return this.act("/matching", staff, { on }, {}); }
 
+  staffStep(staff: string, method: "GET" | "POST", path: string, body: Record<string, unknown> | undefined): Promise<{ status: number; json: Record<string, any> }> {
+    return this.call(method, path, staff, body);
+  }
+
   /**
    * Texts held for staff: the leak guard's parked texts or held relay items. Only the fields of HeldText
    * pass (no score, no rating). 404 without a reason: the service has no such route yet ("not_available").
@@ -233,11 +237,11 @@ export class ServiceClient {
           const id = str(x.id, 300) ?? str(x.itemId, 300);
           if (!id) return [];
           const memberId = str(x.memberId, 200) ?? str(x.from, 200);
-          const at = Number(x.createdAt ?? x.at);
+          const at = Number(x.createdAt ?? x.at), deadline = x.deadline === null || x.deadline === undefined ? NaN : Number(x.deadline);
           return [{
             id, queue, reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string").map(r => r.slice(0, 120)).slice(0, 20) : [],
             ...(str(x.kind, 60) ? { kind: str(x.kind, 60) } : {}), ...(str(x.to, 40) ? { to: maskTo(str(x.to, 40)!) } : {}),
-            ...(memberId ? { memberId } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}),
+            ...(memberId ? { memberId } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}), ...(Number.isSafeInteger(deadline) ? { deadline } : {}),
             ...(x.minor === true ? { textHidden: "minor" as const } : str(x.text) ? { text: str(x.text) } : {}),
           }];
         }),

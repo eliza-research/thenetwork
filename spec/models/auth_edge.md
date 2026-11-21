@@ -8,7 +8,7 @@ A member needs to confirm their phone and use their own session. The service nee
 
 Check banned numbers, session ownership, OTP and Cloud authentication, and signed proxy requests. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [OTP spec](../otpLimits.md) generates the current request and verification transitions. The [web session spec](../webSession.md) generates session lifetime, rotation, and fresh sign-in decisions. This imported model uses seconds and scales the global send limit for reachability. The current runtime uses ordered OTP bucket reads and schedules the old token's grace expiry before writing its replacement. The imported model's transaction and concurrency assumptions describe the original branch.
+The [OTP spec](../otpLimits.md) generates the current request and verification transitions. The [web session spec](../webSession.md) generates session lifetime, rotation, and fresh sign-in decisions. This imported model uses seconds and scales the global send limit for reachability. The current runtime reads the four OTP buckets in order and counts a start in all four or in none in one store transaction that locks only those four buckets (PeopleStore.hitAll), and schedules the old token's grace expiry before writing its replacement. The imported model's transaction and concurrency assumptions describe the original branch.
 
 Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -25,41 +25,48 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 // The model was written for branch wave2/auth_edge (ad67275 with the fixes for SD-013, SD-054, SD-181,
 // SD-380 and SD-491). None of those fix commits is in branch vibestack-matching. The comparison of
 // 2026-11-18 with this branch found (locations are by function name):
-//  - SD-380 is open again (defect AE-1): OtpService.start (otp.ts) calls store.hit once per bucket, each
-//    in its own transaction, in the order of spec/otpLimits.md. A bucket that allowed the request keeps
-//    the count when a later bucket refuses. The otp.ts header still says "A refused request is not
-//    counted". The model keeps the all-or-none rule (startBuckets, otpRefusedNotCounted).
-//  - SD-013 changed shape (defect AE-2): the web route and the MCP startOtp hook answer { ok: true } for
-//    a banned number before OtpService.start, so no bucket counts it and a banned number never gets 429.
-//    The model keeps the counting rule (otpStartLimits with bannedAtBegin). bannedNoCode and
-//    bannedNoSession hold in the code too.
-//  - SD-054 is open again, in another form (defect AE-3): there is no bindSessions. admitMembership
-//    (pg-store.ts, used by the text join, the web join and enrollment) sets the new person on EVERY
-//    person-less session of the number, so a session from before the person (an earlier holder of a
-//    recycled number) gets the person and can export or leave (verifiedPrivacyOwnerMatches then
-//    matches). A repeated web join (ReturnExisting) binds nothing. The model keeps the SD-054 rule
-//    (bindSessions: only the joining session gets the person, the others end).
-//  - SD-491 is open again (defect AE-4): an under-13 web join (accounts.ts joinLocked, BelowJoinAge)
-//    records only the age; no person-less session of the number ends and api.ts clears no cookie.
-//  - SD-181 is open again in production (defect AE-5): parseNetworkDelegation refuses any issuedAt
-//    after the local clock. spec/cloudSignIn.md allows 30 s, and only the staging-local callback
-//    (parseCloudIdentity) allows it. cloud_auth models the code; this model keeps the spec rule.
-//    DECISION (founder or the owner of spec/cloudSignIn.md, not made): either cloudSignIn.md takes 0 s
-//    for production, or parseNetworkDelegation takes 30 s. The code is the stricter side, so no safety
-//    rule is weaker; until the decision, the two models keep their two rules and both name AE-5.
+//  - SD-380 (defect AE-1, closed 2026-11-21): OtpService.start (otp.ts) calls store.hitAll, which in one
+//    transaction locks the four buckets, reads them, and counts the request in all four only when
+//    otpSendDecision of spec/otpLimits.md permits it (startBuckets, otpRefusedNotCounted).
+//  - SD-013 (defect AE-2, closed 2026-11-21): the web route and the MCP startOtp hook pass the ban read
+//    to OtpService.start, which counts a banned number in the buckets like any number and then withholds
+//    the send (withholdSend in spec/otpLimits.md): otpStartLimits with bannedAtBegin.
+//  - The phone-code-only address bucket of spec/otpLimits.md (PLATFORM_PHONE_OTP_ONLY_APPS): a start on
+//    the site API for a named app counts in its own address bucket with a ceiling of 200 an hour
+//    (bucketStage with codeOnly). The MCP startOtp hook always uses the standard address bucket.
+//  - SD-054 (defect AE-3) is fixed on 2026-11-21: PgPeopleStore.attachPerson, called by admitMembership
+//    (the text join, the web join and enrollment) and by the referred join, gives the person only to the
+//    joining session (who.session, the token hash) and revokes every other person-less session of the
+//    number (spec/webSession.md, "A session without a person never outlives its number getting a
+//    person"). The same rule holds on every other path that gives a number a person: createPerson
+//    (invitation, text join, connector join) and movePhone (number change) call attachPerson in their own
+//    transaction, and a sign-in that finishes after the person arrived is stored with that person
+//    (putSession). That is numberChange and invite here. A text or connector
+//    join has no joining session. That is bindSessions here. A repeated web join (ReturnExisting) binds
+//    nothing in the code; the model's repeated-join branch binds, which differs only for a person-less
+//    session of a number that already has a member, and after the fix every such session ended at the
+//    admission (the held-number case is refused before the join).
+//  - SD-491 (defect AE-4) is fixed on 2026-11-21: an under-13 web join (accounts.ts joinLocked,
+//    BelowJoinAge, declineEndsUnboundAccess) records the age, then PgPeopleStore.endUnboundAccess revokes
+//    every person-less session of the number and deletes its pending texts. The code revokes the row and
+//    api.ts sends no cookie reset; the model drops the row and the cookie, which is the same for every
+//    later request (a revoked row never authenticates).
+//  - SD-181 (defect AE-5, closed 2026-11-21): parseNetworkDelegation calls cloudIdentityTimesValid of
+//    spec/cloudSignIn.md, so production allows 30 s of issue time ahead of the local clock, like the
+//    staging-local callback (parseCloudIdentity). cloud_auth and this model have the same rule.
 //  - PLATFORM_PROXY_SECRET_PREVIOUS does not exist on this branch: normalizeEdge verifies with one
 //    secret. The model now has one backend secret (closed drift).
-//  - Session rotation is two writes (revokeSession with the grace time, then create), not one
-//    statement; the model keeps one action (rotateCommit). A crash between them only ends the old
-//    token after the grace time.
+//  - Session rotation (defect AE-6, fixed on 2026-11-21) is one transaction: PgPeopleStore.rotateSession
+//    takes the erasure lock of the number's person (or of the number), reads the old row again, and then
+//    writes the old token's revocation and the next row (rotateCommit). A row that another request
+//    rotated in the grace time stays usable and gets no second replacement.
 // Files:
 //   packages/platform/src/api.ts          routes, gates, Cloud callback and validation
 //   packages/platform/src/otp.ts          OtpService.start / verify and the rate buckets
 //   packages/platform/src/sessions.ts     SessionService.create / authenticate / revoke / fresh
 //   packages/platform/src/accounts.ts     join, leave, deleteAll, exportApp, createPerson (who = {e164, personId, session})
-//   packages/platform/src/pg-store.ts     hit, sessions, revokeSession, attachPerson, admitMembership, deleteAll, purge
-//     (bindSessions in this model is the intended SD-054 rule, not a pg-store function: AE-3; textJoinCode is
-//     the code's binding, not in `step`)
+//   packages/platform/src/pg-store.ts     hit, sessions, revokeSession, rotateSession, attachPerson (bindSessions),
+//     admitMembership, endUnboundAccess, deleteAll, purge
 //   packages/platform/src/cloud-delegation.ts and packages/core/src/svc/network-delegation.ts
 //   packages/platform/src/proxy.ts, deploy/router.ts, deploy/backend/backend.ts (normalizeEdge)
 //   packages/core/src/svc/svc-auth.ts and the signed endpoints that use it
@@ -69,7 +76,7 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 //  - HMAC, the OTP code, Turnstile and the Cloud proof are oracles. A human knows a code only when the
 //    provider sent it to the phone that human holds. Nobody can forge a signature without the secret.
 //  - Each SQL transaction is one action. One code request is four actions: the route's ban check,
-//    the four rate buckets (intended: one transaction; AE-1), the provider send and putChallenge.
+//    the four rate buckets (one hitAll transaction: read all four, then count all four or none), the provider send and putChallenge.
 //  - The verify limits (OtpService.verify: 10 code checks a number and 30 an IP an hour) are not modelled:
 //    they only refuse more checks, and no invariant here needs a refused check.
 //    The OTP verify route and the Cloud callback are one action each: their internal awaits do not
@@ -97,6 +104,7 @@ module auth_edge {
   pure val PER_PHONE_HOUR = 3
   pure val PER_PHONE_DAY = 6
   pure val PER_IP_HOUR = 10
+  pure val PER_IP_HOUR_CODE_ONLY = 200
   pure val MIN_GAP = 30
   pure val GLOBAL_PER_HOUR = 2
   // sessions.ts
@@ -128,7 +136,7 @@ module auth_edge {
 
   type Bucket = { start: int, n: int, last: int }
   // One OtpService.start in flight. stage: 0 rate buckets (one transaction), 1 provider send, 2 putChallenge.
-  type StartReq = { phone: str, ip: str, stage: int, sentTo: str, bannedAtBegin: bool }
+  type StartReq = { phone: str, ip: str, codeOnly: bool, stage: int, sentTo: str, bannedAtBegin: bool }
   type Challenge = { live: bool, attempts: int, expires: int, sentTo: str }
   // platform.sessions row. person NONE = person_id null. chain = the first session of the login.
   // human is ghost state: the browser that holds the cookie.
@@ -198,7 +206,7 @@ module auth_edge {
     val id = w.phoneOf.get(p)
     if (id != NONE and w.alive.contains(id)) id else NONE
 
-  // pg-store.ts hit: one advisory-locked transaction for one bucket (there is no hitAll on this branch: AE-1).
+  // pg-store.ts hit: one advisory-locked transaction for one bucket; hitAll locks the four buckets in one transaction.
   pure def bucketOf(b: (str, str) -> Bucket, key: (str, str)): Bucket =
     if (b.keys().contains(key)) b.get(key) else { start: NONE, n: 0, last: NONE }
   pure def hitOk(b: (str, str) -> Bucket, key: (str, str), window: int, at: int, limit: int, gap: int): bool =
@@ -236,9 +244,7 @@ module auth_edge {
   pure def dropRows(rows: int -> Session, keep: int => bool): int -> Session =
     rows.keys().filter(k => keep(k)).mapBy(k => rows.get(k))
 
-  // The intended SD-054 rule (no such function in pg-store.ts on this branch: AE-3; the code's
-  // admitMembership and attachPerson give the person to every person-less session): the number has a
-  // person now. Of its sessions with no person, `keepSid` gets the person and every other one is revoked
+  // pg-store.ts attachPerson (SD-054, AE-3 fixed): the number has a person now. Of its sessions with no person, `keepSid` gets the person and every other one is revoked
   // at `at` (it may belong to an earlier holder of the number). NONE keeps no session (a text join).
   pure def bindSessions(rows: int -> Session, p: str, pid: int, keepSid: int, at: int): int -> Session =
     rows.keys().mapBy(k =>
@@ -294,36 +300,37 @@ module auth_edge {
 
   // api.ts POST /api/auth/otp/start. A Cloud sign-in app answers 409. Turnstile is an oracle that
   // passes. The intended SD-013 rule: the route reads the ban first, a banned number counts in the rate
-  // buckets like any number, gets { ok: true } and no code. DEFECT AE-2: the code answers { ok: true }
-  // before OtpService.start, so no bucket counts a banned number. `bannedAtBegin` is the ban read;
-  // bannedNoCode reads it.
-  action otpStartBegin(h: str, p: str): bool = all {
+  // buckets like any number, gets { ok: true } and no code (AE-2). `bannedAtBegin` is the ban read;
+  // bannedNoCode reads it. `codeOnly` is a site API start for an app named in PLATFORM_PHONE_OTP_ONLY_APPS.
+  action otpStartBegin(h: str, p: str): bool = otpStartBeginFor(h, p, false)
+
+  action otpStartBeginFor(h: str, p: str, codeOnly: bool): bool = all {
     mode == "otp",
     otp.inflight.keys().size() < 2,
-    otp' = { ...otp, inflight: otp.inflight.put(otp.nextRid, { phone: p, ip: h, stage: 0, sentTo: "", bannedAtBegin: world.banned.contains(p) }),
+    otp' = { ...otp, inflight: otp.inflight.put(otp.nextRid, { phone: p, ip: h, codeOnly: codeOnly, stage: 0, sentTo: "", bannedAtBegin: world.banned.contains(p) }),
              nextRid: otp.nextRid + 1 },
     now' = now, mode' = mode, world' = world, sess' = sess, edge' = edge, svc' = svc, ghost' = ghost,
   }
 
   // The four rate buckets of one start, in order: ip, phone hour (and the 30 s gap), phone day, global.
-  pure def bucketStage(p: str, ip: str, st: int): { key: (str, str), window: int, limit: int, gap: int } =
-    if (st == 0) { key: ("ip", ip), window: HOUR, limit: PER_IP_HOUR, gap: 0 }
+  pure def bucketStage(p: str, ip: str, st: int, codeOnly: bool): { key: (str, str), window: int, limit: int, gap: int } =
+    if (st == 0 and codeOnly) { key: ("ip_code_only", ip), window: HOUR, limit: PER_IP_HOUR_CODE_ONLY, gap: 0 }
+    else if (st == 0) { key: ("ip", ip), window: HOUR, limit: PER_IP_HOUR, gap: 0 }
     else if (st == 1) { key: ("phone", p), window: HOUR, limit: PER_PHONE_HOUR, gap: MIN_GAP }
     else if (st == 2) { key: ("day", p), window: DAY, limit: PER_PHONE_DAY, gap: 0 }
     else { key: ("global", ""), window: HOUR, limit: GLOBAL_PER_HOUR, gap: 0 }
 
-  // The intended SD-380 rule (the source-branch store.hitAll is not on this branch; the code's otp.ts
-  // OtpService.start calls pg-store.ts hit once per bucket: AE-1): one transaction checks the four
-  // buckets in order and counts the hit in all of them, or in none when one refuses. `burned` is true
-  // when a refused request still changed a bucket (otp.ts says it must not).
-  pure def startBuckets(b: (str, str) -> Bucket, h: str, p: str, at: int): { ok: bool, burned: bool, buckets: (str, str) -> Bucket } =
+  // The SD-380 rule (otp.ts OtpService.start through store.hitAll, AE-1): one unit checks the
+  // four buckets in order and counts the hit in all of them, or in none when one refuses. `burned` is
+  // true when a refused request still changed a bucket (spec/otpLimits.md says it must not).
+  pure def startBuckets(b: (str, str) -> Bucket, h: str, p: str, at: int, codeOnly: bool): { ok: bool, burned: bool, buckets: (str, str) -> Bucket } =
     val stages = [0, 1, 2, 3]
     val ok = stages.foldl(true, (acc, st) => {
-      val k = bucketStage(p, h, st)
+      val k = bucketStage(p, h, st, codeOnly)
       acc and hitOk(b, k.key, k.window, at, k.limit, k.gap)
     })
     val applied = stages.foldl(b, (acc, st) => {
-      val k = bucketStage(p, h, st)
+      val k = bucketStage(p, h, st, codeOnly)
       hitApply(acc, k.key, k.window, at)
     })
     val after = if (ok) applied else b
@@ -331,7 +338,7 @@ module auth_edge {
 
   action otpStartLimits(rid: int): bool = {
     val r = otp.inflight.get(rid)
-    val res = startBuckets(otp.buckets, r.ip, r.phone, now)
+    val res = startBuckets(otp.buckets, r.ip, r.phone, now, r.codeOnly)
     all {
       otp.inflight.keys().contains(rid),
       r.stage == 0,
@@ -395,8 +402,10 @@ module auth_edge {
 
   // The four actions above run back to back with no other step in between (a macro-step: it adds no
   // behaviour, it only lets the random simulation reach a login in fewer steps).
-  action otpStartFast(h: str, p: str, delivered: bool): bool = {
-    val r = startBuckets(otp.buckets, h, p, now)
+  action otpStartFast(h: str, p: str, delivered: bool): bool = otpStartFastFor(h, p, delivered, false)
+
+  action otpStartFastFor(h: str, p: str, delivered: bool, codeOnly: bool): bool = {
+    val r = startBuckets(otp.buckets, h, p, now, codeOnly)
     val banned = world.banned.contains(p)
     all {
       mode == "otp",
@@ -476,12 +485,11 @@ module auth_edge {
     }
   }
 
-  // sessions.ts SessionService.authenticate: revokeSession (the old token ends after the 60 s grace),
-  // then create (the next row, with the person that the read saw). Two writes; the model merges them.
-  // The guard (the old row still exists and is live) is the intended rule. DEFECT AE-6 (low): the code
-  // writes the next row without a re-read, so a request that read the row before "delete everything"
-  // (pg-store.ts deleteAll removes the rows) can still create a new session for the erased number after
-  // it. Two requests in the grace time both rotate (SD-180, refuted as harmless).
+  // sessions.ts SessionService.authenticate and pg-store.ts rotateSession: under the erasure lock, read
+  // the old row again; a row that "delete everything" removed refuses (the action is not enabled, AE-6
+  // fixed). An unrevoked row gets the revocation (the old token ends after the 60 s grace) and the next
+  // row in the same transaction. A row that another request rotated in the grace time stays usable with
+  // no second replacement (spec/webSession.md recordRevocation, rotatedMeanwhile).
   action rotateCommit(r: Rot): bool = {
     val old = sess.rows.get(r.sid)
     val sid = sess.nextSid
@@ -491,34 +499,16 @@ module auth_edge {
       sess.pendingRot.contains(r),
       sess.rows.keys().contains(r.sid),
       old.revoked == NONE or old.revoked > now,
-      sess' = { ...sess,
-                rows: rows1.put(sid, { ...old, created: now, expires: expires, revoked: NONE }),
-                jar: sess.jar.set(r.human, sid), nextSid: sid + 1,
-                pendingRot: sess.pendingRot.exclude(Set(r)) },
-      ghost' = { ...ghost, rotations: ghost.rotations + 1 },
-      now' = now, mode' = mode, world' = world, otp' = otp, edge' = edge, svc' = svc,
-    }
-  }
-
-  // Two requests with the same day-old cookie both rotate it: rotateRead twice, then rotateCommit twice,
-  // with no other step in between (a macro-step like otpStartFast: it adds no behaviour, it only lets the
-  // random simulation reach SD-180 in fewer steps). The browser keeps the second new cookie.
-  action rotateForkFast(h: str): bool = {
-    val sid = sess.jar.get(h)
-    val old = sess.rows.get(sid)
-    val a = sess.nextSid
-    val b = sess.nextSid + 1
-    val expires = imin(imin(now + SESSION_TTL, old.started + SESSION_MAX), if (old.cloud) old.expires else now + SESSION_TTL)
-    all {
-      usableSession(world, sess, sid, now),
-      old.revoked == NONE,
-      now - old.created >= SESSION_ROTATE,
-      sess' = { ...sess,
-                rows: revokeRow(sess.rows, sid, now + SESSION_GRACE)
-                        .put(a, { ...old, created: now, expires: expires, revoked: NONE })
-                        .put(b, { ...old, created: now, expires: expires, revoked: NONE }),
-                jar: sess.jar.set(h, b), nextSid: b + 1 },
-      ghost' = { ...ghost, rotations: ghost.rotations + 2 },
+      if (old.revoked == NONE) all {
+        sess' = { ...sess,
+                  rows: rows1.put(sid, { ...old, created: now, expires: expires, revoked: NONE }),
+                  jar: sess.jar.set(r.human, sid), nextSid: sid + 1,
+                  pendingRot: sess.pendingRot.exclude(Set(r)) },
+        ghost' = { ...ghost, rotations: ghost.rotations + 1 },
+      } else all {
+        sess' = { ...sess, pendingRot: sess.pendingRot.exclude(Set(r)) },
+        ghost' = ghost,
+      },
       now' = now, mode' = mode, world' = world, otp' = otp, edge' = edge, svc' = svc,
     }
   }
@@ -534,12 +524,12 @@ module auth_edge {
 
   // api.ts GET /api/auth/cloud/callback in production (productionDelegation set). Cloud signs a
   // phone proof for the number the human holds now, with its own clock: issuedAt = now + skew.
-  // cloud-delegation.ts parseNetworkDelegation(…, o.now(), o.skewMs) refuses issuedAt*1000 > now +
-  // CLOUD_CLOCK_SKEW_MS (network-delegation.ts, SD-181 fix), the same allowance as api.ts.
+  // cloud-delegation.ts parseNetworkDelegation(…, o.now()) refuses issuedAt more than 30 s ahead of now
+  // (cloudIdentityTimesValid of spec/cloudSignIn.md, SD-181 and AE-5), the same allowance as api.ts.
   action cloudLogin(h: str, p: str, skew: int): bool = {
     val issuedAt = now + skew
     val proofExpires = issuedAt + CLOUD_PROOF_LIFE
-    val parsedOk = issuedAt <= now + CLOUD_SKEW and proofExpires > now  // spec rule; the code allows 0 s here (AE-5)
+    val parsedOk = issuedAt <= now + CLOUD_SKEW and proofExpires > now  // network-delegation.ts
     val callbackOk = parsedOk and issuedAt <= now + CLOUD_SKEW           // api.ts
     val refused = world.banned.contains(p) or world.suppressed.contains(p) // api.ts (no hold here)
     val person = personFor(world, p)
@@ -576,8 +566,8 @@ module auth_edge {
   // is an oracle; a human that Cloud has revoked always gets "invalid".
   // who = { e164: session.phone, personId: session.person, session: token hash } (api.ts). The
   // Accounts calls use personFor(who.e164) and do not compare who.personId (accounts.ts). This is
-  // safe only under the intended SD-054 rule: when a number gets a person, every person-less session of the
-  // number other than the joining one ends (bindSessions, the model's rule; the code binds them all: AE-3).
+  // safe under the SD-054 rule: when a number gets a person, every person-less session of the number other
+  // than the joining one ends (bindSessions; pg-store.ts attachPerson, AE-3 fixed).
   action account(h: str, op: str, age: int, cloudSays: str): bool = {
     val sid = sess.jar.get(h)
     val s = sess.rows.get(sid)
@@ -641,33 +631,30 @@ module auth_edge {
         if (banned) all {
           sess' = sess, world' = world, ghost' = ghost,
         } else if (newFloor < APP_MIN_AGE) all {
-          // accounts.ts: under_age. The age floor is written; under 13, declineUnderAge
-          // (accounts.ts) forgets every membership of the person. The intended SD-491 rule (the
-          // source-branch forgetPersonlessSessions is not in pg-store.ts on this branch: AE-4): a number
-          // with no person keeps no session, and api.ts clears the cookies of a session with no person. A number with a person keeps its sessions:
-          // its data is already stored, so the "nothing stored" rule is about a number with no person
-          // (under13At).
+          // accounts.ts: under_age. The age floor is written; under 13, the age hook forgets every
+          // membership of the person, and endUnboundAccess (pg-store.ts, AE-4 fixed) ends every
+          // person-less session of the number, also when the number has a person. Its person-bound
+          // sessions stay: its data is already stored, so the "nothing stored" rule is about a number with
+          // no person (under13At).
           sess' = { ...sess,
-                    rows: if (target != NONE) sess.rows
-                          else dropRows(sess.rows, k => not(sess.rows.get(k).phone == s.phone and sess.rows.get(k).person == NONE)),
+                    rows: dropRows(sess.rows, k => not(sess.rows.get(k).phone == s.phone and sess.rows.get(k).person == NONE)),
                     jar: if (s.person == NONE) sess.jar.set(h, NONE) else sess.jar },
           world' = { ...world, floor: world.floor.set(s.phone, newFloor),
                      member: if (newFloor < JOIN_FLOOR) world.member.exclude(Set(target)) else world.member },
           // The ghost `lowered` is not recorded here. A rotation that read a person-less session before
-          // the intended bindSessions creates its next row after it (no re-read, AE-6), so a session from before the
-          // person can still act for it. DEFECT AE-4: the code drops no session and clears no cookie here.
+          // this step finds its row gone at rotateCommit and issues nothing (AE-6 fixed).
           ghost' = { ...ghost, under13At: if (age < JOIN_FLOOR and target == NONE) ghost.under13At.put(s.phone, sess.nextSid) else ghost.under13At },
         } else if (isMember) all {
           // accounts.ts "existing": a repeated join is still an age statement on
-          // personFor(who.e164), and the intended bindSessions gives this session the person (the others
-          // with no person end; the code binds nothing here: AE-3).
+          // personFor(who.e164). The model binds this session (see the header: the code binds nothing here,
+          // and no person-less session of a member's number is left after the admission).
           sess' = { ...sess, rows: bindSessions(sess.rows, s.phone, target, sid, now) },
           world' = { ...world, floor: world.floor.set(s.phone, newFloor) },
           ghost' = { ...ghost, ageLoweredByOther: ghost.ageLoweredByOther or lowered },
         } else {
-          // accounts.ts: a person (when none), the membership, unsuppress, then the intended bindSessions:
-          // of the person-less sessions of the number, only this request's session gets the person; the
-          // others end now (SD-054 rule; the code's admitMembership binds them all: AE-3).
+          // accounts.ts: a person (when none), then admitMembership: the membership, unsuppress and
+          // attachPerson (bindSessions): of the person-less sessions of the number, only this request's
+          // session gets the person; the others end now (SD-054 rule, AE-3 fixed).
           val pid = if (target != NONE) target else world.nextPerson
           all {
             sess' = { ...sess, rows: bindSessions(sess.rows, s.phone, pid, sid, now) },
@@ -697,8 +684,8 @@ module auth_edge {
   // The text channel (accounts text join, founder 2026-10-09 item 3): only the holder of a number can
   // text from it; a banned number is refused. An adult joins; the person is created when absent and
   // the join is a new opt-in (suppression lifted). service.ts creates the person with
-  // accounts.createPerson and no session to keep, so under the intended SD-054 rule every person-less web
-  // session of the number ends.
+  // accounts.createPerson and admitMembership with no joining session, so every person-less web session
+  // of the number ends (attachPerson, AE-3 fixed).
   action textJoin(p: str): bool = {
     val h = world.holder.get(p)
     val target = personFor(world, p)
@@ -718,26 +705,37 @@ module auth_edge {
     }
   }
 
-  // DEFECT AE-3, the code's text join (service.ts join -> PgPeopleStore.admitMembership, and
-  // attachPerson): `update platform.sessions set person_id = .. where e164 = .. and person_id is null`.
-  // Every person-less session of the number gets the person and stays live, the earlier holder's too.
-  // Not in `step`: the model keeps the intended rule (textJoin); ae3OtpStaleSessionActsTest shows the failure.
-  action textJoinCode(p: str): bool = {
-    val target = personFor(world, p)
-    val pid = if (target != NONE) target else world.nextPerson
+  // accounts.ts confirmNumberChange, then pg-store.ts movePhone (one transaction): the person of `p`
+  // moves to `q`, which has no person and is not banned. The person proved `q` with a code, so the holder
+  // of `q` is the holder of `p`. The old number's sessions are deleted. In the same transaction
+  // attachPerson with no joining session ends every person-less session of `q`, because an earlier
+  // holder of `q` may hold one (spec/webSession.md, "A session without a person never outlives its
+  // number getting a person").
+  action numberChange(p: str, q: str): bool = {
+    val pid = personFor(world, p)
     all {
-      not(world.banned.contains(p)),
-      world' = { ...world,
-                 phoneOf: world.phoneOf.set(p, pid),
-                 bornAt: if (target != NONE) world.bornAt else world.bornAt.put(pid, sess.nextSid),
-                 bornBy: if (target != NONE) world.bornBy else world.bornBy.put(pid, NONE),
-                 alive: world.alive.union(Set(pid)),
-                 member: world.member.union(Set(pid)),
-                 nextPerson: if (target != NONE) world.nextPerson else world.nextPerson + 1,
-                 suppressed: world.suppressed.exclude(Set(p)) },
-      sess' = { ...sess, rows: sess.rows.keys().mapBy(k =>
-                  val r = sess.rows.get(k)
-                  if (r.phone == p and r.person == NONE) { ...r, person: pid } else r) },
+      p != q, pid != NONE, personFor(world, q) == NONE,
+      world.holder.get(q) == world.holder.get(p),
+      not(world.banned.contains(p)), not(world.banned.contains(q)),
+      world' = { ...world, phoneOf: world.phoneOf.set(p, NONE).set(q, pid),
+                 bornAt: world.bornAt.set(pid, sess.nextSid) },
+      sess' = { ...sess, rows: bindSessions(dropRows(sess.rows, k => sess.rows.get(k).phone != p), q, pid, NONE, now) },
+      now' = now, mode' = mode, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
+    }
+  }
+
+  // accounts.ts invite (staff or a member): a number with no person that is not banned, held or
+  // suppressed gets a person (createPerson, method "staff") and an invited membership, which is not a
+  // live member. createPerson ends every person-less session of the number in its transaction.
+  action invite(p: str): bool = {
+    val pid = world.nextPerson
+    all {
+      personFor(world, p) == NONE,
+      not(world.banned.contains(p)), not(world.suppressed.contains(p)),
+      world' = { ...world, phoneOf: world.phoneOf.set(p, pid),
+                 bornAt: world.bornAt.put(pid, sess.nextSid), bornBy: world.bornBy.put(pid, NONE),
+                 alive: world.alive.union(Set(pid)), nextPerson: pid + 1 },
+      sess' = { ...sess, rows: bindSessions(sess.rows, p, pid, NONE, now) },
       now' = now, mode' = mode, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
     }
   }
@@ -860,6 +858,7 @@ module auth_edge {
     nondet p = PHONES.oneOf()
     nondet d = TICKS.oneOf()
     nondet flag = Set(true, false).oneOf()
+    nondet codeOnly = Set(true, false).oneOf()
     nondet op = Set("export", "leave", "join", "deleteAll").oneOf()
     nondet age = Set(10, 15, 25).oneOf()
     nondet cloudSays = Set("valid", "unavailable").oneOf()
@@ -877,9 +876,9 @@ module auth_edge {
         svcSend(id, svcSkew),
         all { svc.inflight.size() > 0, nondet r = svc.inflight.oneOf() any { svcTamper(r), svcDeliver(r, flag) } },
       },
-      otpStartFast(h, p, flag),
+      otpStartFastFor(h, p, flag, codeOnly),
       any {
-        otpStartBegin(h, p),
+        otpStartBeginFor(h, p, codeOnly),
         all { otp.inflight.keys().size() > 0, nondet rid = otp.inflight.keys().oneOf() any {
           otpStartLimits(rid), otpStartSend(rid, flag), otpStartPut(rid), otpStartCrash(rid) } },
       },
@@ -888,12 +887,12 @@ module auth_edge {
         sessionAuth(h),
         all { nondet req = Set(1, 2).oneOf() rotateRead(h, req) },
         all { sess.pendingRot.size() > 0, nondet r = sess.pendingRot.oneOf() rotateCommit(r) },
-        rotateForkFast(h),
       },
       cloudLogin(h, p, cloudSkew),
       account(h, op, age, cloudSays),
       all { sess.rows.keys().size() > 0, nondet k = sess.rows.keys().oneOf() cloudSignOut(sess.rows.get(k).chain) },
-      any { textJoin(p), carrierReassign(p, h), banNumber(p) },
+      any { textJoin(p), carrierReassign(p, h), banNumber(p), invite(p) },
+      all { nondet q = PHONES.oneOf() numberChange(p, q) },
     }
   }
 
@@ -919,8 +918,7 @@ module auth_edge {
   // from before a person existed (it may belong to an earlier holder of the number) never acts for that
   // person, except the session whose web join created it. A login made after the person exists gets the
   // person of the number by the recycled-number policy (accounts.ts), which this model scopes out.
-  // Was violated at ad67275 (SD-054); 6ddfc8f is not on this branch, so the code still breaks it (AE-3,
-  // ae3OtpStaleSessionActsTest).
+  // Was violated at ad67275 (SD-054) and again on this branch until the AE-3 fix of 2026-11-21.
   val staleSessionNoAct = ghost.foreignActs == Set()
 
   // AGENTS.md age policy: "Lowest stated age wins"; a person's age is lowered only by a statement of
@@ -996,11 +994,6 @@ module auth_edge {
   val witness_otpLogin = ghost.otpLogins == 0
   val witness_cloudLogin = ghost.cloudLogins == 0
   val witness_rotation = ghost.rotations == 0
-  // SD-180 (refuted as harmless in the register): two live heads in one rotation chain.
-  val witness_rotationFork = not(sess.rows.keys().exists(a => sess.rows.keys().exists(b =>
-    a < b and sess.rows.get(a).chain == sess.rows.get(b).chain and
-    sess.rows.get(a).revoked == NONE and sess.rows.get(b).revoked == NONE and
-    sess.rows.get(a).expires > now and sess.rows.get(b).expires > now)))
   // A signed turn with a clock offset under 60 s is accepted.
   val witness_signedTurnSkew = not(ghost.skewedSvcOk)
   // SD-166 (runtime_ops): a one-side proxy secret rotation answers 421 to honest router requests (this
@@ -1085,7 +1078,7 @@ module auth_edge {
       .then(cloudLogin("alice", "X", 0))
       .expect(ghost.cloudLogins == 0 and bannedNoSession)
 
-  // SD-054, the intended rule (the source-branch fix 6ddfc8f is not on this branch: AE-3): bob logs in on Y
+  // SD-054 (AE-3 fixed on 2026-11-21): bob logs in on Y
   // before Y has a person; the carrier gives Y to alice; alice joins by text. The text join ends bob's session,
   // so it can neither export alice's data nor make an age statement for her.
   run sd054StaleSessionTest =
@@ -1096,7 +1089,7 @@ module auth_edge {
       .then(textJoin("Y"))
       .expect(sess.rows.get(1).revoked == now and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
 
-  // SD-054, the intended rule (6ddfc8f is not on this branch: AE-3): bob and then alice
+  // SD-054 (AE-3 fixed on 2026-11-21): bob and then alice
   // log in on Y (the carrier gave Y to alice in between); alice's web join gives the person to her own
   // session only and ends bob's.
   run sd054WebJoinTest =
@@ -1112,17 +1105,28 @@ module auth_edge {
               and sess.rows.get(1).person == NONE and sess.rows.get(1).revoked == now
               and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
 
-  // DEFECT AE-3, the code: the same start as sd054StaleSessionTest, but the text join is the code's
-  // (textJoinCode). bob's old OTP session gets alice's person, stays live and exports her data.
-  run ae3OtpStaleSessionActsTest =
+  // Review of AE-3 (2026-11-21): bob logs in on Y before Y has a person; the carrier gives Y to alice,
+  // who has a person on X and changes her number to Y. The move ends bob's session, so it cannot act for
+  // alice.
+  run numberChangeEndsStaleSessionTest =
     initWith("otp")
       .then(otpStartBegin("bob", "Y")).then(otpStartAll(1))
       .then(otpVerify("bob", "Y"))
+      .then(textJoin("X"))
       .then(carrierReassign("Y", "alice"))
-      .then(textJoinCode("Y"))
-      .expect(sess.rows.get(1).person == 1 and usableSession(world, sess, sess.jar.get("bob"), now))
-      .then(account("bob", "export", 0, "valid"))
-      .expect(not(staleSessionNoAct))
+      .then(numberChange("X", "Y"))
+      .expect(world.phoneOf.get("Y") == 1 and sess.rows.get(1).revoked == now
+              and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
+
+  // Review of AE-3 (2026-11-21): bob logs in on Y before Y has a person; staff invite Y. The invitation
+  // ends bob's session.
+  run inviteEndsStaleSessionTest =
+    initWith("otp")
+      .then(otpStartBegin("bob", "Y")).then(otpStartAll(1))
+      .then(otpVerify("bob", "Y"))
+      .then(invite("Y"))
+      .expect(world.phoneOf.get("Y") == 1 and sess.rows.get(1).revoked == now
+              and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
 
   // SD-491 (fixed, b56267f; "SD-491 an under-13 web join keeps no session with the number"): two logins
   // on X, then an under-13 web join. Only the age floor stays; no session row and no cookie.
@@ -1214,7 +1218,8 @@ module auth_edge {
       .then(cloudLogin("alice", "X", 0))
       .expect(ghost.cloudLogins == 2 and safety)
 
-  // Rotation after a day; two parallel requests with the same old cookie both rotate (SD-180).
+  // Rotation after a day; of two parallel requests with the same old cookie only the first rotates, and the
+  // second keeps the old token in its grace time (AE-6 fix; SD-180 no longer forks the chain).
   run rotationForkTest =
     initWith("otp")
       .then(otpStartBegin("alice", "X")).then(otpStartAll(1))
@@ -1223,7 +1228,7 @@ module auth_edge {
       .then(rotateRead("alice", 1)).then(rotateRead("alice", 2))
       .then(rotateCommit({ human: "alice", sid: 1, req: 1 }))
       .then(rotateCommit({ human: "alice", sid: 1, req: 2 }))
-      .expect(ghost.rotations == 2 and not(witness_rotationFork) and sess.rows.get(1).revoked == DAY + SESSION_GRACE and safety)
+      .expect(ghost.rotations == 1 and sess.rows.keys() == Set(1, 2) and sess.jar.get("alice") == 2 and sess.rows.get(1).revoked == DAY + SESSION_GRACE and safety)
 
   // svc-auth: a turn signed 30 s ahead is accepted once; a duplicate delivery has no second effect;
   // a 90 s old request and a request with a query string have none.
@@ -1265,5 +1270,16 @@ module auth_edge {
       .then(tick(1))
       .then(otpStartFast("alice", "X", true))
       .expect(otp.buckets.get(("ip", "alice")).n == 1 and otp.buckets.get(("phone", "X")).n == 1 and safety)
+
+  // spec/otpLimits.md: a phone-code-only start counts in its own address bucket and keeps the
+  // per-number limits, which it shares with the standard start.
+  run codeOnlyAddressBucketTest =
+    initWith("otp")
+      .then(otpStartFastFor("alice", "X", true, true))
+      .expect(otp.buckets.get(("ip_code_only", "alice")).n == 1 and not(otp.buckets.keys().contains(("ip", "alice")))
+              and otp.buckets.get(("phone", "X")).n == 1 and safety)
+      .then(tick(1))
+      .then(otpStartFastFor("alice", "X", true, false))
+      .expect(not(otp.buckets.keys().contains(("ip", "alice"))) and otp.buckets.get(("phone", "X")).n == 1 and not(ghost.burned) and safety)
 }
 ```

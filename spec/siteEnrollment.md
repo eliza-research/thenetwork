@@ -25,7 +25,7 @@ A supplied signup marker must match the app, verified phone and current person, 
 ```quint
 type EnrollmentPhase = AwaitingAccountView | AccountChanged | AwaitingProfile | InvalidProfile | AwaitingConsent | ConsentMismatch |
   AwaitingEligibility | NeedsReview | AwaitingMembership | NeedsInvite | InvalidInvitation | AwaitingAge | BelowJoinAge |
-  ReturnExisting | AwaitingPersistence | Created | JoinHookFailed
+  ReturnExisting | AwaitingRepair | AwaitingPersistence | Created | JoinHookFailed
 type Enrollment = {
   phase: EnrollmentPhase,
   viewChecked: bool,
@@ -138,20 +138,39 @@ pure def checkMembership(joining: Enrollment, membershipFacts: MembershipFacts):
 
 ### The effective age controls the result of a new or repeated join
 
-Use the existing lowest age rule. A repeated join records the age statement before returning the existing membership. A new join that fails the age rule records the age statement without creating a membership, even when its explicit member invitation is unavailable. Passing the age rule starts persistence only for a new membership with no unavailable invitation.
+Use the existing lowest age rule. A repeated join records the age statement before returning the existing membership. A repeated join of an active membership that has no Network member runs the join hook again before it returns the membership. A new join that fails the age rule records the age statement without creating a membership, even when its explicit member invitation is unavailable. Passing the age rule starts persistence only for a new membership with no unavailable invitation. Changed on 2026-11-21 (audit JA-3): a repeated join returned the membership without the hook, so a membership whose Network member was never made answered success forever.
 
 ```quint
 pure def canCheckJoinAge(joining: Enrollment): bool =
   joining.phase == AwaitingAge and joining.currentEligibility and joining.viewChecked and joining.validProfile and joining.currentConsent
 
-pure def checkJoinAge(joining: Enrollment, ageEligible: bool): Enrollment =
+pure def checkJoinAge(joining: Enrollment, ageEligible: bool, memberMissing: bool): Enrollment =
   { ...joining, ageAllowed: ageEligible,
-    phase: if (not(ageEligible)) BelowJoinAge else if (joining.rejoin) ReturnExisting else if (joining.invalidReferral) InvalidInvitation else AwaitingPersistence }
+    phase: if (not(ageEligible)) BelowJoinAge
+      else if (joining.rejoin) (if (memberMissing) AwaitingRepair else ReturnExisting)
+      else if (joining.invalidReferral) InvalidInvitation else AwaitingPersistence }
+
+pure def canFinishRepair(joining: Enrollment): bool =
+  joining.phase == AwaitingRepair and joining.rejoin and joining.ageAllowed
+    and joining.currentEligibility and joining.viewChecked and joining.validProfile and joining.currentConsent
+
+pure def finishRepair(joining: Enrollment, hookSucceeded: bool): Enrollment =
+  { ...joining, phase: if (hookSucceeded) ReturnExisting else JoinHookFailed }
+```
+
+### A decline below the join age ends the number's unbound access
+
+When the effective age is below the age at which anyone may join, the decline also ends every session of the number that has no person and deletes the number's pending text joins. The age floor stays. A decline for an app's higher minimum age leaves them, because the person may still use the other apps. New rule on 2026-11-21 (audits AE-4 and JA-5): before, an under-13 web decline left the number's sessions, cookies and pending text join.
+
+```quint
+import memberAge as Age from "./memberAge"
+
+pure def declineEndsUnboundAccess(effectiveAge: int): bool = Age::confirmedUnderage(effectiveAge)
 ```
 
 ### Success for a new membership follows the join hook
 
-An ordinary join writes the membership, consent and person link, then runs the join hook. A hook failure forgets the new membership and records the failed opt-in's reversal. A referred join commits the app membership, consent, session attachment, Network attribution and invitation use together. A failed referral commit leaves those writes for the next verified attempt. A successful response reports the stored membership.
+An ordinary join writes the membership, consent and person link, then runs the join hook. A hook failure runs the app's forget hook, forgets the new membership and records the failed opt-in's reversal, also when the failure is a review refusal, which then answers review. A failed repair of a repeated join does the same to the existing membership. The forget hook of a failed join removes only the Network member: the app's photos, the agent's grants and the signup drafts stay, because the person is still signing up and retries with the same agent. Added on 2026-11-21 (review of JA-4): the forget hook of a failed join first removed them too, so a transient failure took the agent's authorization mid-signup. Changed on 2026-11-21 (audits JA-4 and SIG68): before, the forget hook did not run, so a Network member made before the failure stayed, and a review refusal kept the membership and its opt-in. A referred join commits the app membership, consent, session attachment, Network attribution and invitation use together. A failed referral commit leaves those writes for the next verified attempt. A successful response reports the stored membership.
 
 ```quint
 pure def canFinishJoin(joining: Enrollment): bool =
@@ -160,6 +179,14 @@ pure def canFinishJoin(joining: Enrollment): bool =
 
 pure def finishJoin(joining: Enrollment, hookSucceeded: bool): Enrollment =
   { ...joining, phase: if (hookSucceeded) Created else JoinHookFailed }
+
+pure def joinFailureForgetsMembership(referred: bool): bool = not(referred)
+
+pure def forgetEndsAppAccess(joinFailed: bool): bool = not(joinFailed)
+
+pure def lawFailedOrdinaryJoinForgetsOnlyTheMember(joining: Enrollment): bool =
+  (canFinishJoin(joining) and not(joining.referred))
+    implies (finishJoin(joining, false).phase == JoinHookFailed and joinFailureForgetsMembership(joining.referred) and not(forgetEndsAppAccess(true)))
 ```
 
 ### The approved profile reaches onboarding and its stated age counts
@@ -216,4 +243,5 @@ pure def sometimesAccountChanged(joining: Enrollment): bool = joining.phase == A
 pure def sometimesNeedsInvite(joining: Enrollment): bool = joining.phase == NeedsInvite
 pure def sometimesInvalidInvitation(joining: Enrollment): bool = joining.phase == InvalidInvitation
 pure def sometimesBelowJoinAge(joining: Enrollment): bool = joining.phase == BelowJoinAge
+pure def sometimesRepairsMember(joining: Enrollment): bool = joining.phase == AwaitingRepair
 ```

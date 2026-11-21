@@ -61,7 +61,7 @@ async function seed(
 	accepted = false,
 	createdAt = now - 2000,
 ) {
-	const storage = new ProfileSuggestions(admin, async () => true);
+	const storage = new ProfileSuggestions(admin, async () => ({ issuedAt: createdAt }));
 	const batch = await storage.propose(
 		who,
 		{

@@ -169,6 +169,7 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 |---|---|---|
 | `GET /health` | any role for the app | Last tick, lock holder, backlog (review, overdue, deferred, waiting sends), refusals; with several networks, a `networks` summary |
 | `GET /review` | reviewer, safety | The review queue, oldest first, with the current `revision` for each item |
+| `GET /review/:oppId/probes?revision=` | reviewer, safety | The words each participant would get for that revision: the first probe, its leak-guard fallback and the introduction, and in `replacements` the same for each reviewed alternate and each participant it can replace. Writes the audit row `read_review_probes` first. A changed revision or a passed deadline returns `preview_unavailable` (404). [Probe dispatch](../../../spec/probeDispatch.md), "A reviewer can read each first probe of the open revision" |
 | `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", revision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. Send the revision the reviewer saw. A changed revision returns `review_stale`. The token identifies the reviewer. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |

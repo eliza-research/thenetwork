@@ -10,8 +10,10 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
-The connector no longer writes signup drafts: `prepare_signup`, the browser draft routes and the
-`oauth.signup_drafts` table were removed (audit MCP16 and SIG46), so the model keeps no draft state.
+The [signup draft rules](../mcpSignupDraft.md) drive draft preparation, the read at the
+Finish signup step of the connection page, the deletion after signup, and expiry. A revocation
+no longer erases the draft; it lives at most ten minutes. This model keeps no draft state yet:
+its draft machine left with the retired tool, and the next model pass adds it again.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

@@ -11,7 +11,8 @@ import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } 
 import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
-import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
+import { APPS, keywordApp, lookingForReading, type AppId } from "../../packages/platform/src/apps.ts";
+import { parseJoinText } from "../../packages/network/service/service.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
@@ -185,6 +186,27 @@ export async function evalsBlock(b: Block): Promise<void> {
     for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol", "leave the party now", "quit smoking now", "exit the building now"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
     expect(optOutPhrase(`${"I had a long day at work and the train was late again. ".repeat(3)}stop texting me`)).toBe(false);
   });
+
+  type Routing = { kind: "first" | "join" | "lookingFor"; text: string; reading: Record<string, unknown> };
+  const routing = await jsonl<Routing>("network/line-routing.jsonl");
+  const lineCommand = { stop: "LineStop", stop_all: "LineStopAll", help: "LineHelp", start: "LineStart" } as const;
+  const appWords = Object.values(APPS).flatMap(a => [a.id, ...a.domain.split(".")]);
+  const routingReading = (row: Routing): Record<string, unknown> => {
+    if (row.kind === "first") {
+      const keyword = detectKeyword(row.text);
+      return { command: keyword ? lineCommand[keyword] : "LineNoCommand", app: keywordApp(row.text) ?? null };
+    }
+    if (row.kind === "join") {
+      const said = parseJoinText(row.text, appWords, true);
+      return { age: said.age ?? null, ...("name" in row.reading ? { name: said.name } : {}) };
+    }
+    return { ...lookingForReading(row.text) };
+  };
+  const routingMiss = routing.filter(row => JSON.stringify(routingReading(row)) !== JSON.stringify(row.reading))
+    .map(row => `${row.kind} ${JSON.stringify(row.text)} -> ${JSON.stringify(routingReading(row))}`);
+  const routingKinds = (["first", "join", "lookingFor"] as const).map(kind => routing.filter(row => row.kind === kind).length);
+  b.gate(`shared-line routing readings (n ${routing.length}): every row read as labelled`,
+    routing.length >= 60 && routingKinds.every(n => n >= 15) && routingMiss.length === 0, routingMiss.slice(0, 5).join("; "));
 
   // ---- leak guard ------------------------------------------------------------------------------------
   type G = { text: string; want: "contact" | "leak" | "clean"; note: string; facts?: string[]; forbidden?: string[]; privateVocab?: string[]; canaries?: string[]; allow?: string[]; publicPhrases?: string[]; contacts?: boolean };

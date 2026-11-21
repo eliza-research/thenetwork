@@ -24,8 +24,8 @@ beforeEach(async () => {
   await sql`insert into network.members(id,app_id,person_id,name,age,home_city,account_status) values('member-one','friends',${owner.personId},'Alex',30,'nyc','active')`;
 });
 afterAll(async () => { await sql.close(); const admin = new SQL(`${base}/postgres`); await admin.unsafe(`drop database ${db}`); await admin.close(); });
-async function seed(retain: boolean, accepted: boolean, createdAt = now - 2000) {
-  const store = new ProfileSuggestions(sql, async () => true);
+async function seed(retain: boolean, accepted: boolean, createdAt = now - 2000, issuedAt = createdAt) {
+  const store = new ProfileSuggestions(sql, async () => ({ issuedAt }));
   const suggestion: SourceSuggestion = { connectionId, source: "gmail", observedAt: createdAt - 1000, kind: "interest", value: "I enjoy climbing", tags: ["climbing"], confidence: .8, scope: "agent_private" };
   const b = (await store.propose(owner, { windowStart: createdAt - 5000, windowEnd: createdAt, timezone: "America/Los_Angeles", expiresAt: now + 60_000,
     retainOnDisconnect: retain, allowedKinds: ["interest"], suggestions: [suggestion] }, createdAt))!;
@@ -89,6 +89,19 @@ test("V2 withdrawal removes pending intake only and keeps accepted facts regardl
     expect(await sql`select id from network.facets`).toHaveLength(0);
     expect((await sql`select status from platform.profile_suggestions where batch_id=${newer.id}`)[0].status).toBe('proposed');
     expect(before.length).toBeGreaterThan(0);
+  }finally{await f.close();}
+});
+
+// spec/profileSuggestionSource.md, "Cleanup uses current owner authority and any required stored withdrawal turn"
+test("V2 withdrawal compares Cloud times only, so a later Network turn time or batch time neither refuses it nor hides a batch",async()=>{
+  const skewed=await seed(false,false,now,cutoffAt-500);const reconnected=await seed(false,false,cutoffAt-1500,cutoffAt+500);
+  const f=await fixture();try {
+    const request=f.request();const context=await f.prepare(request);
+    await sql`update platform.inbound set received_at=${new Date(cutoffAt+5000)},arrived_at=${new Date(cutoffAt+5000)} where id=${`msg:blooio:${context.messageId}`}`;
+    const result=await f.post(request);expect(result.status).toBe(200);
+    expect(result.body).toEqual({kind:'owner_withdrawal',operation:'withdraw',counts:{pending:0,retainedAccepted:0,linkedFacts:0}});
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${skewed.id}`)[0].status).toBe('withdrawn');
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${reconnected.id}`)[0].status).toBe('proposed');
   }finally{await f.close();}
 });
 

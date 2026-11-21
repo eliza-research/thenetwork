@@ -88,3 +88,15 @@
 {"kind": "lookingFor", "text": "no romance or work stuff, just friends", "reading": {"friends": "MentionWanted", "dating": "MentionRefused", "work": "MentionRefused", "everything": false}, "decision": {"apps": ["friends"]}}
 {"kind": "lookingFor", "text": "not into dating right now, maybe work", "reading": {"friends": "MentionAbsent", "dating": "MentionRefused", "work": "MentionWanted", "everything": false}, "decision": {"apps": ["peon"]}}
 {"kind": "lookingFor", "text": "anything except work", "reading": {"friends": "MentionAbsent", "dating": "MentionAbsent", "work": "MentionRefused", "everything": true}, "decision": {"apps": ["friends", "slop"]}}
+{"kind": "first", "text": "slop, I'm 15", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "I'm 12, slop", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "under_age", "app": "ntwrk"}}
+{"kind": "first", "text": "Kim, 16", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "joined", "app": "ntwrk"}}
+{"kind": "first", "text": "STOP ALL", "reading": {"command": "LineStopAll", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
+{"kind": "first", "text": "stop all", "reading": {"command": "LineStopAll", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
+{"kind": "first", "text": "stop texting me", "reading": {"command": "LineStop", "app": null}, "decision": {"outcome": "stopped", "app": "ntwrk"}}
+{"kind": "first", "text": "START", "reading": {"command": "LineStart", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "can you stop by later?", "reading": {"command": "LineNoCommand", "app": null}, "decision": {"outcome": "join_asked", "app": "ntwrk"}}
+{"kind": "first", "text": "HELP!", "reading": {"command": "LineHelp", "app": null}, "decision": {"outcome": "handled", "app": "ntwrk"}}
+{"kind": "join", "text": "Tay, 19, my brother is 12", "reading": {"age": null, "name": "Tay"}, "decision": {"outcome": "join_asked"}}
+{"kind": "join", "text": "Jo, 16, slop", "reading": {"age": 16, "name": "Jo"}, "decision": {"outcome": "joined"}}
+{"kind": "join", "text": "STOP", "reading": {"age": null}, "decision": {"outcome": "stopped"}}

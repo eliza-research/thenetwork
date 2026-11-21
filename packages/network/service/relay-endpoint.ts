@@ -44,7 +44,7 @@ import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/re
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
-import type { PhotoChoiceResult } from "./photoIntakeRelayChoice.ts";
+import { photoWithdrawRequest, type PhotoChoiceResult, type PhotoWithdrawResult } from "./photoIntakeRelayChoice.ts";
 import { isProduction } from "../../platform/src/env.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
@@ -73,6 +73,7 @@ export interface RelayEndpointDeps {
   photos?: PhotoRelayService;
   /** The conversation step that lists the member's photos or records the named one (photoIntakeRelayChoice.ts). */
   choosePhoto?: (input: { app: AppId; personId: string; threadId: string; text: string; requestId: string }) => Promise<PhotoChoiceResult>;
+  withdrawPhoto?: (input: { app: AppId; personId: string; threadId: string | undefined }) => Promise<PhotoWithdrawResult>;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
   /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
@@ -218,7 +219,16 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   try {
     const request = parseRelayRequest(text);
     let result: StoredRelay;
-    if (request.kind === "none" && withdrawsSwap(text)) {
+    if (request.kind === "none" && d.withdrawPhoto && photoWithdrawRequest(text)) {
+      result = await rt.unitOfWork(async net => {
+        if (withdrawsSwap(text)) net.relayCancelSwap(memberId as MemberId);
+        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
+        const withdrawal = await d.withdrawPhoto!({ app, personId: who.person.id, threadId: match?.id });
+        const r: StoredRelay = { decision: "none", notice: withdrawal.notice };
+        rt.unit.completeAction = async tx => { await lock(tx); await withdrawal.commit(tx); await complete(tx, r); };
+        return r;
+      });
+    } else if (request.kind === "none" && withdrawsSwap(text)) {
       // "Don't send my number": the member takes back a pending number swap (committed with the receipt).
       result = await rt.unitOfWork(async net => {
         // The turn's own message may already have withdrawn it (network.ts); either way nothing of theirs is pending.

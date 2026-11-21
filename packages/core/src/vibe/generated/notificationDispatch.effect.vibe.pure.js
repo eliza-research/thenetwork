@@ -25,6 +25,10 @@ export function lawMissingRecipientCancels(plannedCount, remainingCount, destina
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export function digestItemSetCanBeRecorded(itemCount, pendingOwnedCount) { return M.digestItemSetCanBeRecorded(itemCount, pendingOwnedCount); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
+export function digestWithinWeeklyCap(countsTowardCap, countedSends, weeklyCap) { return M.digestWithinWeeklyCap(countsTowardCap, countedSends, weeklyCap); }
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
+export function lawRecordedCountingDigestStaysUnderCap(countedSends, weeklyCap) { return M.lawRecordedCountingDigestStaysUnderCap(countedSends, weeklyCap); }
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export function canRecordDigest(digest) { return M.canRecordDigest(digest); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export function recordDigest(digest, recorded) { return M.recordDigest(digest, recorded); }

@@ -169,7 +169,7 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | App packs | Done | `packages/engine/src/pack.ts` and the conformance rules in `scripts/sim/conformance.ts` (the goldens were replaced by run fingerprints in the cleanup) | (met) |
 | slop.date pack and sim | Sim-only, Partial | `packages/engine/src/packs/slop/*`, `packages/sim/src/apps/slop/*`, `scripts/sim/slop.ts`. Gates: Section 4. | Section 4 gates pass; photo-in-probe and rater in the same state in the sim and live. |
 | Admin app switcher | Done | `packages/observatory/web/apps.tsx`, `src/people.ts`, tokens per app role (service README, Staff API) | (met) |
-| Home page and app sites | Done (code), deploy pending | `sites/*/wrangler.toml`, `deploy/router.ts`, `.github/workflows/deploy-sites.yml`, `sites/skills/*/SKILL.md` | Pages projects live, with `/api/*` reaching `api.ntwrk.party` through the signed router (runbook-real 7.1 #13). |
+| Home page and app sites | Done (code), deploy pending | `sites/*/wrangler.toml`, `deploy/router.ts`, `.github/workflows/deploy-sites.yml`, `sites/skills/*/SKILL.md` | Pages projects live, with `/api/*` reaching `api.ntwrk.party` through the signed router (deploy.md section 3). |
 
 ### 1.2 Flows F1-F29 (PRD 29), read for slop
 
@@ -238,8 +238,8 @@ The order is by dependency. Owner **P** is the platform session (`packages/netwo
 
 | # | Piece | Owner | Est. | Depends on | What is missing |
 |---|---|---|---|---|---|
-| 0 | **Founder decisions** | Founder | 1 | none | (a) Who owns STOP/HELP if Eliza Cloud also receives the line's webhook (runbook-real 7.1 #10). (b) Whether the conversation is the service's own LLM reader or the Eliza agent. (c) Join mode for peon and friends on production. (d) Whether to build same-face ban evasion or drop that gate. (e) Whether to keep the security suite. (f) How to fit the Clef weights (the fitter was deleted in the cleanup). Photos in the probe are decided (yes, adults only); the engine side is done (item 7). |
-| 1 | **Backend deploy (staging, then production)** | P | 2 | 0a | Railway project, Postgres, and the `network_backend` login (`docs/deploy.md` 2.1). Secrets. `api.ntwrk.party` DNS. Staff port private. Observatory behind Access. Logins per app role (runbook-real 7.1 #14). |
+| 0 | **Founder decisions** | Founder | 1 | none | (a) and (b) are decided: the Eliza gateway owns STOP/HELP on the shared line, and the conversation runs in the Eliza agent (spec/product/source/founder-decisions.md, decisions of 2026-10-09, item 2). (c) Join mode for peon and friends on production. (d) Whether to build same-face ban evasion or drop that gate. (e) Whether to keep the security suite. (f) How to fit the Clef weights (the fitter was deleted in the cleanup). Photos in the probe are decided (yes, adults only); the engine side is done (item 7). |
+| 1 | **Backend deploy (staging, then production)** | P | 2 | 0a | Railway project, Postgres, and the `network_backend` login (`docs/deploy.md` 2.1). Secrets. `api.ntwrk.party` DNS. Staff port private. Observatory behind Access. Logins per app role (`docs/deploy.md` 2.1). |
 | 2 | **DB migrations against Railway** | P | 1 | 1 | `migrate.ts` refuses non-local hosts (runbook-real 1.2): needs a reviewed path (`MIGRATE_ON_BOOT` in `server.ts` with `MIGRATION_DATABASE_URL`). `PLATFORM_DB_ENVIRONMENT_INIT=1` once. pgvector. Backups on, and one restore tested. |
 | 3 | **Blooio inbound and outbound with keyword routing** | P | 3 | 1, 2, 0a | Point the line's webhook at `/webhooks/blooio`. The queue and its counters are persisted (done, migration 0015; `pnpm run sim --only pipeline`). Fence the saves (audit network-service-8). Test phones with `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and `SLOP_LIVE_APPROVED=1` **[FOUNDER]**. The routing code is done. |
 | 4 | **The slop onboarding conversation** | P (wiring), E (copy and rubric) | 4 | 3, 0b | Wire `understand` (`llmUnderstand`, gpt-6-luna via Surplus) and `onAgeStated` into the runtime. Handle free text that is not a hard field. Read back the profile. Ask for photos for adults only. The MCP `submit_profile` path writes the same fields. A dating persona style guide (PRD 36.6). |
@@ -338,7 +338,7 @@ The gap analysis found 28 places where the PRD, the docs and the code disagreed.
 | 4 | PRD 40.1, 40.2, 40.6, 28.4, 37, 38; mvp-plan: peon and friends "no deploys" | All four sites are on Pages; peon and friends matching and sends stay local; join mode is a founder decision. AGENTS.md decision 4 updated to match. |
 | 5 | PRD 28.4: connectors are post-MVP | Agent-first onboarding through MCP and the skills moved into 28.3; 28.4 keeps only the hosted-assistant connectors beyond onboarding. |
 | 6 | PRD 1.3, 28.1, 25, 36.5, 37 M6: an SF and NYC pilot on Eliza Cloud with Twilio | 1.3 and 28.1 rewritten for slop.date first in NYC on the shared platform; 25.1, 27, 36.5 and 37 point to NYC first. |
-| 7 | PRD 22, 31: built inside Eliza Cloud | Status notes in 22 and 31: Railway backend plus Pages sites. runbook-real section 7 still asks the question until the deploy. |
+| 7 | PRD 22, 31: built inside Eliza Cloud | Status notes in 22 and 31: Railway backend plus Pages sites. runbook-real section 7 now points to deploy.md. |
 | 8 | PRD 28.5: 30 simulated days of all flows, unit and load tests, terms, 10DLC | Rewritten for the slop pilot and simulations only; compliance items point to 40.7. |
 | 9 | PRD 34.1-34.2; `docs/audit/2026-10-08-test-plan.md`; AGENTS.md | PRD 34 rewritten ("simulations only"). The audit test plan carries a superseded note. |
 | 10 | Service README: slop runs `required: true`; photos need `verify:age:pass` | Fixed: `required: false`, a stated adult age is enough. |
@@ -348,9 +348,9 @@ The gap analysis found 28 places where the PRD, the docs and the code disagreed.
 | 14 | experience-design D5 and F2: "never a photo until both say yes" | A note at the top gives the slop.date exception. |
 | 15 | The friends-first college GTM docs | Deleted in the cleanup. A slop NYC go-to-market (who the first 40-75 adults are) is still to write (prototype P1). |
 | 16 | PRD 36.1, 32.2, 37 M0: per-city numbers, 10DLC filed, vCard | 32.2 and the M0 row updated; 36.1 already points to 40.3 and 40.7. |
-| 17 | PRD 32.3, 36.10: the Eliza plugin speaks on the line | 32.3 says the service owns every member message today; where the conversation runs is a founder decision. |
+| 17 | PRD 32.3, 36.10: the Eliza plugin speaks on the line | 32.3 says the service owns every member message today; the founder decided that the conversation runs in the Eliza agent (founder-decisions.md, 2026-10-09 item 2). |
 | 18 | PRD 40.5 "share-my-date with a trusted contact" | Now "a share-my-date tip"; building it is not on the critical path. |
-| 19 | runbook-real 6.5 and 7: "Nothing is deployed" | Kept until the deploy, then updated with the real hosts. |
+| 19 | runbook-real 6.5: "Nothing is deployed" | Kept until the deploy, then updated with the real hosts. |
 | 20 | Code: `copy.ts` says "no photo" while the sim runs with a photo | Fixed in the engine (2026-10-09-relay.md); the live probe path still needs the wiring. |
 | 21 | mvp-plan, PRD 40.5 and 40.8, admin-console.md: "verified adults" | Now "adult by lowest stated age (18+), unknown fails closed". |
 | 22 | deploy.md against admin-console, runbook-real and the service README: what is live | deploy.md is the one place; the sites are on Pages and the backend is pending. |

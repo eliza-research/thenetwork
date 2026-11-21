@@ -37,7 +37,7 @@ import {
 } from "../../core/src/generated/outboundAdmission.ts";
 import { controlQuietHoursValid } from "../../core/src/generated/participationControls.ts";
 import {
-  acceptanceEndsRow, acceptanceRecordsSend, returnsPersonSlot, step as stepReceipt, type FailureKind, type ReceiptPhase,
+  acceptanceEndsRow, acceptanceRecordsSend, gatewayReplyPhase, returnsPersonSlot, step as stepReceipt, type FailureKind, type ReceiptPhase,
 } from "../../core/src/generated/outboundReceipt.ts";
 import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/outboundReceiptShell.js";
@@ -222,6 +222,7 @@ export class IdempotencyConflictError extends Error {
 
 /** Statuses that still wait for the worker (the console's backlog). */
 export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending", "unknown_acceptance"];
+export const GATEWAY_WAITING = ["collected", "send_unknown"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
 const FAILURE_KIND = {
   unknown: "UnknownResult", retryable: "Retryable", await_recipient: "NeedReply", blocked: "BlockedNumber",
@@ -801,6 +802,18 @@ export class OutboundQueue {
       if (!expired.length) continue;
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
       if (row.personCap && returnsPersonSlot(expiry.phase)) await this.o.checks.capRelease?.(row).catch(() => {});
+      changes.push({ id: row.id, app: row.app, memberId: row.memberId, status: "failed_unknown" });
+    }
+    for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
+      and status = any(${`{${GATEWAY_WAITING.join(",")}}`}::text[]) and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      const row=this.rowOf(stored);
+      if (gatewayReplyPhase(this.now-row.createdAt>ttl) !== "AcceptanceExpired") continue;
+      const at = new Date(this.now);
+      const expired = await this.sql`update platform.outbound set status = 'failed_unknown',
+        note = 'gateway receipt never resolved', ended_at = ${at}, updated_at = ${at}
+        where id = ${row.id} and status = ${row.status} returning id`;
+      if (!expired.length) continue;
+      this.o.onAlert?.(row.id,"gateway_receipt_expired");
       changes.push({ id: row.id, app: row.app, memberId: row.memberId, status: "failed_unknown" });
     }
     if (!this.o.provider.receipt) return changes;

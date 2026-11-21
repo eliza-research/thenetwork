@@ -8,7 +8,7 @@ The [whole opportunity model](models/opportunity.md) follows the review, schedul
 
 ### The first participant opens the later turns
 
-The first participant's turn can open immediately. Other turns can open after the first participant is available. A prior request for exactly this opportunity counts as interest before contact. A prior request still needs its time question when times are available and remain to be picked. Record when a queued turn first opens. Each participant's probe state also keeps the opportunity's roster revision, the revision that their open turn or their yes is about, and whether a probe of that turn reached them. An opened turn and a used prior request are about the current revision, and no probe of the new turn has gone out yet. Changed in this revision: the state now carries the roster revision and the sent probe, so that a yes counts only for the roster that its probe described (audit OPP18).
+The first participant's turn can open immediately. Other turns can open after the first participant is available. A prior request for exactly this opportunity counts as interest before contact. A prior request still needs its time question when times are available and remain to be picked. Record when a queued turn first opens. Each participant's probe state also keeps the opportunity's roster revision, the revision that their open turn or their yes is about, and whether a probe of that turn reached them. An opened turn and a used prior request are about the current revision, and no probe of the new turn has gone out yet. Changed in this revision: the state now carries the roster revision and the sent probe, so that a yes counts only for the roster that its probe described (audit OPP18). A prior request can stand in for a probe only while no probe of the current turn reached the member, because a member who read a probe answers that probe and not their earlier request.
 
 ```quint
 type ProbePhase = Queued | AwaitingReply | Available | Unavailable | OutsideProbe
@@ -41,7 +41,7 @@ pure def lawLaterTurnRequiresFirst(participant: ParticipantProbe): bool = not(tu
 
 ### Wait for the member's send window and current availability
 
-A pending turn needs only one probe: after its probe goes out, the turn is marked as told. A requester's own confirmation and a hiring manager's review use the logistics window. Other participants use their proactive send window. An outstanding question defers both regular and plan probes before contact, including an onboarding question sent as a direct reply. The question holds the probe until the member answers or for up to 24 hours. After timing allows contact, a participant away from the city is unavailable. When everyone else's proposed times are gone and there is no fixed time or venue, close without probing. The existing send path still checks consent, eligibility, and private facts.
+A pending turn needs only one probe: after its probe goes out, the turn is marked as told. A requester's own confirmation and a hiring manager's review use the logistics window. Other participants use their proactive send window. An outstanding question defers both regular and plan probes before contact, including an onboarding question sent as a direct reply. The question holds the probe until the member answers or for up to 24 hours. After timing allows contact, a participant away from the city is unavailable. When everyone else's proposed times are gone and there is no fixed time or venue, close without probing. The existing send path still checks consent, eligibility, and private facts. Changed in this revision: a turn needs a probe while no probe of that turn reached the member, not while the member was never contacted in the opportunity, so that a member asked again after a replacement gets a new probe (audit OPP18).
 
 ```quint
 type ProbeTiming = WaitForQuestion | WaitForWindow | CheckAvailability
@@ -74,10 +74,26 @@ pure def markUnavailable(participant: ParticipantProbe): ParticipantProbe = { ..
 
 ### A reply or an expired deadline settles the probe
 
-Treat a yes as availability and a no as unavailability when the participant's probe is open. A yes without any acceptable offered time can get one replacement set. If that time question goes unanswered, keep the yes. Other unanswered turns become unavailable at the response deadline, or at the send deadline if still unsent. Use the sent timestamp for the response deadline and the turn timestamp for the send deadline. A legacy unsent turn without its own timestamp uses its opportunity creation time. The sent window is 26 hours for both regular and plan probes.
+Treat a yes as availability and a no as unavailability when the participant's probe is open. A yes without any acceptable offered time can get one replacement set. If that time question goes unanswered, keep the yes. Other unanswered turns become unavailable at the response deadline, or at the send deadline if still unsent. Use the sent timestamp for the response deadline and the turn timestamp for the send deadline. A legacy unsent turn without its own timestamp uses its opportunity creation time. A Slop probe and a time question each have a sent window of 24 hours; every other regular or plan probe has a sent window of 48 hours. A sent probe is open for its whole window and expires when the window ends. Changed in this revision: before, every probe had a 26-hour window, which disagreed with the approved story F11 (audit OPP57). The review of that fix found that the two window laws only restated the definition of the window; the laws now relate each window to the expiry of a sent probe.
 
 ```quint
-pure val probeResponseMs: int = 26 * 3600000
+pure val genericProbeResponseMs: int = 48 * 3600000
+pure val shortProbeResponseMs: int = 24 * 3600000
+
+pure def probeResponseMs(slop: bool, timeQuestion: bool): int =
+  if (slop or timeQuestion) shortProbeResponseMs else genericProbeResponseMs
+
+pure def lawASentProbeIsOpenForItsWholeWindow(slop: bool, timeQuestion: bool, sentAt: int, asOf: int, sendDeadline: int): bool =
+  (asOf < sentAt + probeResponseMs(slop, timeQuestion))
+    implies not(probeExpired(asOf, probeExpiryDeadline(true, sentAt + probeResponseMs(slop, timeQuestion), sendDeadline)))
+
+pure def lawAGenericProbeIsStillOpenAfterOneDay(sentAt: int, sendDeadline: int): bool =
+  not(probeExpired(sentAt + 24 * 3600000, probeExpiryDeadline(true, sentAt + probeResponseMs(false, false), sendDeadline)))
+    and probeExpired(sentAt + 48 * 3600000, probeExpiryDeadline(true, sentAt + probeResponseMs(false, false), sendDeadline))
+
+pure def lawASlopProbeOrTimeQuestionEndsAfterOneDay(slop: bool, timeQuestion: bool, sentAt: int, sendDeadline: int): bool =
+  (slop or timeQuestion)
+    implies probeExpired(sentAt + 24 * 3600000, probeExpiryDeadline(true, sentAt + probeResponseMs(slop, timeQuestion), sendDeadline))
 
 pure def canRecordReply(participant: ParticipantProbe): bool = participant.phase == AwaitingReply
 pure def recordReply(participant: ParticipantProbe, agreed: bool): ParticipantProbe =
@@ -163,7 +179,7 @@ pure def lawGroupBelowThreeCloses(remaining: int): bool =
 
 ### A replacement asks again every member who heard about the earlier roster
 
-A probe and a yes answer one arrangement: the roster revision that the probe described. When an alternate joins an introduction or an activity-partner plan, the roster revision goes up by one. Each member who stays and got a probe of the earlier roster goes back to the queue, whether they said yes or have not answered yet: their earlier answer no longer counts, and they get a new probe in their turn. A turn that opened but whose probe has not gone out also goes back to the queue, so that its probe is written again for the new roster. When the first participant is asked again or was the one replaced, the first turn goes to a member who is asked again, so the alternate gets a probe only after that member agreed again. A prior request that the Network used without a probe moves to the new revision, because no probe described the other person. An unavailable member stays unavailable. When a group continues without an alternate, the roster revision does not change, because nobody joins whom a member was not asked about. A group plan probe describes no single person and says that the Network shares who is coming when enough people say yes, so a backfill there keeps the yeses. Changed in this revision: before, a yes carried over to the replacement, who then learned the member's first name (audit OPP18); the first fix voided only a recorded yes, so a probe still waiting for an answer, or still waiting to go out, also carried over, and this revision voids them too.
+A probe and a yes answer one arrangement: the roster revision that the probe described. When an alternate joins an introduction or an activity-partner plan, the roster revision goes up by one. Each member who stays and got a probe of the earlier roster goes back to the queue, whether they said yes or have not answered yet: their earlier answer no longer counts, and they get a new probe in their turn. A turn that opened but whose probe has not gone out also goes back to the queue, so that its probe is written again for the new roster. When the first participant is asked again or was the one replaced, the first turn goes to a member who is asked again, so the alternate gets a probe only after that member agreed again. A prior request that the Network used without a probe moves to the new revision, because no probe described the other person. An unavailable member stays unavailable. When a group continues without an alternate, the roster revision does not change, because nobody joins whom a member was not asked about. A group plan probe describes no single person and says that the Network shares who is coming when enough people say yes, so a backfill there keeps the yeses, with an alternate who leaves the words of each probe unchanged (the rule below). The alternate joins with a queued turn about the new roster revision. After the change, no member who heard about the earlier roster has a yes to the new one. Changed in this revision: before, a yes carried over to the replacement, who then learned the member's first name (audit OPP18); the first fix voided only a recorded yes, so a probe still waiting for an answer, or still waiting to go out, also carried over, and this revision voids them too. The alternate's join is now a transition of the probe state and not built in the Network, and the law over the roster change says what the reveal relies on.
 
 ```quint
 pure def canChangeRoster(participant: ParticipantProbe): bool = true
@@ -178,8 +194,20 @@ pure def stepARosterChangeVoidsEveryEarlierProbe(before: ParticipantProbe, via: 
     implies (after.phase == Queued and not(after.told))
 
 pure def stepOnlyARosterChangeMovesTheRoster(before: ParticipantProbe, via: str, after: ParticipantProbe): bool =
-  (via != "changeRoster" implies after.roster == before.roster) and
+  ((via != "changeRoster" and via != "joinRoster") implies after.roster == before.roster) and
   (via == "changeRoster" implies after.roster == before.roster + 1)
+
+pure def lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne(participant: ParticipantProbe): bool =
+  (participant.told or participant.phase == AwaitingReply)
+    implies not(agreedToRoster(changeRoster(participant), participant.roster + 1))
+
+pure def canJoinRoster(participant: ParticipantProbe, roster: int): bool =
+  participant.phase == Queued and not(participant.told) and participant.roster == 0 and participant.about == 0 and roster >= 0
+pure def joinRoster(participant: ParticipantProbe, roster: int): ParticipantProbe =
+  { phase: Queued, roster: roster, about: roster, told: false }
+
+pure def stepAnAlternateJoinsQueuedForTheCurrentRoster(before: ParticipantProbe, via: str, after: ParticipantProbe): bool =
+  via == "joinRoster" implies (after.phase == Queued and not(after.told) and after.about == after.roster)
 
 pure def sometimesAgreedAgainAfterARosterChange(participant: ParticipantProbe): bool =
   participant.phase == Available and participant.told and participant.roster > 0
@@ -219,6 +247,21 @@ pure def lawAnEarlierRosterProbeIsRefused(rosterChanged: bool): bool =
   rosterChanged implies not(queuedProbeCurrent(rosterChanged, false))
 ```
 
+### A group plan backfill keeps the words that each member heard
+
+A group plan probe names the activity, the place, the time and the number of others, and it can say what all the others are into. A backfill keeps the earlier yeses and waiting probes only when every member who got the probe would get the same words about the new group. An alternate who changes those words for any such member is skipped, and the next alternate on the bench is tried; when nobody got the probe yet, any alternate can join. Added in this revision: before, a backfill could bring in someone who did not share the interest that the probe named, so a yes counted for a group that the probe described differently (review of audit OPP18).
+
+```quint
+pure def groupBackfillKeepsYeses(heard: int, describedAlike: int): bool =
+  heard <= describedAlike
+
+pure def lawAnAlternateWhoChangesTheWordsIsSkipped(heard: int, describedAlike: int): bool =
+  describedAlike < heard implies not(groupBackfillKeepsYeses(heard, describedAlike))
+
+pure def lawAnyAlternateCanJoinBeforeAProbe(describedAlike: int): bool =
+  describedAlike >= 0 implies groupBackfillKeepsYeses(0, describedAlike)
+```
+
 ### An activity-partner plan asks the member who agreed again before its alternate
 
 When the partner of an activity-partner plan declines and an alternate is next, the roster changes as for an introduction. When a member who stays is asked again, their plan answer goes back to pending, the alternate waits at the front of the bench, and the alternate gets a probe only after that member says yes again. When nobody is asked again, the alternate is asked at once. A new probe to a member asked again uses the daily cap, not the weekly plan allowance that the first probe used. Added in this revision: the order of the bench was decided in the shell before (audit OPP18 review).
@@ -238,7 +281,7 @@ pure def lawTheAlternateWaitsForTheMemberAskedAgain(bench: List[str], alternate:
 
 ### A reviewer can read each first probe of the open revision
 
-Staff who can read the review queue can read, for one review revision, the words of the first probe that each participant would get if their turn opened at that time, and the generic text that the leak guard sends instead when the first text fails it. The Network chooses time options when the probe goes out, so the offered times can change; in a plan, a later member gets only the times that the earlier members picked. The read is refused after the revision changes or at the review deadline. Added in this revision: before, a reviewer approved the reasons and the plan details but could not read the words that members get (audit OPP20 and CRI13).
+Staff who can read the review queue can read, for one review revision, the words of the first probe that each participant would get if their turn opened at that time, and the generic text that the leak guard sends instead when the first text fails it. The Network chooses time options when the probe goes out, so the offered times can change; in a plan, a later member gets only the times that the earlier members picked. The same read also gives, for each participant, the words of the introduction that the participant would get if everyone said yes, with the same reason and names. The place and the time of an introduction are chosen at booking, so the read shows placeholders for them; a plan names its place and time, and shows a placeholder for the members who say yes. Approval also covers the reviewed alternates, and a replacement during probing goes out without a new review. So the read also gives, for each reviewed alternate and each participant whom that alternate can replace, the probe and introduction words that the alternate and every member who stays would get after that replacement, with the reasons written again for the new roster. A requester and a hiring manager are never replaced, and a job introduction closes instead of a replacement, so they have no such entry. The read is refused after the revision changes or at the review deadline. Added in this revision: before, a reviewer approved the reasons and the plan details but could not read the words that members get (audit OPP20 and CRI13); the review of that fix found that the introduction text, which names the others and carries the reason, was still not shown, and the read now includes it. The second review found that the words after a replacement, which can quote facts about the alternate, were not shown, and the read now includes them.
 
 ```quint
 import reviewDeadline as ReviewWindow from "./reviewDeadline"

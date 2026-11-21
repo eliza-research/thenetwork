@@ -369,7 +369,7 @@ function fakeHost(over: { ratesPhotos?: boolean; members?: Partial<Record<"a" | 
   ]);
   const h: FakeHost = {
     app: "slop", ratesPhotos: over.ratesPhotos ?? true, reviewWindowMs: 12 * 3_600_000, t: NOW, sent: [], members,
-    match: { id: "op1", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual", at: NOW - 86_400_000 },
+    match: { id: "op1", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual", negativeFeedback: false, at: NOW - 86_400_000 },
     now: () => h.t,
     member: id => members.get(id),
     matchesOf: id => (h.match.participants.includes(id) ? [h.match] : []),

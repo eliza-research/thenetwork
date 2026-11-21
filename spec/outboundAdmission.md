@@ -116,7 +116,7 @@ pure def lawDispatchParksOnlyWithoutAttempts(hasAttemptsLeft: bool): bool =
 
 ### A claim needs the Network state that its checks read
 
-The stale check, the recipient check and the leak check read the replica's copy of the Network state. The claim transaction locks the stored state. After the checks that read the stored rows, it claims a row only when the stored version is still the version of the copy; otherwise the row waits with the same provider key and without its person-cap slot. A runtime drain that ends with a copy that is not the stored version loads the stored state and drains once more. A copy whose unit failed before its save has no known version. Changed 2026-11-19: a replica sent from an old copy after another replica closed the item or held the member (SD-020).
+The stale check, the recipient check and the leak check read the replica's copy of the Network state. The claim transaction locks the stored state. After the checks that read the stored rows, it claims a row only when the stored version is still the version of the copy; otherwise the row waits with the same provider key and without its person-cap slot. A runtime drain whose copy is not the stored version loads the stored state before its checks, and a drain that ends with such a copy loads it and drains once more. A copy whose unit failed before its save has no known version. Changed 2026-11-19: a replica sent from an old copy after another replica closed the item or held the member (SD-020). Changed 2026-11-21: a drain ran its checks on an old copy before it loaded the stored state, so an opt-out or hold that another replica had lifted ended a row for good; the drain now loads the stored state first.
 
 ```quint
 type ViewCheck = ViewCurrent | ViewChanged

@@ -119,6 +119,25 @@ pure def sometimesLineContinues(gate: LineGate): bool =
   gate.phase == LineContinue and not(gate.banned) and not(gate.underage)
 ```
 
+### Every app leave gets one honest reply
+
+New rule on 2026-11-21 (audit SHA66): before, "leave <app>" from a number that was not a member of that app, or for an app that does not run on this backend, ended with no reply, so the person could repeat it or send STOP, which stops every app. Now a leave from a live member of the app removes that membership and gets the app's left reply. A live member is one the app's network routes this number to, or one whose stored membership is neither invited nor removed (a retry after the network member was cleaned up). A leave from anyone else gets one reply that says they are not in that app and that nothing changed; it writes no consent event and names no other app.
+
+```quint
+type LeaveReply = LeftAppReply | NotInAppReply
+pure def leaveReply(routedMember: bool, membershipInvited: bool, membershipRemoved: bool, hasMembership: bool): LeaveReply =
+  if (routedMember or (hasMembership and not(membershipInvited) and not(membershipRemoved))) LeftAppReply else NotInAppReply
+
+pure def lawStrangerHearsNotInApp(membershipInvited: bool, membershipRemoved: bool): bool =
+  leaveReply(false, membershipInvited, membershipRemoved, false) == NotInAppReply
+
+pure def lawInvitedOrRemovedHearsNotInApp(membershipInvited: bool, membershipRemoved: bool): bool =
+  (membershipInvited or membershipRemoved) implies leaveReply(false, membershipInvited, membershipRemoved, true) == NotInAppReply
+
+pure def lawRoutedMemberHearsLeft(membershipInvited: bool, membershipRemoved: bool, hasMembership: bool): bool =
+  leaveReply(true, membershipInvited, membershipRemoved, hasMembership) == LeftAppReply
+```
+
 ## Story: Join the apps I asked for from The Network
 
 > As a person who joined The Network with no app keyword, I want my answer to "what are you looking for?" to enroll me only in the apps I asked for.

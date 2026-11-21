@@ -19,10 +19,10 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
-    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates"]);
+    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "get_updates"]);
     for (const t of l.body!.result.tools) {
       // Profile submission and reading updates modify the person's own state.
-      const ro = !["submit_profile", "get_updates"].includes(t.name);
+      const ro = !["submit_profile", "get_updates", "prepare_signup"].includes(t.name);
       expect(t.annotations).toEqual({ title: expect.any(String), readOnlyHint: ro, destructiveHint: false, idempotentHint: ro, openWorldHint: false });
       expect(t.inputSchema.additionalProperties).toBe(false);
     }
@@ -83,7 +83,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const future = await rpc(env, NTWRK, "initialize", { protocolVersion: "2030-01-01", capabilities: {} }, { modern: false });
     expect(future.body!.result.protocolVersion).toBe("2025-11-25");
     const list = await rpc(env, NTWRK, "tools/list", {}, { modern: false, headers: { "mcp-protocol-version": "2025-06-18" } });
-    expect(list.body!.result.tools).toHaveLength(6);
+    expect(list.body!.result.tools).toHaveLength(7);
     const tool = await call(env, NTWRK, "app_info", {}, { modern: false });
     expect(tool.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
   });
@@ -172,13 +172,13 @@ describe("surface=openai hides slop", () => {
 });
 
 describe("no tool accepts a phone number or a code", () => {
-  test("no tool takes a name, age or contact field; all unlisted fields are refused", async () => {
+  test("only the authenticated draft accepts a first name/home city; all unlisted fields are refused", async () => {
     const env = setup();
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     for (const url of [NTWRK, OPENAI, `${origin("slop.date")}/mcp`]) {
       for (const t of (await rpc(env, url, "tools/list")).body!.result.tools) {
-        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : ["app"]);
-        expect(JSON.stringify(t.inputSchema)).not.toMatch(/phone|code|otp|name|age|birth/i);
+        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "prepare_signup" ? ["app", "firstName", "homeCity"] : ["app"]);
+        expect(JSON.stringify(t.inputSchema)).not.toMatch(t.name === "prepare_signup" ? /phone|code|otp|age|birth|orientation|gender/i : /phone|code|otp|name|age|birth/i);
       }
     }
     const sends = env.provider.sent.length;

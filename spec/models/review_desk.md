@@ -14,6 +14,8 @@ The browser calls the [staff review controller](../staffReview.md) for selected 
 
 Compared again 2026-11-19: `review.tsx`, `store.ts` and `admin.tsx` have not changed since the 2026-11-18 comparison; the server side (`ConsentNetwork.decide`, `reviewBlock`, `POST /review/:oppId` with its required revision) still agrees with `serverApply`. The only new code is the launch scope of the matching switch, which this model leaves out (see OUTSIDE THE MODEL).
 
+Compared again 2026-11-21 (audit COV08): `review.tsx` (`ReviewQueue`, `onKey`, `approveBlock`, `act`, `ReviewActions`), `store.ts` (`decide`, `canAct`, `canReview`), `admin.tsx` (`Config`) and the generated `staffReview` controller have not changed since 2026-11-19. On the server, `POST /review/:oppId` (`service.ts`, role reviewer, a required integer revision) and `ConsentNetwork.decide` and `reviewBlock` (`network.ts`) still agree with `serverApply`: the deadline first (`review_expired`, and the item expires), then `review_stale` for another revision, then `reviewBlock` (a minor, declined or unknown participant, or matching paused, refuses approve and edit). Three server refusals are outside the model and do not change its traces: `note_required` (the page asks for the note first, `requireReviewNote`), and `staff_review_required` and `gathering_repeat_fixed_pair` for a monthly gathering repeat, which this model's queue does not hold. The key handler uses `store.canReview()` (reviewer role) and `approveBlock` uses `store.canAct()`; the model has one constant `CAN_ACT` for both. The key-repeat defect below is still in the code (`onKey` reads no `e.repeat`).
+
 Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`ReviewQueue`, `onKey`) does not ignore key-repeat events. A held `a` approves the selected card. When the accepted answer moves the selection, the next repeat event approves the next card. `repeatNeverDecides` states the rule. It is not part of `safety`; `heldKeyDecidesTest` replays the defect.
 
 ```quint
@@ -67,6 +69,8 @@ Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`Re
 //     "on" outside it). This model's network is inside its scope; staff_console models the refusal.
 //   - The approval re-check after approve (approvalCheck, review_invalidated) and edit leak checks
 //     (editBlock). The model keeps decision "approve" with the version it was approved at.
+//   - The server refusals note_required (the page asks for the note first), staff_review_required and
+//     gathering_repeat_fixed_pair (monthly gathering repeats, not in this queue). Compared 2026-11-21.
 module review_desk {
 
   // ---------------------------------------------------------------- constants

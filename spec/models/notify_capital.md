@@ -57,18 +57,18 @@ Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.
 // the delivery id hash, recordDelivery (one transaction, locks the pending items in id order, refuses
 // a known id or a notified, seen or expired item: SD-150), stillNeeded, the recipient (first member
 // with an address, The Network first, proactiveAllowed true), the ledger built with reader: false.
-// OPEN: the model keeps the fixed behavior of the source branch; the code on this branch lacks these
-// fixes, so they are code defects, not model drift:
-//  - Notifier.recordSent runs addItem and recordDelivery in two transactions (SD-151). A throw or a stop
-//    between them leaves a Network text's item pending until the next projection; a scheduler dispatch in
-//    that window texts it again [noRepeatOfNetworkText].
-//  - runtime.ts start() replays network.capital_events `order by t, id`; the table has no seq column
-//    (SD-153) [the capital replay invariants].
-//  - capitalWiring.onLedger returns nothing; the unit stores every emitted capital event (writeUnit) and
-//    the live ledger records it only after the commit, so an event the ledger refuses is still stored
-//    (SD-156).
-// Not compared in full: Part B ledger rules against packages/capital (they now come from the generated
-// capitalLedger spec); the model's ledger actions were left as they are.
+// CLOSED in the code on this branch (2026-11-21, checked in the code; the model keeps the fixed behavior):
+//  - SD-151: Notifier.recordSent calls PgNotifyStore.addDelivered, which inserts the item, the net:<id> delivery
+//    and notified_at in one transaction [noRepeatOfNetworkText]
+//    (packages/network/test/notify-recorded-text.integration.test.ts).
+//  - SD-153: migration 0074 adds network.capital_events.seq; runtime.ts start() replays `order by seq`.
+//  - SD-156: capitalWiring.onLedger answers whether the ledger took the event, and writeUnit stores only the
+//    events it took, in emit order (packages/network/test/capital-ledger.integration.test.ts).
+//  - SD-150 (cap part, found by this model): PgNotifyStore.recordDelivery checks the weekly cap again
+//    under a lock of the person, so two overlapping replicas cannot both record a counting digest
+//    [schedulerRespectsCap] (packages/notify/test/wiring.test.ts "SD-150").
+// OPEN (not compared): the Part B ledger actions were not compared with spec/capitalLedger.md or packages/capital
+// on this branch; they are left as they were imported. Only Part A and the capital persistence were compared.
 module notify_capital {
 
   // ================================================================================================
@@ -232,7 +232,7 @@ module notify_capital {
   // The re-read before record (scheduler.ts:178-183): keep items still unseen and unnotified. With
   // fewer items the plan is rebuilt (a new id, a new surface choice) for the recipient read again
   // (directory.get, scheduler.ts:181); with no recipient left the plan is cancelled (scheduler.ts:182).
-  // The cap is not checked again.
+  // The cap is checked again when the plan is recorded (recordDelivery).
   action reread(r: str, target: str): bool = {
     val x = rep.get(r)
     val fresh = x.items.filter(s => items.get(s).exists and not(items.get(s).seen) and items.get(s).notified == "")
@@ -251,13 +251,16 @@ module notify_capital {
   // recordDelivery for the scheduler's delivery, one transaction (scheduler.ts:186-191,
   // pg-store.ts deliveryIn). SD-150 fix a66f44e: it locks the items (select for update) and records
   // nothing when the delivery id exists, or an item is gone or already notified. dispatch then
-  // cancels the plan (scheduler.ts:191).
+  // cancels the plan (scheduler.ts:191). SD-150 cap fix (spec/notificationDispatch.md
+  // digestWithinWeeklyCap): under a lock of the person, a counting digest is recorded only while the
+  // counted deliveries are under the cap.
   action recordDelivery(r: str): bool = {
     val x = rep.get(r)
     val open = x.items.forall(s => items.get(s).exists and items.get(s).notified == "")
+    val withinCap = not(x.counts) or capCount < CAP
     all {
       x.phase == "checked",
-      if (ntf.keys().contains(x.items) or not(open)) all {
+      if (ntf.keys().contains(x.items) or not(open) or not(withinCap)) all {
         rep' = rep.set(r, IDLE), ntf' = ntf, items' = items,
       } else all {
         rep' = rep.set(r, { ...x, phase: "recorded" }),
@@ -455,14 +458,10 @@ module notify_capital {
       and queue.keys().exists(k => k.contains(s))))
 
   // scheduler.ts:6-7 and PRD 32.9: at most weeklyCap counting scheduler texts in 7 days.
-  // NOT IN `safety`: SD-150, residual found by this model after a66f44e. The fix stops one item in
-  // two texts, but two overlapping replicas still pass the cap: r1 plans {3}; item 4 arrives; r2
-  // plans {3,4} (the cap check sees no delivery yet); r1 records {3}; r2's re-read keeps {4} and
-  // dispatch rebuilds the plan without a new cap check (scheduler.ts:182-183), so {4} is recorded
-  // and sent too. Run test `replicaRebuildCapTest`. It needs two overlapping replicas (deploy/backend/backend.ts:454-455
-  // says replicas may overlap and relies on the delivery id, which does not stop this case) and a
-  // Notifier.add producer (none in production), so no production path reaches it today.
-  // A fix (a cap check when dispatch rebuilds a plan) needs its own failing integration test.
+  // Was the SD-150 residual found by this model after a66f44e: r1 plans {3}; item 4 arrives; r2 plans
+  // {3,4}; r1 records {3}; r2's re-read keeps {4} and the rebuilt plan was recorded with no new cap
+  // check. Holds since recordDelivery checks the cap under a lock of the person (replicaRebuildCapTest;
+  // packages/notify/test/wiring.test.ts "SD-150").
   val schedulerRespectsCap: bool =
     sentRows.filter(k => queue.get(k).proactive).size() <= CAP
 
@@ -498,6 +497,7 @@ module notify_capital {
   val notifySafety: bool = and {
     oneNotifyTextPerItem,
     noRepeatOfNetworkText,
+    schedulerRespectsCap,
     signalsKeptForPending,
     everyNetworkTextInInbox,
   }
@@ -1038,9 +1038,8 @@ module notify_capital {
       .then(all { queueSend(Set(3)), capitalUnchanged })
       .expect(and { oneNotifyTextPerItem, schedulerRespectsCap, safety })
 
-  // SD-150 residual (cap part, see schedulerRespectsCap): r2's re-read runs after r1's record, so
-  // dispatch rebuilds r2's plan with {4} and records it without a new cap check. Each item is in
-  // one text (the SD-150 fix holds), but two counting texts go out with a cap of 1.
+  // SD-150 cap part (fixed): r2's re-read runs after r1's record, so dispatch rebuilds r2's plan
+  // with {4}; the record refuses it because r1's counting digest used the cap of 1. Item 4 stays pending.
   run replicaRebuildCapTest =
     initWith("notify", "active")
       .then(all { notifyAdd(3, false), capitalUnchanged })
@@ -1050,12 +1049,12 @@ module notify_capital {
       .then(all { reread("r1", "imessage"), capitalUnchanged })
       .then(all { recordDelivery("r1"), capitalUnchanged })
       .then(all { reread("r2", "imessage"), capitalUnchanged })
+      .expect(rep.get("r2").items == Set(4))
       .then(all { recordDelivery("r2"), capitalUnchanged })
+      .expect(and { rep.get("r2").phase == "idle", ntf.keys() == Set(Set(3)), pending == Set(4) })
       .then(all { enqueue("r1"), capitalUnchanged })
-      .then(all { enqueue("r2"), capitalUnchanged })
       .then(all { queueSend(Set(3)), capitalUnchanged })
-      .then(all { queueSend(Set(4)), capitalUnchanged })
-      .expect(and { oneNotifyTextPerItem, not(schedulerRespectsCap), safety })
+      .expect(and { oneNotifyTextPerItem, schedulerRespectsCap, safety })
 
   // SD-095 (skipped): the queue refuses the text (person cap, consent); the delivery still counts
   // and the item stays notified, so no later text carries it. Only through Notifier.add.

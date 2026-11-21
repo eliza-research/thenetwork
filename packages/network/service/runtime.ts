@@ -85,7 +85,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, WAITING, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { GATEWAY_WAITING, NOT_SENT, WAITING, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { StateView } from "./state-view.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
@@ -870,6 +870,12 @@ export class NetworkRuntime {
       return [{ key: probeReplyReceiptKey(opp.id, member.id, slot), id: slot.probeReceiptId ?? formerInvite?.deliveryId ?? null,
         member_id: member.id, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: false }];
     });
+    for (const member of state.members) {
+      const ended = member.endedProbe;
+      if (!ended || ended.told) continue;
+      pending.push({ key: ended.receiptKey, id: ended.receiptId ?? null, member_id: member.id, opportunity_id: ended.oppId,
+        opened_at: new Date(ended.sentAt).toISOString(), plan: !!ended.plan });
+    }
     const members = new Map(state.members.map(member => [member.id, member]));
     for (const opp of state.opps) {
       if (!opp.plan || !opp.planRun || (opp.stage !== "probing" && opp.stage !== "scheduled")) continue;
@@ -1445,16 +1451,19 @@ export class NetworkRuntime {
    */
   private async drainQueue() {
     let ds: Delivery[];
+    const current = () => this.scoped(tx => this.view.isCurrent(tx));
+    const reload = () => this.store.withLock(async () => {
+      const s = await this.store.load();
+      if (s) this.net.importState(s);
+      this.unit = newUnit();
+      this.view.imported();
+    });
     try {
-      ds = await this.adapter.deliver([]);
       // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
-      if (!await this.scoped(tx => this.view.isCurrent(tx))) {
-        await this.store.withLock(async () => {
-          const s = await this.store.load();
-          if (s) this.net.importState(s);
-          this.unit = newUnit();
-          this.view.imported();
-        });
+      if (!await current()) await reload();
+      ds = await this.adapter.deliver([]);
+      if (!await current()) {
+        await reload();
         ds = [...ds, ...await this.adapter.deliver([])];
       }
     } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
@@ -1471,7 +1480,7 @@ export class NetworkRuntime {
     await this.storeStatuses(ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id));
     await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
       where m.app_id = ${this.app.id} and m.direction = 'outbound' and o.app_id = m.app_id and o.id = m.id and o.member_id = m.member_id
-      and m.status = any(${tx.array(WAITING_STATUSES, "TEXT")}) and o.status <> all(${tx.array(WAITING, "TEXT")})`);
+      and m.status = any(${tx.array([...WAITING_STATUSES, ...GATEWAY_WAITING], "TEXT")}) and o.status <> all(${tx.array([...WAITING, ...GATEWAY_WAITING], "TEXT")})`);
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */

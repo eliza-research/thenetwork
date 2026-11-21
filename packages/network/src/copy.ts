@@ -117,6 +117,7 @@ export function copyFor(b: CopyBrand) {
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
   /** A late answer to an expired probe (spec/probeReply.md): it ended, and nothing about the member was shared. */
   probeEnded: "That invitation has closed, so I didn't share anything about you. I'll keep an eye out for another.",
+  probeVoided: "That plan changed before you answered, so I didn't count your answer or share anything about you. If the new plan fits, I'll ask you about it.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
   dayOfCheckIn: (when: string, venue: string) => `Still good for ${when} at ${venue}? Tell me if you're running late or can't make it.`,
   /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */
@@ -193,6 +194,7 @@ export function copyFor(b: CopyBrand) {
   shareDone: "Done. I'll reuse the interests you confirmed before. Nothing else is shared.",
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
+  notInApp: `You're not in ${b.name}, so there is nothing to leave and nothing changed. Other apps you use with this number are not affected.`,
   };
 }
 export type Copy = ReturnType<typeof copyFor>;

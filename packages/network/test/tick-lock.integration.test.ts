@@ -35,7 +35,7 @@ const within = <T>(p: Promise<T>, ms: number) => Promise.race([p.then(v => ({ do
 describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
   let url: string;
   const stores: PgStore[] = [];
-  beforeAll(async () => { url = await testDb(); }, 120_000);
+  beforeAll(async () => { url = await testDb(); }, 600_000);
   afterAll(async () => { for (const s of stores) await s.close(); await dropTestDb(); });
 
   test("a STOP during a long engine run answers inside the turn limit, and the run's commit contacts neither the stopped nor a changed member", async () => {

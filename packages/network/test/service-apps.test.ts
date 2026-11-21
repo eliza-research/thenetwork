@@ -175,7 +175,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from network.messages where member_id = ${tm.id}`)).toBe(0);
     expect((await sql`select state from platform.memberships where member_id = ${tm.id}`)[0].state).toBe("removed");
     expect((await sql`select p.lowest_age from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${teen}`)[0].lowest_age).toBe(12);
-    expect(await text(s, clock, teen, "slop")).toBe("join_asked");
+    expect(await text(s, clock, teen, "slop")).toBe("under_age");
     expect(await text(s, clock, teen, "Lee 25")).toBe("under_age");
 
     // The shared line, no keyword, a stranger: they join The Network (founder decision 2). Nothing is stored before the age check.
@@ -424,7 +424,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const kid = newPhone();
     expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
     expect(await text(s, clock, kid, "Kid, 12", { app: FR })).toBe("under_age");
-    expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
+    expect(await text(s, clock, kid, "hi", { app: FR })).toBe("under_age");
     expect(await text(s, clock, kid, "Kid, 19", { app: FR })).toBe("under_age");
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.age_floor where lowest_age = 12`)).toBe(1);
@@ -709,7 +709,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     });
     if (!first.ok) throw new Error(`Fixture signup failed: ${first.error}`);
     const owner = { e164: oldNumber, personId: first.membership.personId };
-    expect(await second.accounts.startNumberChange(app, owner, newNumber, async () => true)).toEqual({ ok: true });
+    expect(await second.accounts.startNumberChange(app, owner, newNumber, true, async () => true)).toEqual({ ok: true });
     const rt = s.runtimeFor(FR)!;
     const run = rt.unitOfWork.bind(rt);
     let successor: string | undefined;

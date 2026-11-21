@@ -2,8 +2,8 @@
 // Item ids are bigserial numbers stored as text ids "inb_<n>" in the API.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { digestItemSetCanBeRecorded } from "../../core/src/generated/notificationDispatch.ts";
-import type { DeliveryRecord, NotifyStore } from "./store.ts";
+import { digestItemSetCanBeRecorded, digestWithinWeeklyCap } from "../../core/src/generated/notificationDispatch.ts";
+import { WEEK_MS, type DeliveryRecord, type NotifyStore } from "./store.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
 import { isAssistant, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
@@ -135,11 +135,15 @@ export class PgNotifyStore implements NotifyStore {
       const ids = tx.array(numIds(d.itemIds), "int8");
       const sentAt = new Date(d.sentAt);
       if (d.deliveryId.startsWith("ntf_")) {
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`notify-cap:${d.personId}`}, 0))`;
         const pending = await tx`
           select id from notify.inbox_items where person_id = ${d.personId} and id = any(${ids})
             and seen_at is null and notified_at is null and (expires_at is null or expires_at > ${sentAt})
           order by id for update`;
         if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+        const [counted] = await tx`select count(*)::int as n from notify.deliveries
+          where person_id = ${d.personId} and counts_toward_cap and sent_at >= ${new Date(d.sentAt - WEEK_MS + 1)}`;
+        if (!digestWithinWeeklyCap(d.countsTowardCap, Number(counted?.n ?? 0), d.weeklyCap ?? 0)) return false;
       }
       const ins = await tx`
         insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at, assistant_link)

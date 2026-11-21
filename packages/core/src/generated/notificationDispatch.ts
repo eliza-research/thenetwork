@@ -88,6 +88,19 @@ export function digestItemSetCanBeRecorded(itemCount: number, pendingOwnedCount:
 
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
+export function digestWithinWeeklyCap(countsTowardCap: boolean, countedSends: number, weeklyCap: number): boolean {
+  return !countsTowardCap || countedSends < weeklyCap;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
+//@ pure
+export function lawRecordedCountingDigestStaysUnderCap(countedSends: number, weeklyCap: number): boolean {
+  //@ ensures \result === true
+  return !digestWithinWeeklyCap(true, countedSends, weeklyCap) || exact_notificationDispatch(countedSends + 1) <= weeklyCap;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
+//@ pure
 export function canRecordDigest(digest: DigestFlow): boolean {
   return digest.phase === "ReusingDigest" || digest.phase === "RebuildingDigest";
 }
@@ -257,4 +270,10 @@ export function parseState(x: unknown): DigestFlow | undefined {
 export function initialHolds(): DigestFlow {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_notificationDispatch(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

@@ -100,3 +100,91 @@ pure def staffMemberAccess(roles: List[str], realMode: bool): MemberAccess =
   else if (roles.includes("reviewer")) OpenReviewMember
   else MemberRefused
 ```
+
+## Story: Take a gate or safety step in the console as myself
+
+> As a staff member, I want to verify an employer, keep postings, review home help, member invitations, agent signals, privacy requests and held relay items in the console, so that the step needs my own role and the audit names me, not a shared token.
+
+### Each console staff step needs the role that its staff route needs
+
+New rule (2026-11-21, audit PER35): these steps were raw staff-port calls with a shared token, so the console now offers them and checks the person's own role before it forwards a step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal and held relay items need the safety role. Member invitations and reading agent signals need the reviewer or safety role. Admin passes every check. A posting or employer step exists only on peon. A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count.
+
+```quint
+type StaffStep = ReadPostings | SavePosting | ClosePosting | VerifyEmployer | ReadHomeHelp | DecideHomeHelp
+  | ReadMemberInvitations | DecideMemberInvitation | SeedInvitations | VerifyMember | InviteMember
+  | ReadAgentSignals | DecideAgentSignal | OpenPrivacyRequest | ConfirmPrivacyRequest | ReplayPrivacy
+  | ReadHeldRelay | DecideHeldRelay
+
+pure def staffStepRoles(staffStep: StaffStep): List[str] =
+  match staffStep {
+    | ReadPostings => List("reviewer")
+    | SavePosting => List("admin")
+    | ClosePosting => List("admin")
+    | VerifyEmployer => List("admin")
+    | ReadHomeHelp => List("safety")
+    | DecideHomeHelp => List("safety")
+    | ReadMemberInvitations => List("reviewer", "safety")
+    | DecideMemberInvitation => List("reviewer", "safety")
+    | SeedInvitations => List("admin")
+    | VerifyMember => List("safety")
+    | InviteMember => List("admin")
+    | ReadAgentSignals => List("reviewer", "safety")
+    | DecideAgentSignal => List("safety")
+    | OpenPrivacyRequest => List("admin")
+    | ConfirmPrivacyRequest => List("admin")
+    | ReplayPrivacy => List("admin")
+    | ReadHeldRelay => List("safety")
+    | DecideHeldRelay => List("safety")
+  }
+
+pure def staffStepEveryApp(staffStep: StaffStep): bool =
+  match staffStep {
+    | OpenPrivacyRequest => true
+    | ConfirmPrivacyRequest => true
+    | ReplayPrivacy => true
+    | _ => false
+  }
+
+pure def staffStepOffered(staffStep: StaffStep, appName: str): bool =
+  match staffStep {
+    | ReadPostings => appName == "peon"
+    | SavePosting => appName == "peon"
+    | ClosePosting => appName == "peon"
+    | VerifyEmployer => appName == "peon"
+    | _ => true
+  }
+
+pure def staffStepAdmitted(staffStep: StaffStep, appName: str, appRoles: List[str], globalRoles: List[str]): bool =
+  staffStepOffered(staffStep, appName) and
+    allowedByRole(if (staffStepEveryApp(staffStep)) globalRoles else appRoles, staffStepRoles(staffStep))
+
+pure def lawEveryAppStepNeedsGlobalAdmin(staffStep: StaffStep, appName: str, appRoles: List[str], globalRoles: List[str]): bool =
+  (staffStepEveryApp(staffStep) and staffStepAdmitted(staffStep, appName, appRoles, globalRoles)) implies globalRoles.includes("admin")
+
+pure def lawStepWithoutAppRoleRefused(staffStep: StaffStep, appName: str, globalRoles: List[str]): bool =
+  not(staffStepEveryApp(staffStep)) implies not(staffStepAdmitted(staffStep, appName, List(), globalRoles))
+
+pure def lawEmployerVerificationOnlyOnPeon(appName: str, appRoles: List[str], globalRoles: List[str]): bool =
+  staffStepAdmitted(VerifyEmployer, appName, appRoles, globalRoles) implies appName == "peon"
+
+pure val appNameValues = Set("peon", "slop", "ntwrk")
+pure val appRolesValues = Set(List(), List("admin"), List("reviewer"), List("safety"), List("analyst"))
+pure val globalRolesValues = Set(List(), List("admin"), List("safety"), List("reviewer", "safety"))
+```
+
+### The staff API takes a console step only from a named person
+
+New rule (2026-11-21, audit PER35): a shared role token recorded itself as the reviewer of record, so a step could change a gate or a safety state without a person on the audit row. When the service has a console token, it refuses every console staff step whose actor the console did not name in `X-Network-Staff-Id`. The console names the signed-in person and never takes the name from the browser. A service without a console token, as in development or a test harness, has no way to name a person, so it records its token.
+
+```quint
+type StepActor = NamedReviewer | SharedToken
+
+pure def staffStepActorAccepted(consoleConfigured: bool, actor: StepActor): bool =
+  actor == NamedReviewer or not(consoleConfigured)
+
+pure def lawConsoleServiceRefusesSharedToken(actor: StepActor): bool =
+  staffStepActorAccepted(true, actor) implies actor == NamedReviewer
+
+pure def lawNamedReviewerAlwaysAccepted(consoleConfigured: bool): bool =
+  staffStepActorAccepted(consoleConfigured, NamedReviewer)
+```

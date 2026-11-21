@@ -330,10 +330,15 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const t = setup();
     const [A, B, D, E] = ["+12125550187", "+12125550188", "+12125550189", "+12125550190"];
     const b = t.browser(); await b.login(A); await t.join(b);
-    // A banned new number: refused after the code, with the review answer.
+    const F = "+12125550198";
+    expect((await b.call("POST", "/api/me/phone/start", { phone: F })).status).toBe(200);
+    await store.ban({ id: `ban_nc_${process.pid}_3`, scope: "phone", personId: null, phoneHash: t.api.accounts.phoneHash(F), reason: "test", reportId: null, bannedBy: "staff", at: t.now() });
+    expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(F) })).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(await store.findPhone(F)).toBeUndefined();
     await store.ban({ id: `ban_nc_${process.pid}_1`, scope: "phone", personId: null, phoneHash: t.api.accounts.phoneHash(B), reason: "test", reportId: null, bannedBy: "staff", at: t.now() });
-    expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
-    expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(await b.call("POST", "/api/me/phone/start", { phone: B })).toEqual({ status: 200, body: { ok: true } });
+    expect(t.sends.filter(x => x === B)).toEqual([]);
+    expect((await b.call("POST", "/api/me/phone/confirm", { code: "123456" })).body.ok).toBe(false);
     expect(await store.findPhone(B)).toBeUndefined();
     // A banned person cannot start (a new number would escape a ban by phone).
     const d = t.browser(); await d.login(D); await t.join(d);

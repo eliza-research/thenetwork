@@ -39,7 +39,7 @@ function contract(name: string, make: () => Promise<NotifyStore>) {
 
     test("deliveries: once per id, mark items notified, cap window, outcomes", async () => {
       const a = (await s.addItem({ ...base, personId: "c3", subjectId: "a" }, T0)).item;
-      const d = { deliveryId: "ntf_c3a", personId: "c3", itemIds: [a.id], target: "imessage" as const, countsTowardCap: true, sentAt: T0 + 100 };
+      const d = { deliveryId: "ntf_c3a", personId: "c3", itemIds: [a.id], target: "imessage" as const, countsTowardCap: true, sentAt: T0 + 100, weeklyCap: 2 };
       expect(await s.recordDelivery(d)).toBe(true);
       expect(await s.recordDelivery(d)).toBe(false);
       expect((await s.getItems([a.id]))[0]).toMatchObject({ notifiedAt: T0 + 100, deliveryId: "ntf_c3a" });

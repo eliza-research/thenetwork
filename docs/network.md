@@ -80,7 +80,7 @@ Tests (local Postgres, a database per test process):
 
 - `test/service.test.ts`: dry-run replies to signed webhooks, retries and strangers, STOP and HELP, an under-13 decline, review through the API after a restart and the next tick's probe, two instances that never tick at once, and no Blooio send without the live flags.
 - `test/service-apps.test.ts`: per-app copy, joins by text, under-age and invite-only answers, keyword routing and `platform.app_lines`, the link notice and SHARE, STOP, STOP ALL and START, leave, the person cap, the per-app live flags, staff roles per app, and the public API (join two apps, stop, export, leave, delete everything).
-- `test/crossapp.test.ts`: a two-app world (ntwrk and friends) with shared people and planted canaries. No canary or member id of one app reaches the other app's messages, review queue, opportunities, events, snapshot or health. A block made on ntwrk keeps the pair apart on buddies.
+- `test/crossapp.test.ts`: a two-app world (ntwrk and friends) with shared people and planted canaries. No canary or member id of one app reaches the other app's messages, review queue, opportunities, events, snapshot or health. A block made on ntwrk keeps the pair apart on friends.
 
 ### 1.3 Apps (the `app` option)
 
@@ -142,7 +142,7 @@ Every opportunity waits in a review queue before any member hears about it. This
 | Setting | Value | Where |
 |---|---|---|
 | Default mode | `"human"`, always. The member count never changes the mode. | `reviewMode()` |
-| Simulator mode | `"auto"`: a simulated reviewer (`sim_auto_reviewer`) approves each queued item. Experiments, scenarios and tests ask for it explicitly. It is never the default. Production must refuse it (runbook-real 7.1). | `NetworkOptions.review` |
+| Simulator mode | `"auto"`: a simulated reviewer (`sim_auto_reviewer`) approves each queued item. Experiments, scenarios and tests ask for it explicitly. It is never the default. Staging and production refuse it (`NETWORK_REVIEW_MODE`, deploy.md 2.3). | `NetworkOptions.review` |
 | No review | There is no "off" mode. PRD 32.8 keeps review on for the whole MVP. Above 1,000 members, only a category that held the precision gate for 4 weeks may move to sampled review. Sampled review needs a founder-approved option. It is not built. | - |
 | SLA | 12 hours; 1 hour for a same-day opportunity | `reviewSlaHours` |
 | Missed SLA | The item expires (`review_expired`). Nobody is contacted. It is never sent late. | `advance()` |
@@ -288,7 +288,7 @@ engine proposal / member request / plans / second encounter / newcomer welcome
 - **No time in common.** When the others named times and none of them can still work (each is less than 12 hours away, or this member turned it down), the opportunity closes quietly: `no_common_time { oppId, memberId }` and the counter `noCommonTime`. The partner is then not probed at all, and a partner who says "neither" to the picked times gets "No problem." instead of a retry.
 - **"Neither" gets one more try.** A member who says yes but picks no time gets other times once, as a direct reply (a `scheduling` message with `timeOptions`). The retry never repeats a time anyone turned down. A second "neither" keeps the yes; the plan is then set at the time that suits them best from the other member's picks (never one they turned down).
 - **A requester with a strong fit** is not asked yes or no (they asked). They get one question first: which of the times works for them. Their picks are what the other person is offered. A requester with a partial fit gets a confirm-probe with the times.
-- A probe expires 26 hours after it went out. A probe that cannot go out (the member's send window never opens, section 6.4) expires after 2 days unsent. Before a probe goes out, the Network checks again that the member is in New York this week.
+- A probe expires 48 hours after it went out; a Slop probe and a time question expire after 24 hours. A probe that cannot go out (the member's send window never opens, section 6.4) expires after 2 days unsent. Before a probe goes out, the Network checks again that the member is in New York this week.
 - When a participant says no, does not answer, or cannot be contacted, an alternate takes their place (at most 3 swaps). A group of 3 or more continues without them. Otherwise the opportunity closes quietly. No member learns who said no.
 
 ### 4.2 The booked plan (the reveal with an opt-out)
@@ -357,7 +357,7 @@ The engine's planner (`plans`, `DEFAULT_PLANS`, plans-v1.1.0 in `packages/engine
 | Review | Each plan is one review item (origin `planner`). No plan reaches a member before approval. |
 | Probe | An anonymous plan probe (`meta.type` `"plan_probe"`): the activity, the area, the time options. No names. A probe the engine cannot build without a leak (`buildPlanProbe` returns null) is not sent and counts as a no. |
 | Plan lane | At most one plan invite a day for a member, in the send window. Members on the plan allowance get at most 1 plan invite per 7 days (`planLedger`, a plan-only ledger). Plan invites count for the two-unanswered pause and the Blooio streak. They never count on the intro cap (6.4). |
-| Answers | Silence for 26 hours after a probe counts as a no. Alternates from the reviewed list fill in. |
+| Answers | Silence for 48 hours after a probe (24 hours on Slop) counts as a no. Alternates from the reviewed list fill in. |
 | Booking | The plan books at quorum. Anyone booked elsewhere within 4 hours (`BOOKING_GAP`) is dropped first. Names appear only after quorum, in the booked plan: the people, the time, the public place, and "everyone pays their own way". A late yes can join until 6 hours before. Booked plans count as away when the Network picks a time for an intro. |
 | Falls short | `planFallback`: a smaller plan, a public event, or next week. "That plan didn't come together this time." goes into the member's next message. Nobody learns who declined. |
 | After | "How was X, and would you do it again with this group?" Members who both say yes get a `would_interact_again` link. Crew detection uses those links. A crew is offered once, and members opt in. Weekly crew sessions are reviewed like any plan and handed off after 3. |
@@ -622,7 +622,7 @@ The copy follows PRD 12.4: short, one question, an easy no, opt-out on first con
 | # | Finding | Recommendation |
 |---|---|---|
 | 1 | `welcome` says the agent will "suggest a person or plan". It does not say that a person reviews suggestions first. | Add "a person on our team checks every suggestion first" while review is on. It sets expectations for the delay. |
-| 2 | `requestAck` promises "within a day". With a 12-hour review SLA and a 26-hour probe, a fulfilled request takes a median of 21-30 hours in the simulator. | Say "in the next day or two". |
+| 2 | `requestAck` promises "within a day". With a 12-hour review SLA and the 26-hour probe of that time (the probe window is now 48 hours, and 24 hours for a Slop probe or a time question: spec/probeDispatch.md), a fulfilled request takes a median of 21-30 hours in the simulator. | Say "in the next day or two". |
 | 3 | `probe` puts the reason in parentheses at the end. The reason is the strongest part of the ask. | Lead with it: "Someone near Greenpoint also wants a climbing partner. Up for a session this weekend? Yes or no is all I need." Test the change with a probe-yes A/B in the pilot, not in the simulator (the simulator ignores wording). |
 | 4 | `booked` (the booked plan, which replaced `reveal`) gives "First L.", the time, the place and the reason, but no way to see more. | Add "Reply WHO to hear a bit more about them" once the member web profile exists (32.17). Not before. |
 | 7 | `booked` ends with "Reply if you can't make it." A member who answers with the one word "cancel" is opted out of everything (STOP keyword), not only out of the plan. | Keep the wording away from "cancel". Decide with the STOP/HELP owner (section 11) whether a bare "cancel" inside an open booked plan should cancel the plan instead. |

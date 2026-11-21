@@ -54,6 +54,12 @@ export function acceptanceEndsRow(phase, receiptOwner, member) { return M.accept
 export function lawFailedAcceptanceRecordsNoSend(phase) { return M.lawFailedAcceptanceRecordsNoSend(phase); }
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
 export function lawReceiptOwnerEndsNonMemberRow(phase) { return M.lawReceiptOwnerEndsNonMemberRow(phase); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function gatewayReplyPhase(pastLimit) { return M.gatewayReplyPhase(pastLimit); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function lawGatewayReplyEndsOnlyPastLimit(pastLimit) { return M.lawGatewayReplyEndsOnlyPastLimit(pastLimit); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function lawExpiredGatewayReplyKeepsSlot(pastLimit) { return M.lawExpiredGatewayReplyKeepsSlot(pastLimit); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

@@ -315,6 +315,21 @@ describe("banned numbers", () => {
     expect(env.provider.sent.length).toBe(sends);
     expect(flow.location).toBeNull();
   });
+
+  test("AE-2 a banned number reaches the code limit at the same start as any number, and still gets no code", async () => {
+    const pages = async (phone: string) => {
+      const env = setup();
+      await env.people.ban({ id: "ban_ae2", scope: "phone", personId: null, phoneHash: env.accounts.phoneHash(PHONE_A), reason: "staff", reportId: null, bannedBy: "staff:1", at: env.clock.t });
+      const reg = await register(env, PEON);
+      const limited: boolean[] = [];
+      for (let i = 0; i < 4; i++) limited.push((await browserFlow(env, PEON, reg.body.client_id, phone)).html.includes("Too many codes were asked for"));
+      return { limited, sent: env.provider.sent.filter(s => s.e164 === phone).length };
+    };
+    const banned = await pages(PHONE_A), plain = await pages(PHONE_B);
+    expect(banned.limited).toEqual([false, false, false, true]);
+    expect(banned.limited).toEqual(plain.limited);
+    expect([banned.sent, plain.sent]).toEqual([0, 3]);
+  });
 });
 
 describe("the person's consent records", () => {

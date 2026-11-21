@@ -54,3 +54,23 @@ pure def lawOrdinaryCounterFollowsPlatformCutoff(lastAt: int, platformCutoff: in
 pure def lawStopHintCounterStaysInWindow(lastAt: int, platformCutoff: int): bool =
   lastAt >= platformCutoff - stopHintWindowMs implies not(stopHintCounterPastRetention(lastAt, platformCutoff))
 ```
+
+### Finished profile suggestions leave after the platform cutoff
+
+A rejected, expired or withdrawn profile suggestion has no text, but it still keeps its source, kind and connection. Remove it when its batch expired strictly before the platform cutoff. A pending or accepted suggestion stays: an accepted one links a saved fact that a later disconnect or delete must find. A batch with no suggestion left is removed at the same cutoff. Changed 2026-11-21: this rule is new, because finished suggestion rows had no purge (SD-376); the window is the platform window of two days, counted from the batch expiry.
+
+```quint
+pure def suggestionRetentionCutoff(now: int): int = now - platformKeepMs
+pure def suggestionFinished(status: str): bool =
+  status == "rejected" or status == "expired" or status == "withdrawn"
+pure def suggestionPastRetention(status: str, batchExpiresAt: int, cutoff: int): bool =
+  suggestionFinished(status) and rowBeforeCutoff(batchExpiresAt, cutoff)
+pure def batchPastRetention(remaining: int, batchExpiresAt: int, cutoff: int): bool =
+  remaining == 0 and rowBeforeCutoff(batchExpiresAt, cutoff)
+
+pure def lawLiveSuggestionStays(batchExpiresAt: int, cutoff: int): bool =
+  not(suggestionPastRetention("proposed", batchExpiresAt, cutoff))
+    and not(suggestionPastRetention("accepted", batchExpiresAt, cutoff))
+pure def lawBatchWithSuggestionsStays(remaining: int, batchExpiresAt: int, cutoff: int): bool =
+  remaining > 0 implies not(batchPastRetention(remaining, batchExpiresAt, cutoff))
+```

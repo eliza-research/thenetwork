@@ -833,6 +833,10 @@ export class RealSource implements DataSource {
     return this.afterAction(await this.service.safety(actor, a));
   }
 
+  staffStep(actor: string, method: "GET" | "POST", path: string, body: Record<string, unknown> | undefined) {
+    return this.service?.staffStep(actor, method, path, body);
+  }
+
   get gatheringServiceAvailable() { return this.service !== undefined; }
 
   /** Authoring remains exclusively on the Network service. */

@@ -117,8 +117,6 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     if (!event.recipientAvailable) flow.recipient = undefined;
     else if (event.destinationChanged) flow.recipient = { ...flow.recipient, to: "+12125553002" };
     // The plan's own build read the signals; only the dispatch's rebuild, record and enqueue wait from here.
-    // The plan's build already set `rebuilt`; only a signals read after the re-read is the dispatch's rebuild.
-    flow.rebuilt = false;
     flow.armed = new Set(["signals", "record", "enqueue"]);
     await progress(flow);
     return "accepted";
@@ -179,14 +177,16 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
   }
 
   async function reset() {
+    const failures: unknown[] = [];
     for (const flow of flows.values()) {
       flow.armed.clear();
       while (flow.waiting) await progress(flow);
-      await flow.run?.catch(() => {});
+      await flow.run?.catch(error => failures.push(error));
     }
     flows.clear();
     await sql`delete from notify.deliveries`;
     await sql`delete from notify.inbox_items`;
+    if (failures.length > 0) throw new AggregateError(failures, "A dispatch failed during the journey");
     return null;
   }
 

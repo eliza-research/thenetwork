@@ -7,6 +7,8 @@ export type PhotoDeliveryPhase = "PhotoWaiting" | "PhotoApproved";
 export interface PhotoDelivery { phase: PhotoDeliveryPhase; expiresAt: number; boundAction: boolean; actionKey: string; boundIntent: boolean; intentKey: string; hasDeadline: boolean; deliveryUntil: number }
 /** Story: Choose the photo to relay in the conversation / A photo request delivers an approved choice, lists the photos, or records the named photo (spec/photoRelayItem.md) */
 export type PhotoRelayEntry = "DeliverApprovedPhoto" | "OfferPhotoChoices" | "RecordPhotoChoice" | "AskForPhotosFirst" | "PhotoRelayOff" | "PhotoChoiceUnknown";
+/** Story: Choose the photo to relay in the conversation / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+export type PhotoWithdrawal = "PhotoWithdrawn" | "NoPhotoToWithdraw";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -158,6 +160,39 @@ export function lawChoiceStaysInsideTheList(relayOn: boolean, approvedReady: boo
 export function lawNothingChosenWhenRelayIsOff(photoCount: number, choice: number, offerLive: boolean, offerSize: number): boolean {
   //@ ensures \result === true
   return photoRelayEntryFor(false, false, photoCount, choice, offerLive, offerSize) === "PhotoRelayOff";
+}
+
+/** Story: Choose the photo to relay in the conversation / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+//@ pure
+export function photoItemWithdrawable(ownItem: boolean, sameMatch: boolean, open: boolean): boolean {
+  return ownItem && sameMatch && open;
+}
+
+/** Story: Choose the photo to relay in the conversation / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+//@ pure
+export function photoWithdrawalFor(withdrawn: number): PhotoWithdrawal {
+  return withdrawn > 0 ? "PhotoWithdrawn" : "NoPhotoToWithdraw";
+}
+
+/** Story: Choose the photo to relay in the conversation / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+//@ pure
+export function lawOnlyOwnItemsAreWithdrawn(sameMatch: boolean, open: boolean): boolean {
+  //@ ensures \result === true
+  return !photoItemWithdrawable(false, sameMatch, open);
+}
+
+/** Story: Choose the photo to relay in the conversation / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+//@ pure
+export function lawOnlyThisMatchIsWithdrawn(ownItem: boolean, open: boolean): boolean {
+  //@ ensures \result === true
+  return !photoItemWithdrawable(ownItem, false, open);
+}
+
+/** Story: Choose the photo to relay in the conversation / A withdrawal by text revokes the member's open photo items for the match (spec/photoRelayItem.md) */
+//@ pure
+export function lawNothingWithdrawnSaysSo(withdrawn: number): boolean {
+  //@ ensures \result === true
+  return !(withdrawn <= 0) || photoWithdrawalFor(withdrawn) === "NoPhotoToWithdraw";
 }
 
 /** Do the rules allow this event in this state? */

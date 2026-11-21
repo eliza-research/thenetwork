@@ -205,7 +205,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(await banned.json()).toEqual({ ok: true });
       release();
       expect((await joining).body).toMatchObject({ ok: false, error: "review" });
-      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "restricted" });
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "removed" });
+      expect(await s.accounts.optedIn("friends", phone)).toBe(false);
       expect(await memberOf("friends", phone)).toBeUndefined();
     } finally {
       release();
@@ -547,7 +548,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await staff(s, "rev-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).status).toBe(403);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
     expect(await (await upload()).json()).toEqual({ ok: false, error: "not_verified" });
+    // spec/photoRetention.md, "Only a live adult member keeps photos and a rating": the failed check also erases the photos.
+    expect(readdirSync(dir)).toHaveLength(0);
+    expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "pass", note: "staff review" })).json()).toEqual({ ok: true });
+    expect((await upload()).status).toBe(200);
     // A 16-year-old member (13+ may join slop): verified or not, never photos.
     web.forget("slop");
     await web.login("slop", kid);
@@ -588,6 +593,86 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
   }, T);
+  // spec/photoRetention.md, "Only a live adult member keeps photos and a rating"
+  test("DELETE PHOTOS by text erases the photos and the rating; a crash after a lower age or a failed age check is finished by the retention tick", async () => {
+    await fresh();
+    const dir = mkdtempSync(join(tmpdir(), "svc-photo-sweep-")); dirs.push(dir);
+    const clock = new SimClock(START);
+    const rater: PhotoRater = { id: "fake", rate: async () => ({ face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }) };
+    const { s, otp, directs } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
+    const web = site(s, clock, otp);
+    const upload = async () => (await (await web.call("slop", "POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "image/jpeg", "x-photo-consent": PHOTO_CONSENT.version })).json()) as { ok: boolean };
+    const photosOf = async (member: string) => (await sql`select count(*)::int as n from platform.photos ph join network.members m on m.person_id = ph.person_id and m.app_id = 'slop' where m.id = ${member}`)[0].n as number;
+    const ratingsOf = async (member: string) => (await sql`select count(*)::int as n from network.facets where member_id = ${member} and id = ${`${member}:appearance`}`)[0].n as number;
+    const joined = async (name: string) => {
+      web.forget("slop");
+      const phone = newPhone();
+      await web.login("slop", phone);
+      expect((await web.join("slop", 30, name)).status).toBe(200);
+      const id = (await memberOf("slop", phone))!.id;
+      expect((await upload()).ok).toBe(true);
+      expect([await photosOf(id), await ratingsOf(id)]).toEqual([1, 1]);
+      return { phone, id };
+    };
+    const ana = await joined("Ana");
+    expect(await text(s, clock, ana.phone, "DELETE PHOTOS")).toBe("handled");
+    expect(directs.filter(d => d.to === ana.phone).at(-1)?.body).toBe("I deleted your photo and the private rating made from it.");
+    expect([await photosOf(ana.id), await ratingsOf(ana.id)]).toEqual([0, 0]);
+    expect(await text(s, clock, ana.phone, "delete my photos")).toBe("handled");
+    expect(directs.filter(d => d.to === ana.phone).at(-1)?.body).toBe("You have no photos with me.");
+    expect(PHOTO_CONSENT.text).toContain("DELETE PHOTOS");
+    const di = await joined("Di");
+    await web.login("friends", di.phone);
+    expect((await web.join("friends", 30, "Di")).status).toBe(200);
+    await text(s, clock, di.phone, "friends");
+    const routed = async (body: string) => ((await (s as any).route({ kind: "message", from: di.phone, text: body })) as { app: string }).app;
+    expect(await routed("DELETE PHOTOS")).toBe("friends");
+    expect(await text(s, clock, di.phone, "DELETE PHOTOS")).toBe("handled");
+    expect(directs.filter(d => d.to === di.phone).at(-1)?.body).toBe("I deleted your photo and the private rating made from it.");
+    expect([await photosOf(di.id), await ratingsOf(di.id)]).toEqual([0, 0]);
+    const bo = await joined("Bo");
+    await sql`update platform.people p set lowest_age = 16 from network.members m where m.id = ${bo.id} and m.person_id = p.id`;
+    const cy = await joined("Cy");
+    await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+      values ('slop', ${`${cy.id}:verify:age`}, ${cy.id}, 'fact', 'age check failed', ${sql.array(["verify:age:fail"], "TEXT")}, 'agent_private', 'vouched', 'staff', 0.95, 'confirmed', ${new Date(clock.now())})`;
+    expect([await photosOf(bo.id), await ratingsOf(bo.id), await photosOf(cy.id), await ratingsOf(cy.id)]).toEqual([1, 1, 1, 1]);
+    await s.purge();
+    expect([await photosOf(bo.id), await ratingsOf(bo.id), await photosOf(cy.id), await ratingsOf(cy.id)]).toEqual([0, 0, 0, 0]);
+    expect(readdirSync(dir)).toHaveLength(0);
+  }, T);
+
+  // spec/photoRetention.md, "Only a live adult member keeps photos and a rating"
+  test("an upload that lands between the photo erasure of a leave and the end of the membership is erased by the next retention tick", async () => {
+    await fresh();
+    const dir = mkdtempSync(join(tmpdir(), "svc-photo-leave-")); dirs.push(dir);
+    const clock = new SimClock(START);
+    const rater: PhotoRater = { id: "fake", rate: async () => ({ face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }) };
+    const { s, otp } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    await web.login("slop", phone);
+    expect((await web.join("slop", 30, "Eve")).status).toBe(200);
+    const member = (await memberOf("slop", phone))!.id;
+    const person = (await s.accounts.personFor(phone))!.id;
+    const photoRows = async () => (await sql`select count(*)::int as n from platform.photos where person_id = ${person}::uuid`)[0].n as number;
+    const ratingRows = async () => (await sql`select count(*)::int as n from network.facets where app_id = 'slop' and (id = ${`${member}:appearance`} or source = 'photo_rater')`)[0].n as number;
+    const svc = s as unknown as { forget: (...a: unknown[]) => Promise<unknown> };
+    const forget = svc.forget.bind(s);
+    let late: { ok: boolean } | undefined;
+    svc.forget = async (...a: unknown[]) => {
+      late = await s.photos.upload(person, "slop", jpeg(), PHOTO_CONSENT.version);
+      return forget(...a);
+    };
+    expect((await web.json("slop", "POST", "/api/me/delete", { scope: "app" })).status).toBe(200);
+    svc.forget = forget;
+    expect(late?.ok).toBe(true);
+    expect((await s.people.getMembership(person, "slop"))?.state).not.toBe("active");
+    expect(await photoRows()).toBe(1);
+    await s.purge();
+    expect([await photoRows(), await ratingRows()]).toEqual([0, 0]);
+    expect(readdirSync(dir)).toHaveLength(0);
+  }, T);
+
   // spec/photoRating.md, "Write only after the returned score passes a fresh authority check"
   test("the private member rating follows the latest photos and clears on failed age or a minor age in any app", async () => {
     await fresh();
@@ -797,7 +882,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const person = (await restarted.s.accounts.personFor(phone))!;
     expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
     expect(await restarted.s.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
-    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
   }, T);
 
   test("an automatic hard hold committed after leave admission survives the atomic forget", async () => {

@@ -75,6 +75,18 @@ const banPhone = (phone: string) => st.svc.people.ban({
   reason: "owned fixture", reportId: null, bannedBy: "fixture", at: st.clock.now(),
 });
 const adult = { firstName: "Ari", age: "29", homeCity: "nyc" };
+const draftRows = async (phone: string, app: AppId) => Number(((await sql`select count(*)::int as n from oauth.signup_drafts
+  where phone_key = ${st.svc.publicApi.accounts.phoneHash(phone)} and app_id = ${app}`)[0] as { n: number }).n);
+
+async function saveDraft(app: AppId, phone: string, b: Browser) {
+  const c = await authorize(app, b);
+  const verified = await confirmPhone(app, b, c.rid, phone);
+  const token = await allow(app, b, c, verified.html);
+  const saved = toolData(await rpc(st, app, "/mcp", "tools/call", { name: "prepare_signup", arguments: { firstName: "Ari", homeCity: "sf" } }, token));
+  expect(saved).toMatchObject({ prepared: true, app, next_step: expect.stringContaining("Finish signup") });
+  expect(await draftRows(phone, app)).toBe(1);
+  return token;
+}
 
 describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
   beforeAll(async () => {
@@ -205,6 +217,78 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     expect(await personOf(phone)).toBe(person);
     expect(await memberships(phone)).toEqual(["friends", "slop"]);
   }, T);
+
+  describe("spec/mcpSignupDraft.md, \"The signup result settles the draft\"", () => {
+    test("an adult's draft stays readable at Finish signup and is deleted when they join with corrected details", async () => {
+      const phone = newPhone(), b = new Browser();
+      await saveDraft("friends", phone, b);
+      const again = await authorize("friends", b);
+      const opened = await st.site("friends", "/oauth/authorize/signup", { browser: b, form: { rid: again.rid, decision: "open" } });
+      expect(opened.status).toBe(200);
+      expect(await draftRows(phone, "friends")).toBe(1);
+      const joined = await finishSignup("friends", b, again.rid, { ...adult, firstName: "Rae" });
+      expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
+      expect(await draftRows(phone, "friends")).toBe(0);
+      const member = (await sql`select ms.first_name from platform.memberships ms join platform.phone_identities ph on ph.person_id = ms.person_id where ph.e164 = ${phone} and ms.app_id = 'friends'`)[0] as { first_name: string };
+      expect(member.first_name).toBe("Rae");
+    }, T);
+
+    test("a 15-year-old's draft is used when they join, and they are never matched", async () => {
+      const phone = newPhone(), b = new Browser();
+      await saveDraft("friends", phone, b);
+      const again = await authorize("friends", b);
+      const joined = await finishSignup("friends", b, again.rid, { ...adult, firstName: "Kai", age: "15" });
+      expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
+      expect(await draftRows(phone, "friends")).toBe(0);
+      const member = (await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'friends' and ph.e164 = ${phone}`)[0] as { id: string };
+      const rt = [...st.svc.runtimes.values()].find(r => r.app.id === "friends")!;
+      expect(rt.net.member(member.id as never).minor).toBe(true);
+    }, T);
+
+    test("an under-13 age at Finish signup declines the join and deletes the draft", async () => {
+      const phone = newPhone(), b = new Browser();
+      await saveDraft("friends", phone, b);
+      const again = await authorize("friends", b);
+      const declined = await finishSignup("friends", b, again.rid, { ...adult, age: "12" });
+      expect(declined.res.status).toBe(400);
+      expect(declined.html).toContain("You can’t join this app at the age entered.");
+      expect(await draftRows(phone, "friends")).toBe(0);
+      expect(await personOf(phone)).toBeUndefined();
+    }, T);
+
+    test("a ban after the draft deletes it when Finish signup opens", async () => {
+      const phone = newPhone(), b = new Browser();
+      await saveDraft("friends", phone, b);
+      const again = await authorize("friends", b);
+      await banPhone(phone);
+      const opened = await st.site("friends", "/oauth/authorize/signup", { browser: b, form: { rid: again.rid, decision: "open" } });
+      expect(opened.status).toBe(400);
+      expect(await draftRows(phone, "friends")).toBe(0);
+    }, T);
+
+    test("another person's signup and a signup in a second app leave the draft alone", async () => {
+      const phone = newPhone(), b = new Browser();
+      await saveDraft("friends", phone, b);
+      const other = newPhone(), ob = new Browser();
+      const oc = await authorize("friends", ob);
+      await confirmPhone("friends", ob, oc.rid, other);
+      expect((await finishSignup("friends", ob, oc.rid, { ...adult, firstName: "Bo" })).res.status).toBe(200);
+      expect(await draftRows(phone, "friends")).toBe(1);
+      const slop = await authorize("slop", b);
+      expect((await confirmPhone("slop", b, slop.rid, phone)).html).toContain('action="/oauth/authorize/signup"');
+      expect((await finishSignup("slop", b, slop.rid, adult)).res.status).toBe(200);
+      expect(await draftRows(phone, "friends")).toBe(1);
+    }, T);
+
+    test("a draft past its ten minutes is deleted", async () => {
+      const phone = newPhone(), b = new Browser();
+      await saveDraft("friends", phone, b);
+      st.clock.advance(11 * 60_000);
+      const again = await authorize("friends", b);
+      expect(again.html).toContain('action="/oauth/authorize/signup"');
+      expect(await draftRows(phone, "friends")).toBe(0);
+    }, T);
+  });
 
   test("every link that any tool returns, on every app and surface, is a served route", async () => {
     const links = new Set<string>();

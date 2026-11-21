@@ -78,3 +78,22 @@ pure def lawNumberAskNeedsALiveMatch(liveMatches: int, asks: bool, everyAskNames
 pure def lawSeveralMatchesAreNotAbuse(liveMatches: int): bool =
   liveMatches > 1 implies numberAsk(liveMatches, true, true, false) == NumberAskOpens
 ```
+
+## Story: End the thread after a bad meeting
+
+> As a member who had a bad meeting, I want the other person to stop reaching me through Eliza without my having to block or report them.
+
+### Negative feedback after a meeting ends the relay thread
+
+A relay thread is open only while its match is mutual, both members said yes, and neither member gave negative feedback about the other after the meeting. Negative feedback is a check-in answer with negative sentiment that does not say the other person did not come: the same answer that keeps the pair from being matched again. When the thread ends, the match is no longer live in either direction: the shared context does not offer it, a relay request that names it gets the "match is closed" notice, a relay without a name does not count it, and a queued relay item for it fails its final dispatch check. A block or a report is not needed. New rule: negative feedback only kept the pair from new matches, and the other member could keep sending relayed texts until the member blocked them (audit OPP58).
+
+```quint
+pure def relayThreadOpen(mutual: bool, bothSaidYes: bool, negativeFeedback: bool): bool =
+  mutual and bothSaidYes and not(negativeFeedback)
+
+pure def lawNegativeFeedbackEndsTheThread(mutual: bool, bothSaidYes: bool): bool =
+  not(relayThreadOpen(mutual, bothSaidYes, true))
+
+pure def lawAnOpenThreadIsMutualWithBothYes(mutual: bool, bothSaidYes: bool, negativeFeedback: bool): bool =
+  relayThreadOpen(mutual, bothSaidYes, negativeFeedback) implies (mutual and bothSaidYes)
+```

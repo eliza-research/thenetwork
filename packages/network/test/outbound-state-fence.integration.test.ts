@@ -91,6 +91,25 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
     expect(await a.adapter.queue.statusOf("sd136-update")).toBe("delivered");
     await rtA.storeStatuses([{ id: "sd136-update", memberId: second!, status: "sent" }]);
     expect(await message("sd136-update")).toBe("delivered");
+
+    await sql`update network.messages set status='collected' where app_id=${app.id} and id='sd020-update'`;
+    await rtA.deliver();
+    expect(await message("sd020-update")).toBe("expired");
+
+    const version = async () => String((await sql`select xmin::text as v from network.network_state where id='friends:nyc'`)[0]?.v);
+    await a.adapter.queue.setLineSafety("review");
+    await rtA.unitOfWork(() => { rtA.unit.sends.push({ ...update("sd020-copy", 0), oppId: undefined }); });
+    expect(await message("sd020-copy")).toBe("retry_scheduled");
+    const saved = await version();
+    await rtB.unitOfWork(net => { net.importState(net.exportState()); });
+    expect(await version()).not.toBe(saved);
+    const copy = rtA.net.exportState();
+    rtA.net.importState({ ...copy, members: copy.members.map(m => m.id === first ? { ...m, optedOut: true } : m) });
+    await a.adapter.queue.setLineSafety(undefined);
+    clock.advance(HOUR);
+    await rtA.deliver();
+    expect(await a.adapter.queue.statusOf("sd020-copy")).toBe("sent");
+    expect(await message("sd020-copy")).toBe("sent");
   } finally {
     await a.service.close();
     await b.service.close();

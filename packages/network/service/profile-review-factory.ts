@@ -90,7 +90,7 @@ export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): Profile
           || (entry.turn.action === "collect" && (!Number.isSafeInteger(entry.turn.pendingExpiresAt)
             || entry.turn.pendingExpiresAt! > proof.pendingExpiresAt || entry.turn.pendingExpiresAt! <= o.now()))) return false;
         entry.sourceUntil = Math.min(entry.sourceUntil, proof.expiresAt);
-        return current(entry, tx);
+        return current(entry, tx) && { issuedAt: proof.issuedAt };
       } catch { return false; }
     },
   };

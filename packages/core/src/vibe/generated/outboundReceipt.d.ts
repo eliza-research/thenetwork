@@ -81,6 +81,12 @@ export declare function acceptanceEndsRow(phase: ReceiptPhase, receiptOwner: boo
 export declare function lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
 export declare function lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+export declare function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+export declare function lawGatewayReplyEndsOnlyPastLimit(pastLimit: boolean): boolean;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+export declare function lawExpiredGatewayReplyKeepsSlot(pastLimit: boolean): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: ReceiptLifecycle, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

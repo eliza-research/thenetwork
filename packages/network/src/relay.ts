@@ -25,7 +25,7 @@
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
 import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
-import { relayTarget, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
+import { relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
@@ -63,6 +63,7 @@ export interface RelayMatch {
   participants: [MemberId, MemberId];
   acceptedBy: MemberId[];
   status: RelayOpportunity["status"];
+  negativeFeedback: boolean;
   metAt?: number;
   /** For choosing the newest match. */
   at: number;
@@ -193,7 +194,7 @@ export class RelayDesk {
 
   /** The member's live matches (two people, both said yes, not closed), newest first. */
   liveMatches(from: MemberId): RelayMatch[] {
-    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)))
+    return this.host.matchesOf(from).filter(m => relayThreadOpen(m.status === "mutual", m.participants.every(p => m.acceptedBy.includes(p)), m.negativeFeedback))
       .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1));
   }
 

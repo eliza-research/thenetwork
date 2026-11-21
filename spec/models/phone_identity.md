@@ -60,6 +60,9 @@ Imported from `quint/phone_identity.qnt` at `30d950e`. See [model index](README.
 //     HELP and app leave"). These answers serve no code, join or member turn, so the model leaves them
 //     out (refuse covers them).
 //   - Age, invites, consent and rate limits are outside the model (join_age, auth_edge, turn_consent).
+//   - Sessions are outside the model. When a number gets a person (a join, an invitation or a number
+//     change, pg-store.ts createPerson and movePhone), its person-less sessions end: auth_edge
+//     (numberChange, invite) models that.
 //     A banned OTP start answers { ok: true } before OtpService.start, so no rate bucket counts it
 //     (auth_edge records that as a defect).
 //   - The keyed hash (phoneHash) is the identity function: it is injective for these keys.

@@ -23,7 +23,7 @@ The other CI checks: `ci.yml` runs every simulation block (`offline-core` and th
 
 ### E2E: restored
 
-| File | Result |
+| File | Result when restored |
 |---|---|
 | `tests/e2e/harness.ts` | Helper. Blooio import moved to `packages/blooio`. |
 | `tests/e2e/platform.e2e.test.ts` | 25 pass |
@@ -31,7 +31,7 @@ The other CI checks: `ci.yml` runs every simulation block (`offline-core` and th
 
 ### Integration: restored
 
-| File | Why integration | Result |
+| File | Why integration | Result when restored |
 |---|---|---|
 | `deploy/router.test.ts` | The site router with the platform's proxy signature, and the built Pages `_worker.js` | 31 pass |
 | `packages/mcp/test/mcp.test.ts` | The MCP server over Streamable HTTP on the real platform | 12 pass |

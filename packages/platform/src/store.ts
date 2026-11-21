@@ -7,6 +7,7 @@ import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPa
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
+import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src/generated/webSession.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -88,6 +89,8 @@ const rateKind = (bucket: string) => bucket.split(":", 1)[0]!;
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
+export interface RateBucket { key: string; windowMs: number }
+export interface RateBucketRead { used: number; prevAt: number | null }
 export interface RecordedMemberAge { personId: string | null; phoneHash: string }
 
 export interface PeopleStore {
@@ -99,7 +102,7 @@ export interface PeopleStore {
    * A person with their verified phone. A person who deleted everything with this phone (a tombstone
    * with the same keyed phone hash) comes back as the same person, so blocks made against them hold.
    */
-  createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }): Promise<Person>;
+  createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string; joiningSession?: string | null }): Promise<Person>;
   touchPhone(e164: string, at: number): Promise<void>;
   /** Put a number on hold for staff review (or clear the hold with null). */
   setPhoneHold(e164: string, hold: PhoneHold | null, at: number): Promise<void>;
@@ -115,7 +118,7 @@ export interface PeopleStore {
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
   /** Commit the exact member, opt-in and session binding if current ownership and bans allow enrollment. */
-  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean>;
+  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null): Promise<boolean>;
   restrictBannedMemberships(personId: string): Promise<void>;
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
@@ -158,8 +161,9 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
-  /** Sessions of a verified phone that had no person get the person after a join. */
-  attachPerson(e164: string, personId: string): Promise<void>;
+  rotateSession(tokenHash: string, e164: string, revokeAt: number, decide: (current: Session | undefined) => Session | undefined): Promise<void>;
+  attachPerson(e164: string, personId: string, joiningSession: string | null, at: number): Promise<void>;
+  endUnboundAccess(e164: string, phoneHash: string, at: number): Promise<void>;
 
   /**
    * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
@@ -167,6 +171,7 @@ export interface PeopleStore {
    * Returns the count with this hit (or the count so far when refused) and the last counted hit before it.
    */
   hit(bucket: string, windowMs: number, at: number, rule?: HitRule): Promise<HitResult>;
+  hitAll<T>(buckets: readonly RateBucket[], at: number, decide: (seen: RateBucketRead[]) => { count: boolean; value: T }): Promise<T>;
 
   /** Run fn while holding a lock on `key` (one holder per key across processes on Postgres). */
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
@@ -226,7 +231,7 @@ export class MemoryPeopleStore implements PeopleStore {
     return undefined;
   }
   async getPerson(id: string) { return this.people.get(id); }
-  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }) {
+  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string; joiningSession?: string | null }) {
     if (this.phones.has(p.e164)) throw new Error("phone already linked");
     const back = p.phoneHash ? [...this.personHash].find(([id, h]) => h === p.phoneHash && this.people.get(id)?.deletedAt !== null)?.[0] : undefined;
     const person: Person = back
@@ -236,6 +241,7 @@ export class MemoryPeopleStore implements PeopleStore {
     if (p.phoneHash) this.personHash.set(person.id, p.phoneHash);
     p = { ...p, id: person.id };
     this.phones.set(p.e164, { e164: p.e164, personId: p.id, verifiedAt: p.at, method: p.method, lastSeenAt: p.at, hold: null });
+    await this.attachPerson(p.e164, p.id, p.joiningSession ?? null, p.at);
     return person;
   }
   async touchPhone(e164: string, at: number) { const ph = this.phones.get(e164); if (ph) ph.lastSeenAt = at; }
@@ -262,7 +268,7 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null): Promise<boolean> {
     return this.withLock(`person-phone-binding:${m.personId}`, async () => {
       const owner = this.people.get(m.personId);
       const phone = this.phones.get(consent.e164);
@@ -273,7 +279,7 @@ export class MemoryPeopleStore implements PeopleStore {
       await this.unsuppress(phoneHash);
       await this.putMembership(m);
       await this.addConsent(consent);
-      await this.attachPerson(consent.e164, m.personId);
+      await this.attachPerson(consent.e164, m.personId, joiningSession, consent.at);
       return true;
     });
   }
@@ -361,10 +367,30 @@ export class MemoryPeopleStore implements PeopleStore {
     return true;
   }
 
-  async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
+  async putSession(s: Session) {
+    const phone = s.personId === null ? this.phones.get(s.e164) : undefined;
+    this.sessions.set(s.tokenHash, phone && unboundSessionTakesNewPerson(true, true) ? { ...s, personId: phone.personId } : { ...s });
+  }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
-  async attachPerson(e164: string, personId: string) { for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) s.personId = personId; }
+  async rotateSession(tokenHash: string, e164: string, revokeAt: number, decide: (current: Session | undefined) => Session | undefined) {
+    const current = this.sessions.get(tokenHash);
+    const next = decide(current && current.e164 === e164 ? { ...current } : undefined);
+    if (!next) return;
+    await this.revokeSession(tokenHash, revokeAt);
+    this.sessions.set(next.tokenHash, { ...next });
+  }
+  async attachPerson(e164: string, personId: string, joiningSession: string | null, at: number) {
+    for (const s of this.sessions.values()) {
+      if (s.e164 !== e164 || s.personId !== null) continue;
+      if (unboundSessionTakesNewPerson(true, s.tokenHash === joiningSession)) s.personId = personId;
+      else if (unboundSessionEnds(true, s.tokenHash === joiningSession)) await this.revokeSession(s.tokenHash, at);
+    }
+  }
+  async endUnboundAccess(e164: string, phoneHash: string, at: number) {
+    for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) await this.revokeSession(s.tokenHash, at);
+    await this.deletePending(phoneHash);
+  }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {
     const windowStart = at - (at % windowMs);
@@ -376,6 +402,16 @@ export class MemoryPeopleStore implements PeopleStore {
     }
     this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at });
     return { count: count + 1, prevAt, ok: true };
+  }
+
+  async hitAll<T>(buckets: readonly RateBucket[], at: number, decide: (seen: RateBucketRead[]) => { count: boolean; value: T }): Promise<T> {
+    const seen = buckets.map(b => {
+      const cur = this.limits.get(b.key), windowStart = at - (at % b.windowMs);
+      return { used: cur && cur.windowStart === windowStart ? cur.count : 0, prevAt: cur?.lastAt ?? null };
+    });
+    const d = decide(seen);
+    if (d.count) buckets.forEach((b, i) => this.limits.set(b.key, { windowStart: at - (at % b.windowMs), count: seen[i]!.used + 1, lastAt: at }));
+    return d.value;
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -430,6 +466,7 @@ export class MemoryPeopleStore implements PeopleStore {
       if (this.phones.has(m.newE164)) return "number_in_use";
       this.phones.delete(m.oldE164);
       this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
+      await this.attachPerson(m.newE164, m.personId, null, at);
       for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
       this.personHash.set(m.personId, m.newHash);
       this.suppression.delete(m.newHash);

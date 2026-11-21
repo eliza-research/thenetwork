@@ -2,7 +2,7 @@ name: Vibestack
 
 on:
   push:
-    branches: [main]
+    branches: [main, vibestack]
     paths:
       - 'spec/**'
       - 'packages/core/src/generated/**'
@@ -56,6 +56,7 @@ permissions:
 
 jobs:
   generation:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -72,6 +73,7 @@ jobs:
         run: pnpm run spec:check-generated
 
   browser:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -105,6 +107,8 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+    env:
+      REQUIRE_PG: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -116,6 +120,20 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - name: Put the Postgres client tools on PATH
+        run: |
+          bin="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
+          test -x "$bin/pg_ctl"
+          echo "$bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run spec:setup
-      - run: pnpm run check
+      - name: Initialize conformance Postgres
+        run: |
+          pg_isready -h localhost -p 54339
+          node --import tsx scripts/require-pg.ts
+          node --import tsx packages/observatory/db/dev-pg.ts up
+      - run: pnpm run connector:css
+      - name: Full check (the nightly profile on the schedule)
+        env:
+          PROFILE: ${{ github.event_name == 'schedule' && '--nightly' || '' }}
+        run: pnpm run check $PROFILE

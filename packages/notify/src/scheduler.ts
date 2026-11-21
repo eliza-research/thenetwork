@@ -23,7 +23,7 @@ import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText, composeThreadText } from "./compose.ts";
 import { assistantLink, buttonPageLink, updatePrompt } from "./links.ts";
 import { TOKEN_PATTERN } from "./reference.ts";
-import type { DigestAssistantLink, NotifyStore } from "./store.ts";
+import { WEEK_MS, type DigestAssistantLink, type NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
 import { newToken, TOKEN_TTL_MS, type TaskToken } from "./tokens.ts";
 import { isAssistant, type Assistant, type Channel, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
@@ -73,7 +73,6 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   rand: randomInt,
 };
 
-const WEEK_MS = 7 * 24 * 3600_000;
 
 export interface SendPlan {
   personId: string;
@@ -229,7 +228,7 @@ export class Notifier {
         record: final => this.store.recordDelivery({
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
           target: final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel,
-          countsTowardCap: final.countsTowardCap, sentAt: now,
+          countsTowardCap: final.countsTowardCap, sentAt: now, weeklyCap: this.cfg.weeklyCap,
           assistantLink: final.assistantLink,
         }),
         enqueue: async final => sink.enqueue({
@@ -326,7 +325,6 @@ export class Notifier {
    * An assistant called get_network_updates, or the member typed "updates" in the thread.
    * `callerPersonId` comes from the OAuth grant or the channel binding. With a token, only its
    * items; without, every unseen item; with `app`, only that app's. Everything returned is marked seen.
-   * `withheld` names selected items that are neither returned nor marked seen.
    */
   async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string,
     opts: { app?: string; visible?: (items: InboxItem[]) => Promise<InboxItem[]>; withheld?: (items: InboxItem[]) => InboxItem[] } = {}): Promise<InboxItem[]> {
@@ -344,7 +342,6 @@ export class Notifier {
     }
     if (!canRecordInboxSeen(read)) return [];
     const visible = opts.visible ? await opts.visible(items) : items;
-    // spec/connectorTools.md, "A withheld update stays unseen"
     const kept = new Set((opts.withheld?.(items) ?? []).map(i => i.id));
     const seen = new Set(await this.store.markSeen(callerPersonId, surface, now, items.filter(i => !kept.has(i.id)).map(i => i.id)));
     return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? visible.filter(i => seen.has(i.id)) : [];

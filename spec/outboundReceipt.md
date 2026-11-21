@@ -126,3 +126,16 @@ pure def lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): bool =
 pure def lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): bool =
   receiptRank(phase) > 0 implies acceptanceEndsRow(phase, true, false)
 ```
+
+### A gateway reply with no final receipt ends after the receipt deadline
+
+A reply that the gateway took in a signed turn waits for the turn receipt, as does a reply whose receipt said unknown. The gateway may have sent it, so the queue never sends it. When no accepted or rejected receipt came before the deadline of an unknown acceptance, counted from when the reply was collected, the reply ends as an expired acceptance (failed unknown). It keeps the history of the thread and returns no person-cap slot. Changed 2026-11-21: nothing ended such a reply (SD-100), so a reply whose receipt never came stayed open with no end.
+
+```quint
+pure def gatewayReplyPhase(pastLimit: bool): ReceiptPhase = if (pastLimit) AcceptanceExpired else AcceptanceUnknown
+
+pure def lawGatewayReplyEndsOnlyPastLimit(pastLimit: bool): bool =
+  (gatewayReplyPhase(pastLimit) == AcceptanceExpired) iff pastLimit
+
+pure def lawExpiredGatewayReplyKeepsSlot(pastLimit: bool): bool = not(returnsPersonSlot(gatewayReplyPhase(pastLimit)))
+```

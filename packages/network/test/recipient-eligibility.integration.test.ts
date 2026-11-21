@@ -124,6 +124,35 @@ describe("send-time recipient eligibility", () => {
     expect(w.net.recipientPolicy("c", "probe", { about: ["d", "b"] })).toEqual({ ok: false, reason: "blocked_pair" });
     expect(w.net.recipientPolicy("c", "probe", { about: ["b", "d"] })).toEqual({ ok: false, reason: "blocked_pair" });
   });
+
+  test("quiet hours defer an interruption and a logistics send, never a reply", async () => {
+    const w = new Mini([person("q", "Quinn Ash"), person("r", "Rae Lin")], { matchingEnabled: false, growth: false, plans: false });
+    await w.onboard("q", "r");
+    const night = Date.UTC(2026, 10, 8, 4);
+    const saved = w.net.exportState();
+    saved.deferred = [
+      { memberId: "q", body: "How did your week of climbing go?", meta: { type: "checkin" }, kind: "checkin", o: {}, timing: "slot" },
+      { memberId: "r", body: "Your climbing session moved to 7pm.", meta: { type: "info" }, kind: "reminder", o: {}, timing: "logistics" },
+    ];
+    w.net.importState(saved);
+    w.clock.set(night);
+
+    const asked = w.mark();
+    await w.say("r", "cancel my plan");
+    expect(w.to("r", asked).map(sent => sent.reply)).toEqual([true]);
+
+    const atNight = w.mark();
+    await w.net.tick(night);
+    expect(w.sent.slice(atNight)).toEqual([]);
+    expect(w.net.exportState().deferred.map(item => [item.memberId, item.kind])).toEqual([["q", "checkin"], ["r", "reminder"]]);
+
+    const morning = Date.UTC(2026, 10, 8, 15);
+    w.clock.set(morning);
+    const atMorning = w.mark();
+    await w.net.tick(morning);
+    expect(w.sent.slice(atMorning).map(sent => [sent.to, sent.body])).toEqual([["r", "Your climbing session moved to 7pm."]]);
+    expect(w.net.exportState().deferred.map(item => [item.memberId, item.kind])).toEqual([["q", "checkin"]]);
+  });
 });
 
 // The same verdict at the real send boundary: rows in the Postgres outbound queue (platform.outbound),
@@ -193,6 +222,13 @@ test.skipIf(!pgAvailable)("the persisted queue refuses each ineligible row with 
     await adapter.queue.drain();
     const [stored] = await sql<{ status: string; note: string | null }[]>`select status, note from platform.outbound where id=${ok.id}`;
     expect(["blocked_pair", "other_not_matchable", "minor", "held"]).not.toContain(stored?.note);
+
+    const info = { id: `eligible-info:${eve.id}`, memberId: eve.id, to: eve.e164, kind: "proactive" as const, text: "The climbing gym on Kent Ave opens early on Saturdays." };
+    await adapter.queue.enqueue(sql, [{ ...info, city: "nyc" }]);
+    await rt.unitOfWork(() => undefined);
+    const [sent] = await sql<{ status: string; note: string | null }[]>`select status, note from platform.outbound where id=${info.id}`;
+    expect(sent).toEqual({ status: "sent", note: null });
+    expect(calls.filter(call => call.idempotencyKey.endsWith(info.id)).map(call => [call.to, call.text])).toEqual([[eve.e164, info.text]]);
   } finally {
     await service.close();
     await sql.close();

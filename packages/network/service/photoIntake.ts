@@ -39,19 +39,25 @@ const LIVE = new Set(["active", "paused", "onboarding"]);
 /** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
   ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree and I will text you a private link to add them. Reply NO PHOTOS and I keep none.`,
-  link: (url: string) => `Here is your private link to add up to 4 photos, 4 MB each and 8 MB in all. It works once, for 15 minutes: ${url} To request a copy or deletion, email help@ntwrk.party.`,
-  agreed: "Thanks. To request a copy or deletion, email help@ntwrk.party.",
+  link: (url: string) => `Here is your private link to add up to 4 photos, 4 MB each and 8 MB in all. It works once, for 15 minutes: ${url} To delete your photos, text DELETE PHOTOS. To request a copy, email help@ntwrk.party.`,
+  agreed: "Thanks. To delete your photos, text DELETE PHOTOS. To request a copy, email help@ntwrk.party.",
   linkLimit: "You asked for several photo links today. Ask again tomorrow.",
   declined: "OK. I will not keep your photos.",
   stored: (n: number) => (n === 1 ? "Got it. I saved your photo privately." : `Got it. I saved ${n} photos privately.`),
   notAdult: "I can't keep photos for you here.",
   badPhoto: "I could not use that photo. Send a JPEG, PNG or WebP photo of up to 8 MB.",
-  tooMany: "You have the most photos I can keep. Email help@ntwrk.party to request deletion before sending more.",
+  tooMany: "You have the most photos I can keep. Text DELETE PHOTOS to delete them before you send more.",
+  deleted: (n: number) => (n === 1 ? "I deleted your photo and the private rating made from it." : `I deleted your ${n} photos and the private rating made from them.`),
+  noneToDelete: "You have no photos with me.",
 } as const;
 
 /** The explicit request for a photo upload link: "ADD PHOTOS" (also "add a photo", "upload photos"). */
 export function photoAddRequest(text: string): boolean {
   return /^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
+}
+
+export function photoDeleteRequest(text: string): boolean {
+  return /^\s*(?:delete|remove|erase)\s+(?:all\s+)?(?:of\s+)?(?:my\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
 }
 
 /** The explicit answer to the photo consent ask: "YES PHOTOS" or "NO PHOTOS" (a bare yes or no is never taken). */
@@ -192,6 +198,15 @@ export class PhotoIntake {
       return true;
     }
     await this.d.reply(e164, this.linkText(await this.d.links.issue(who.person.id, PHOTO_APP, "text")), `sys:${ref}`);
+    return true;
+  }
+
+  async deleteRequest(e164: string, text: string, ref: string): Promise<boolean> {
+    if (!photoDeleteRequest(text)) return false;
+    const person = await this.d.accounts.personFor(e164);
+    if (!person) return false;
+    const n = await this.d.photos.deleteFor(person.id);
+    await this.d.reply(e164, n ? PHOTO_TEXT.deleted(n) : PHOTO_TEXT.noneToDelete, `sys:${ref}`);
     return true;
   }
 

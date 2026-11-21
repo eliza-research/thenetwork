@@ -86,7 +86,7 @@ module relay {
   // ------------------------------------------------------------------------------------------ types
   type World = {
     now: int,
-    matchOpen: bool,          // relayMatchOf: stage scheduled or done, both said yes
+    matchOpen: bool,          // relayMatchOf: stage scheduled or done, both said yes, no negative feedback (relayThreadOpen)
     blocked: bool,            // a block edge in either direction
     optedOut: str -> bool,    // STOP, leave, removed membership
     trustHold: str -> bool,   // a safety hold (trust level hold, account status)
@@ -583,6 +583,7 @@ module relay {
     w' = w.with("blocked", true),
     desk' = desk, queue' = queue, ep' = ep, photo' = photo, g' = g,
   }
+  // A closed match, or negative feedback after the meeting (the avoid edge; spec/relayDecision.md, "Negative feedback after a meeting ends the relay thread").
   action closeMatch: bool = all {
     w.matchOpen,
     w' = w.with("matchOpen", false),

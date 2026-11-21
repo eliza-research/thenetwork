@@ -75,6 +75,26 @@ export function lawSeveralMatchesAreNotAbuse(liveMatches: number): boolean {
   return !(liveMatches > 1) || numberAsk(liveMatches, true, true, false) === "NumberAskOpens";
 }
 
+/** Story: End the thread after a bad meeting / Negative feedback after a meeting ends the relay thread (spec/relayDecision.md) */
+//@ pure
+export function relayThreadOpen(mutual: boolean, bothSaidYes: boolean, negativeFeedback: boolean): boolean {
+  return mutual && bothSaidYes && !negativeFeedback;
+}
+
+/** Story: End the thread after a bad meeting / Negative feedback after a meeting ends the relay thread (spec/relayDecision.md) */
+//@ pure
+export function lawNegativeFeedbackEndsTheThread(mutual: boolean, bothSaidYes: boolean): boolean {
+  //@ ensures \result === true
+  return !relayThreadOpen(mutual, bothSaidYes, true);
+}
+
+/** Story: End the thread after a bad meeting / Negative feedback after a meeting ends the relay thread (spec/relayDecision.md) */
+//@ pure
+export function lawAnOpenThreadIsMutualWithBothYes(mutual: boolean, bothSaidYes: boolean, negativeFeedback: boolean): boolean {
+  //@ ensures \result === true
+  return !relayThreadOpen(mutual, bothSaidYes, negativeFeedback) || (mutual && bothSaidYes);
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_relayDecision(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

@@ -153,7 +153,7 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     const itemSets = [items.slice(0, 2), items.slice(1)];
     const ids = itemSets.map(set => deliveryIdFor(r.personId, set));
     const recorded = await Promise.all(itemSets.map((itemIds, index) => store.recordDelivery({
-      deliveryId: ids[index]!, personId: r.personId, itemIds, target: "imessage", countsTowardCap: true, sentAt: now(),
+      deliveryId: ids[index]!, personId: r.personId, itemIds, target: "imessage", countsTowardCap: true, sentAt: now(), weeklyCap: 2,
     })));
 
     expect(recorded.filter(Boolean)).toHaveLength(1);
@@ -163,6 +163,43 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await store.getDelivery(ids[recorded[0] ? 1 : 0]!)).toBeUndefined();
   });
 
+
+  test("SD-150: two overlapping scheduler replicas record at most the weekly cap of counting digests", async () => {
+    const { now, store, queue, sink, sent: calls, r } = await setup();
+    const urgent = (subject: string) => ({ ...req(r.personId, subject, `Update ${subject}.`), urgency: "urgent" as const });
+    const cfg = { isQuiet: () => false, weeklyCap: 1, urgentDelayMs: 0 };
+    let reached!: () => void, release!: () => void;
+    const atGate = new Promise<void>(resolve => { reached = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let replicaB!: Notifier, runB!: Promise<Awaited<ReturnType<Notifier["dispatch"]>>>;
+    let gated = false;
+    const storeB = Object.assign(Object.create(store), {
+      getItems: async (ids: string[], lock?: boolean) => {
+        if (!gated) { gated = true; reached(); await gate; }
+        return store.getItems(ids, lock);
+      },
+    }) as PgNotifyStore;
+    let lookupsA = 0;
+    const replicaA = new Notifier(store, { get: async id => {
+      if (id !== r.personId) return undefined;
+      if (++lookupsA === 2) {
+        await replicaA.add(urgent("second"), now());
+        runB = replicaB.dispatch(now(), sink);
+        await atGate;
+      }
+      return r;
+    } }, cfg);
+    replicaB = new Notifier(storeB, { get: id => (id === r.personId ? r : undefined) }, cfg);
+    const { item: first } = await replicaA.add(urgent("first"), now());
+    const a = await replicaA.dispatch(now(), sink);
+    release();
+    const b = await runB;
+    expect(a.sent.map(plan => plan.itemIds)).toEqual([[first.id]]);
+    expect(b.sent).toEqual([]);
+    expect(await store.capSendsSince(r.personId, now() - 7 * 24 * 3600_000 + 1)).toEqual([now()]);
+    await queue.drain();
+    expect(calls.map(call => call.text)).toEqual(["Update first."]);
+  });
 
   test.each(["expired", "mixed", "erased", "left_app"] as const)("queued notification with %s content is suppressed", async mode => {
     const { clock, now, notifier, queue, sink, sent: calls, r } = await setup();

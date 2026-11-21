@@ -1,8 +1,9 @@
-import type { Event, WebhookTurn } from "../../packages/core/src/generated/webhookInbox.ts";
+import { type Event, type WebhookTurn, webhookAttemptLimit } from "../../packages/core/src/generated/webhookInbox.ts";
 import { SimClock } from "../../packages/core/src/clock.ts";
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import type { InboundMessage } from "../../packages/blooio/src/types.ts";
 import { Inbox } from "../../packages/network/service/inbox.ts";
+import { detectKeyword } from "../../packages/platform/src/consent.ts";
 import { withConformanceDatabases } from "./conformanceDatabase.ts";
 import { serveJourney } from "./serveJourney.ts";
 
@@ -11,8 +12,7 @@ import { serveJourney } from "./serveJourney.ts";
 // received through Inbox.receive, fails as many times as the event counts through Inbox.drain, and the next drain
 // selects it with the handler held open, so `RunningWebhook` is the shell waiting on the handler. A STOP row arrives
 // after an ordinary row that is still pending, so its completion has a row to cancel. An ordinary row that failed five
-// times is dropped and no drain selects it again; that start is refused. A negative count cannot come from the inbox, so
-// the worker writes it on the stored row and the drain must refuse to start the attempt. Completion is held by a
+// times is dropped and no drain selects it again; that start is refused. Completion is held by a
 // transaction that locks the row, so `CompleteWebhook` and `CancelEarlier` are a completion write that waits on the
 // lock; a failed completion write is that statement cancelled. The attempt count is read back from the row.
 
@@ -29,6 +29,7 @@ type Lane = {
   from: string;
   serial: number;
   stop?: boolean;
+  storedStop?: boolean;
   targetId?: string;
   failures: number;
   held?: Held;
@@ -74,8 +75,9 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
   /** Run `work` until the handler holds the target row open or the work ends; true when the row is held. */
   async function untilHeld(lane: Lane, work: () => Promise<unknown>): Promise<boolean> {
     const arrived = new Promise<true>(resolve => { lane.arrived = () => resolve(true); });
-    lane.attempt = work();
-    const held = await Promise.race([arrived, lane.attempt.then(() => false, () => false)]);
+    const attempt = work();
+    lane.attempt = attempt;
+    const held = await Promise.race([arrived, attempt.then(() => false)]);
     lane.arrived = undefined;
     return held;
   }
@@ -90,10 +92,10 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
       lane.failures = 0;
       return untilHeld(lane, () => lane.inbox.receive(target));
     }
-    lane.failures = Math.max(prior, 1);
+    if (prior < 0) throw new Error(`The inbox never stores a negative attempt count; the event asked for ${prior}`);
+    lane.failures = prior;
     const first = await lane.inbox.receive(target);
     if (first !== "retry_later") throw new Error(`A failed row answered ${first}`);
-    if (prior < 0) await lane.sql`update platform.inbound set attempts = ${prior} where id = ${rowId(lane)}`;
     for (let n = 1; n < prior; n++) await lane.inbox.drain();
     lane.failures = 0;
     return untilHeld(lane, () => lane.inbox.drain());
@@ -101,10 +103,15 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
 
   /** A start the drain refused leaves no attempt: remove the lane's rows so the key is queued again. */
   async function forget(lane: Lane) {
-    await lane.attempt?.catch(() => {});
+    await lane.attempt;
+    const [row] = await lane.sql<{ status: string; attempts: number }[]>`select status, attempts from platform.inbound where id = ${rowId(lane)}`;
+    if (!row) throw new Error("The refused row is missing");
+    if (lane.stop) throw new Error(`The drain refused to start a STOP row with ${row.attempts} attempts`);
+    if (row.status !== "failed" || row.attempts < webhookAttemptLimit) throw new Error(`The drain refused a row that is ${row.status} with ${row.attempts} attempts`);
     lane.attempt = undefined;
     lane.targetId = undefined;
     lane.stop = undefined;
+    lane.storedStop = undefined;
     await lane.sql`delete from platform.inbound where id like ${`msg:sim:${lane.from}-%`}`;
   }
 
@@ -145,14 +152,18 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
 
   async function turnOf(lane: Lane): Promise<WebhookTurn> {
     if (lane.targetId === undefined) return { phase: "WebhookQueued", attempts: 0, stopCommand: false };
-    const rows = await lane.sql<{ id: string; status: string; outcome: string | null; attempts: number }[]>`
-      select id, status, outcome, attempts from platform.inbound where id like ${`msg:sim:${lane.from}-%`} order by received_at`;
+    const rows = await lane.sql<{ id: string; status: string; outcome: string | null; attempts: number; text: string | null }[]>`
+      select id, status, outcome, attempts, event->'ev'->>'text' as text from platform.inbound
+      where id like ${`msg:sim:${lane.from}-%`} order by received_at`;
     const target = rows.find(row => row.id === rowId(lane));
     const earlier = rows.find(row => row.id !== rowId(lane));
     if (!target) throw new Error("The target row is missing");
-    const turn = (phase: WebhookTurn["phase"]): WebhookTurn => ({ phase, attempts: target.attempts, stopCommand: lane.stop === true });
+    if (target.text !== null) lane.storedStop = (keyword => keyword === "stop" || keyword === "stop_all")(detectKeyword(target.text));
+    const stopCommand = lane.storedStop;
+    if (stopCommand === undefined) throw new Error("The target row never stored its text");
+    const turn = (phase: WebhookTurn["phase"]): WebhookTurn => ({ phase, attempts: target.attempts, stopCommand });
     if (lane.held) return turn("RunningWebhook");
-    if (lane.writer !== undefined) return turn(lane.stop ? "CancelEarlier" : "CompleteWebhook");
+    if (lane.writer !== undefined) return turn(stopCommand ? "CancelEarlier" : "CompleteWebhook");
     switch (target.status) {
       case "done":
         if (target.outcome !== "handled") throw new Error(`The handled row stored ${target.outcome}`);
@@ -168,14 +179,16 @@ await withConformanceDatabases("webhook_inbox_conformance", LANES, async databas
   }
 
   async function reset() {
+    const failures: unknown[] = [];
     for (const lane of lanes.values()) {
       lane.held?.reject(new Error("journey reset"));
       lane.held = undefined;
-      if (lane.lock) await finish(lane).catch(() => {});
-      await lane.attempt?.catch(() => {});
+      const settled = lane.lock ? finish(lane) : lane.attempt;
+      await settled?.catch(error => failures.push(error));
       await lane.sql`delete from platform.inbound`;
     }
     lanes.clear();
+    if (failures.length > 0) throw new AggregateError(failures, "An inbox attempt failed during the journey");
     return null;
   }
 

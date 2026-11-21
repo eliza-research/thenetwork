@@ -31,35 +31,37 @@ Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) fo
 //    NetworkService.ageLowered runs finishUnderageCleanup for an age under 13 (beginUnderageCleanup
 //    deletes the pending rows and writes the join_declined opt-outs in one transaction, then each
 //    membership is forgotten). That is declineUnderAge for a phone with a person.
-//  - DEFECT JA-1 (HIGH, SD-010 open again): a text answer with an age and no name puts the age only on
-//    the pending join row (service.ts NetworkService.join: `if (ageCheck.phase === "AskForName")
-//    { await this.people.putPending({ ..., age, ... }) ... }`, no recordAge). pendingOf drops the row
-//    after PENDING_MS (a day), so "15" to slop.date, then a day later "Sam 25", joins a 15-year-old as an
-//    adult who can be matched. Breaks lowestWins and minorNeverMatched (sd010PendingAgeExpiresTest is
-//    the intended trace; ja1PendingAgeLostTest shows the failure with joinStepCode). Model: joinStep `not(name)`.
-//  - DEFECT JA-2 (HIGH): a text answer with an allowed age and a home city that the parser reads as
-//    invalid records no age and stores no pending row (service.ts NetworkService.join: `if
-//    (ageCheck.phase === "AskForHome") return requestHome();`, after checkTextJoinAge). "Sam 15, Boston"
-//    then "Sam 25, New York" joins a 15-year-old as an adult. Breaks lowestWins and minorNeverMatched.
-//    Model: joinStep `m.badHome` (it records the age); ja2BadHomeAgeLostTest shows the failure with joinStepCode.
-//  - DEFECT JA-3 (Q-join_age-2 open again): a repeated web join that passes (joinLocked, ReturnExisting)
-//    returns the membership without the join hook, so a web join that stopped after admitMembership
-//    answers success with no network member, on every retry. Model: webCheck `repeat`.
-//  - DEFECT JA-4 (SD-015 open again): when the web join hook fails after NetworkService.joined made the
-//    network member (welcomeJoined throws), joinLocked forgets only the platform membership and adds an
-//    opt-out; onForget does not run, so the network member stays. Model: webCatch.
-//  - DEFECT JA-5 (Q-join_age-3 open again): an under-13 web join from a phone with no person records only
-//    the age floor; the phone's pending text join (platform.pending_texts) stays until it expires.
+//  - JA-1 (SD-010) fixed on 2026-11-21: NetworkService.join records every stated age (recordAge, the
+//    generated recordStatedAge step of spec/textEnrollment.md) before the age check, the name question and
+//    the pending row, so "15" then, a day later, "Sam 25" joins at 15 (sd010PendingAgeExpiresTest).
+//    Model: joinStep `not(name)`.
+//  - JA-2 fixed on 2026-11-21: an allowed age with an invalid home city is recorded before the home-city
+//    question (the same recordStatedAge step), so "Sam 15, Boston" then "Sam 25, New York" joins at 15
+//    (ja2BadHomeAgeKeptTest). parseJoinText reads a delimited last segment that is not a known city, after
+//    a short name-and-age head ("Sam 15, Boston", "Sam, 15, Boston"), as an unsupported home, and drops a
+//    last segment of courtesy words ("Sam 15, thanks"), so the age is read in both. An undelimited
+//    "Sam 15 Boston" is still not read as an age: the bare-age rule refuses a number with two other
+//    words, so that a sentence never becomes an age. Model: joinStep `m.badHome` (the model's message
+//    carries the parsed age).
+//  - JA-1 follow-up on 2026-11-21: an age stated to an invite-only app (ntwrk on its own line) is recorded
+//    on the age floor before the invite-only reply (checkInvitation hasAge, recordStatedAge). Model:
+//    joinStep `inviteOnly`.
+//  - JA-3 (Q-join_age-2) fixed on 2026-11-21: a repeated web join of an active membership whose network
+//    member is missing (AccountHooks.memberExists) runs the join hook again (joinLocked AwaitingRepair,
+//    finishRepair) before it answers success. Model: webCheck `repeat`.
+//  - JA-4 (SD-015) fixed on 2026-11-21: when the web join hook fails, joinLocked (undoFailedJoin) runs
+//    onForget (the network member goes), forgets the membership and adds an opt-out, also for a review
+//    refusal (SIG68) and for a failed repair of a repeated join. Model: webCatch.
+//  - JA-5 (Q-join_age-3) fixed on 2026-11-21: an under-13 web join records the age floor, then
+//    endUnboundAccess deletes the phone's pending texts and ends its sessions with no person.
 //    Model: declineUnderAge with no person.
-//  - DEFECT JA-7 (HIGH, SD-315 open again; ff807e1 is not on this branch): a text with no age from a phone
-//    whose age floor is under 13 is not declined. service.ts NetworkService.join computes
-//    `age = lowestAge(said.age, p?.age)` and does not read the floor; it goes to `answer.phase ===
-//    "AskForAge"`, runs putPending with the name and sends the join question. The line gate does not stop
-//    it (checkLineAge runs only when memberId is set). Breaks under13StoresNothing. Model: joinStep
-//    `age < 0 and floorUnder` (the decline); ja7FloorUnder13PendingStoredTest shows the failure with joinStepCode.
-//  - DEFECT JA-6 (SD-127, low): a text join for a person whose membership of that app is already live
-//    (the address book has no member for it) makes a new member id, and putMembership replaces the live
-//    membership's member id. Model: memberStep (flag midReplaced).
+//  - JA-7 (SD-315) fixed on 2026-11-21: NetworkService.join reads the phone's lowest recorded age before
+//    it reads the answer (floorRefused in readJoinAnswer); a text with no age from a phone whose age floor
+//    is under the join age gets the decline and the pending join is deleted (sd315FloorUnder13DeclinedTest).
+//    Model: joinStep `age < 0 and floorUnder`.
+//  - JA-6 (SD-127) fixed on 2026-11-21: a text join keeps the member id of a membership that is invited or
+//    live (textJoinKeepsMemberId), so a join that runs again after the network member was lost keeps the
+//    id. Model: memberStep `kept` (flag midReplaced never set; sd127MemberIdKeptTest).
 //  - Not compared again on this branch (the model keeps the source-branch behaviour): the route rules
 //    (SD-488, Q-join_age-1, SD-179, SD-125, SD-038), the unit age writes (SD-011: runtime.ts unit.ages and
 //    recordedAges exist), the welcome and interview for minors (SD-213, SD-065, SD-066), the first-contact
@@ -360,10 +362,9 @@ module join_age {
     }
   }
 
-  // S:1384-1433 join: the decision. It ends the turn (ask, invite-only, under-13 floor) or starts the commits.
-  // `code` false is the intended rule (joinStep, in `step`). `code` true is what service.ts NetworkService.join
-  // does on this branch (joinStepCode, not in `step`): JA-1, JA-2 and JA-7 are its differences.
-  action joinStepWith(code: bool): bool = {
+  // NetworkService.join: the decision. It ends the turn (ask, invite-only, under-13 floor) or starts the
+  // commits. Compared with the code on 2026-11-21: every branch agrees (JA-1, JA-2 and JA-7 fixed).
+  action joinStep = {
     val a = turn.app
     val m = turn.msg
     val invited = db.mstate.get(a) == "invited"
@@ -381,11 +382,15 @@ module join_age {
     all {
       turn.pc == "join",
       if (inviteOnly) all {
-        db' = db, turn' = turn.with("pc", "done").with("replied", true).with("outcome", "invite_only"), g' = g1,
-      } else if (age < 0 and floorUnder and not(code)) all {
-        // SD-315, the intended rule: no age in the text and an age floor under 13: the decline, the pending
-        // join goes. DEFECT JA-7: the code (join(), AskForAge) does not read the floor; it stores the pending
-        // join with the name and asks for the age (the next two branches, with `code`).
+        // checkInvitation with hasAge, then recordStatedAge: an age stated to an invite-only app goes on the
+        // age floor before the invite-only reply; nothing else is stored.
+        db' = if (m.age >= 0) recordAge(db, m.age) else db,
+        turn' = turn.with("pc", "done").with("replied", true).with("outcome", "invite_only"),
+        g' = if (m.age >= 0) g1.with("everStated", g.everStated.union(Set(m.age))) else g1,
+      } else if (age < 0 and floorUnder) all {
+        // SD-315: no age in the text and an age floor under 13: the decline, the pending join goes
+        // (readJoinAnswer floorRefused, then RefuseAge). The model has no day clock: the code sends this
+        // decline at most once a day per number and app (sendAgeDecline); "replied" stands for the first.
         db' = db.with("pendJoin", NO_PEND),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "under_age"), g' = g1,
       } else if (age < 0 and m.badHome) all {
@@ -399,15 +404,14 @@ module join_age {
         db' = db, turn' = turn.with("pc", "j_under").with("age", age), g' = g1,
       } else if (m.badHome) all {
         // need_home with an age that passed: the intended rule records the age (a statement on every exit
-        // past the ban check), then the home-city question; no pending join. DEFECT JA-2: the code
-        // (join(), AskForHome after checkTextJoinAge) records no age here.
-        db' = if (code) db else recordAge(db, age),
+        // past the ban check), then the home-city question; no pending join (recordStatedAge, then
+        // checkTextJoinAge AskForHome).
+        db' = recordAge(db, age),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"),
         g' = g1.with("everStated", g.everStated.union(Set(age))),
       } else if (not(name)) all {
         // S:1428-1432: pending join with the age. SD-010: recordAge first, so the floor keeps it.
-        // DEFECT JA-1: the code (join(), AskForName) writes the age only on the pending row.
-        db' = (if (code) db else recordAge(db, age)).with("pendJoin", { has: true, app: a, age: age, name: false }),
+        db' = recordAge(db, age).with("pendJoin", { has: true, app: a, age: age, name: false }),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"),
         g' = g1.with("everStated", g.everStated.union(Set(age))),
       } else all {
@@ -419,10 +423,6 @@ module join_age {
       vol' = vol,
     }
   }
-  action joinStep = joinStepWith(false)
-  // The code's join decision on this branch (JA-1, JA-2, JA-7). Not in `step`: the model keeps the intended
-  // rule; ja1PendingAgeLostTest, ja2BadHomeAgeLostTest and ja7FloorUnder13PendingStoredTest show the failures.
-  action joinStepCode = joinStepWith(true)
 
   // S:1417-1424: under the join age: recordAge, declineUnderAge (SD-014, b6a1489), delete the pending join,
   // the decline.
@@ -642,7 +642,7 @@ module join_age {
   // A:352-370: a repeat join (an age statement), invite-only, the age check. An under_age answer runs
   // declineUnderAge (SD-014; on this branch through recordAge and onAgeLowered). A repeat join that passes
   // runs the join hook again (Q-join_age-2); the hook does nothing for an inactive membership or a network
-  // member that exists. DEFECT JA-3: joinLocked ReturnExisting runs no hook.
+  // member that exists (joinLocked AwaitingRepair, JA-3 fixed).
   action webCheck = {
     val a = turn.app
     val age = turn.age
@@ -704,19 +704,18 @@ module join_age {
       g' = if (dupMember(db, a)) g.with("flags", flag("dupMember")) else g,
     }
   }
-  // S:794 welcomeJoined unit; it may throw (any error in the unit or the delivery). On a new join the catch
-  // undoes the join; on a repeat join (A:357-366, no try) the error goes to the client and the member stays.
+  // S:794 welcomeJoined unit; it may throw (any error in the unit or the delivery). On a new join and on a
+  // repeated join that repairs the member, the catch undoes the join (undoFailedJoin, JA-4 fixed).
   action webWelcome(throws: bool): bool = {
     val a = turn.app
     all {
       turn.pc == "w_welcome",
-      if (throws) all { db' = db, turn' = if (turn.repeat) turn.with("pc", "done").with("outcome", "error") else turn.with("pc", "w_catch") }
+      if (throws) all { db' = db, turn' = turn.with("pc", "w_catch") }
       else all { db' = db.with("net", db.net.set(a, welcome(db.net.get(a)))), turn' = turn.with("pc", "done").with("outcome", "joined") },
       vol' = vol, g' = g,
     }
   }
   // A:388-400: the catch: onForget (SD-015: the network member goes), forgetMembership, an opt-out.
-  // DEFECT JA-4: joinLocked's JoinHookFailed branch runs no onForget; the network member stays.
   action webCatch = all {
     turn.pc == "w_catch",
     db' = db.with("net", db.net.set(turn.app, NO_NET)).with("mstate", db.mstate.set(turn.app, "removed")),
@@ -826,13 +825,13 @@ module join_age {
   // backend read from this phone is kept (person, floor, or a pending join that lives a day). An under-13
   // statement from an attested adult is recorded as 13 (S:1296-1299 comment, audit network-service-1).
   // The rule binds once the phone has a person or a stored age (a stranger who never joined has nothing).
-  // Failed at ad67275: SD-010, SD-011, SD-038, SD-383. Open on this branch: JA-1, JA-2.
+  // Failed at ad67275: SD-010, SD-011, SD-038, SD-383. Failed on this branch until 2026-11-21: JA-1, JA-2.
   val lowestWins = idle implies ((db.personExists or durableLowest(db) >= 0) implies
     g.everStated.forall(a => durableLowest(db) >= 0 and durableLowest(db) <= hi(a, 13)))
 
   // AGENTS.md decision 1 and code invariant "minors never matched": a person who ever stated an age under
   // 18 is matchable in no app (N:3746, migration 0038). Failed at ad67275: SD-010, SD-011, SD-038, SD-383.
-  // Open on this branch: JA-1, JA-2.
+  // Failed on this branch until 2026-11-21: JA-1, JA-2.
   val minorNeverMatched = idle implies (g.everStated.exists(a => a < 18) implies APPS.forall(a => not(matchable(db, a))))
 
   // core/src/policy.ts:2 and A:7 "under 13: cannot join, nothing is stored" (only the age floor):
@@ -844,12 +843,12 @@ module join_age {
   // The canonical age already excludes matching during this window.
   val under13StoresNothingStrict = idle implies under13Clean(db)
   // In `safety`: the same rule outside the Q-join_age-4 window. Failed at ad67275: SD-014, SD-315; the code
-  // on this branch still breaks it (JA-5: a web under-13 decline keeps the pending text join; JA-7).
+  // on this branch broke it through the text join until 2026-11-21 (JA-7 fixed); the web decline keeps
+  // nothing (JA-5 fixed).
   val under13StoresNothing = idle implies (not(g.declineOpen) implies under13Clean(db))
 
   // S:719-722 createMember comment: the network member is the member of an active membership. A network
-  // member never outlives its membership (failed at ad67275: SD-015; the fix is not on this branch, open
-  // again as JA-4).
+  // member never outlives its membership (failed at ad67275: SD-015, and again as JA-4 until 2026-11-21).
   val noOrphanMember = idle implies APPS.forall(a => db.net.get(a).exists implies (live(db, a) and db.net.get(a).mid == db.mid.get(a)))
 
   // A:11-12 "parallel joins make one person, one membership, one member and one opt-in": an active
@@ -866,8 +865,7 @@ module join_age {
     implies db.net.get(g.last.app).exists)
 
   // A:11-12 one member per app: a live membership never gets a new member id, and no second network
-  // member row is made for the same app (failed at ad67275: SD-127; the fix is not on this branch, open
-  // again as JA-6).
+  // member row is made for the same app (failed at ad67275: SD-127, and again as JA-6 until 2026-11-21).
   val oneMemberPerApp = not(g.flags.contains("midReplaced")) and not(g.flags.contains("dupMember"))
 
   // core/src/policy.ts:3 and N:985: a minor gets no adult onboarding interview (failed at ad67275: SD-213,
@@ -936,8 +934,7 @@ module join_age {
 
   // ------------------------------------------------------------------ run tests (traces from the code)
   // Each defect test replays the trace that failed at ad67275 and checks the intended rule. The named fix
-  // commits are from the source branch and none is on this branch: where the header lists an open defect,
-  // the test shows the rule the code must meet, and a ja*Test with joinStepCode shows the code's failure.
+  // commits are from the source branch; the header says which defects were fixed again on this branch.
   pure val M_AGE15: Msg = NO_MSG.with("age", 15).with("explicit", true)
   pure val M_SAM25: Msg = NO_MSG.with("age", 25).with("name", true).with("explicit", true)
   pure val M_SAM15: Msg = NO_MSG.with("age", 15).with("name", true).with("explicit", true)
@@ -1097,39 +1094,21 @@ module join_age {
       .then(noticeStep).then(joinStep).then(doneStep(true))
       .expect(db.noticeRow and g.noticeDelivered and noticeSpentImpliesDelivered)
 
-  // SD-315, the intended rule (open on this branch: JA-7): a web join with age 12 leaves the floor 12; a text
+  // SD-315 (JA-7 fixed on 2026-11-21): a web join with age 12 leaves the floor 12; a text
   // "hi" is declined, with no pending join.
   run sd315FloorUnder13DeclinedTest =
     init.then(webJoin("slop", 12)).then(webCheck).then(doneStep(true))
       .then(receive(M_HI, "ntwrk")).then(noticeStep).then(joinStep).then(doneStep(true))
       .expect(db.floor == 12 and not(db.pendJoin.has) and g.last.outcome == "under_age" and under13StoresNothing and safety)
 
-  // DEFECT JA-7, the code: the same start, then "Sam" (a name, no age) with joinStepCode: the pending join
-  // with the name is stored and the join question goes out.
-  run ja7FloorUnder13PendingStoredTest =
-    init.then(webJoin("slop", 12)).then(webCheck).then(doneStep(true))
-      .then(receive(M_HI.with("name", true), "ntwrk")).then(noticeStep).then(joinStepCode).then(doneStep(true))
-      .expect(db.floor == 12 and db.pendJoin.has and db.pendJoin.name and g.last.outcome == "join_asked"
-        and not(under13StoresNothing))
-
-  // DEFECT JA-1, the code: "15" to slop.date with joinStepCode puts the age only on the pending join; the
-  // row expires after a day; "Sam 25" then joins slop.date as a matchable adult.
-  run ja1PendingAgeLostTest =
+  // JA-2 (fixed on 2026-11-21): "Sam 15, Boston" records 15 before the home-city question and stores no
+  // pending join; "Sam 25, New York" then joins slop.date at 15, matchable nowhere.
+  run ja2BadHomeAgeKeptTest =
     init
-      .then(receive(M_AGE15.with("kw", "slop"), "slop")).then(noticeStep).then(joinStepCode).then(doneStep(true))
-      .expect(db.pendJoin.age == 15 and db.floor == NONE)
-      .then(pendingExpire)
+      .then(receive(M_SAM15.with("badHome", true).with("kw", "slop"), "slop")).then(noticeStep).then(joinStep).then(doneStep(true))
+      .expect(g.last.outcome == "join_asked" and db.floor == 15 and not(db.pendJoin.has))
       .then(joinByText(M_SAM25.with("kw", "slop"), "slop"))
-      .expect(not(lowestWins) and not(minorNeverMatched))
-
-  // DEFECT JA-2, the code: "Sam 15, Boston" with joinStepCode records no age and stores no pending join;
-  // "Sam 25, New York" then joins slop.date as a matchable adult.
-  run ja2BadHomeAgeLostTest =
-    init
-      .then(receive(M_SAM15.with("badHome", true).with("kw", "slop"), "slop")).then(noticeStep).then(joinStepCode).then(doneStep(true))
-      .expect(g.last.outcome == "join_asked" and db.floor == NONE and not(db.pendJoin.has))
-      .then(joinByText(M_SAM25.with("kw", "slop"), "slop"))
-      .expect(not(lowestWins) and not(minorNeverMatched))
+      .expect(lowestWins and minorNeverMatched and safety)
 
   // SD-213 (a4326bf): an adult at q1 sends a minor signal ("i have homework"); the interview stops.
   run sd213MinorInterviewStopsTest =

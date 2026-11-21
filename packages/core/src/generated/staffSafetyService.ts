@@ -114,6 +114,19 @@ export function durableStaffHoldSnapshotStatus(accountStatus: string, staffHeld:
 
 /** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
 //@ pure
+export function erasureKeepsStaffHold(releasedToNewHolder: boolean): boolean {
+  return !releasedToNewHolder;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function lawErasedThenRejoinedNumberStaysHeld(accountStatus: string): boolean {
+  //@ ensures \result === true
+  return durableStaffHoldSnapshotStatus(accountStatus, erasureKeepsStaffHold(false)) === "restricted";
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
 export function lawLocalStaffCannotReleaseGlobalHold(globallyCovered: boolean): boolean {
   //@ ensures \result === true
   return !globallyCovered || !durableStaffHoldLiftAllowed(globallyCovered, false);

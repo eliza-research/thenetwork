@@ -9,7 +9,7 @@ name: ci
 on:
   # Pull requests cover feature commits; main pushes retain post-merge validation.
   push:
-    branches: [main]
+    branches: [main, vibestack]
   pull_request:
   workflow_dispatch:
 

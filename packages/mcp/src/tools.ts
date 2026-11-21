@@ -3,23 +3,28 @@
 // or updates in the one app the client is bound to. No tool takes a phone number, a code or an age, and every
 // input schema refuses properties it does not list.
 import {
+  initial as initialDraftPreparation, signupDraftDeadline, signupDraftLifetimeMs,
+  signupDraftRequestAllowed, step as stepDraftPreparation,
+} from "../../core/src/generated/mcpSignupDraft.ts";
+import {
   type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
-  canCallCheckStatus, canCallGetUpdates, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
+  canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
   decideGrantOwner, initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
-import type { Grant, Scope, OAuthStore } from "./store.ts";
-import { outputLeaks } from "./leaks.ts";
+import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
+import { outputLeaks, passesOutputGate } from "./leaks.ts";
 
-export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates"] as const;
+export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 /** The generated name of each tool (spec/connectorTools.md, "Each surface lists only the apps it may offer"). */
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
   read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool",
+  prepare_signup: "PrepareSignupTool",
 };
 /** The OAuth scope of each generated scope; a public tool needs none (spec/connectorTools.md, "Public tools need no sign-in"). */
 const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write", ProfileRead: "profile:read" };
@@ -51,6 +56,7 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
     case "read_profile": return canCallReadProfile(c);
     case "get_updates": return canCallGetUpdates(c);
     case "submit_profile": return canCallSubmitProfile(c);
+    case "prepare_signup": return canCallPrepareSignup(c);
   }
 }
 
@@ -109,6 +115,14 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages }),
       annotations: annotations("Get signup instructions"),
       ...schemes("start_signup"),
+    },
+    {
+      name: "prepare_signup", title: "Save my signup draft",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. To finish signup, the person connects again and chooses Finish signup on the connection page, which shows the draft to approve or correct. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
+      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
+      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, next_step: text }),
+      annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      ...schemes("prepare_signup"),
     },
     {
       name: "check_status",
@@ -204,12 +218,18 @@ export function contactOrCode(text: string): boolean {
   return false;
 }
 
-export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string } | { ok: false; message: string } {
+export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; draft?: SignupDraftFields } | { ok: false; message: string } {
   if (args === undefined || args === null) args = {};
   if (typeof args !== "object" || Array.isArray(args)) return { ok: false, message: "Arguments must be an object." };
   const a = args as Record<string, unknown>;
-  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about") && !(name === "get_updates" && k === "update_token"));
+  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about") && !(name === "get_updates" && k === "update_token") && !(name === "prepare_signup" && (k === "firstName" || k === "homeCity")));
   if (extra.length) return { ok: false, message: `This tool does not take ${extra.map(k => `"${k.slice(0, 40)}"`).join(", ")}. It never takes phone numbers, codes or personal details.` };
+  if (name === "prepare_signup") {
+    if (!signupDraftRequestAllowed(host.id, a.app !== undefined, a.app === host.id)) return { ok: false, message: "This draft is not available for that app." };
+    const firstName = typeof a.firstName === "string" ? a.firstName.trim() : "";
+    if (!/^[\p{L}][\p{L}\p{M}'’-]{0,49}$/u.test(firstName) || contactOrCode(firstName) || (a.homeCity !== undefined && a.homeCity !== "nyc" && a.homeCity !== "sf")) return { ok: false, message: "Use only the approved first name and a supported home city." };
+    return { ok: true, app: host.id, draft: { firstName, ...(a.homeCity ? { homeCity: a.homeCity as "nyc" | "sf" } : {}) } };
+  }
   if (name === "submit_profile") {
     const about = typeof a.about === "string" ? a.about.trim() : "";
     if (about.length < 10 || about.length > PROFILE_MAX_CHARS) return { ok: false, message: `about must be 10 to ${PROFILE_MAX_CHARS} characters.` };
@@ -359,6 +379,28 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         },
       };
     }
+    case "prepare_signup": {
+      const g = c.grant, store = c.store;
+      const connection = stepDraftPreparation(initialDraftPreparation, { type: "observeConnection", grantReady: !!g && !!store && c.now !== undefined, guardReady: !!c.hooks.signupAgeAllowed });
+      if (connection.phase === "GrantRefused" || !g || !store || c.now === undefined) return { kind: "invalid_grant" };
+      if (connection.phase !== "CheckAge" || !c.hooks.signupAgeAllowed) return { kind: "error", message: "Drafts cannot be saved here. Follow this app's signup instructions in your agent." };
+      const aged = stepDraftPreparation(connection, { type: "observeAge", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app) });
+      if (aged.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
+      const owner = await checkGrantOwner(c.hooks, g);
+      const refusal = grantOwnerRefusal(owner);
+      if (refusal) return refusal;
+      const owned = stepDraftPreparation(aged, { type: "observeOwner", ownerMatches: owner === "GrantOwnerMatches" });
+      if (owned.phase !== "CheckMembership") return { kind: "invalid_grant" };
+      const status = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
+      const member = stepDraftPreparation(owned, { type: "observeMembership", status });
+      if (member.phase !== "WriteDraft") return { kind: "error", message: "This person already has a membership here. Use check_status for the next step." };
+      const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: signupDraftDeadline(c.now + signupDraftLifetimeMs, g.expiresAt) }, c.now);
+      const finished = stepDraftPreparation(member, { type: "observeWrite", saved });
+      const a = c.apps[g.app];
+      return finished.phase === "Prepared"
+        ? { kind: "ok", data: { prepared: true, app: g.app, next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. To finish signup, ${connectAgain(a)} The page shows the saved first name and home city to check.` } }
+        : { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
+    }
     case "check_status": {
       const g = c.grant;
       if (!g) return { kind: "invalid_grant" };
@@ -423,11 +465,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
-      // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts)
-      // and stays unseen in the inbox. The boundary checks the returned summaries again.
-      // spec/connectorTools.md, "A withheld update stays unseen"
-      const passesLeakGate = (summary: string) => outputLeaks(summary).length === 0;
-      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token, passesLeakGate)).filter(u => passesLeakGate(u.summary));
+      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token, passesOutputGate)).filter(u => passesOutputGate(u.summary));
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

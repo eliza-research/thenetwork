@@ -2,10 +2,12 @@
 // Postgres version (pg-store.ts, schema in db/schema.sql) keeps the same rules as this in-memory
 // one, and the same tests run against both.
 
-import { digestItemSetCanBeRecorded, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
+import { digestItemSetCanBeRecorded, digestWithinWeeklyCap, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
 import type { Assistant, InboxItem, InboxItemInput, Surface } from "./types.ts";
+
+export const WEEK_MS = 7 * 24 * 3600_000;
 
 export const dedupeKey = (i: Pick<InboxItemInput, "personId" | "app" | "eventType" | "subjectId">) =>
   [i.personId, i.app, i.eventType, i.subjectId].join("|");
@@ -25,6 +27,7 @@ export interface DeliveryRecord {
   target: Surface;
   countsTowardCap: boolean;
   sentAt: number;
+  weeklyCap?: number;
   assistantLink?: DigestAssistantLink;
   /** Set when the member acts on it (token redeemed, thread reply) or the outcome window passes. */
   outcome?: "acted" | "ignored";
@@ -137,6 +140,7 @@ export class MemoryNotifyStore implements NotifyStore {
           item.expiresAt !== undefined, item.expiresAt ?? 0, d.sentAt);
       });
       if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+      if (!digestWithinWeeklyCap(d.countsTowardCap, (await this.capSendsSince(d.personId, d.sentAt - WEEK_MS + 1)).length, d.weeklyCap ?? 0)) return false;
     }
     this.deliveries.set(d.deliveryId, copyDelivery(d));
     for (const id of d.itemIds) {

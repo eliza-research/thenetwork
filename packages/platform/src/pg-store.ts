@@ -5,11 +5,12 @@ import { confirmedUnderage, minMemberAge, textUseAllowedAtAge, underageCleanupRe
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { rateCounterCutoff } from "../../core/src/generated/platformRetention.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
-import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
+import { erasureKeepsStaffHold, includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
+import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src/generated/webSession.ts";
 import type { AppId } from "./apps.ts";
 import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RecordedMemberAge, Session, ShareGrant, StaffBanProjection } from "./store.ts";
+import type { AppLeaveAdmission, AppLeaveInput, Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, ShareGrant, StaffBanProjection } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -80,7 +81,7 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select * from platform.people where id = ${id}`;
     return r ? person(r) : undefined;
   }
-  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }) {
+  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string; joiningSession?: string | null }) {
     return this.sql.begin(async tx => {
       await lockPhoneBinding(tx, p.e164);
       // A tombstone with this phone's keyed hash: the same person again (blocks against them still hold).
@@ -88,6 +89,7 @@ export class PgPeopleStore implements PeopleStore {
         where id = (select id from platform.people where phone_hash = ${p.phoneHash} and deleted_at is not null order by deleted_at desc limit 1) returning *` : [];
       const [r] = back ? [back] : await tx`insert into platform.people (id, lowest_age, created_at, phone_hash) values (${p.id}, ${p.lowestAge}, ${ts(p.at)}, ${p.phoneHash ?? null}) returning *`;
       await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${p.e164}, ${r!.id}, ${ts(p.at)}, ${p.method}, ${ts(p.at)})`;
+      await new PgPeopleStore(tx).attachPerson(p.e164, r!.id as string, p.joiningSession ?? null, p.at);
       return person(r!);
     });
   }
@@ -199,13 +201,13 @@ export class PgPeopleStore implements PeopleStore {
     return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned) && !confirmedUnderage(owner?.lowest_age ?? -1);
   }
 
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null): Promise<boolean> {
     return this.sql.begin(async tx => {
       if (!await this.enrollmentOwnerAllowed(tx, m.personId, consent.e164, phoneHash)) return false;
       await tx`delete from platform.suppression where phone_hash=${phoneHash}`;
       await this.putMembership(m, tx);
       await this.addConsent(consent, tx);
-      await tx`update platform.sessions set person_id=${m.personId}::uuid where e164=${consent.e164} and person_id is null`;
+      await new PgPeopleStore(tx).attachPerson(consent.e164, m.personId, joiningSession, consent.at);
       return true;
     });
   }
@@ -365,8 +367,17 @@ export class PgPeopleStore implements PeopleStore {
     return r.length > 0;
   }
 
-  async putSession(s: Session) {
-    await this.sql`insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
+  async putSession(s: Session, db?: SQL) {
+    if (db) return this.insertSession(s, db);
+    if (s.personId !== null) return this.insertSession(s, this.sql);
+    await this.sql.begin(async tx => {
+      await lockPhoneBinding(tx, s.e164);
+      const [phone] = await tx<{ person_id: string }[]>`select person_id from platform.phone_identities where e164 = ${s.e164}`;
+      await this.insertSession(phone && unboundSessionTakesNewPerson(true, true) ? { ...s, personId: phone.person_id } : s, tx);
+    });
+  }
+  private async insertSession(s: Session, db: SQL) {
+    await db`insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
       values (${s.tokenHash}, ${s.app}, ${s.e164}, ${s.personId}, ${ts(s.createdAt)}, ${ts(s.startedAt)}, ${ts(s.expiresAt)}, ${s.rotatedFrom}, ${ts(s.revokedAt)})`;
   }
   async getSession(tokenHash: string) {
@@ -376,8 +387,31 @@ export class PgPeopleStore implements PeopleStore {
   async revokeSession(tokenHash: string, at: number) {
     await this.sql`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) where token_hash = ${tokenHash}`;
   }
-  async attachPerson(e164: string, personId: string) {
-    await this.sql`update platform.sessions set person_id = ${personId} where e164 = ${e164} and person_id is null`;
+  async rotateSession(tokenHash: string, e164: string, revokeAt: number, decide: (current: Session | undefined) => Session | undefined) {
+    await this.sql.begin(async tx => {
+      const [phone] = await tx<{ person_id: string }[]>`select person_id from platform.phone_identities where e164 = ${e164}`;
+      if (phone) await lockPersonPhone(tx, phone.person_id);
+      await lockPhoneBinding(tx, e164);
+      const [r] = await tx`select * from platform.sessions where token_hash = ${tokenHash} and e164 = ${e164} for update`;
+      const next = decide(r ? session(r) : undefined);
+      if (!next) return;
+      await tx`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(revokeAt)}), ${ts(revokeAt)}) where token_hash = ${tokenHash}`;
+      await this.putSession(next, tx);
+    });
+  }
+  async attachPerson(e164: string, personId: string, joiningSession: string | null, at: number) {
+    const unbound = await this.sql<{ token_hash: string }[]>`select token_hash from platform.sessions where e164 = ${e164} and person_id is null for update`;
+    for (const { token_hash } of unbound) {
+      if (unboundSessionTakesNewPerson(true, token_hash === joiningSession)) await this.sql`update platform.sessions set person_id = ${personId}::uuid where token_hash = ${token_hash}`;
+      else if (unboundSessionEnds(true, token_hash === joiningSession)) await this.revokeSession(token_hash, at);
+    }
+  }
+  async endUnboundAccess(e164: string, phoneHash: string, at: number) {
+    await this.sql.begin(async tx => {
+      await lockPhoneBinding(tx, e164);
+      await tx`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) where e164 = ${e164} and person_id is null`;
+      await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
+    });
   }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {
@@ -393,6 +427,25 @@ export class PgPeopleStore implements PeopleStore {
       // Old windows are not needed after the next one starts.
       await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
       return { count: r!.count as number, prevAt, ok: true };
+    });
+  }
+
+  async hitAll<T>(buckets: readonly RateBucket[], at: number, decide: (seen: RateBucketRead[]) => { count: boolean; value: T }): Promise<T> {
+    return this.sql.begin(async tx => {
+      for (const key of [...new Set(buckets.map(b => b.key))].sort()) await tx`select pg_advisory_xact_lock(hashtext(${`rate:${key}`}))`;
+      const seen: RateBucketRead[] = [];
+      for (const b of buckets) {
+        const [r] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${new Date(at - (at % b.windowMs))}), 0)::int as n from platform.rate_limits where bucket = ${b.key}`;
+        seen.push({ used: (r?.n as number) ?? 0, prevAt: ms(r?.last_at) });
+      }
+      const d = decide(seen);
+      if (d.count) for (const b of buckets) {
+        const start = new Date(at - (at % b.windowMs));
+        await tx`insert into platform.rate_limits (bucket, window_start, count, last_at) values (${b.key}, ${start}, 1, ${ts(at)})
+          on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at`;
+        await tx`delete from platform.rate_limits where bucket = ${b.key} and window_start < ${new Date(start.getTime() - b.windowMs)}`;
+      }
+      return d.value;
     });
   }
 
@@ -500,7 +553,7 @@ export class PgPeopleStore implements PeopleStore {
       }
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
-        await tx`delete from platform.staff_safety_holds where person_id = ${personId}::uuid`;
+        if (!erasureKeepsStaffHold(releaseHeldPhone)) await tx`delete from platform.staff_safety_holds where person_id = ${personId}::uuid`;
         await tx`delete from platform.report_safety_carryovers where person_id = ${personId}::uuid`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;
         // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
@@ -546,6 +599,7 @@ export class PgPeopleStore implements PeopleStore {
       if (taken) return "number_in_use";
       await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${m.newE164}, ${m.personId}::uuid, ${ts(at)}, 'otp_sms', ${ts(at)})`;
       await tx`delete from platform.phone_identities where e164 = ${m.oldE164}`;
+      await new PgPeopleStore(tx).attachPerson(m.newE164, m.personId, null, at);
       // The ledger is never updated in place: its rows are copied to the new number, then the old number's rows go.
       await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
         select ${m.newE164}, app_id, line, state, source, wording, wording_version, ref, at from platform.consent_events where e164 = ${m.oldE164} order by at, id

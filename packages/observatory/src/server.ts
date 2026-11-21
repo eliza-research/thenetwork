@@ -43,6 +43,7 @@ import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
 import { CostView } from "./ops.ts";
 import { gatheringId, type GatheringRequest } from "./gatherings.ts";
+import { staffStepRoutes } from "./staffSteps.ts";
 import {
   AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, globalRolesFor, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
@@ -893,6 +894,11 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return panel ? json(panel) : json({ error: "no membership in that app" }, 404);
         }),
       },
+      ...staffStepRoutes({
+        identified: h => global(h), appOf, mode: () => mode, record, json,
+        modeRefusal: req => { const said = req.headers.get(MODE_HEADER); return req.method !== "GET" && said && said !== mode ? modeChanged() : undefined; },
+        forward: async (app, actor, method, path, body) => { const src = await source("real", app); return src instanceof RealSource ? src.staffStep(actor, method, path, body) : undefined; },
+      }),
       "/api/*": global(() => json({ error: "not found" }, 404)),
     },
     async fetch(req, srv) {

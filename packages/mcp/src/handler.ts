@@ -36,10 +36,12 @@ import {
   connectorTokenPerGrantMinute, profileDailyCap, profileLimitReached,
 } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
+import { signupDraftAfterSignup, signupDraftAppEnabled, signupDraftClaimRoute } from "../../core/src/generated/mcpSignupDraft.ts";
+import { confirmHandoff, grantHandoff, offerHandoff } from "./signup-handoff.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage } from "./pages.ts";
-import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
+import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, type SignupDraftFields, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
@@ -561,6 +563,20 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       && !!o.platform.session && !!o.platform.signupEnrollment && !!o.platform.joinSignup;
   }
 
+  async function signupDraftFor(app: McpAppId, e164: string, personId: string | null): Promise<SignupDraftFields | null> {
+    if (!signupDraftAppEnabled(app)) return null;
+    const key = o.platform.phoneKey(e164);
+    const status = personId === null ? "not_joined" : await o.platform.status(personId, app, key);
+    const ageAllowed = !!o.platform.signupAgeAllowed && await o.platform.signupAgeAllowed(key, app);
+    const route = signupDraftClaimRoute(status, ageAllowed, await o.platform.grantIsBanned(key, personId));
+    if (route === "DiscardDraft") await store.deleteSignupDrafts(key, app);
+    return route === "ReadDraft" ? (await store.claimSignupDraft(key, app, personId, now())) ?? null : null;
+  }
+
+  async function settleSignupDraft(app: McpAppId, e164: string, signupResult: string): Promise<void> {
+    if (signupDraftAppEnabled(app) && signupDraftAfterSignup(signupResult) === "DeleteDraft") await store.deleteSignupDrafts(o.platform.phoneKey(e164), app);
+  }
+
   async function availableSignup(c: Ctx, who: SignedIn): Promise<BrowserSignup | undefined> {
     try { return await o.platform.signupEnrollment?.(c.app.id, who); }
     catch { return undefined; }
@@ -704,6 +720,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return expired();
     const { r, client, flow } = live;
     if (!validBrowserEntry(c, r, client) || !signupClientAllowed(c, r, client) || !o.platform.joinSignup) return expired();
+    const draft = form.get("decision") === "open" && r.e164 !== null && r.step === "consent" ? await signupDraftFor(c.app.id, r.e164, r.personId) : null;
     const who = await readAuthorizationSession(c);
     if (who === "unavailable") return browserUnavailable(c);
     if (!who || !browserSignupOpenAllowed(flow, browserPages[r.step], !!r.e164,
@@ -716,14 +733,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
     const showSignup = (error?: string) => {
-      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error });
+      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error, draft });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
     };
     if (decision === "open") return showSignup();
 
     const version = form.get("consentVersion");
-    if (!browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version))
+    const offered = offerHandoff(browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version));
+    if (offered.phase !== "AwaitingPhoneConfirmation")
       return showSignup("Review and accept the current text message terms to continue.");
     const age = form.get("age") ?? "";
     const input = parseJoin({
@@ -739,6 +757,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
     try {
       const joined = await o.platform.joinSignup(c.app.id, who, input, invitation);
+      await settleSignupDraft(c.app.id, who.e164, joined.ok ? "joined" : joined.error);
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
@@ -751,9 +770,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const member = joined.membership;
       const owner = await o.platform.login(who.e164);
       const current = await o.platform.status(member.personId, c.app.id, o.platform.phoneKey(who.e164));
+      const confirmed = confirmHandoff(offered, {
+        sameApp: member.app === c.app.id && r.app === c.app.id,
+        ownerVerified: owner !== "held" && owner.personId === member.personId && (r.personId === null || r.personId === member.personId),
+        eligibleEnrollment: member.review === null && browserSignupMemberAllowed(current),
+        requestLive: requestIsLive(now(), r.expiresAt),
+      });
       if (!browserSignupOwnerBindingAllowed(browserPages[pending.step], joined.created, member.app === c.app.id,
         r.personId === null || r.personId === member.personId, owner !== "held" && owner.personId === member.personId,
-        member.review === null && browserSignupMemberAllowed(current))) return expired();
+        member.review === null && browserSignupMemberAllowed(current)) || confirmed.phase !== "AwaitingSignupGrant") return expired();
       const enrolled = { ...r, personId: member.personId, step: "enrolled" as const };
       if (!await store.advanceAuthRequest(pending, enrolled, now)) return expired();
       return verifiedConsentPage(c, enrolled, client, who);
@@ -920,8 +945,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
             if (!samePendingAuthPage(approval, r, now())) return false;
             if (r.step === "enrolled") {
               const owner = await o.platform.login(r.e164);
-              if (r.personId === null || owner === "held" || owner.personId !== r.personId) return false;
-              if (!browserSignupMemberAllowed(await o.platform.status(r.personId, c.app.id, grant.phoneKey))) return false;
+              const ownerMatches = r.personId !== null && owner !== "held" && owner.personId === r.personId;
+              const memberAllowed = ownerMatches && r.personId !== null && browserSignupMemberAllowed(await o.platform.status(r.personId, c.app.id, grant.phoneKey));
+              const recorded = grantHandoff(grant.app === c.app.id && r.app === c.app.id, ownerMatches,
+                memberAllowed && tokenCovers("submit_profile", grant.scopes) && grant.expiresAt > now());
+              if (recorded.phase !== "ReadyForSignupProfile") return false;
             }
             return confirm(approval);
           }, {
@@ -1360,11 +1388,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           const args = checkArgs(tool, params.arguments, [], host);
           // spec/connectorTools.md: the generated guard of the call.
           if (!canCallTool(connectionOf(host, surface, auth.token.scopes), tool)) {
-            return result({ content: [{ type: "text", text: "The person must sign in on the site and allow access first." }], isError: true });
+            const text = tool === "prepare_signup" && !args.ok ? args.message : "The person must sign in on the site and allow access first.";
+            return result({ content: [{ type: "text", text }], isError: true });
           }
           // A profile is a few messages a day at most (each one reaches the member's own app as a text).
           // Only a well-formed profile counts (a refused one never reaches the app).
-          if (tool === "submit_profile" && args.ok) {
+          if ((tool === "submit_profile" || tool === "prepare_signup") && args.ok) {
             // spec/connectorTools.md, "within the daily limit": the earlier calls of this grant in the store's day.
             const sentToday = Math.min((await store.hit(`profile:grant:${auth.grant.id}`, PROFILE_DAY_MS, now())) - 1, profileDailyCap);
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });

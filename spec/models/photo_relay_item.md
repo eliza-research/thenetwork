@@ -18,14 +18,15 @@ Production uses [selected-photo consent and review](../photoRelayReview.md) for 
 //
 // photo_relay_item: one selected-photo relay item, from the member's choice and consent to the provider fetch.
 //
-// WHAT THIS MODELS (compared with branch vibestack-matching on 2026-11-18; code locations are names)
+// WHAT THIS MODELS (compared with branch vibestack-matching on 2026-11-21; code locations are names)
 //   PhotoRelayService (packages/platform/src/photo-relay.ts) for one item: select, review, revoke,
-//   claimForAction, issueDelivery and delivery, and the conversation step choosePhoto
-//   (packages/network/service/photoIntakeRelayChoice.ts, called by /internal/relay in relay-endpoint.ts).
+//   claimForAction, issueDelivery and delivery, and the conversation steps choosePhoto and withdrawPhoto
+//   (packages/network/service/photoIntakeRelayChoice.ts, called by /internal/relay in relay-endpoint.ts;
+//   withdrawPhoto calls PhotoRelayService.withdrawable and withdraw).
 //   The pure defs below have the names and the decisions of the generated specs that the shell calls:
 //   spec/photoRelayReview.md (checkSelection, photoReviewable, photoReviewMayProceed, recordReview,
 //   photoHeldForReview, revokeSelection) and spec/photoRelayItem.md (canClaimAction, permitsIntentBinding,
-//   deadlineForDelivery, photoFetchAllowed, photoDeliveryStillLive, photoRelayOfferLive). The item state is a
+//   deadlineForDelivery, photoFetchAllowed, photoDeliveryStillLive, photoRelayOfferLive, photoItemWithdrawable). The item state is a
 //   string here: "pending", "approved", "rejected", "revoked" (the shell's storedReview map). Each action is
 //   one shell method under the item lock (PhotoRelayStore.locked). `current` is PhotoRelayService.current
 //   (policy version and notice, expiry, not revoked or rejected, parties, photo); the oracle `pair` stands for
@@ -49,19 +50,25 @@ Production uses [selected-photo consent and review](../photoRelayReview.md) for 
 //   the reviewer authorization (authorizeReviewer: a refused reviewer changes nothing), the staff preview
 //   token, the descriptor and recipient checks of issueDelivery (a mismatch changes nothing), the outbound
 //   row checks of resolveRelayPhoto, and the choice of which offered photo (one item stands for it).
-//   choosePhoto (photoIntakeRelayChoice.ts:51) is abstracted: relayOn is the constant true (the
+//   choosePhoto (photoIntakeRelayChoice.ts) is abstracted: it checks the choice (prepareSelection) and writes
+//   the item in the transaction that completes the relay action (recordSelection with the caller's tx), one
+//   atomic step here; relayOn is the constant true (the
 //   PhotoRelayOff branch, relay.enabled false or no notice, is not explored), approvedReady is false as the
 //   code passes it (DeliverApprovedPhoto is never taken there), photoCount is 1, and the stored list always
 //   has OFFER_SIZE = 2 ids (the code passes offered.length, up to the upload limit, and a list may be longer
 //   or shorter than the photos now live). The code's offer check compares policy_version and policy_notice;
 //   the model compares only offerVersion, because policyVersion merges the version and its notice text.
 //
-// KNOWN CODE DEFECT (2026-11-18; spec/models/README.md)
-//   PRI-D1 PhotoRelayService.revoke has one caller: the signed-in site route /api/relay-photos/revoke. The
-//   conversation (/internal/relay, choosePhoto) has no withdraw command, and the sites have no account
-//   portal (founder correction 2026-10-19), so a member who chose a photo by text cannot withdraw it before
-//   delivery. The `revoke` action below is the intended behaviour (the story: withdraw consent before
-//   delivery), not the code as it is.
+// CODE DEFECT FOUND BY THIS MODEL (spec/models/README.md), fixed on 2026-11-21
+//   PRI-D1 PhotoRelayService.revoke had one caller, the site route /api/relay-photos/revoke, and the sites
+//   have no account portal, so a member who chose a photo by text could not withdraw it before delivery.
+//   Now "don't send my photo" in the conversation (/internal/relay, withdrawPhoto) revokes the member's own
+//   open items of the match (pending or approved and not expired, also a claimed one) in the transaction
+//   that completes the action: withdrawByText. `revoke` stays the site route, in every state.
+//   withdrawByText is one step: the code reads the withdrawable items, then revokes each one again under its
+//   row lock in the completing transaction (PhotoRelayService.withdraw calls revoke with the match). When the
+//   commit revokes fewer items than the read counted (a delivery or a site revoke came first), the relay
+//   action fails and the "won't send" reply is not sent, so the read and the commit act as one step.
 module photo_relay_item {
 
   pure val PHOTO_TTL = 15
@@ -95,6 +102,7 @@ module photo_relay_item {
     textChoice: bool,             // the item came from a numbered choice by text
     choiceWithoutLiveOffer: bool, // a text choice recorded an item without a live list of the same notice
     choiceOutsideList: bool,      // a text choice recorded an item for a number that is not on the list
+    textWithdrawn: bool,          // the member withdrew the item by text
   }
 
   var now: int
@@ -137,6 +145,8 @@ module photo_relay_item {
     and deadline == i.deliveryExpiresAt and deadline <= i.expiresAt and photoDeliveryStillLive(deadline, i.expiresAt, at)
   pure def photoRelayOfferLive(offeredAt: int, at: int, sameNotice: bool): bool =
     sameNotice and at >= offeredAt and at - offeredAt < OFFER_TTL
+  pure def photoItemWithdrawable(ownItem: bool, sameMatch: bool, open: bool): bool =
+    ownItem and sameMatch and open
   pure def photoRelayEntryFor(relayOn: bool, approvedReady: bool, photoCount: int, choice: int, offerLive: bool, offerSize: int): str =
     if (approvedReady) "DeliverApprovedPhoto"
     else if (not(relayOn)) "PhotoRelayOff"
@@ -174,7 +184,7 @@ module photo_relay_item {
     g' = { fetches: 0, fetchedWithoutConsent: false, fetchedNotApproved: false, fetchedLate: false,
            badEdge: false, actionChanged: false, intentChanged: false, deadlineChanged: false, unrevoked: false,
            approvedNotByReview: false, reviewedSafe: false, revokedClaimed: false,
-           textChoice: false, choiceWithoutLiveOffer: false, choiceOutsideList: false },
+           textChoice: false, choiceWithoutLiveOffer: false, choiceOutsideList: false, textWithdrawn: false },
   }
 
   action frame = all { now' = now, policyVersion' = policyVersion, pair' = pair, offerAt' = offerAt, offerVersion' = offerVersion }
@@ -246,6 +256,19 @@ module photo_relay_item {
       pri.selected,
       pri' = nxt,
       g' = { ...ghostFor(pri, nxt), revokedClaimed: g.revokedClaimed or pri.boundAction != "" },
+      frame,
+    }
+  }
+
+  // withdrawPhoto: "don't send my photo" for this match. photoItemWithdrawable with the member's own item of
+  // the match (ownItem and sameMatch true for the one item) and open: pending or approved and not expired.
+  action withdrawByText: bool = {
+    val nxt = { ...pri, state: "revoked" }
+    all {
+      pri.selected,
+      photoItemWithdrawable(true, true, (pri.state == "pending" or pri.state == "approved") and now < pri.expiresAt),
+      pri' = nxt,
+      g' = { ...ghostFor(pri, nxt), revokedClaimed: g.revokedClaimed or pri.boundAction != "", textWithdrawn: true },
       frame,
     }
   }
@@ -333,7 +356,7 @@ module photo_relay_item {
     fetch(e),
     nondet d = Set(1, 10, 20).oneOf()
     tick(d),
-    any { revoke, policyChange, pairEnds, pairResumes },
+    any { revoke, withdrawByText, policyChange, pairEnds, pairResumes },
   }
 
   // ---------------------------------------------------------------- invariants
@@ -391,6 +414,8 @@ module photo_relay_item {
   val witness_noRejected = pri.state != "rejected"
   // A photo chosen by text is fetched.
   val witness_noTextFetch = not(g.textChoice and g.fetches > 0)
+  // A photo chosen by text is withdrawn by text.
+  val witness_noTextWithdrawal = not(g.textChoice and g.textWithdrawn)
 
   // ---------------------------------------------------------------- traces
   run happyPathTest =
@@ -469,6 +494,25 @@ module photo_relay_item {
       .then(review("unsafe"))
       .then(all { assert(pri.state == "revoked"), assert(safety), tick(1) })
       .then(issue("int1"))
+      .fail()
+
+  run textWithdrawBeforeDeliveryTest =
+    init
+      .then(offerList)
+      .then(tick(1))
+      .then(chooseByText(1))
+      .then(review("safe"))
+      .then(claim("act1"))
+      .then(withdrawByText)
+      .then(all { assert(pri.state == "revoked" and g.textWithdrawn), assert(safety), tick(1) })
+      .then(issue("int1"))
+      .fail()
+
+  run textWithdrawNeedsOpenItemTest =
+    init
+      .then(selectPhoto(true, 1))
+      .then(review("unsafe"))
+      .then(withdrawByText)
       .fail()
 
   run secondActionRefusedTest =

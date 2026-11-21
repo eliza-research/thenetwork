@@ -39,10 +39,10 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
     async findInvitation(app, token, _at, phone) {
       if (app === "peon" && tokenByPhone.get(phone) === token) return { inviterMemberId: "fixture-inviter", tokenHash: "fixture-hash" };
     },
-    async commitReferredJoin({ membership, e164, app }) {
+    async commitReferredJoin({ membership, e164, app, session }) {
       await store.putMembership(membership);
       await store.addConsent({ e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at: membership.joinedAt! });
-      await store.attachPerson(e164, membership.personId);
+      await store.attachPerson(e164, membership.personId, session ?? null, membership.joinedAt!);
       referredPhones.push(e164);
     },
     minStartMs: 0, minVerifyMs: 0, log: () => {},

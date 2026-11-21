@@ -19,6 +19,7 @@ import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { copy } from "../src/copy.ts";
+import { REVEAL_PLACE_PLACEHOLDER, REVEAL_TIME_PLACEHOLDER } from "../src/network.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -182,10 +183,15 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const probesPath = (revision: number) => `/apps/slop/review/${encodeURIComponent(item.oppId)}/probes?revision=${revision}`;
     expect(await (await staff(s, REVIEWER, "GET", probesPath(item.revision + 1))).json()).toEqual({ ok: false, error: "preview_unavailable" });
     const previewed = await (await staff(s, REVIEWER, "GET", probesPath(item.revision))).json() as
-      { ok: boolean; preview: { app: string; revision: number; probes: { memberId: string; text: string | null; fallback?: string }[] } };
+      { ok: boolean; preview: { app: string; revision: number; probes: { memberId: string; text: string | null; fallback?: string; reveal: { text: string } }[] } };
     expect(previewed).toMatchObject({ ok: true, preview: { app: "slop", revision: item.revision } });
     expect(previewed.preview.probes.map(p => p.memberId).sort()).toEqual([rae, sam].sort());
     for (const p of previewed.preview.probes) expect(p.text).toMatch(/^(?![\s\S]*\b(Rae|Sam)\b)[\s\S]*\?/);
+    for (const p of previewed.preview.probes) {
+      expect(p.reveal.text).toContain(REVEAL_PLACE_PLACEHOLDER);
+      expect(p.reveal.text).toContain(REVEAL_TIME_PLACEHOLDER);
+      expect(p.reveal.text).toContain(p.memberId === rae ? "Sam" : "Rae");
+    }
     expect((await sql`select count(*)::int as n from network.staff_audit where action = 'read_review_probes' and target_id = ${item.oppId}`)[0].n).toBe(2);
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
     expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision })).json() as any).ok).toBe(true);
@@ -223,6 +229,12 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const [booked] = await sql`select state, meeting_at from network.opportunities where app_id = 'slop' and id = ${item.oppId}`;
     expect(booked?.state).toBe("SCHEDULED");
     for (const id of [rae, sam]) expect((await inbox(id)).some(m => /You're both in: a first date with/.test(m.body))).toBe(true);
+    const literal = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const p of previewed.preview.probes) {
+      const template = p.reveal.text.split(REVEAL_PLACE_PLACEHOLDER).map(part => part.split(REVEAL_TIME_PLACEHOLDER).map(literal).join(".+?")).join(".+?");
+      const reveal = (await inbox(p.memberId)).find(m => m.opp === item.oppId && /You're both in/.test(m.body))!.body;
+      expect(reveal).toMatch(new RegExp(`(^|\\. )${template}(\\n\\S+)?$`));
+    }
     // The first probe each member got is the text the reviewer read. The member asked first gets it word
     // for word; the second member is offered only the times the first one picked.
     const firstProbe = async (id: string) => (await inbox(id)).find(m => m.opp === item.oppId)?.body ?? "";

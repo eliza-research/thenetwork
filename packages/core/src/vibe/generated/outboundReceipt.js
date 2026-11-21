@@ -151,6 +151,23 @@ export function lawReceiptOwnerEndsNonMemberRow(phase) {
     //@ ensures \result === true
     return !(receiptRank(phase) > 0) || acceptanceEndsRow(phase, true, false);
 }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function gatewayReplyPhase(pastLimit) {
+    return pastLimit ? "AcceptanceExpired" : "AcceptanceUnknown";
+}
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function lawGatewayReplyEndsOnlyPastLimit(pastLimit) {
+    //@ ensures \result === true
+    return (gatewayReplyPhase(pastLimit) === "AcceptanceExpired") === pastLimit;
+}
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function lawExpiredGatewayReplyKeepsSlot(pastLimit) {
+    //@ ensures \result === true
+    return !returnsPersonSlot(gatewayReplyPhase(pastLimit));
+}
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {

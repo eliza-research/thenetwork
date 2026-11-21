@@ -45,7 +45,7 @@ accepted merges and pays after maintainer review. There is no escrow.
   [whole-flow models](spec/models/README.md) exactly. Verify that the
   approved behavior is fully implemented and integrated through the
   application's real entry points.
-- The [connector browser authorization](spec/oauthBrowserAuthorization.md) gives the person one
+- The [signup handoff](spec/agentPhoneHandoff.md) gives the person one
   app-bound link to verify their phone and authorize profile access. The person
   enters the code on the app's site. Keep the code and browser session outside
   the assistant conversation.

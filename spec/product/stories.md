@@ -588,7 +588,7 @@ Acceptance:
 - The site's signup flow checks the enrollment fields, home region and current consent. The person confirms those details match the approved draft and separately authorizes the connector. After the app-bound grant becomes active, the agent submits the approved profile once through MCP.
 - The agent reports "saved" only after the service confirms the approved profile submission and the same connector confirms an eligible membership. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
 
-See the [browser phone confirmation and connector handoff](../oauthBrowserAuthorization.md) and [signup conversation](../agentSignup.md).
+See the [browser phone confirmation and connector handoff](../agentPhoneHandoff.md) and [signup conversation](../agentSignup.md).
 
 ## Story F46 — Use my app's connector from my agent
 

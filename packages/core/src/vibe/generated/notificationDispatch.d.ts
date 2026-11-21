@@ -51,6 +51,10 @@ export declare function lawMissingRecipientCancels(plannedCount: number, remaini
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 export declare function digestItemSetCanBeRecorded(itemCount: number, pendingOwnedCount: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
+export declare function digestWithinWeeklyCap(countsTowardCap: boolean, countedSends: number, weeklyCap: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
+export declare function lawRecordedCountingDigestStaysUnderCap(countedSends: number, weeklyCap: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 export declare function canRecordDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 export declare function recordDigest(digest: DigestFlow, recorded: boolean): DigestFlow;
@@ -101,3 +105,5 @@ export declare function parseEvent(x: unknown): Event | undefined;
 export declare function parseState(x: unknown): DigestFlow | undefined;
 /** Proof obligation: the initial state satisfies every `always` rule. */
 export declare function initialHolds(): DigestFlow;
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export declare function exact_notificationDispatch(n: number): number;

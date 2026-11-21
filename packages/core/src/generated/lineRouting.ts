@@ -9,6 +9,8 @@ export type LineGatePhase = "LineAwaitingCommand" | "LineAwaitingBan" | "LineAwa
 export type LineCommand = "LineNoCommand" | "LineStop" | "LineStopAll" | "LineHelp" | "LineStart";
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 export interface LineGate { phase: LineGatePhase; command: LineCommand; leaveNamed: boolean; banned: boolean; underage: boolean }
+/** Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply (spec/lineRouting.md) */
+export type LeaveReply = "LeftAppReply" | "NotInAppReply";
 /** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */
 export type LookingForMention = "MentionAbsent" | "MentionWanted" | "MentionRefused";
 /** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */
@@ -236,6 +238,33 @@ export function sometimesNumberHeld(gate: LineGate): boolean {
 //@ pure
 export function sometimesLineContinues(gate: LineGate): boolean {
   return gate.phase === "LineContinue" && !gate.banned && !gate.underage;
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply (spec/lineRouting.md) */
+//@ pure
+export function leaveReply(routedMember: boolean, membershipInvited: boolean, membershipRemoved: boolean, hasMembership: boolean): LeaveReply {
+  return routedMember || (hasMembership && !membershipInvited && !membershipRemoved) ? "LeftAppReply" : "NotInAppReply";
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply (spec/lineRouting.md) */
+//@ pure
+export function lawStrangerHearsNotInApp(membershipInvited: boolean, membershipRemoved: boolean): boolean {
+  //@ ensures \result === true
+  return leaveReply(false, membershipInvited, membershipRemoved, false) === "NotInAppReply";
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply (spec/lineRouting.md) */
+//@ pure
+export function lawInvitedOrRemovedHearsNotInApp(membershipInvited: boolean, membershipRemoved: boolean): boolean {
+  //@ ensures \result === true
+  return !(membershipInvited || membershipRemoved) || leaveReply(false, membershipInvited, membershipRemoved, true) === "NotInAppReply";
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply (spec/lineRouting.md) */
+//@ pure
+export function lawRoutedMemberHearsLeft(membershipInvited: boolean, membershipRemoved: boolean, hasMembership: boolean): boolean {
+  //@ ensures \result === true
+  return leaveReply(true, membershipInvited, membershipRemoved, hasMembership) === "LeftAppReply";
 }
 
 /** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */

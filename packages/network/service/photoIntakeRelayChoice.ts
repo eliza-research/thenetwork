@@ -6,7 +6,7 @@
 // PhotoRelayService.select, which checks the parties, the photo and the notice again. Staff review the
 // item; the existing release path delivers it. The list holds photo ids only, never bytes or links.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { photoRelayEntryFor, photoRelayOfferLive, type PhotoRelayEntry } from "../../core/src/generated/photoRelayItem.ts";
+import { photoRelayEntryFor, photoRelayOfferLive, photoWithdrawalFor, type PhotoRelayEntry, type PhotoWithdrawal } from "../../core/src/generated/photoRelayItem.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { PhotoService } from "../../platform/src/photos.ts";
@@ -25,7 +25,28 @@ export const PHOTO_CHOICE_TEXT = {
   unknown: "I could not match that number to the photos I listed. Say \"send them my photo\" to see the list again.",
   recorded: "Thanks. A person on the safety team checks the photo first. I will send it after that check.",
   refused: "I could not choose that photo. Say \"send them my photo\" to see the list again.",
+  withdrawn: "Okay, I won't send your photo.",
+  noneToWithdraw: "No photo of yours is waiting to go to this match.",
 } as const;
+
+export function photoWithdrawRequest(text: string): boolean {
+  const t = (text ?? "").replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase();
+  return /\b(?:don'?t|dont|do not|never|stop|cancel|hold off|withdraw|take back|unsend|changed my mind|scratch)\b/.test(t)
+    && /\b(?:photos?|pics?|pictures?|selfies?)\b/.test(t);
+}
+
+export type PhotoWithdrawResult = { entry: PhotoWithdrawal; notice: string; commit: (tx: SQL) => Promise<void> };
+
+export async function withdrawPhoto(d: Pick<PhotoRelayChoiceDeps, "relay">, input: { app: AppId; personId: string; threadId: string | undefined }): Promise<PhotoWithdrawResult> {
+  const { app, personId, threadId } = input;
+  const ids = threadId ? await d.relay.withdrawable(app, personId, threadId) : [];
+  const entry = photoWithdrawalFor(ids.length);
+  const commit = async (tx: SQL) => {
+    if (!threadId || !ids.length) return;
+    if ((await d.relay.withdraw(tx, app, personId, threadId, ids)) < ids.length) throw new Error("Photo item changed before the withdrawal");
+  };
+  return { entry, notice: entry === "PhotoWithdrawn" ? PHOTO_CHOICE_TEXT.withdrawn : PHOTO_CHOICE_TEXT.noneToWithdraw, commit };
+}
 
 export interface PhotoRelayChoiceDeps {
   sql: SQL;
@@ -63,13 +84,13 @@ export async function choosePhoto(d: PhotoRelayChoiceDeps, input: { app: AppId; 
       return { entry, decision: "none", notice: PHOTO_CHOICE_TEXT.list(ids.length, notice!.notice), commit };
     }
     case "RecordPhotoChoice": {
-      // PhotoRelayService.select writes in its own transaction. If the relay unit fails after it, the item
-      // stays pending: it is keyed by requestId (no second item), and review and release check the parties,
-      // the photo and the notice again, so it is never delivered on a stale authority.
-      const item = await d.relay.select(app, personId, threadId, offered[choice - 1]!, notice!.version, true, input.requestId);
-      return item && item.state === "pending"
-        ? { entry, decision: "hold", notice: PHOTO_CHOICE_TEXT.recorded }
-        : { entry, decision: "block", notice: PHOTO_CHOICE_TEXT.refused };
+      const prepared = await d.relay.prepareSelection(app, personId, threadId, offered[choice - 1]!, notice!.version, true, input.requestId);
+      if (!prepared || prepared.item.state !== "pending") return { entry, decision: "block", notice: PHOTO_CHOICE_TEXT.refused };
+      const commit = async (tx: SQL) => {
+        const item = await d.relay.recordSelection(prepared, tx);
+        if (!item || item.state !== "pending") throw new Error("Photo choice changed before commit");
+      };
+      return { entry, decision: "hold", notice: PHOTO_CHOICE_TEXT.recorded, commit };
     }
     case "AskForPhotosFirst": return { entry, decision: "block", notice: PHOTO_CHOICE_TEXT.addFirst };
     case "PhotoChoiceUnknown": return { entry, decision: "block", notice: PHOTO_CHOICE_TEXT.unknown };

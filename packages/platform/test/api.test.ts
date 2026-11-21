@@ -111,13 +111,13 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
         checked.push(app);
         return app === "ntwrk" && value === token ? referral : undefined;
       },
-      commitReferredJoin: async ({ app, person, membership, e164, referral }) => {
+      commitReferredJoin: async ({ app, person, membership, e164, referral, session }) => {
         expect(await store.getMembership(person.id, app.id)).toBeUndefined();
         expect(await store.lastConsent(e164, app.id)).toEqual({});
         if (invitationLost) throw new InvitationUnavailable();
         await store.putMembership(membership);
         await store.addConsent({ e164, app: app.id, state: "opted_in", source: "web_form", at: membership.joinedAt! });
-        await store.attachPerson(e164, person.id);
+        await store.attachPerson(e164, person.id, session ?? null, membership.joinedAt!);
         attributed.push(referral);
       },
       onJoin: () => { throw new Error("Referred signup uses only its commit hook"); },
@@ -151,7 +151,8 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const underage = newPhone();
     const minor = await login(c, "slop", underage);
     expect((await call(c, "slop", "POST", "/api/join", { ...body, age: 12, consent: consentOf("slop") }, minor)).body.error).toBe("under_age");
-    expect((await join(c, "slop", minor, 29)).body.error).toBe("under_age");
+    expect((await join(c, "slop", minor, 29)).body.error).toBe("unauthorized");
+    expect((await join(c, "slop", await login(c, "slop", underage), 29)).body.error).toBe("under_age");
     expect(await c.api.accounts.personFor(underage)).toBeUndefined();
     expect(attributed).toEqual([referral]);
   });
@@ -225,8 +226,10 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const ntwrk = await login(c, "ntwrk", phone);
     expect((await join(c, "ntwrk", ntwrk, 15)).body.error).toBe("invite_only");
     const inv = await c.api.accounts.invite(APPS.ntwrk, phone);
-    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
-    expect((await join(c, "ntwrk", ntwrk, 15)).status).toBe(200);
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).status).toBe(401);
+    const invited = await login(c, "ntwrk", phone);
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, invited)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
+    expect((await join(c, "ntwrk", invited, 15)).status).toBe(200);
     // The join keeps the invited member id (an invite may already name it).
     expect(c.joined.at(-1)).toBe(inv!.memberId);
     const slop = await login(c, "slop", phone);
@@ -310,7 +313,8 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const c = make(store), phone = newPhone();
     const cookie = await login(c, "slop", phone);
     expect((await join(c, "slop", cookie, 12)).body.error).toBe("under_age");
-    expect((await join(c, "slop", cookie, 25)).body.error).toBe("under_age");
+    expect((await join(c, "slop", cookie, 25)).body.error).toBe("unauthorized");
+    expect((await join(c, "slop", await login(c, "slop", phone), 25)).body.error).toBe("under_age");
     expect((await join(c, "peon", await login(c, "peon", phone), 30)).body.error).toBe("under_age");
     expect(await store.findPhone(phone)).toBeUndefined(); // still nothing stored for the app: only the age floor
     expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBe(12);

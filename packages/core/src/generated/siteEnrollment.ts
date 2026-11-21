@@ -1,8 +1,9 @@
 // GENERATED from spec/siteEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { minMemberAge as memberAge_minMemberAge, maxAge as memberAge_maxAge, adultAge as memberAge_adultAge, ageInRange as memberAge_ageInRange, lowerAge as memberAge_lowerAge, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, joinableAge as memberAge_joinableAge, matchableAge as memberAge_matchableAge, confirmedUnderage as memberAge_confirmedUnderage, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
 
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
-export type EnrollmentPhase = "AwaitingAccountView" | "AccountChanged" | "AwaitingProfile" | "InvalidProfile" | "AwaitingConsent" | "ConsentMismatch" | "AwaitingEligibility" | "NeedsReview" | "AwaitingMembership" | "NeedsInvite" | "InvalidInvitation" | "AwaitingAge" | "BelowJoinAge" | "ReturnExisting" | "AwaitingPersistence" | "Created" | "JoinHookFailed";
+export type EnrollmentPhase = "AwaitingAccountView" | "AccountChanged" | "AwaitingProfile" | "InvalidProfile" | "AwaitingConsent" | "ConsentMismatch" | "AwaitingEligibility" | "NeedsReview" | "AwaitingMembership" | "NeedsInvite" | "InvalidInvitation" | "AwaitingAge" | "BelowJoinAge" | "ReturnExisting" | "AwaitingRepair" | "AwaitingPersistence" | "Created" | "JoinHookFailed";
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 export interface Enrollment { phase: EnrollmentPhase; viewChecked: boolean; validProfile: boolean; currentConsent: boolean; currentEligibility: boolean; rejoin: boolean; invited: boolean; referred: boolean; invalidReferral: boolean; ageAllowed: boolean }
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
@@ -19,7 +20,8 @@ export type Event =
   | { type: "confirmConsent"; consentMatches: boolean }
   | { type: "checkEligibility"; eligible: boolean }
   | { type: "checkMembership"; membershipFacts: MembershipFacts }
-  | { type: "checkJoinAge"; ageEligible: boolean }
+  | { type: "checkJoinAge"; ageEligible: boolean; memberMissing: boolean }
+  | { type: "finishRepair"; hookSucceeded: boolean }
   | { type: "finishJoin"; hookSucceeded: boolean };
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
@@ -153,11 +155,44 @@ export function canCheckJoinAge(joining: Enrollment): boolean {
 
 /** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md) */
 //@ pure
-export function checkJoinAge(joining: Enrollment, ageEligible: boolean): Enrollment {
+export function checkJoinAge(joining: Enrollment, ageEligible: boolean, memberMissing: boolean): Enrollment {
   //@ ensures (inv(joining) && canCheckJoinAge(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
   //@ ensures (inv(joining) && canCheckJoinAge(joining)) ==> alwaysExistingMembershipStaysExisting(\result)
   //@ ensures (inv(joining) && canCheckJoinAge(joining)) ==> alwaysReferralOnlyOnNewMembership(\result)
-  return { ...joining, ageAllowed: ageEligible, phase: !ageEligible ? "BelowJoinAge" : (joining.rejoin ? "ReturnExisting" : (joining.invalidReferral ? "InvalidInvitation" : "AwaitingPersistence")) };
+  return { ...joining, ageAllowed: ageEligible, phase: !ageEligible ? "BelowJoinAge" : (joining.rejoin ? (memberMissing ? "AwaitingRepair" : "ReturnExisting") : (joining.invalidReferral ? "InvalidInvitation" : "AwaitingPersistence")) };
+}
+
+/** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md) */
+//@ pure
+export function canFinishRepair(joining: Enrollment): boolean {
+  return joining.phase === "AwaitingRepair" && joining.rejoin && joining.ageAllowed && joining.currentEligibility && joining.viewChecked && joining.validProfile && joining.currentConsent;
+}
+
+/** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md) */
+//@ pure
+export function finishRepair(joining: Enrollment, hookSucceeded: boolean): Enrollment {
+  //@ ensures (inv(joining) && canFinishRepair(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
+  //@ ensures (inv(joining) && canFinishRepair(joining)) ==> alwaysExistingMembershipStaysExisting(\result)
+  //@ ensures (inv(joining) && canFinishRepair(joining)) ==> alwaysReferralOnlyOnNewMembership(\result)
+  return { ...joining, phase: hookSucceeded ? "ReturnExisting" : "JoinHookFailed" };
+}
+
+/** Story: Save my approved profile in the app I asked for / A decline below the join age ends the number's unbound access (spec/siteEnrollment.md) */
+//@ pure
+export function declineEndsUnboundAccess(effectiveAge: number): boolean {
+  return memberAge_confirmedUnderage(effectiveAge);
+}
+
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
+//@ pure
+export function joinFailureForgetsMembership(referred: boolean): boolean {
+  return !referred;
+}
+
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
+//@ pure
+export function forgetEndsAppAccess(joinFailed: boolean): boolean {
+  return !joinFailed;
 }
 
 /** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
@@ -173,6 +208,13 @@ export function finishJoin(joining: Enrollment, hookSucceeded: boolean): Enrollm
   //@ ensures (inv(joining) && canFinishJoin(joining)) ==> alwaysExistingMembershipStaysExisting(\result)
   //@ ensures (inv(joining) && canFinishJoin(joining)) ==> alwaysReferralOnlyOnNewMembership(\result)
   return { ...joining, phase: hookSucceeded ? "Created" : "JoinHookFailed" };
+}
+
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
+//@ pure
+export function lawFailedOrdinaryJoinForgetsOnlyTheMember(joining: Enrollment): boolean {
+  //@ ensures \result === true
+  return !(canFinishJoin(joining) && !joining.referred) || (finishJoin(joining, false).phase === "JoinHookFailed" && joinFailureForgetsMembership(joining.referred) && !forgetEndsAppAccess(true));
 }
 
 /** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md) */
@@ -228,18 +270,6 @@ export function lawTypedEntryUsesSameConsentGate(consentMatches: boolean): boole
 
 /** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
 //@ pure
-export function sometimesEnrolled(joining: Enrollment): boolean {
-  return joining.phase === "Created";
-}
-
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
-//@ pure
-export function sometimesExisting(joining: Enrollment): boolean {
-  return joining.phase === "ReturnExisting";
-}
-
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
-//@ pure
 export function sometimesAccountChanged(joining: Enrollment): boolean {
   return joining.phase === "AccountChanged";
 }
@@ -262,6 +292,24 @@ export function sometimesBelowJoinAge(joining: Enrollment): boolean {
   return joining.phase === "BelowJoinAge";
 }
 
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+//@ pure
+export function sometimesRepairsMember(joining: Enrollment): boolean {
+  return joining.phase === "AwaitingRepair";
+}
+
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+//@ pure
+export function sometimesEnrolled(joining: Enrollment): boolean {
+  return joining.phase === "Created";
+}
+
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md) */
+//@ pure
+export function sometimesExisting(joining: Enrollment): boolean {
+  return joining.phase === "ReturnExisting";
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: Enrollment, event: Event): boolean {
@@ -271,6 +319,7 @@ export function enabled(current: Enrollment, event: Event): boolean {
   if (event.type === "checkEligibility") return canCheckEligibility(current);
   if (event.type === "checkMembership") return canCheckMembership(current);
   if (event.type === "checkJoinAge") return canCheckJoinAge(current);
+  if (event.type === "finishRepair") return canFinishRepair(current);
   if (event.type === "finishJoin") return canFinishJoin(current);
   return false;
 }
@@ -285,7 +334,8 @@ export function step(current: Enrollment, event: Event): Enrollment {
   if (event.type === "confirmConsent") return canConfirmConsent(current) ? confirmConsent(current, event.consentMatches) : current;
   if (event.type === "checkEligibility") return canCheckEligibility(current) ? checkEligibility(current, event.eligible) : current;
   if (event.type === "checkMembership") return canCheckMembership(current) ? checkMembership(current, event.membershipFacts) : current;
-  if (event.type === "checkJoinAge") return canCheckJoinAge(current) ? checkJoinAge(current, event.ageEligible) : current;
+  if (event.type === "checkJoinAge") return canCheckJoinAge(current) ? checkJoinAge(current, event.ageEligible, event.memberMissing) : current;
+  if (event.type === "finishRepair") return canFinishRepair(current) ? finishRepair(current, event.hookSucceeded) : current;
   if (event.type === "finishJoin") return canFinishJoin(current) ? finishJoin(current, event.hookSucceeded) : current;
   return current;
 }
@@ -310,7 +360,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "confirmConsent" && typeof raw.consentMatches === "boolean") return { type: "confirmConsent", consentMatches: raw.consentMatches };
   if (raw.type === "checkEligibility" && typeof raw.eligible === "boolean") return { type: "checkEligibility", eligible: raw.eligible };
   if (raw.type === "checkMembership" && is_MembershipFacts(raw.membershipFacts)) return { type: "checkMembership", membershipFacts: ({ existingMember: raw.membershipFacts.existingMember, inviteRequired: raw.membershipFacts.inviteRequired, hasInvite: raw.membershipFacts.hasInvite, referral: raw.membershipFacts.referral }) };
-  if (raw.type === "checkJoinAge" && typeof raw.ageEligible === "boolean") return { type: "checkJoinAge", ageEligible: raw.ageEligible };
+  if (raw.type === "checkJoinAge" && typeof raw.ageEligible === "boolean" && typeof raw.memberMissing === "boolean") return { type: "checkJoinAge", ageEligible: raw.ageEligible, memberMissing: raw.memberMissing };
+  if (raw.type === "finishRepair" && typeof raw.hookSucceeded === "boolean") return { type: "finishRepair", hookSucceeded: raw.hookSucceeded };
   if (raw.type === "finishJoin" && typeof raw.hookSucceeded === "boolean") return { type: "finishJoin", hookSucceeded: raw.hookSucceeded };
   return undefined;
 }
@@ -329,7 +380,7 @@ export function parseState(x: unknown): Enrollment | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AwaitingAccountView" || raw.phase === "AccountChanged" || raw.phase === "AwaitingProfile" || raw.phase === "InvalidProfile" || raw.phase === "AwaitingConsent" || raw.phase === "ConsentMismatch" || raw.phase === "AwaitingEligibility" || raw.phase === "NeedsReview" || raw.phase === "AwaitingMembership" || raw.phase === "NeedsInvite" || raw.phase === "InvalidInvitation" || raw.phase === "AwaitingAge" || raw.phase === "BelowJoinAge" || raw.phase === "ReturnExisting" || raw.phase === "AwaitingPersistence" || raw.phase === "Created" || raw.phase === "JoinHookFailed") && typeof raw.viewChecked === "boolean" && typeof raw.validProfile === "boolean" && typeof raw.currentConsent === "boolean" && typeof raw.currentEligibility === "boolean" && typeof raw.rejoin === "boolean" && typeof raw.invited === "boolean" && typeof raw.referred === "boolean" && typeof raw.invalidReferral === "boolean" && typeof raw.ageAllowed === "boolean" && Object.keys(raw).length === 10)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AwaitingAccountView" || raw.phase === "AccountChanged" || raw.phase === "AwaitingProfile" || raw.phase === "InvalidProfile" || raw.phase === "AwaitingConsent" || raw.phase === "ConsentMismatch" || raw.phase === "AwaitingEligibility" || raw.phase === "NeedsReview" || raw.phase === "AwaitingMembership" || raw.phase === "NeedsInvite" || raw.phase === "InvalidInvitation" || raw.phase === "AwaitingAge" || raw.phase === "BelowJoinAge" || raw.phase === "ReturnExisting" || raw.phase === "AwaitingRepair" || raw.phase === "AwaitingPersistence" || raw.phase === "Created" || raw.phase === "JoinHookFailed") && typeof raw.viewChecked === "boolean" && typeof raw.validProfile === "boolean" && typeof raw.currentConsent === "boolean" && typeof raw.currentEligibility === "boolean" && typeof raw.rejoin === "boolean" && typeof raw.invited === "boolean" && typeof raw.referred === "boolean" && typeof raw.invalidReferral === "boolean" && typeof raw.ageAllowed === "boolean" && Object.keys(raw).length === 10)) return undefined;
   const parsed: Enrollment = ({ phase: raw.phase, viewChecked: raw.viewChecked, validProfile: raw.validProfile, currentConsent: raw.currentConsent, currentEligibility: raw.currentEligibility, rejoin: raw.rejoin, invited: raw.invited, referred: raw.referred, invalidReferral: raw.invalidReferral, ageAllowed: raw.ageAllowed });
   return inv(parsed) ? parsed : undefined;
 }

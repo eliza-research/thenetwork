@@ -248,3 +248,34 @@ test.skipIf(!pgAvailable)("an unverified employer, a ban, a posting closed durin
   await verify(unverified!.employer, "Company 0");
   expect(pairOf(await matchingDay([unverified!.employerPhone, unverified!.candidatePhone]), unverified!.candidate, unverified!.employer)).toBeDefined();
 }, 300_000);
+
+test.skipIf(!pgAvailable)("a Peon member whose age the platform does not know is never proposed for a fitting verified posting", async () => {
+  expect((await staff("/matching", { on: true })).status).toBe(200);
+  const role = "data analyst";
+  const employerPhone = "+12125550220", adultPhone = "+12125550221", unknownPhone = "+12125550222";
+  const employer = (await join(employerPhone, "My name is Emg. I am 41 years old.")).id!;
+  await postOnLine(employerPhone, role);
+  await verify(employer, "Company 6");
+  const adult = (await join(adultPhone, "My name is Cag. I am 31 years old.")).id!;
+  expect(await saveSearch(adultPhone, role)).toEqual(["I saved your Peon job search. I'll ask you before any introduction."]);
+  const unknown = (await join(unknownPhone, "My name is Cah. I am 32 years old.")).id!;
+  expect(await saveSearch(unknownPhone, role)).toEqual(["I saved your Peon job search. I'll ask you before any introduction."]);
+  await db`update network.members set age = null where id = ${unknown}`;
+  await db`update platform.people set lowest_age = null where id = (select person_id from network.members where id = ${unknown})`;
+  await db`delete from platform.age_floor where phone_hash = (select p.phone_hash from network.members m join platform.people p on p.id = m.person_id where m.id = ${unknown})`;
+  expect(await db`select age from platform.matching_ages where app_id = 'peon' and member_id = ${unknown}`).toEqual([{ age: null }]);
+  await runtime().unitOfWork(net => {
+    const saved = net.exportState();
+    const member = saved.members.find(m => m.id === unknown)!;
+    delete member.statedAge;
+    member.ageUnknown = true;
+    net.importState(saved);
+  });
+
+  const items = await matchingDay([employerPhone, adultPhone, unknownPhone]);
+  const participants = items.flatMap(i => i.proposal.participants);
+  expect(participants).toContain(adult);
+  expect(participants).not.toContain(unknown);
+  await runtime().deliver();
+  expect(await db`select id from network.messages where app_id = 'peon' and member_id = ${unknown} and opportunity_id is not null`).toEqual([]);
+}, 300_000);

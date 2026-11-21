@@ -6,6 +6,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
+import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultScopes, scopeName, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
@@ -164,11 +165,17 @@ export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token |
   return preparedTokensLive(rotation, at) ? "RefreshPairCommitted" : "RefreshNotCommitted";
 }
 
+export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
+export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number }
+
 export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
 
 export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
 
 export interface OAuthStore {
+  putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
+  claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number): Promise<SignupDraftFields | undefined>;
+  deleteSignupDrafts(phoneKey: string, app: McpAppId): Promise<void>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
   /** Store observed acceptance, or release a claim only after intake explicitly refused it. */
@@ -237,6 +244,7 @@ export const CLIENT_UNUSED_MS = 86_400_000;
 const copy = <T extends object>(v: T | undefined): T | undefined => (v ? structuredClone(v) : undefined);
 
 export class MemoryOAuthStore implements OAuthStore {
+  readonly signupDrafts = new Map<string, SignupDraft>();
   private readonly profileSubmissions = new Map<string, Map<string, boolean>>();
   private readonly assistantProjections = new Map<string, Promise<void>>();
   readonly clients = new Map<string, OAuthClient>();
@@ -246,6 +254,24 @@ export class MemoryOAuthStore implements OAuthStore {
   readonly tokens = new Map<string, Token>();
   readonly rows: AuditRow[] = [];
   readonly windows = new Map<string, { start: number; count: number; windowMs: number }>();
+
+  async putSignupDraft(d: SignupDraft, at: number) {
+    const g = this.grants.get(d.grantId);
+    if (!g || !signupDraftGrantAllowed(g.app === d.app && g.phoneKey === d.phoneKey, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
+      || signupDraftExpired(d.expiresAt, at) || this.signupDrafts.has(g.id)) return false;
+    this.signupDrafts.set(g.id, structuredClone(d));
+    return true;
+  }
+  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
+    const drafts = [...this.signupDrafts.values()].filter(d => {
+      const g = this.grants.get(d.grantId);
+      return signupDraftRowReadable(!!g && d.phoneKey === phoneKey && d.app === app && g.app === app && g.phoneKey === phoneKey && g.personId === personId, d.expiresAt, at);
+    });
+    return signupDraftUnique(drafts.length) ? structuredClone(drafts[0].fields) : undefined;
+  }
+  async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
+    for (const [id, d] of this.signupDrafts) if (d.phoneKey === phoneKey && d.app === app) this.signupDrafts.delete(id);
+  }
 
   async claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim> {
     const current = this.grants.get(grant.id);
@@ -393,6 +419,7 @@ export class MemoryOAuthStore implements OAuthStore {
   }
 
   async sweep(at: number) {
+    for (const [k, d] of this.signupDrafts) if (signupDraftExpired(d.expiresAt, at)) this.signupDrafts.delete(k);
     for (const [k, r] of this.requests) if (r.expiresAt <= at) this.requests.delete(k);
     for (const [k, c] of this.codes) if (c.expiresAt <= at) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.expiresAt <= at) this.tokens.delete(k);
@@ -405,6 +432,7 @@ export class MemoryOAuthStore implements OAuthStore {
 
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {
     let n = 0;
+    for (const [k, d] of this.signupDrafts) if (d.phoneKey === phoneKey && (!app || d.app === app)) this.signupDrafts.delete(k);
     for (const [k, g] of this.grants) if (g.phoneKey === phoneKey && (!app || g.app === app)) { this.dropGrant(k); n++; }
     for (const [k, r] of this.requests) if (r.e164 === e164 && (!app || r.app === app)) this.requests.delete(k);
     return n;
@@ -414,12 +442,15 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [id, request] of this.requests)
       if (request.personId === personId && (!app || request.app === app)) this.requests.delete(id);
     const grants = [...this.grants.values()].filter(grant => grant.personId === personId && (!app || grant.app === app));
+    const phones = new Set(grants.map(grant => grant.phoneKey));
+    for (const [k, d] of this.signupDrafts) if (phones.has(d.phoneKey) && (!app || d.app === app)) this.signupDrafts.delete(k);
     for (const grant of grants) this.dropGrant(grant.id);
     return grants.map(grant => structuredClone(grant));
   }
 
   private dropGrant(id: string) {
     this.grants.delete(id);
+    this.signupDrafts.delete(id);
     this.profileSubmissions.delete(id);
     for (const [k, c] of this.codes) if (c.grantId === id) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.grantId === id) this.tokens.delete(k);

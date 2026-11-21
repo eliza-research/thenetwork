@@ -71,44 +71,116 @@ pure def pendingMatchesApp(pendingApp: str, routedApp: str): bool = pendingApp =
 
 ### A join needs permission to enter this app
 
-A banned number or person cannot join. An invite-only app requires an invitation except The Network's shared-line intake. Other join modes may proceed.
+A banned number or person cannot join. An invite-only app requires an invitation except The Network's shared-line intake. Other join modes may proceed. An answer refused for want of an invitation stores nothing for this app, but an age it states is still recorded at once on the number's age floor and on the person, if any, before the invite-only reply, because age is a person-level fact and the lowest stated age wins. Changed on 2026-11-21 (review of audit JA-1): before, "Sam 15" sent to an invite-only app was not recorded, so a later "Sam 25" to an open app joined a minor as an adult.
 
 ```quint
 type JoinPhase = AwaitingBan | JoinHeld | AwaitingInvite | InviteRequired | AwaitingAnswer | AskForAge | AskForHome |
   AwaitingJoinAge | RefuseAge | AskForName | AwaitingMember | AwaitingWelcome | JoinedWaitlist | JoinedWithShare |
-  JoinedWithLookingFor | JoinedWithoutFollowUp
-type TextJoin = { phase: JoinPhase, ageAllowed: bool, hasName: bool, invalidHome: bool }
-pure val initial: TextJoin = { phase: AwaitingBan, ageAllowed: false, hasName: false, invalidHome: false }
+  JoinedWithLookingFor | JoinedWithoutFollowUp | AwaitingAgeRecord | AwaitingInviteAgeRecord
+type TextJoin = { phase: JoinPhase, ageAllowed: bool, hasName: bool, invalidHome: bool, hasAge: bool, ageRecorded: bool,
+  floorRefused: bool }
+pure val initial: TextJoin = { phase: AwaitingBan, ageAllowed: false, hasName: false, invalidHome: false, hasAge: false,
+  ageRecorded: false, floorRefused: false }
 
 pure def canCheckJoinBan(joining: TextJoin): bool = joining.phase == AwaitingBan
 pure def checkJoinBan(joining: TextJoin, banned: bool): TextJoin =
   { ...joining, phase: if (banned) JoinHeld else AwaitingInvite }
 
 pure def canCheckInvitation(joining: TextJoin): bool = joining.phase == AwaitingInvite
-pure def checkInvitation(joining: TextJoin, inviteOnly: bool, invited: bool, sharedNetwork: bool): TextJoin =
-  { ...joining, phase: if (inviteOnly and not(invited) and not(sharedNetwork)) InviteRequired else AwaitingAnswer }
+pure def checkInvitation(joining: TextJoin, inviteOnly: bool, invited: bool, sharedNetwork: bool, hasAge: bool): TextJoin =
+  if (inviteOnly and not(invited) and not(sharedNetwork))
+    { ...joining, hasAge: hasAge, phase: if (hasAge) AwaitingInviteAgeRecord else InviteRequired }
+  else { ...joining, phase: AwaitingAnswer }
+
+pure def alwaysInviteRefusalKeepsStatedAge(joining: TextJoin): bool =
+  (joining.phase == InviteRequired and joining.hasAge) implies joining.ageRecorded
+
+pure def sometimesInviteRefusalRecordsAge(joining: TextJoin): bool =
+  joining.phase == InviteRequired and joining.ageRecorded
 ```
 
 ### Confirm age before creating a member
 
-Combine the new reply with the same app's pending fields. Ask for age when it is absent, and request a corrected home when the answer supplied an unsupported one. When the age is present, apply the existing lowest-age rule before asking for name or home. A failed age records the age floor and drops the pending join. Name and a supported or omitted home are needed before writing the membership.
+Combine the new reply with the same app's pending fields. When an age is present, record it at once on the number's age floor and on the person, if any, before any other step, so that a missing name, an unsupported home or an expired pending join never loses it. Then apply the existing lowest-age rule before asking for name or home. When no age is present and the number's recorded lowest age is under this app's join age, decline kindly and drop the pending join. Otherwise ask for age, or request a corrected home when the answer supplied an unsupported one. A failed age, stated or recorded, also declines and drops the pending join. Name and a supported or omitted home are needed before writing the membership. Changed on 2026-11-21 (audit JA-1, JA-2 and JA-7): before, an age sent without a name was kept only on the pending join, which expires after a day, and an allowed age sent with an unsupported home was not kept at all, so a later older age joined a minor as an adult; a number with a recorded age under 13 that sent no age stored a pending join and was asked its age again.
 
 ```quint
-type JoinAnswerFacts = { hasAge: bool, hasName: bool, invalidHome: bool }
-pure val completedAnswer: JoinAnswerFacts = { hasAge: true, hasName: true, invalidHome: false }
+type JoinAnswerFacts = { hasAge: bool, hasName: bool, invalidHome: bool, floorRefused: bool }
+pure val completedAnswer: JoinAnswerFacts = { hasAge: true, hasName: true, invalidHome: false, floorRefused: false }
 pure val answerFactsValues = Set(
   completedAnswer, { ...completedAnswer, hasAge: false }, { ...completedAnswer, hasName: false },
   { ...completedAnswer, invalidHome: true }, { ...completedAnswer, hasAge: false, invalidHome: true },
+  { ...completedAnswer, floorRefused: true }, { ...completedAnswer, hasAge: false, floorRefused: true },
+  { ...completedAnswer, hasAge: false, hasName: false, invalidHome: true, floorRefused: true },
 )
 pure def canReadJoinAnswer(joining: TextJoin): bool = joining.phase == AwaitingAnswer
 pure def readJoinAnswer(joining: TextJoin, answerFacts: JoinAnswerFacts): TextJoin =
-  { ...joining, hasName: answerFacts.hasName, invalidHome: answerFacts.invalidHome,
-    phase: if (answerFacts.hasAge) AwaitingJoinAge else if (answerFacts.invalidHome) AskForHome else AskForAge }
+  { ...joining, hasName: answerFacts.hasName, invalidHome: answerFacts.invalidHome, hasAge: answerFacts.hasAge,
+    floorRefused: answerFacts.floorRefused,
+    phase: if (answerFacts.hasAge) AwaitingAgeRecord else if (answerFacts.floorRefused) RefuseAge
+      else if (answerFacts.invalidHome) AskForHome else AskForAge }
+
+pure def canRecordStatedAge(joining: TextJoin): bool =
+  joining.phase == AwaitingAgeRecord or joining.phase == AwaitingInviteAgeRecord
+pure def recordStatedAge(joining: TextJoin): TextJoin =
+  { ...joining, ageRecorded: true, phase: if (joining.phase == AwaitingInviteAgeRecord) InviteRequired else AwaitingJoinAge }
 
 pure def canCheckTextJoinAge(joining: TextJoin): bool = joining.phase == AwaitingJoinAge
 pure def checkTextJoinAge(joining: TextJoin, ageAllowed: bool): TextJoin =
   { ...joining, ageAllowed: ageAllowed,
-    phase: if (not(ageAllowed)) RefuseAge else if (joining.invalidHome) AskForHome else if (joining.hasName) AwaitingMember else AskForName }
+    phase: if (not(ageAllowed) or joining.floorRefused) RefuseAge else if (joining.invalidHome) AskForHome
+      else if (joining.hasName) AwaitingMember else AskForName }
+
+pure def joinAnswerSettled(phase: JoinPhase): bool =
+  phase == AwaitingJoinAge or phase == RefuseAge or phase == AskForAge or phase == AskForHome or phase == AskForName or
+  phase == AwaitingMember or phase == AwaitingWelcome or phase == JoinedWaitlist or phase == JoinedWithShare or
+  phase == JoinedWithLookingFor or phase == JoinedWithoutFollowUp
+
+pure def alwaysStatedAgeRecordedFirst(joining: TextJoin): bool =
+  (joining.hasAge and joinAnswerSettled(joining.phase)) implies joining.ageRecorded
+
+pure def alwaysRefusedFloorOnlyDeclines(joining: TextJoin): bool =
+  (joining.floorRefused and joinAnswerSettled(joining.phase)) implies
+    (joining.phase == RefuseAge or joining.phase == AwaitingJoinAge)
+
+pure def sometimesRecordsStatedAge(joining: TextJoin): bool = joining.phase == AwaitingAgeRecord
+pure def sometimesDeclinesRecordedFloor(joining: TextJoin): bool =
+  joining.phase == RefuseAge and joining.floorRefused and not(joining.hasAge)
+```
+
+### A text join keeps the member id of a membership that is not removed
+
+A text join for a person whose membership of the app is invited or live keeps that membership's member id. Only a person with no membership, or a removed one, gets a new member id. The rule takes the membership's state itself, so each of the four cases is checked. Changed on 2026-11-21 (audit JA-6): before, only an invited membership kept its id, so a join that ran again after an earlier join stopped before the network member was made gave the live membership a new member id.
+
+```quint
+type JoinMembership = NoMembership | InvitedMembership | LiveMembership | RemovedMembership
+
+pure def textJoinKeepsMemberId(membership: JoinMembership): bool =
+  membership == InvitedMembership or membership == LiveMembership
+
+pure def lawNoMembershipGetsNewMemberId(membership: JoinMembership): bool =
+  membership == NoMembership implies not(textJoinKeepsMemberId(membership))
+
+pure def lawRemovedMembershipGetsNewMemberId(membership: JoinMembership): bool =
+  membership == RemovedMembership implies not(textJoinKeepsMemberId(membership))
+
+pure def lawLiveMembershipKeepsItsMemberId(membership: JoinMembership): bool =
+  membership == LiveMembership implies textJoinKeepsMemberId(membership)
+
+pure def lawInvitedMembershipKeepsItsMemberId(membership: JoinMembership): bool =
+  membership == InvitedMembership implies textJoinKeepsMemberId(membership)
+```
+
+### A recorded-age decline without a stated age is sent at most once a day
+
+When a join answer states an age that fails the join age check, the kind decline is always sent. When the answer states no age and only the number's recorded lowest age refuses the join, the decline is sent at most once a day for each number and app, counted together with the stated-age declines. New rule on 2026-11-21 (review of audit JA-7): before, a number with a recorded age under the join age got the decline for every message it sent, with no limit.
+
+```quint
+pure def sendAgeDecline(statedAge: bool, declinedInLastDay: bool): bool = statedAge or not(declinedInLastDay)
+
+pure def lawStatedAgeDeclineIsAlwaysSent(declinedInLastDay: bool): bool = sendAgeDecline(true, declinedInLastDay)
+
+pure def lawRecordedAgeDeclineAtMostOnceADay(statedAge: bool): bool =
+  not(statedAge) implies not(sendAgeDecline(statedAge, true))
 ```
 
 ### An active membership gets its welcome and at most one follow-up

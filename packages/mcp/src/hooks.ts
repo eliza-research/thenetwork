@@ -3,7 +3,7 @@
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
 import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { canMatchInApp, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
+import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 import { connectorMembershipStatus, type MemberStatus } from "../../core/src/generated/connectorTools.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
@@ -70,6 +70,7 @@ export interface PlatformHooks {
   grantOwner(phoneKey: string): Promise<{ personId: string | null; held: boolean }>;
   /** True when the grant's phone or person is banned now. Read at every use of a connector credential. */
   grantIsBanned(phoneKey: string, personId: string | null): Promise<boolean>;
+  signupAgeAllowed?(phoneKey: string, app: McpAppId): Promise<boolean>;
   /** The person's own state in one app. */
   status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
   /** Fields the active member saved in this app. The connector applies its output gate before disclosure. */
@@ -161,9 +162,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if(p.cloudAuthorityRequired?.(id))return {ok:false,error:"unavailable"};
       const app = p.app(id);
       if (!app) return { ok: false, error: "unavailable" };
-      // A banned number gets the same answer as any other, and no code is sent (no sign-in, no grant).
-      if (await p.accounts.banned(e164)) return { ok: true };
-      const r = await p.otp.start(app, e164, ip);
+      const r = await p.otp.start(app, e164, ip, false, await p.accounts.banned(e164));
       return r.ok ? { ok: true } : { ok: false, error: "rate_limited" };
     },
     async verifyOtp(id, e164, code, ip) {
@@ -190,6 +189,11 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     },
     async grantIsBanned(key, personId) {
       return p.store.isBanned(key, personId ?? (await p.accounts.byPhoneHash(key))?.person.id ?? null);
+    },
+    async signupAgeAllowed(key, id) {
+      const app = p.app(id);
+      const age = lowestAge(await p.store.ageFloor(key), (await p.accounts.byPhoneHash(key))?.person.lowestAge);
+      return !!app && (age === undefined || canJoinApp(age, app));
     },
     async customChatGptSlopEligible(personId, key) {
       const app = p.app("slop");

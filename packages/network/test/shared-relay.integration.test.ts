@@ -14,8 +14,9 @@ import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel
 import {NetworkService} from "../service/service.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
-import type {NetworkState} from "../src/network.ts";
+import {relayDispatchCheck,type NetworkState} from "../src/network.ts";
 import {PHOTO_CONSENT,type PhotoStorage} from "../../platform/src/photos.ts";
+import {withdrawPhoto} from "../service/photoIntakeRelayChoice.ts";
 import type {QueueOptions} from "../../blooio/src/outbound-queue.ts";
 import {collectNetwork,evaluate,runtimeProbe} from "../../../deploy/backend/ops.ts";
 import {createBackend,jsonLogger,loadConfig} from "../../../deploy/backend/backend.ts";
@@ -298,6 +299,29 @@ test("a held relay item expires unsent at its review deadline, its sender is tol
   expect(await rt.unitOfWork(n=>n.rejectRelay(item.itemId,"staff"))).toEqual({ok:false,reason:"not_held"});
 },60_000);
 
+test("negative feedback after the meeting ends the relay thread in both directions without a block (audit OPP58)",async()=>{
+  clock.advance(11*MINUTE);await fixturePair();
+  const rt=service.runtimeFor("friends")!,k=[fromId,toId].sort().join("|");
+  const open1=await open("relay-feedback-before","tell Ari thanks for coffee",b);
+  expect(await(await post(RELAY_PATH,open1)).json()).toMatchObject({decision:"pass",delivered:true});
+  await rt.unitOfWork(n=>{const st=n.exportState();st.avoid=[...st.avoid.filter(x=>x!==k),k];n.importState(st);});
+  try {
+    const before=posts;
+    const theirs=await open("relay-feedback-after","tell Ari I had fun, let's do it again",b);
+    const [context]=await sql`select response from platform.inbound where id=${"msg:blooio:relay-feedback-after"}`;expect(context.response.context.activeItems).toBeNull();
+    expect(await(await post(RELAY_PATH,theirs)).json()).toEqual({decision:"block",senderNotice:"I can only pass messages on to someone you've matched with, and you don't have an open match right now.",delivered:false,replayed:false});
+    expect((await post(RELAY_PATH,{...(await open("relay-feedback-named","tell Ari I had fun",b)),itemId:"relay-pair"})).status).toBe(403);
+    expect(await(await post(RELAY_PATH,await open("relay-feedback-mine","tell Sam goodbye"))).json()).toMatchObject({decision:"block",delivered:false});
+    expect(posts).toBe(before);
+    const [row]=await sql`select state from network.network_state where id='friends:nyc'`,st=typeof row.state==="string"?JSON.parse(row.state):row.state;
+    expect(relayDispatchCheck(st,{matchId:"relay-pair",from:toId,to:fromId,now:clock.now()})).toBe("state:closed");
+    expect(st.blocks).not.toContain(k);
+  } finally {
+    await rt.unitOfWork(n=>{const st=n.exportState();st.avoid=st.avoid.filter(x=>x!==k);n.importState(st);});
+    await fixturePair();
+  }
+},60_000);
+
 test("closing the pair or a recipient STOP after classification and the async dispatch checks prevents relay",async()=>{
   const rt=service.runtimeFor("friends")!;
   // Classification runs inside the unit: a close waits for it, and the dispatch admission then reads the close.
@@ -564,4 +588,19 @@ test("a matched member chooses the photo to relay by text: the numbered list, on
   clock.advance(16*MINUTE);
   expect(await ask("photo-choice-stale",`send them my photo ${photos.length}`)).toMatchObject({decision:"block",delivered:false});
   expect(await pending()).toHaveLength(pendingBefore);expect(posts).toBe(before+1);
+  // spec/photoRelayItem.md, "A withdrawal by text revokes the member's open photo items for the match"
+  expect(await ask("photo-choice-relist","send them my photo")).toMatchObject({decision:"none",delivered:false});
+  expect(await ask("photo-choice-again","send them my photo 1")).toMatchObject({decision:"hold",delivered:false});
+  const again=(await pending()).filter((r:any)=>r.photo_id===photos[0]);expect(again).toHaveLength(1);
+  expect(await ask("photo-choice-withdraw","don't send my photo")).toMatchObject({decision:"none",delivered:false,senderNotice:"Okay, I won't send your photo."});
+  expect((await sql`select state from platform.photo_relay_items where id=${again[0]!.id}`)[0].state).toBe("revoked");
+  expect(await ask("photo-choice-withdraw-none","don't send my photo")).toMatchObject({decision:"none",senderNotice:"No photo of yours is waiting to go to this match."});
+  expect(await pending()).toHaveLength(pendingBefore);expect(posts).toBe(before+1);
+  expect(await ask("photo-choice-relist-race","send them my photo")).toMatchObject({decision:"none",delivered:false});
+  expect(await ask("photo-choice-race","send them my photo 1")).toMatchObject({decision:"hold",delivered:false});
+  const raced=(await pending()).filter((r:any)=>r.photo_id===photos[0]);expect(raced).toHaveLength(1);
+  const withdrawal=await withdrawPhoto({relay:service.photoRelay},{app:"slop",personId:person.id,threadId});
+  expect(withdrawal.notice).toBe("Okay, I won't send your photo.");
+  expect(await service.photoRelay.revoke("slop",person.id,raced[0]!.id as string)).toBe(true);
+  await expect(sql.begin(tx=>withdrawal.commit(tx))).rejects.toThrow("Photo item changed before the withdrawal");
 },120_000);

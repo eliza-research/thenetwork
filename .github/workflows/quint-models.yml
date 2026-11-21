@@ -8,7 +8,7 @@ name: quint-models
 
 on:
   push:
-    branches: [main]
+    branches: [main, vibestack]
     paths:
       - 'spec/models/**'
       - 'scripts/quint-check.ts'
@@ -96,5 +96,5 @@ jobs:
           MODELS: ${{ steps.shard.outputs.models }}
         run: |
           read -ra names <<< "$MODELS"
-          pnpm run quint:check "${names[@]}" --jobs 4
+          pnpm run quint:check "${names[@]}" --jobs "$(nproc)"
         timeout-minutes: 30

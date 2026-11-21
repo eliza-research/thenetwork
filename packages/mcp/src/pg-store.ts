@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
+import { signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraft, type SignupDraftFields, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -83,6 +84,30 @@ export class PgOAuthStore implements OAuthStore {
       ? await this.sql`update oauth.profile_submissions set accepted=true where grant_id=${grantId} and fingerprint=${fingerprint} and not accepted returning grant_id`
       : await this.sql`delete from oauth.profile_submissions where grant_id=${grantId} and fingerprint=${fingerprint} and not accepted returning grant_id`;
     return rows.length === 1;
+  }
+
+  async putSignupDraft(d: SignupDraft, at: number) {
+    return this.sql.begin(async tx => {
+      const [g] = await tx<{ app_id: string; phone_key: string; expires_at: Date; revoked_at: Date | null; scopes: unknown }[]>`
+        select app_id, phone_key, expires_at, revoked_at, scopes from oauth.grants where id=${d.grantId} for update`;
+      if (!g || !signupDraftGrantAllowed(g.app_id === d.app && g.phone_key === d.phoneKey, ms(g.expires_at)! > at, g.revoked_at === null, arr(g.scopes).includes("profile:write"))
+        || d.expiresAt <= at) return false;
+      const rows = await tx`insert into oauth.signup_drafts (grant_id, app_id, phone_key, fields, expires_at)
+        values (${d.grantId}, ${d.app}, ${d.phoneKey}, ${d.fields}::jsonb, ${ts(d.expiresAt)}) on conflict (grant_id) do nothing returning grant_id`;
+      return signupDraftUnique(rows.length);
+    });
+  }
+
+  async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
+    const rows = await this.sql<{ fields: SignupDraftFields; expires_at: Date; bound: boolean }[]>`
+      select d.fields, d.expires_at, (g.app_id = d.app_id and g.phone_key = d.phone_key and g.person_id is not distinct from ${personId}) as bound
+      from oauth.signup_drafts d join oauth.grants g on g.id = d.grant_id where d.phone_key=${phoneKey} and d.app_id=${app}`;
+    const readable = rows.filter(r => signupDraftRowReadable(r.bound, ms(r.expires_at)!, at));
+    return signupDraftUnique(readable.length) ? readable[0].fields : undefined;
+  }
+
+  async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
+    await this.sql`delete from oauth.signup_drafts where phone_key=${phoneKey} and app_id=${app}`;
   }
 
   async putClient(c: OAuthClient) {
@@ -267,6 +292,7 @@ export class PgOAuthStore implements OAuthStore {
 
   async sweep(at: number) {
     const t = ts(at);
+    await this.sql`delete from oauth.signup_drafts where expires_at <= ${t}`;
     await this.sql`delete from oauth.profile_submissions s using oauth.grants g where s.grant_id=g.id and (g.revoked_at is not null or g.expires_at<=${t})`;
     await this.sql`delete from oauth.auth_requests where expires_at <= ${t}`;
     await this.sql`delete from oauth.codes where expires_at <= ${t}`;
@@ -294,6 +320,8 @@ export class PgOAuthStore implements OAuthStore {
       // Wait for any locked approval of this person before deleting the grants it might issue.
       if (app) await tx`delete from oauth.auth_requests where person_id = ${personId} and app_id = ${app}`;
       else await tx`delete from oauth.auth_requests where person_id = ${personId}`;
+      await tx`delete from oauth.signup_drafts d using oauth.grants g where g.person_id = ${personId} and d.phone_key = g.phone_key
+        and (${app ?? null}::text is null or d.app_id = ${app ?? null})`;
       const rows = app
         ? await tx`delete from oauth.grants where person_id = ${personId} and app_id = ${app} returning *`
         : await tx`delete from oauth.grants where person_id = ${personId} returning *`;

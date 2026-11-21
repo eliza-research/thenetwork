@@ -14,6 +14,8 @@ The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers revie
 
 The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
 
+A group backfill skips an alternate who would change the probe words that a member already heard ([probe dispatch](../probeDispatch.md), "A group plan backfill keeps the words that each member heard"). The model does not render probe words: its bench takes the next adult alternate that the shell admits.
+
 The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
@@ -90,7 +92,7 @@ module plan_run {
   pure val S = 10              // plan.window.start
   pure val LATEJOIN = 3        // pcfg.lateJoinHours
   pure val CUTOFF = S - LATEJOIN
-  pure val PROBE_TTL = 3       // network.ts:440 (26 h)
+  pure val PROBE_TTL = 3       // network.ts probeWindow (48 h, scaled)
   pure val MAXT = 13
 
   // ------------------------------------------------------------------------------------------------

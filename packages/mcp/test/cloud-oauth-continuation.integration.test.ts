@@ -12,11 +12,12 @@ import {defaultApps} from '../src/apps.ts';
 import {pkceS256} from '../src/util.ts';
 import {networkDelegationService,networkDelegationServiceRequest} from './fixtures/cloud-authorization-producer.ts';
 
-async function fixture(){
+async function fixture({cloudAheadS=0,bearerIssuedOffsetS=-10}={}){
  let now=Date.UTC(2026,9,19,12),live=true,otp=0;
  let validationFailure:'none'|'timeout'|'5xx'|'malformed'|'malformed-identity'|'identity-mismatch'='none';
  const phone='+12125550162',secret='synthetic-existing-network-authority-'.repeat(2),rows=new Map<string,any>();
- const producer=networkDelegationService({secret,now:()=>now,verifyBearer:async v=>v==='verified-fixture'?{userId:'fixture-steward',issuedAt:Math.floor(now/1000)-10,expiration:Math.floor(now/1000)+3600}:null,
+ const cloudNow=()=>now+cloudAheadS*1000;
+ const producer=networkDelegationService({secret,now:cloudNow,verifyBearer:async v=>v==='verified-fixture'?{userId:'fixture-steward',issuedAt:Math.floor(cloudNow()/1000)+bearerIssuedOffsetS,expiration:Math.floor(cloudNow()/1000)+3600}:null,
  primaryOwner:async()=>live?{userId:'11111111-1111-4111-8111-111111111111',organizationId:'22222222-2222-4222-8222-222222222222',stewardUserId:'fixture-steward',e164:phone,agentId:'personal:33333333-3333-4333-8333-333333333333',expiresAt:now+3600000}:undefined,
  blockedByLogout:async()=>false,insert:async r=>{rows.set(r.code_hash,r)},claim:async k=>{const r=rows.get(k);rows.delete(k);return r}});
  const transport=Object.assign(async(input:RequestInfo|URL,init?:RequestInit)=>{
@@ -73,6 +74,14 @@ test('agent-originated Cloud OAuth returns to the same pending request and expli
  const tok=await f.request('/oauth/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code:u.searchParams.get('code')!,client_id:f.client.client_id,redirect_uri:f.client.redirect_uris[0],code_verifier:f.verifier,resource:f.resource})});expect(tok.status).toBe(200);
  const grant=[...f.store.grants.values()][0]!;expect(grant.id.startsWith('grant_cloud_')).toBe(true);expect(grant.personId).toBe(f.person.id);expect(grant.resource).toBe(f.resource);expect(grant.cloudAuthority).toBeDefined();expect(f.getOtp()).toBe(0);expect(await f.people.getMembership(f.person.id,'ntwrk')).toEqual(f.membership);
  const issued=await tok.json() as any;f.setLive(false);const revoked=await f.request('/mcp/openai',{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream',authorization:'Bearer '+issued.access_token},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'check_status',arguments:{}}})});expect(revoked.status).toBe(401);
+});
+
+test('AE-5 a Cloud delegation issued up to 30 s ahead of the Network clock signs in, and one 31 s ahead does not',async()=>{
+ const ahead=await fixture({cloudAheadS:20,bearerIssuedOffsetS:0});const cb=await cloudCallback(ahead);expect(cb.status).toBe(303);
+ expect((await ahead.request(cb.headers.get('location')!)).status).toBe(200);
+ const late=await fixture({cloudAheadS:31,bearerIssuedOffsetS:0});const refused=await cloudCallback(late);
+ expect(refused.status).toBe(403);expect(refused.headers.getSetCookie().every(c=>/Max-Age=0/.test(c))).toBe(true);
+ expect([...late.store.requests.values()][0]!.personId??null).toBeNull();expect(late.store.grants.size).toBe(0);expect(late.getOtp()).toBe(0);
 });
 
 test('Cloud OAuth continuation rejects expired or revoked authority and public caller return destinations',async()=>{

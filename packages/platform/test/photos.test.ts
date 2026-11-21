@@ -14,7 +14,7 @@ import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import {
   LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
-  type PhotoRater, type PhotoRefusal,
+  type PhotoRater, type PhotoRefusal, type PhotoStorage,
 } from "../src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore } from "../src/photo-relay.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -115,7 +115,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
 
   const score: AppearanceScore = { face: 0.7, body: 0.4, overall: 0.6, confidence: 0.5, model: "fake-clef" };
   let n = 0;
-  function setup(o: { rater?: PhotoRater } = {}) {
+  function setup(o: { rater?: PhotoRater; storage?: (inner: PhotoStorage) => PhotoStorage; log?: (s: string) => void } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "photos-test-")); dirs.push(dir);
     const meta = new PgPhotoStore(sql);
     const verified = new Set<string>();
@@ -123,11 +123,12 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     const removed: string[] = [];
     let now = Date.UTC(2026, 9, 9, 15);
     const svc = new PhotoService({
-      people, meta, storage: new LocalDiskPhotoStorage(dir), signingKey: "test-key", now: () => now, rater: o.rater,
+      people, meta, storage: o.storage ? o.storage(new LocalDiskPhotoStorage(dir)) : new LocalDiskPhotoStorage(dir), signingKey: "test-key", now: () => now, rater: o.rater,
       eligible: async (personId, app) => app === "slop" && verified.has(personId),
       banned: personId => people.isBanned("", personId),
       onRating: async (personId, _app, s) => { ratings.push({ personId, score: s }); },
       onRemoved: async personId => { removed.push(personId); },
+      ...(o.log ? { log: o.log } : {}),
     });
     /** A person with a live slop membership (verified unless told otherwise). */
     const person = async (age: number | null, verify = true) => {
@@ -137,7 +138,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
       if (verify) verified.add(p.id);
       return p.id;
     };
-    return { svc, meta, dir, verified, ratings, removed, person, files: () => readdirSync(dir), tick: (ms: number) => { now += ms; } };
+    return { svc, meta, dir, verified, ratings, removed, person, files: () => { try { return readdirSync(dir); } catch { return []; } }, tick: (ms: number) => { now += ms; } };
   }
   /** `consent` null: no consent header at all. */
   const up = (svc: PhotoService, id: string, bytes = jpeg(), app: AppId = "slop", consent: string | null = PHOTO_CONSENT.version) => svc.upload(id, app, bytes, consent ?? undefined);
@@ -273,6 +274,106 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(t.files()).toHaveLength(0);
     expect(await t.svc.list(adult, "slop")).toEqual([]);
     expect(await rowsOf(adult)).toBe(0);
+  }, T);
+
+  // spec/photoRetention.md, "Reserve the photo row under the person lock before the bytes"
+  test("an upload in flight while an erasure, a leave or an age drop runs keeps no photo, also for a minor", async () => {
+    let entered!: () => void, release!: () => void;
+    let gate = { entered: new Promise<void>(r => { entered = r; }), released: new Promise<void>(r => { release = r; }) };
+    const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
+      put: async (k, b, type) => { entered(); await gate.released; await inner.put(k, b, type); } }) });
+    const erasures: [string, (id: string) => Promise<unknown>][] = [
+      ["delete everything", id => t.svc.deleteFor(id)],
+      ["leave", async id => { await t.svc.deleteFor(id, "slop"); await people.forgetMembership(id, "slop", Date.UTC(2026, 9, 9, 16)); }],
+      ["age drop", async id => { await people.noteAge(id, 16); await t.svc.deleteFor(id); }],
+    ];
+    for (const [label, erase] of erasures) {
+      gate = { entered: new Promise<void>(r => { entered = r; }), released: new Promise<void>(r => { release = r; }) };
+      const id = await t.person(29);
+      const upload = up(t.svc, id);
+      await gate.entered;
+      await erase(id);
+      release();
+      expect([label, (await upload).ok]).toEqual([label, false]);
+      expect([label, await rowsOf(id)]).toEqual([label, 0]);
+    }
+    expect(t.files()).toHaveLength(0);
+  }, T);
+
+  // spec/photoRetention.md, "Reserve the photo row under the person lock before the bytes"
+  test("parallel uploads never pass the per-person maximum", async () => {
+    let release!: () => void;
+    const released = new Promise<void>(r => { release = r; });
+    let holding = true;
+    const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
+      put: async (k, b, type) => { if (holding) await released; await inner.put(k, b, type); } }) });
+    const id = await t.person(31);
+    holding = false;
+    for (let i = 0; i < PHOTO_MAX_PER_PERSON - 1; i++) expect((await up(t.svc, id)).ok).toBe(true);
+    holding = true;
+    const racing = [up(t.svc, id), up(t.svc, id), up(t.svc, id), up(t.svc, id)];
+    await new Promise(r => setTimeout(r, 300));
+    release();
+    const results = await Promise.all(racing);
+    expect(results.filter(r => r.ok)).toHaveLength(1);
+    expect(results.filter(r => !r.ok).map(r => (r as { reason: PhotoRefusal }).reason)).toEqual(["too_many", "too_many", "too_many"]);
+    expect(await rowsOf(id)).toBe(PHOTO_MAX_PER_PERSON);
+    expect(t.files()).toHaveLength(PHOTO_MAX_PER_PERSON);
+  }, T);
+
+  // spec/photoRetention.md, "The retention tick finishes unfinished photo changes"
+  test("a crash in the middle of an upload or a removal leaves nothing behind once the retention tick has run", async () => {
+    let failPut = false, failRemoved = false;
+    const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
+      put: async (k, b, type) => { await inner.put(k, b, type); if (failPut) throw new Error("synthetic crash after the bytes"); } }) });
+    const id = await t.person(33);
+    failPut = true;
+    await expect(up(t.svc, id)).rejects.toThrow("synthetic crash after the bytes");
+    failPut = false;
+    expect(t.files()).toHaveLength(1);
+    expect(await t.svc.list(id, "slop")).toEqual([]);
+    const kept = await up(t.svc, id);
+    if (!kept.ok) throw new Error(kept.reason);
+    const gone = await up(t.svc, id);
+    if (!gone.ok) throw new Error(gone.reason);
+    const svc = t.svc as unknown as { o: { onRemoved: (p: string, a: AppId, photo: string) => Promise<void> } };
+    const onRemoved = svc.o.onRemoved;
+    svc.o.onRemoved = async (p, a, photo) => { if (failRemoved) throw new Error("synthetic crash before the rating is cleared"); await onRemoved(p, a, photo); };
+    failRemoved = true;
+    await expect(t.svc.remove(id, "slop", gone.value.id)).rejects.toThrow("synthetic crash before the rating is cleared");
+    failRemoved = false;
+    expect((await t.svc.list(id, "slop")).map(p => p.id)).toEqual([kept.value.id]);
+    const removedOf = () => t.removed.filter(p => p === id).length, removedBefore = removedOf();
+    await t.svc.sweep();
+    expect(t.files()).toHaveLength(2);
+    t.tick(15 * 60_000);
+    await t.svc.sweep();
+    expect(t.files()).toHaveLength(1);
+    expect(await rowsOf(id)).toBe(1);
+    expect(removedOf()).toBe(removedBefore + 1);
+    expect((await t.svc.list(id, "slop")).map(p => p.id)).toEqual([kept.value.id]);
+  }, T);
+
+  // spec/photoRetention.md, "The retention tick finishes unfinished photo changes"
+  test("one unfinished photo that fails every tick does not stop the sweep of the others", async () => {
+    let crash = true;
+    const stuck = new Set<string>();
+    const logs: string[] = [];
+    const t = setup({ log: (l: string) => logs.push(l), storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k),
+      delete: async k => { if (stuck.has(k)) throw new Error("storage refuses this key"); await inner.delete(k); },
+      put: async (k, b, type) => { await inner.put(k, b, type); if (crash) throw new Error("synthetic crash after the bytes"); } }) });
+    const first = await t.person(34), second = await t.person(35);
+    await expect(up(t.svc, first)).rejects.toThrow("synthetic crash after the bytes");
+    t.tick(1000);
+    await expect(up(t.svc, second)).rejects.toThrow("synthetic crash after the bytes");
+    crash = false;
+    const [firstRow] = await sql`select storage_key from platform.photos where person_id = ${first}::uuid`;
+    stuck.add(firstRow.storage_key);
+    t.tick(15 * 60_000);
+    expect((await t.svc.sweep()).failed).toBeGreaterThanOrEqual(1);
+    expect([await rowsOf(first), await rowsOf(second)]).toEqual([1, 0]);
+    expect(t.files()).toHaveLength(1);
+    expect(logs.some(l => l.includes("storage refuses this key"))).toBe(true);
   }, T);
 
   test("photos are off without storage", async () => {
