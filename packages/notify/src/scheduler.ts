@@ -122,10 +122,9 @@ export class Notifier {
    */
   async recordSent(input: InboxItemInput, d: { deliveryId: string; channel: Channel; countsTowardCap: boolean; sentAt: number }) {
     if (d.deliveryId.startsWith("ntf_")) throw new Error("ntf_ delivery ids belong to the scheduler");
-    const r = await this.add(input, d.sentAt);
-    if (r.item.notifiedAt === undefined)
-      await this.store.recordDelivery({ deliveryId: d.deliveryId, personId: input.personId, itemIds: [r.item.id], target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
-    return r;
+    if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+    // spec/notificationAcknowledgement.md, "A delivered text can appear only once and its opportunity must still be current"
+    return this.store.addDelivered(input, { deliveryId: d.deliveryId, target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
   }
 
   private dueAt(i: InboxItem): number {
@@ -327,9 +326,10 @@ export class Notifier {
    * An assistant called get_network_updates, or the member typed "updates" in the thread.
    * `callerPersonId` comes from the OAuth grant or the channel binding. With a token, only its
    * items; without, every unseen item; with `app`, only that app's. Everything returned is marked seen.
+   * `withheld` names selected items that are neither returned nor marked seen.
    */
   async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string,
-    opts: { app?: string; visible?: (items: InboxItem[]) => Promise<InboxItem[]> } = {}): Promise<InboxItem[]> {
+    opts: { app?: string; visible?: (items: InboxItem[]) => Promise<InboxItem[]>; withheld?: (items: InboxItem[]) => InboxItem[] } = {}): Promise<InboxItem[]> {
     await this.store.touch(callerPersonId, surface, now);
     // A surface bound to one app (an MCP grant) never sees another app's items: cross-app privacy.
     let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
@@ -344,7 +344,9 @@ export class Notifier {
     }
     if (!canRecordInboxSeen(read)) return [];
     const visible = opts.visible ? await opts.visible(items) : items;
-    const seen = new Set(await this.store.markSeen(callerPersonId, surface, now, items.map(i => i.id)));
+    // spec/connectorTools.md, "A withheld update stays unseen"
+    const kept = new Set((opts.withheld?.(items) ?? []).map(i => i.id));
+    const seen = new Set(await this.store.markSeen(callerPersonId, surface, now, items.filter(i => !kept.has(i.id)).map(i => i.id)));
     return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? visible.filter(i => seen.has(i.id)) : [];
   }
 

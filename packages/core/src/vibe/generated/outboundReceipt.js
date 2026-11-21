@@ -118,6 +118,39 @@ export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft) {
     //@ ensures \result === true
     return recordProviderError(initial, "UnknownResult", hasAttemptsLeft).phase === "AcceptanceUnknown";
 }
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) */
+//@ pure
+export function returnsPersonSlot(phase) {
+    return phase === "ProviderFailed" || phase === "ProviderBlocked";
+}
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) */
+//@ pure
+export function lawUncertainSendKeepsSlot(phase) {
+    //@ ensures \result === true
+    return !(phase === "AcceptanceUnknown" || phase === "AcceptanceExpired" || receiptRank(phase) > 0) || !returnsPersonSlot(phase);
+}
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function acceptanceRecordsSend(phase) {
+    return receiptRank(phase) > 0;
+}
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function acceptanceEndsRow(phase, receiptOwner, member) {
+    return phase === "ProviderDelivered" || phase === "ProviderRead" || phase === "ProviderFailed" || (receiptOwner && !member && receiptRank(phase) > 0);
+}
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function lawFailedAcceptanceRecordsNoSend(phase) {
+    //@ ensures \result === true
+    return !(phase === "ProviderFailed") || !acceptanceRecordsSend(phase);
+}
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function lawReceiptOwnerEndsNonMemberRow(phase) {
+    //@ ensures \result === true
+    return !(receiptRank(phase) > 0) || acceptanceEndsRow(phase, true, false);
+}
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {

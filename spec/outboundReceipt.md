@@ -97,3 +97,32 @@ pure def recordProviderError(outbound: ReceiptLifecycle, failure: FailureKind, h
 pure def lawAnUnknownResultDoesNotRetry(hasAttemptsLeft: bool): bool =
   recordProviderError(initial, UnknownResult, hasAttemptsLeft).phase == AcceptanceUnknown
 ```
+
+### A send that may have reached the person keeps its person-cap slot
+
+Only a send that the provider refused or reported failed gives back its slot of the person's daily cap of proactive messages. A send whose acceptance is unknown, or stayed unknown past the deadline, may have reached the person, so it keeps its slot, as does an accepted send. Changed 2026-11-18: the queue gave back the slot of a send that expired unknown (SD-090), so a further proactive text could go the same day.
+
+```quint
+pure def returnsPersonSlot(phase: ReceiptPhase): bool = phase == ProviderFailed or phase == ProviderBlocked
+
+pure def lawUncertainSendKeepsSlot(phase: ReceiptPhase): bool =
+  (phase == AcceptanceUnknown or phase == AcceptanceExpired or receiptRank(phase) > 0) implies not(returnsPersonSlot(phase))
+```
+
+### An acceptance records a send time only for a send that went out
+
+An acceptance whose provider status is failed gets no send time, because the caps and the leak guard's thread history read the send time. A row to someone who is not a member ends at acceptance when the provider owns the delivery receipts (Eliza Cloud sends none to the queue), and then keeps no address and no text. Changed 2026-11-18: a failed acceptance wrote a send time (SD-337), and under Cloud a row to a non-member kept its address and text after acceptance (SD-091).
+
+```quint
+pure def acceptanceRecordsSend(phase: ReceiptPhase): bool = receiptRank(phase) > 0
+
+pure def acceptanceEndsRow(phase: ReceiptPhase, receiptOwner: bool, member: bool): bool =
+  phase == ProviderDelivered or phase == ProviderRead or phase == ProviderFailed or
+    (receiptOwner and not(member) and receiptRank(phase) > 0)
+
+pure def lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): bool =
+  phase == ProviderFailed implies not(acceptanceRecordsSend(phase))
+
+pure def lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): bool =
+  receiptRank(phase) > 0 implies acceptanceEndsRow(phase, true, false)
+```

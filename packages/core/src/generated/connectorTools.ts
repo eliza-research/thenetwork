@@ -23,6 +23,8 @@ export interface Connection { phase: ConnectionPhase; host: AppId; surface: Surf
 export type GrantOwnerDecision = "GrantOwnerMatches" | "GrantOwnerChanged" | "GrantOwnerHeld" | "GrantOwnerUnavailable";
 /** Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen (spec/connectorTools.md) */
 export interface UpdateRead { shown: number; tokenLeft: boolean; otherLeft: boolean }
+/** Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member (spec/connectorTools.md) */
+export type ConnectorUpdateOutcome = "InboxUpdateShown" | "InboxUpdateRetired" | "InboxUpdateWithheld";
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
 export type ConnectorLimitKey = "AddressLimitKey" | "GrantLimitKey";
 
@@ -601,6 +603,60 @@ export function lawForeignReferenceShowsNothing(tokenUnseen: boolean, otherUnsee
   //@ ensures \result === true
   const local_2: UpdateRead = readUpdates(tokenUnseen, otherUnseen, true, false);
   return local_2.shown === 0 && local_2.tokenLeft === tokenUnseen && local_2.otherLeft === otherUnseen;
+}
+
+/** Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member (spec/connectorTools.md) */
+//@ pure
+export function connectorUpdateOutcome(stillCurrent: boolean, readerMatchable: boolean, aboutAnotherMember: boolean, passesLeakGate: boolean): ConnectorUpdateOutcome {
+  return !stillCurrent || (aboutAnotherMember && !readerMatchable) ? "InboxUpdateRetired" : (!passesLeakGate ? "InboxUpdateWithheld" : "InboxUpdateShown");
+}
+
+/** Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member (spec/connectorTools.md) */
+//@ pure
+export function lawUnmatchableReaderNeverReadsAboutAnotherMember(stillCurrent: boolean, passesLeakGate: boolean): boolean {
+  //@ ensures \result === true
+  return connectorUpdateOutcome(stillCurrent, false, true, passesLeakGate) === "InboxUpdateRetired";
+}
+
+/** Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member (spec/connectorTools.md) */
+//@ pure
+export function lawOwnUpdateReadableAtEveryAge(readerMatchable: boolean): boolean {
+  //@ ensures \result === true
+  return connectorUpdateOutcome(true, readerMatchable, false, true) === "InboxUpdateShown";
+}
+
+/** Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member (spec/connectorTools.md) */
+//@ pure
+export function lawShownUpdateIsCurrentSafeAndAllowed(stillCurrent: boolean, readerMatchable: boolean, aboutAnotherMember: boolean, passesLeakGate: boolean): boolean {
+  //@ ensures \result === true
+  return !(connectorUpdateOutcome(stillCurrent, readerMatchable, aboutAnotherMember, passesLeakGate) === "InboxUpdateShown") || (stillCurrent && passesLeakGate && (readerMatchable || !aboutAnotherMember));
+}
+
+/** Story: Use my app's connector from my agent / A withheld update stays unseen (spec/connectorTools.md) */
+//@ pure
+export function connectorUpdateMarkedSeen(updateOutcome: ConnectorUpdateOutcome): boolean {
+  return updateOutcome !== "InboxUpdateWithheld";
+}
+
+/** Story: Use my app's connector from my agent / A withheld update stays unseen (spec/connectorTools.md) */
+//@ pure
+export function lawAllowedUpdateFailingGateStaysUnseen(readerMatchable: boolean, aboutAnotherMember: boolean): boolean {
+  //@ ensures \result === true
+  return !(readerMatchable || !aboutAnotherMember) || !connectorUpdateMarkedSeen(connectorUpdateOutcome(true, readerMatchable, aboutAnotherMember, false));
+}
+
+/** Story: Use my app's connector from my agent / A withheld update stays unseen (spec/connectorTools.md) */
+//@ pure
+export function lawRetiredUpdateIsMarkedSeen(readerMatchable: boolean, aboutAnotherMember: boolean, passesLeakGate: boolean): boolean {
+  //@ ensures \result === true
+  return connectorUpdateMarkedSeen(connectorUpdateOutcome(false, readerMatchable, aboutAnotherMember, passesLeakGate));
+}
+
+/** Story: Use my app's connector from my agent / A withheld update stays unseen (spec/connectorTools.md) */
+//@ pure
+export function lawFailedGateIsNeverShown(stillCurrent: boolean, readerMatchable: boolean, aboutAnotherMember: boolean): boolean {
+  //@ ensures \result === true
+  return connectorUpdateOutcome(stillCurrent, readerMatchable, aboutAnotherMember, false) !== "InboxUpdateShown";
 }
 
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */

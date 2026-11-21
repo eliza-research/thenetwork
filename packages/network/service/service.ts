@@ -118,6 +118,7 @@ import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
+import { networkMatchingAllowed } from "./matching-scope.ts";
 import { BlooioAdapter, collectedReplyGuard, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
@@ -160,6 +161,7 @@ import type { QueueRow } from "../../blooio/src/outbound-queue.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
+import { type ConnectorUpdateOutcome, connectorUpdateMarkedSeen, connectorUpdateOutcome } from "../../core/src/generated/connectorTools.ts";
 import {
   appAllowsInboxItem, inboxOpportunityAllowsUpdate, mayShowThreadUpdate, networkTextCanProduceInboxItem,
   networkTextProjection, networkTextSummaryLimit, threadUpdatePageSize,
@@ -504,7 +506,7 @@ export class NetworkService implements RuntimeHost {
       // every home that no network of the app serves.
       const mine = ids.filter(x => x.split(":")[0] === app);
       const cities = CONVERSATION_CITIES.filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
-      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
+      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: networkMatchingAllowed(this.env, app, spec.matchingEnabled ?? true), network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
     this.photos = new PhotoService({
@@ -1006,23 +1008,36 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
-   * The person's own unseen updates in one app, for their assistant (MCP get_updates). Reading them
-   * marks them seen on every surface. An update code limits the result to that text's items; someone
-   * else's code, an unknown one or an expired one returns nothing.
+   * The person's own unseen updates in one app, for their assistant (MCP get_updates). A shown or retired
+   * update is marked seen on every surface; one that fails the assistant's output gate stays unseen. An
+   * update code limits the result to that text's items; someone else's code, an unknown one or an
+   * expired one returns nothing.
    */
-  async updatesFor(personId: string, app: AppId, surface: Surface, token?: string): Promise<Array<{ summary: string; at: string; kind: string }>> {
+  async updatesFor(personId: string, app: AppId, surface: Surface, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<Array<{ summary: string; at: string; kind: string }>> {
     if (!this.notify) return [];
+    let outcomes = new Map<string, ConnectorUpdateOutcome>();
     const items = await this.notify.readUpdates(personId, surface, this.clock.now(), token, {
-      app, visible: items => this.sql.begin(async tx => {
-        await tx`select set_config('app.app_id',${app},true)`;
-        return this.currentInboxUpdates(tx, personId, app, items);
-      }),
+      app,
+      visible: async items => {
+        outcomes = await this.sql.begin(async tx => {
+          await tx`select set_config('app.app_id',${app},true)`;
+          return this.inboxUpdateOutcomes(tx, personId, app, items, passesLeakGate);
+        });
+        return items.filter(item => outcomes.get(item.id) === "InboxUpdateShown");
+      },
+      withheld: items => items.filter(item => { const outcome = outcomes.get(item.id); return !!outcome && !connectorUpdateMarkedSeen(outcome); }),
     });
     return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
   }
 
   private async currentInboxUpdates(tx: SQL, personId: string, app: AppId, items: InboxItem[]): Promise<InboxItem[]> {
-    if (!items.length) return [];
+    const outcomes = await this.inboxUpdateOutcomes(tx, personId, app, items, () => true);
+    return items.filter(item => outcomes.get(item.id) === "InboxUpdateShown");
+  }
+
+  // spec/connectorTools.md, "A reader who cannot be matched never reads an update about another member"
+  private async inboxUpdateOutcomes(tx: SQL, personId: string, app: AppId, items: InboxItem[], passesLeakGate: (summary: string) => boolean): Promise<Map<string, ConnectorUpdateOutcome>> {
+    if (!items.length) return new Map();
     const subjects = items.map(item => {
       const messageId = item.deliveryId?.startsWith("net:") ? item.deliveryId.slice(4) : undefined;
       const suffix = messageId ? `#${messageId}` : undefined;
@@ -1040,8 +1055,17 @@ export class NetworkService implements RuntimeHost {
         and exists (select 1 from network.members member where member.app_id=${app} and member.id=message.member_id and member.person_id=${personId}::uuid)
       left join network.opportunities opportunity on opportunity.app_id=${app}
         and opportunity.id=coalesce(subject.opportunity_id, message.opportunity_id, subject.subject_id)`;
-    const allowed = new Set(rows.filter(row => inboxOpportunityAllowsUpdate(row.bound, row.state !== null, row.state ?? "")).map(row => row.id));
-    return items.filter(item => allowed.has(item.id));
+    // The lowest age wins: the member row, the person and the phone's age floor (platform.matching_ages).
+    const [reader] = await tx<{ age: number | null }[]>`select ages.age from network.members m
+      join platform.matching_ages ages on ages.app_id=m.app_id and ages.member_id=m.id
+      where m.app_id=${app} and m.person_id=${personId}::uuid`;
+    const readerMatchable = canBeMatched(reader?.age);
+    const facts = new Map(rows.map(row => [row.id, row]));
+    return new Map(items.map(item => {
+      const row = facts.get(item.id);
+      const stillCurrent = !!row && inboxOpportunityAllowsUpdate(row.bound, row.state !== null, row.state ?? "");
+      return [item.id, connectorUpdateOutcome(stillCurrent, readerMatchable, !!row?.bound, passesLeakGate(item.summary))];
+    }));
   }
 
   /** A shared line spans current own memberships. A dedicated line retains its app boundary. */
@@ -1279,9 +1303,8 @@ export class NetworkService implements RuntimeHost {
         await this.photos.deleteFor(ctx.personId, ctx.app.id);
         await this.forget(ctx.app, ctx.memberId, reason === "leave" ? ctx.personId : undefined);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
-        for (const f of this.forgetListeners) {
-          try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
-        }
+        // A failure stops the leave before the membership goes, so the request fails and a retry finishes it.
+        for (const f of this.forgetListeners) await f(ctx);
       },
       onEraseAccount: async personId => {
         for (const erase of this.accountEraseListeners) await erase(personId);
@@ -2770,7 +2793,6 @@ export class NetworkService implements RuntimeHost {
   /** SHARE after the link notice: base-profile grants from the person's other apps, then this app reads them (spec/baseProfileShare.md). */
   private async share(rt: NetworkRuntime, app: AppInfo, memberId: MemberId, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<InboundOutcome> {
     const person = await this.accounts.personFor(e164);
-    await this.people.deletePending(this.phoneKey(e164), "share", app.id);
     if (person) {
       for (const m of await this.people.memberships(person.id)) {
         if (m.app !== app.id && m.state !== "removed" && m.state !== "invited") await this.accounts.share(app, { e164, personId: person.id }, m.app, ["interests"]);
@@ -2778,11 +2800,14 @@ export class NetworkService implements RuntimeHost {
       await applyBaseProfileGrants({ people: this.people, banned: () => this.accounts.banned(e164, person), runtimeFor: a => this.runtimeFor(a), now: this.clock.now() },
         person.id, { app: app.id, memberId, runtime: rt });
     }
-    return rt.unitOfWork(async () => {
+    // The pending SHARE goes only after the reply commits, so a failed unit leaves it for the retried turn (grants and copies are idempotent).
+    const done = await rt.unitOfWork(async () => {
       rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(this.clock.now()) };
       rt.system(memberId, `sys:${rowId}`, this.copyOf(app).shareDone, "reply", "info");
       return "handled" as const;
     });
+    await this.people.deletePending(this.phoneKey(e164), "share", app.id);
+    return done;
   }
 
   // ------------------------------------------------------------------ staff
@@ -3218,7 +3243,7 @@ export class NetworkService implements RuntimeHost {
     return r.ok ? { ok: true, photos: r.value } : { ok: false, reason: r.reason };
   }
 
-  /** The matching switch of one network. A network whose registry row does not allow matching (slop and peon until their packs ship) refuses "on". */
+  /** The matching switch of one network. A network outside its launch scope refuses "on" (spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope"). */
   setMatching(user: StaffUser, on: boolean, rt = this.main) {
     if (on && !rt.matchingAllowed) {
       // A refused attempt is audited too.
@@ -3328,7 +3353,7 @@ export class NetworkService implements RuntimeHost {
           return json(result);
         }
         if (this.routePolicy) return json({error:"canonical_updates_unavailable",retryable:false},503);
-        const result = {items:(await this.updatesFor(who.person.id,app,"web")).map(item=>({summary:item.summary}))};
+        const result = {items:(await this.updatesFor(who.person.id,app,"web",undefined,()=>true)).map(item=>({summary:item.summary}))};
         await this.sql.begin(async tx=>{await lock(tx);await complete(tx,result);});
         return json(result);
       }
@@ -3775,7 +3800,7 @@ export class NetworkService implements RuntimeHost {
     const url = new URL(req.url);
     if (url.pathname === RELAY_PHOTO_RESOLVE_PATH) return this.resolveRelayPhoto(req);
     if (url.pathname === calendarOwnerPath && this.calendarScheduling) return this.calendarScheduling.ownerProof(req, input => this.calendarSchedulingOwner(input));
-    if (url.pathname === LEARNING_CONSENT_CONTEXT_PATH) return learningConsentContextEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy }, req);
+    if (url.pathname === LEARNING_CONSENT_CONTEXT_PATH) return learningConsentContextEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, reviewEnabled: !!this.suggestionIdentity }, req);
     if (url.pathname === PROFILE_REVIEW_WITHDRAWAL_PATH) {
       const resolver = this.suggestionWithdrawalOwner;
       const current = () => Number.isSafeInteger(this.clock.now()) && !!this.routePolicy && this.clock.now() < this.routePolicy.admitUntil;
@@ -3986,8 +4011,8 @@ export class NetworkService implements RuntimeHost {
         const selected = (await this.photoRelay.held(rt.app.id)).filter(p=>p.threadId && p.app===rt.app.id);
         // The console's HeldText shape: `id` is the item, `memberId` the sender (whose words they are). No recipient id
         // (the console masks `to` as a phone number). relayHeld() already leaves out a sender's text once their age is in doubt.
-        return json({ ok: true, network: rt.id, items: held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at,
-          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })).concat(selected.map(p=>({id:p.id,itemId:p.id,app:p.app,kind:"photo",memberId:p.senderMemberId,from:p.senderMemberId,reasons:["photo:review"],createdAt:p.createdAt}))) });
+        return json({ ok: true, network: rt.id, items: held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at, deadline: h.deadline,
+          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })).concat(selected.map(p=>({id:p.id,itemId:p.id,app:p.app,kind:"photo",memberId:p.senderMemberId,from:p.senderMemberId,reasons:["photo:review"],createdAt:p.createdAt,deadline:null as number|null}))) });
       }
       const relayPhotoPreview=path.match(/^\/(?:staff\/)?relay\/(pri_[a-zA-Z0-9_-]+)\/photo$/);
       if (req.method==="GET" && relayPhotoPreview) {

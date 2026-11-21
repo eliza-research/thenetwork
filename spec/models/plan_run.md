@@ -720,7 +720,12 @@ module plan_run {
     now' = now, optedOut' = optedOut, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, fromStart' = fromStart,
   }
 
-  /** A minor signal (network.ts:721): dropMember with the minors policy. */
+  /**
+   * A minor signal (network.ts:721): dropMember with the minors policy. A record that goes under 18 with no
+   * inbound signal is read at the next tick, and also at the moment the plan books, falls back or takes a late yes
+   * (planMembersAdult, spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that
+   * person"), before any reveal. So the plan never books for the adults first, and this one atomic step models both.
+   */
   action minorSignal(m: str): bool = all {
     idle, not(minors.contains(m)),
     val e = { ...env0, minors: minors.union(Set(m)) }

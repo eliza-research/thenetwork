@@ -164,7 +164,8 @@ export interface RelayCallOptions {
 export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean }
 
 const NOTICE = {
-  whichMatch: "You have more than one match. Tell me which one this is for and I'll pass it on.",
+  whichMatch: "You have more than one match, so I didn't send that. Send it again and say who it's for.",
+  matchClosed: "That match is closed, so I can't pass anything on to them.",
   holdExpired: "I couldn't check what you asked me to pass on to your match in time, so I didn't send it. You can send it again.",
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
   swapWait: "I'll share your number as soon as they say they want to swap numbers too.",
@@ -211,7 +212,7 @@ export class RelayDesk {
     if (prior) return { ...prior, replayed: true };
     const { choice, match } = this.matchFor(ask.from, ask.matchId);
     if (choice === "RelayAskWhichMatch") return { itemId: ask.itemId, decision: "unnamed", reason: NOTICE.whichMatch };
-    if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+    if (!match) return { itemId: ask.itemId, decision: "refused", reason: choice === "RelayNamedNotLive" ? NOTICE.matchClosed : NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);

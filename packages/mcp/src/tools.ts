@@ -423,8 +423,11 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
-      // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
-      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
+      // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts)
+      // and stays unseen in the inbox. The boundary checks the returned summaries again.
+      // spec/connectorTools.md, "A withheld update stays unseen"
+      const passesLeakGate = (summary: string) => outputLeaks(summary).length === 0;
+      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token, passesLeakGate)).filter(u => passesLeakGate(u.summary));
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

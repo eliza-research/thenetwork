@@ -84,10 +84,11 @@ export interface PlatformHooks {
   /** Scope the private retry receipt to this exact authorized grant and approved profile. */
   profileSubmissionFingerprint?(app: McpAppId, grantId: string, text: string): string;
   /**
-   * The person's own unseen updates in this app from the single inbox, marked seen on every surface.
+   * The person's own unseen updates in this app from the single inbox. A returned update is marked seen
+   * on every surface; one whose summary fails `passesLeakGate` is not returned and stays unseen.
    * Undefined: the platform has no inbox (get_updates answers "not available").
    */
-  updates?(personId: string, app: McpAppId, assistant: AssistantKind, token?: string): Promise<PublicUpdate[]>;
+  updates?(personId: string, app: McpAppId, assistant: AssistantKind, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<PublicUpdate[]>;
   /** An assistant was connected (consent granted) or disconnected (grant revoked) for a person. */
   assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
   /** The person already signed in on this site (the site's session cookie), if any. */

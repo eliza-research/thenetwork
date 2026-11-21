@@ -201,16 +201,23 @@ export function lawMinorOnTheRosterClosesABookedOpportunity(proposal: Opportunit
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
-export function lawAMinorNeverLeavesABookedGroupRunning(remaining: number): boolean {
+export function lawAMinorNeverLeavesABookedGroupRunning(proposal: OpportunityLifecycle, remaining: number): boolean {
   //@ ensures \result === true
-  return !bookedGroupCanContinue(remaining, true);
+  return !(proposal.phase === "Scheduled") || (closesForMinor(proposal, true, true, false, false) && !bookedGroupCanContinue(remaining, true) && canClose(proposal) && !canBook(close(proposal), true));
 }
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
-export function lawOtherDropsKeepTheGroupRule(remaining: number): boolean {
+export function lawOtherDropsKeepTheGroupRule(proposal: OpportunityLifecycle, remaining: number): boolean {
   //@ ensures \result === true
-  return bookedGroupCanContinue(remaining, false) === groupCanContinue(remaining);
+  return !(proposal.phase === "Scheduled" && !bookedGroupCanContinue(remaining, false)) || (remaining < 3 && canClose(proposal) && !canBook(close(proposal), true));
+}
+
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawNoMinorCloseWithoutAMinorSignal(proposal: OpportunityLifecycle, participant: boolean, alternate: boolean, contacted: boolean): boolean {
+  //@ ensures \result === true
+  return !closesForMinor(proposal, false, participant, alternate, contacted);
 }
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
@@ -222,9 +229,9 @@ export function lawMinorContactClosesAnUnbookedOpportunity(proposal: Opportunity
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
-export function lawMinorCloseNeverTellsTheMinor(before: OpportunityLifecycle, contacted: boolean, accepted: boolean, requester: boolean): boolean {
+export function lawMinorCloseNeverTellsTheMinor(before: OpportunityLifecycle, contacted: boolean, accepted: boolean, minor: boolean, requester: boolean): boolean {
   //@ ensures \result === true
-  return !minorCloseTellsAcceptor(before, contacted, accepted, true, requester);
+  return !minorCloseTellsAcceptor(before, contacted, accepted, minor, requester) || (before.phase === "Probing" && closesForMinor(before, true, false, false, contacted) && !minor && !requester && canClose(before));
 }
 
 /** Story: Book and conclude a proposal that comes together / A minor signal ends the recurring plans that the minor knows (spec/opportunityLifecycle.md) */

@@ -8,9 +8,12 @@ The validation layer is now:
 |---|---|---|
 | Simulations | `pnpm run sim` | Every simulation block with its gates on pinned seeds (offline, no LLM). The safety, ops, pipeline and audit blocks also use the dev Postgres; CI's sim job has one and fails when they skip. |
 | Integration | `pnpm run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`pnpm run security` runs that subset alone). |
-| E2E | `pnpm run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
+| E2E | `pnpm run test:e2e` | `tests/e2e`: the platform, notify, connector signup, Cloud sign-in join, invitations, phone change, agent profile, auth feedback and photo upload links, driven from the outside through the running service. |
+| Conformance | `pnpm run spec:conformance <module>` | A driver in `test/drivers/<module>.ts` runs the application's own entry point against the spec module's journeys, counterexamples and random walks ([SPEC.md](../SPEC.md#conformance)). |
 
 The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
+
+The other CI checks: `ci.yml` runs every simulation block (`offline-core` and the `matching` matrix, with Postgres and `REQUIRE_PG=1`). `vibespec.yml` runs `pnpm run spec:check-generated` and `pnpm run spec:explore` for changes to specs, generated code and the sites, and its `full-check` job (`pnpm run check`: the spec check, the proofs and every conformance journey under `test/drivers`) runs nightly and on demand, not on each pull request. `quint-models.yml` runs `pnpm run quint:check` on every whole-flow model in `spec/models` (two shards, the bounds of each model, seed `0x5eed`) for changes to the models, the script or the pinned Quint (pull requests and main), on demand and weekly; a violated invariant or an unreached witness fails it.
 
 **No unit tests and no smoke tests.** A unit test checks one function with fakes. A smoke test checks that something starts or answers, or calls a live provider. Do not add either. A bug fix adds a sim gate, a scenario, a corpus row in `evals/`, or an integration or e2e case that fails before the fix.
 
@@ -59,7 +62,7 @@ The integration and e2e suites need the dev Postgres (`node --import tsx --env-f
 | `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server | 70 pass |
 | `packages/network/test/mini.ts` | Helper (`START`, the small world) | |
 
-The security suite is part of the integration suite. `pnpm run security` runs it alone. AGENTS.md has the same list. The 11 files (2026-10-09):
+The security suite is part of the integration suite. `pnpm run security` runs it alone (the file list is in `package.json`). AGENTS.md has the same list. The 11 files (2026-10-09):
 
 | File | What it checks |
 |---|---|

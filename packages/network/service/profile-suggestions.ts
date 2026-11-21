@@ -3,8 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
   collectionReceiptHasRoom, collectionRevisionIsOriginal, initial as initialSource, ownerCleanupUsesReceipt,
-  step as stepSource, suggestionCleanupAction,
+  sourceUseAllowed, step as stepSource, suggestionCleanupAction,
 } from "../../core/src/generated/profileSuggestionSource.ts";
+import { observedTimeAllowed, storedReviewReplays, type StoredReview } from "../../core/src/generated/profileSuggestionReview.ts";
+import { personLedgerOptedOut } from "./consent-ledger-read.ts";
 import { parseProfileReviewWithdrawalProof, type ProfileReviewWithdrawalRequest,
   type ProfileReviewWithdrawalProof } from "../../core/src/svc/profile-review-withdrawal.ts";
 import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
@@ -40,6 +42,10 @@ export interface SuggestionProposal {
 }
 /** Internal server context, never inferred from a suggestion or a model-selected owner. */
 export interface SuggestionCollectionClaim { batchId: string; turnId: string; requestSha256: string; commandSha256?: string }
+/** The signed review turn and the hash of its exact request body, from internal server context. */
+export interface SuggestionReviewClaim { turnId: string; requestSha256: string }
+export type StoredReviewResult = SuggestionDecisionResult | { kind: "deleted" };
+const reviewReceiptKey = (batchId: string) => `profile-review:${batchId}`;
 /** Collection scope is authority only when it exactly matches the original explicit member turn. */
 export function collectionProposalMatchesStoredCommand(input: SuggestionProposal, text: string, batchId: string, arrivedAt: number, now: number): boolean {
   const command = parseNetworkCollectionCommand(text), deadline = networkCollectionDeadline(arrivedAt, now);
@@ -83,6 +89,14 @@ export class ProfileSuggestions {
     await tx`select set_config('app.app_id', ${owner.app}, true)`;
     // Use the same person-first order as canonical leave/delete operations.
     await tx`select id from platform.people where id=${owner.personId} for update`;
+    const member = await this.memberRow(tx, owner);
+    if (member && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
+    this.checkAuthority();
+    return member;
+  }
+
+  /** The member row and its eligibility, read again after asynchronous source calls without a new owner lookup. */
+  private async memberRow(tx: SQL, owner: SuggestionOwner): Promise<{ id: string; eligible: boolean } | undefined> {
     const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
       and m.state in ('active','onboarding') and m.review is null
       and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
@@ -92,18 +106,84 @@ export class ProfileSuggestions {
       join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id
       where n.app_id=${owner.app} and p.id=${owner.personId} and p.deleted_at is null
         and m.state<>'removed' for update of n, m`;
-    if (rows[0] && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
-    this.checkAuthority();
-    return rows[0] as { id: string; eligible: boolean } | undefined;
+    const row = rows[0] as { id: string; eligible: boolean } | undefined;
+    if (!row) return undefined;
+    // spec/profileSuggestionSource.md, "Resolve the owner and any claimed collection turn before authorizing live sources"
+    return { id: row.id, eligible: row.eligible && !await personLedgerOptedOut(tx, owner.personId, owner.app) };
   }
 
   private async batch(tx: SQL, owner: SuggestionOwner, id: string) {
     const member = await this.owned(tx, owner);
-    if (!member) return undefined;
+    return member ? this.batchRow(tx, owner, member, id) : undefined;
+  }
+
+  private async batchRow(tx: SQL, owner: SuggestionOwner, member: { id: string; eligible: boolean }, id: string) {
     const rows = await tx`select * from platform.profile_suggestion_batches where id=${id} and app_id=${owner.app}
       and person_id=${owner.personId} and member_id=${member.id} and user_id=${owner.userId}
       and organization_id=${owner.organizationId} and chat_id=${owner.chatId} for update`;
     return rows[0] ? { ...rows[0], eligible: member.eligible } : undefined;
+  }
+
+  /** The locked open review turn of this member, or undefined. */
+  private async reviewTurn(tx: SQL, owner: SuggestionOwner, memberId: string, claim: SuggestionReviewClaim) {
+    const [turn] = await tx`select i.response,i.action_receipts from platform.inbound i
+      join platform.people p on p.phone_hash=i.sender_hash and p.id=${owner.personId}
+      where i.id=${claim.turnId} and i.status='done' for update of i`;
+    return turn?.response?.outcome === "open" && turn.response.app === owner.app && turn.response.memberId === memberId
+      ? turn as { action_receipts: Record<string, unknown> | null } : undefined;
+  }
+
+  // spec/profileSuggestionReview.md, "A retried review command returns its stored result"
+  private async replayReview(tx: SQL, owner: SuggestionOwner, member: { id: string; eligible: boolean }, batchId: string,
+    stored: unknown, claim: SuggestionReviewClaim, now: number): Promise<StoredReviewResult> {
+    const s = stored as { state?: unknown; requestHash?: unknown; response?: Record<string, unknown> } | null;
+    const response = s && typeof s === "object" && s.state === "completed" ? s.response : undefined;
+    const kinds: Record<string, StoredReview> = { saved: "StoredSaved", deleted: "StoredDeleted", preview: "StoredPreview" };
+    const kind = typeof response?.kind === "string" ? kinds[response.kind] : undefined;
+    if (!kind) return { kind: "denied" };
+    const b = kind === "StoredPreview" ? await this.batchRow(tx, owner, member, batchId) : undefined;
+    const t = this.fence?.now() ?? now;
+    if (!storedReviewReplays(kind, true, s!.requestHash === claim.requestSha256,
+      !!b && b.revision === response!.revision, !!b && new Date(b.expires_at).getTime() > t)) return { kind: "denied" };
+    const ids = (v: unknown) => Array.isArray(v) && v.every(x => typeof x === "string") ? v as string[] : undefined;
+    if (kind === "StoredSaved") {
+      const accepted = ids(response!.accepted), rejected = ids(response!.rejected);
+      return accepted && rejected ? { kind: "saved", accepted, rejected } : { kind: "denied" };
+    }
+    if (kind === "StoredDeleted") return { kind: "deleted" };
+    const preview = await this.view(tx, b, t);
+    return preview ? { kind: "preview", batch: preview } : { kind: "denied" };
+  }
+
+  /** Before a claimed decide or delete: the stored result of the same committed request, or undefined. */
+  async priorReview(owner: SuggestionOwner, batchId: string, claim: SuggestionReviewClaim, now: number): Promise<StoredReviewResult | undefined> {
+    if (!Number.isFinite(now)) return { kind: "denied" };
+    return this.sql.begin(async tx => {
+      const member = await this.owned(tx, owner);
+      if (!member) return undefined;
+      const turn = await this.reviewTurn(tx, owner, member.id, claim);
+      const prior = turn?.action_receipts?.[reviewReceiptKey(batchId)];
+      if (prior === undefined) return undefined;
+      const result = await this.replayReview(tx, owner, member, batchId, prior, claim, now);
+      this.checkAuthority();
+      return result;
+    });
+  }
+
+  /** A claimed decide or delete: the replay of a stored result, a denial, or room to keep a new result. */
+  private async claimReview(tx: SQL, owner: SuggestionOwner, member: { id: string; eligible: boolean }, batchId: string,
+    claim: SuggestionReviewClaim, now: number): Promise<StoredReviewResult | "new"> {
+    const turn = await this.reviewTurn(tx, owner, member.id, claim);
+    if (!turn) return { kind: "denied" };
+    const receipts = turn.action_receipts ?? {};
+    const prior = receipts[reviewReceiptKey(batchId)];
+    if (prior !== undefined) return this.replayReview(tx, owner, member, batchId, prior, claim, now);
+    return collectionReceiptHasRoom(Object.keys(receipts).length) ? "new" : { kind: "denied" };
+  }
+
+  private async keepReview(tx: SQL, batchId: string, claim: SuggestionReviewClaim | undefined, response: Record<string, unknown>) {
+    if (claim) await tx`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${reviewReceiptKey(batchId)}],
+      ${{ state: "completed", requestHash: claim.requestSha256, response }}::jsonb) where id=${claim.turnId}`;
   }
 
   private async view(tx: SQL, b: any, now: number): Promise<SuggestionReviewBatch | null> {
@@ -129,7 +209,8 @@ export class ProfileSuggestions {
       if (!valueOK(s.value) || !input.allowedKinds.includes(s.kind)
         || !["gmail", "google_calendar"].includes(s.source) || !["agent_private", "matchable"].includes(s.scope)
         || !Number.isSafeInteger(s.observedAt) || s.observedAt < input.windowStart || s.observedAt >= input.windowEnd
-        || (s.source === "gmail" && s.observedAt > now)
+        // spec/profileSuggestionReview.md, "Only a bounded batch of distinct, valid suggestions can be shown"
+        || !observedTimeAllowed(s.source === "google_calendar", s.observedAt, now)
         || !Number.isFinite(s.confidence) || s.confidence < 0 || s.confidence > 1
         || !s.connectionId || s.connectionId.length > 200
         || s.tags.length > 12 || s.tags.some(t => !/^[a-z][a-z0-9_:-]{0,79}$/u.test(t) || sensitive(t.replace(/[_:]/gu, " ")))) return null;
@@ -156,13 +237,16 @@ export class ProfileSuggestions {
       }
       if (collection.phase !== "CheckingLiveSources") return null;
       let allowed = true;
-      for (const s of input.suggestions) {
+      const scopes = new Map(input.suggestions.map(s => [`${s.source}\u0000${s.connectionId}`, s]));
+      for (const s of scopes.values()) {
         allowed = await this.authorize(owner, { connectionId: s.connectionId, source: s.source,
           windowStart: input.windowStart, windowEnd: input.windowEnd, timezone: input.timezone,
           allowedKinds: input.allowedKinds, retainOnDisconnect: input.retainOnDisconnect }, tx);
         if (!allowed) break;
       }
-      collection = stepSource(collection, { type: "readLiveSourceConsent", allowed });
+      const after = allowed ? await this.memberRow(tx, owner) : undefined;
+      collection = stepSource(collection, { type: "readLiveSourceConsent", allowed,
+        stillEligible: !!after && after.id === member.id && after.eligible });
       if (collection.phase !== "ReadingCollectionReceipt") return null;
       this.checkAuthority({ expires_at: new Date(input.expiresAt) });
       const receiptKey = claim ? `profile-collect:${id}` : undefined;
@@ -223,10 +307,15 @@ export class ProfileSuggestions {
     });
   }
 
-  async decide(owner: SuggestionOwner, input: { batchId: string; revision: number; decisions: SuggestionDecision[] }, now: number): Promise<SuggestionDecisionResult> {
+  async decide(owner: SuggestionOwner, input: { batchId: string; revision: number; decisions: SuggestionDecision[] }, now: number,
+    claim?: SuggestionReviewClaim): Promise<StoredReviewResult> {
     if (!Number.isFinite(now)) return { kind: "denied" };
     return this.sql.begin(async tx => {
-      const b = await this.batch(tx, owner, input.batchId);
+      const member = await this.owned(tx, owner);
+      if (!member) return { kind: "denied" };
+      const claimed = claim ? await this.claimReview(tx, owner, member, input.batchId, claim, now) : "new";
+      if (claimed !== "new") { this.checkAuthority(); return claimed; }
+      const b = await this.batchRow(tx, owner, member, input.batchId);
       if (b && new Date(b.expires_at).getTime() <= (this.fence?.now() ?? now)) {
         await tx`update platform.profile_suggestions set status='expired',value=null,tags='{}' where batch_id=${b.id} and status='proposed'`;
         return { kind: "denied" };
@@ -243,6 +332,11 @@ export class ProfileSuggestions {
             windowStart: new Date(b.window_start).getTime(), windowEnd: new Date(b.window_end).getTime(), timezone: b.timezone,
             allowedKinds: b.allowed_kinds, retainOnDisconnect: b.retain_on_disconnect }, tx)))) return { kind: "denied" };
       }
+      // spec/profileSuggestionSource.md, "Resolve the owner and any claimed collection turn before authorizing live sources"
+      if (input.decisions.some(d => d.action === "accept")) {
+        const after = await this.memberRow(tx, owner);
+        if (!sourceUseAllowed(true, !!after && after.id === member.id && after.eligible)) return { kind: "denied" };
+      }
       this.checkAuthority(b);
       // An edit or scope change is always a new preview, never an implicit acceptance.
       if (input.decisions.some(d => d.editedValue !== undefined || (d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope))) {
@@ -251,6 +345,7 @@ export class ProfileSuggestions {
             tags=case when ${d.editedValue !== undefined} then '{}'::text[] else tags end where id=${d.suggestionId}`;
         const [updated] = await tx`update platform.profile_suggestion_batches set revision=revision+1 where id=${b.id} returning *`;
         const preview = await this.view(tx, updated, this.fence?.now() ?? now);
+        await this.keepReview(tx, b.id, claim, { kind: "preview", revision: updated.revision });
         this.checkAuthority(b);
         return { kind: "preview", batch: preview! };
       }
@@ -270,16 +365,22 @@ export class ProfileSuggestions {
         }
       }
       await tx`update platform.profile_suggestion_batches set revision=revision+1 where id=${b.id}`;
+      await this.keepReview(tx, b.id, claim, { kind: "saved", accepted, rejected });
       this.checkAuthority(b);
       return { kind: "saved", accepted, rejected };
     });
   }
 
-  async deleteBatch(owner: SuggestionOwner, id: string): Promise<boolean> {
+  async deleteBatch(owner: SuggestionOwner, id: string, review?: { claim: SuggestionReviewClaim; now: number }): Promise<boolean> {
     return this.sql.begin(async tx => {
-      const b = await this.batch(tx, owner, id);
+      const member = await this.owned(tx, owner);
+      if (!member) return false;
+      const claimed = review ? await this.claimReview(tx, owner, member, id, review.claim, review.now) : "new";
+      if (claimed !== "new") { this.checkAuthority(); return claimed.kind === "deleted"; }
+      const b = await this.batchRow(tx, owner, member, id);
       if (!b) return false;
       this.checkAuthority();
+      await this.keepReview(tx, b.id, review?.claim, { kind: "deleted" });
       await tx`delete from platform.profile_suggestion_batches where id=${b.id}`;
       this.checkAuthority();
       return true;

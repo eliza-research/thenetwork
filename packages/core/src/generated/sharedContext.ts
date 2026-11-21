@@ -7,6 +7,8 @@ export type ContextMode = "ModeOpen" | "ModeBusy" | "ModeTraveling" | "ModePause
 export type ContextPhase = "CheckingAccount" | "CheckingMembership" | "CheckingMember" | "CheckingLabels" | "CheckingFacets" | "ContextReady" | "Withheld";
 /** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export interface SharedContext { phase: ContextPhase }
+/** Story: Let my agent read the safe context for my current account / Active item summaries are distinct (spec/sharedContext.md) */
+export type ContextItemLabel = "ItemLabelName" | "ItemLabelNameAndDay" | "ItemLabelLeftOut";
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
 export type OpenTurnAnswer = "AnswerOpen" | "AnswerUnavailable";
 
@@ -172,6 +174,26 @@ export function lawActiveItemsAtMostTwenty(shownMatches: number): boolean {
 export function lawIneligibleAgeGetsNoActiveItem(liveMatch: boolean, summarySafe: boolean): boolean {
   //@ ensures \result === true
   return !contextMatchItemShown(liveMatch, false, summarySafe);
+}
+
+/** Story: Let my agent read the safe context for my current account / Active item summaries are distinct (spec/sharedContext.md) */
+//@ pure
+export function contextItemLabel(sameName: number, sameNameAndDay: number): ContextItemLabel {
+  return sameName <= 1 ? "ItemLabelName" : (sameNameAndDay <= 1 ? "ItemLabelNameAndDay" : "ItemLabelLeftOut");
+}
+
+/** Story: Let my agent read the safe context for my current account / Active item summaries are distinct (spec/sharedContext.md) */
+//@ pure
+export function lawNameAloneOnlyWhenTheNameIsUnique(sameName: number, sameNameAndDay: number): boolean {
+  //@ ensures \result === true
+  return !(contextItemLabel(sameName, sameNameAndDay) === "ItemLabelName") || sameName <= 1;
+}
+
+/** Story: Let my agent read the safe context for my current account / Active item summaries are distinct (spec/sharedContext.md) */
+//@ pure
+export function lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: number, sameNameAndDay: number): boolean {
+  //@ ensures \result === true
+  return !(contextItemLabel(sameName, sameNameAndDay) === "ItemLabelNameAndDay") || (sameName > 1 && sameNameAndDay <= 1);
 }
 
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */

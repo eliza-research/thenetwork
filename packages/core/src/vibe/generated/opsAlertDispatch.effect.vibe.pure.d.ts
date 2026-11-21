@@ -1,9 +1,15 @@
 // Generated from spec/opsAlertDispatch.md via Vibestack and VibeLang. Run pnpm run spec:sync.
-import type { FiringEvidence, FiringPlan, MissingPlan, AlertDispatch, RoundReport, Event } from "./opsAlertDispatch.ts";
+import type { FiringEvidence, FiringPlan, MissingPlan, AlertDispatch, RoundReport, TurnWatchCondition, TurnWatchReceipt, Event } from "./opsAlertDispatch.ts";
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export declare const alertPostWindowMs: number;
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) @throws {never} */
 export declare const metricsFreshMs: number;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare const turnWatchComplianceAfterMs: number;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare const turnWatchReplyAfterMs: number;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare const turnWatchWindowMs: number;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export declare const initial: AlertDispatch;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
@@ -40,6 +46,36 @@ export declare function opsRoundDue(elapsedMs: number, intervalMs: number): bool
 export declare function cachedOpsMetricsFresh(elapsedMs: number): boolean;
 /** Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat (spec/opsAlertDispatch.md) @throws {never} */
 export declare function roundReport(hasNotices: boolean, postAttempted: boolean, delivered: boolean, heldNotices: boolean, heartbeatConfigured: boolean): RoundReport;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchAfterMs(possibleCompliance: boolean): number;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchUnconfirmed(receipt: TurnWatchReceipt, complianceReply: boolean): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchPossibleCompliance(condition: TurnWatchCondition, complianceReply: boolean): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawAcceptedReceiptConfirms(complianceReply: boolean): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawRejectedComplianceIsWatched(receipt: TurnWatchReceipt): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchOverdue(condition: TurnWatchCondition, complianceReply: boolean, ageMs: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawComplianceIsWatchedSooner(condition: TurnWatchCondition, ageMs: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawFreshTurnIsNotOverdue(condition: TurnWatchCondition, complianceReply: boolean, ageMs: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawUnresolvedTurnStaysWatched(complianceReply: boolean, ageMs: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchRaises(overdueCount: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchLevel(complianceCount: number): string;
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchLeads(complianceCount: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export declare function turnWatchAlertKey(condition: TurnWatchCondition): string;
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawPossibleStopIsBad(complianceCount: number): boolean;
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawTurnWatchKeysDiffer(first: TurnWatchCondition, second: TurnWatchCondition): boolean;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: AlertDispatch, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

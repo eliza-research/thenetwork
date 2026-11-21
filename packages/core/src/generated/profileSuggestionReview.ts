@@ -7,6 +7,8 @@ export type ReviewVerb = "AcceptVerb" | "RejectVerb" | "EditVerb";
 export type ReviewPhase = "Unchecked" | "NeedsItems" | "BatchUnavailable" | "ReadyToReview" | "CommandRefused" | "AcceptItem" | "RejectItem" | "PreviewEdit";
 /** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export interface ReviewRequest { phase: ReviewPhase; metadataApproved: boolean; itemsApproved: boolean; commandBound: boolean }
+/** Story: Review suggestions before they change my profile / A retried review command returns its stored result (spec/profileSuggestionReview.md) */
+export type StoredReview = "StoredSaved" | "StoredDeleted" | "StoredPreview";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -55,6 +57,19 @@ export function checkBatch(review: ReviewRequest, pending: boolean, ownerMatches
 
 /** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
 //@ pure
+export function observedTimeAllowed(fromCalendar: boolean, observedAt: number, asOf: number): boolean {
+  return fromCalendar || observedAt <= asOf;
+}
+
+/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
+//@ pure
+export function lawFutureGmailRefused(asOf: number): boolean {
+  //@ ensures \result === true
+  return !observedTimeAllowed(false, exact_profileSuggestionReview(asOf + 1), asOf);
+}
+
+/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
+//@ pure
 export function canCheckItems(review: ReviewRequest): boolean {
   return review.phase === "NeedsItems" && review.metadataApproved;
 }
@@ -94,6 +109,26 @@ export function alwaysReviewNeedsEligibleBatch(review: ReviewRequest): boolean {
 //@ pure
 export function alwaysActionNeedsBoundCommand(review: ReviewRequest): boolean {
   return !(review.phase === "AcceptItem" || review.phase === "RejectItem" || review.phase === "PreviewEdit") || review.commandBound;
+}
+
+/** Story: Review suggestions before they change my profile / A retried review command returns its stored result (spec/profileSuggestionReview.md) */
+//@ pure
+export function storedReviewReplays(stored: StoredReview, ownerExists: boolean, sameRequest: boolean, revisionCurrent: boolean, beforeExpiry: boolean): boolean {
+  return ownerExists && sameRequest && (stored !== "StoredPreview" || (revisionCurrent && beforeExpiry));
+}
+
+/** Story: Review suggestions before they change my profile / A retried review command returns its stored result (spec/profileSuggestionReview.md) */
+//@ pure
+export function lawReplayNeedsOwner(sameRequest: boolean, revisionCurrent: boolean, beforeExpiry: boolean): boolean {
+  //@ ensures \result === true
+  return !storedReviewReplays("StoredSaved", false, sameRequest, revisionCurrent, beforeExpiry);
+}
+
+/** Story: Review suggestions before they change my profile / A retried review command returns its stored result (spec/profileSuggestionReview.md) */
+//@ pure
+export function lawStalePreviewNotReplayed(beforeExpiry: boolean): boolean {
+  //@ ensures \result === true
+  return !storedReviewReplays("StoredPreview", true, true, false, beforeExpiry);
 }
 
 /** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md) */
@@ -189,4 +224,10 @@ export function parseState(x: unknown): ReviewRequest | undefined {
 export function initialHolds(): ReviewRequest {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_profileSuggestionReview(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

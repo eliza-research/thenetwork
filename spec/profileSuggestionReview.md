@@ -40,9 +40,15 @@ pure def lawDeadlineDoesNotIncludeExpiry(expiresAt: int): bool =
 
 ### Only a bounded batch of distinct, valid suggestions can be shown
 
-A batch has one to ten items with distinct IDs. The shell checks each item's ID, content, source, field type and observed time before the model makes the batch available. The rendering path rejects a suggestion with an observed time after the check.
+A batch has one to ten items with distinct IDs. The shell checks each item's ID, content, source, field type and observed time before the model makes the batch available. A Gmail suggestion must be observed at or before the check. A Calendar suggestion carries its event start, which can be in the future. The store applies the same observed-time rule when it saves a collection, so a batch that the store saves can always be shown. Changed 2026-11-18: the rendering path refused a future Calendar event start that the store had saved, and the member was then told that nothing was saved (SD-240).
 
 ```quint
+pure def observedTimeAllowed(fromCalendar: bool, observedAt: int, asOf: int): bool =
+  fromCalendar or observedAt <= asOf
+
+pure def lawFutureGmailRefused(asOf: int): bool =
+  not(observedTimeAllowed(false, asOf + 1, asOf))
+
 pure val maxSuggestions: int = 10
 pure val itemCountValues = Set(0, 1, 2, 10, 11)
 
@@ -87,6 +93,24 @@ pure def alwaysReviewNeedsEligibleBatch(review: ReviewRequest): bool =
 pure def alwaysActionNeedsBoundCommand(review: ReviewRequest): bool =
   (review.phase == AcceptItem or review.phase == RejectItem or review.phase == PreviewEdit) implies
     review.commandBound
+```
+
+### A retried review command returns its stored result
+
+The store keeps the result of each committed decide or delete on the member's review turn, in the same transaction as the change. When the gateway sends the same signed request again after a lost reply, the store returns that result while the owner still exists. A stored preview comes back only while the batch keeps that revision and has not expired. Another request for the same batch on the same turn is refused. Added 2026-11-18: a retry after a lost reply was refused although the first request had committed, against the idempotent service contract (SD-458).
+
+```quint
+type StoredReview = StoredSaved | StoredDeleted | StoredPreview
+
+pure def storedReviewReplays(stored: StoredReview, ownerExists: bool, sameRequest: bool,
+    revisionCurrent: bool, beforeExpiry: bool): bool =
+  ownerExists and sameRequest and (stored != StoredPreview or (revisionCurrent and beforeExpiry))
+
+pure def lawReplayNeedsOwner(sameRequest: bool, revisionCurrent: bool, beforeExpiry: bool): bool =
+  not(storedReviewReplays(StoredSaved, false, sameRequest, revisionCurrent, beforeExpiry))
+
+pure def lawStalePreviewNotReplayed(beforeExpiry: bool): bool =
+  not(storedReviewReplays(StoredPreview, true, true, false, beforeExpiry))
 ```
 
 ### A member can reach review, accept, reject and edit

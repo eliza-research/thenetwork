@@ -6,7 +6,7 @@
 import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { APP_IDS, DEFAULT_APP, isAppId, matchingAllowed, type AppId } from "./apps.ts";
+import { APP_IDS, DEFAULT_APP, isAppId, type AppId } from "./apps.ts";
 import { REPO } from "./staff.ts";
 import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 
@@ -71,13 +71,12 @@ export function resultsOf(out: string): { results?: Record<string, any>[] } | un
 }
 
 /**
- * The child's arguments. An app whose pack has not shipped (slop, peon) runs with no new
- * opportunities (--max-new 0): joins, onboarding and safety only. The experiment world is The
- * Network's NYC world for every app; it has no per-app join age yet.
+ * The child's arguments. A lab run is a local simulation, where every app may match (spec/runtimeUnit.md,
+ * "Matching runs for an app only inside its launch scope"). The experiment world is The Network's NYC
+ * world for every app; it has no per-app join age yet.
  */
 export function labArgs(r: LabRequest, seed: number): string[] {
-  const app = isAppId(r.app) ? r.app : DEFAULT_APP;
-  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed), ...(matchingAllowed(app) ? [] : ["--max-new", "0"])];
+  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed)];
 }
 
 export class Lab {

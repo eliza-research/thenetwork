@@ -8,7 +8,7 @@ The Network handles private suggestions for a resolved owner, app and chat. Sign
 
 ### Resolve the owner and any claimed collection turn before authorizing live sources
 
-The owner must be eligible to collect. A claimed collection requires the stored, matching member turn and its exact collection scope. Internal collection without a claim goes from owner eligibility directly to source authorization. Every suggestion still needs its source authorization before the transaction considers a replay or new batch.
+The owner must be eligible to collect. Eligibility reads the canonical consent ledger as well as the member row, so a STOP or leave in the ledger stops collection before its projection reaches the member row. A claimed collection requires the stored, matching member turn and its exact collection scope. Internal collection without a claim goes from owner eligibility directly to source authorization. Each distinct source and connection of the suggestions needs one source authorization, and the owner must still be eligible when the source authorizations return, before the transaction considers a replay or new batch. An accept of a suggestion uses the same check: its source authorization and a second eligibility read after it. Changed 2026-11-18: the rule now names the consent ledger, asks for one authorization for each source and connection and not for each suggestion, and reads eligibility again after the source calls, because a STOP, hold or ban during those calls let a batch commit (SD-175, SD-455, Q-profile_learning-1).
 
 ```quint
 type SourcePhase =
@@ -27,9 +27,14 @@ pure def canReadCollectionTurn(flow: SourceFlow): bool = flow.phase == CheckingC
 pure def readCollectionTurn(flow: SourceFlow, matches: bool): SourceFlow =
   { phase: if (matches) CheckingLiveSources else SourceDenied }
 
+pure def sourceUseAllowed(allowed: bool, stillEligible: bool): bool = allowed and stillEligible
+
 pure def canReadLiveSourceConsent(flow: SourceFlow): bool = flow.phase == CheckingLiveSources
-pure def readLiveSourceConsent(flow: SourceFlow, allowed: bool): SourceFlow =
-  { phase: if (allowed) ReadingCollectionReceipt else SourceDenied }
+pure def readLiveSourceConsent(flow: SourceFlow, allowed: bool, stillEligible: bool): SourceFlow =
+  { phase: if (sourceUseAllowed(allowed, stillEligible)) ReadingCollectionReceipt else SourceDenied }
+
+pure def lawSourceUseNeedsCurrentEligibility(allowed: bool): bool =
+  not(sourceUseAllowed(allowed, false))
 ```
 
 ### A collection replay only returns its original private pending batch

@@ -12,7 +12,7 @@ export type SuggestionCleanupAction = "KeepSuggestion" | "ScrubSuggestion" | "De
 export type Event =
   | { type: "startSourceCollection"; eligible: boolean; claimed: boolean }
   | { type: "readCollectionTurn"; matches: boolean }
-  | { type: "readLiveSourceConsent"; allowed: boolean }
+  | { type: "readLiveSourceConsent"; allowed: boolean; stillEligible: boolean }
   | { type: "readCollectionReceipt"; prior: boolean; matches: boolean }
   | { type: "checkCollectionReplay"; revision: number; sameCount: boolean; onlyPending: boolean }
   | { type: "checkCollectionSave"; receiptCount: number; batchIdUnused: boolean }
@@ -30,6 +30,12 @@ export const initial: SourceFlow = { phase: "SourceInitial" };
 //@ pure
 export function inv(current: SourceFlow): boolean {
   return true;
+}
+
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
+//@ pure
+export function sourceUseAllowed(allowed: boolean, stillEligible: boolean): boolean {
+  return allowed && stillEligible;
 }
 
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
@@ -64,11 +70,18 @@ export function canReadLiveSourceConsent(flow: SourceFlow): boolean {
 
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
-export function readLiveSourceConsent(flow: SourceFlow, allowed: boolean): SourceFlow {
+export function readLiveSourceConsent(flow: SourceFlow, allowed: boolean, stillEligible: boolean): SourceFlow {
   //@ ensures (inv(flow) && canReadLiveSourceConsent(flow)) ==> stepCollectionReplayNeedsOriginalPreview(flow, "readLiveSourceConsent", \result)
   //@ ensures (inv(flow) && canReadLiveSourceConsent(flow)) ==> stepCollectionSaveNeedsCapacity(flow, "readLiveSourceConsent", \result)
   //@ ensures (inv(flow) && canReadLiveSourceConsent(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "readLiveSourceConsent", \result)
-  return { phase: allowed ? "ReadingCollectionReceipt" : "SourceDenied" };
+  return { phase: sourceUseAllowed(allowed, stillEligible) ? "ReadingCollectionReceipt" : "SourceDenied" };
+}
+
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
+//@ pure
+export function lawSourceUseNeedsCurrentEligibility(allowed: boolean): boolean {
+  //@ ensures \result === true
+  return !sourceUseAllowed(allowed, false);
 }
 
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
@@ -285,7 +298,7 @@ export function step(current: SourceFlow, event: Event): SourceFlow {
   //@ ensures inv(\result)
   if (event.type === "startSourceCollection") return canStartSourceCollection(current) ? startSourceCollection(current, event.eligible, event.claimed) : current;
   if (event.type === "readCollectionTurn") return canReadCollectionTurn(current) ? readCollectionTurn(current, event.matches) : current;
-  if (event.type === "readLiveSourceConsent") return canReadLiveSourceConsent(current) ? readLiveSourceConsent(current, event.allowed) : current;
+  if (event.type === "readLiveSourceConsent") return canReadLiveSourceConsent(current) ? readLiveSourceConsent(current, event.allowed, event.stillEligible) : current;
   if (event.type === "readCollectionReceipt") return canReadCollectionReceipt(current) ? readCollectionReceipt(current, event.prior, event.matches) : current;
   if (event.type === "checkCollectionReplay") return canCheckCollectionReplay(current) ? checkCollectionReplay(current, event.revision, event.sameCount, event.onlyPending) : current;
   if (event.type === "checkCollectionSave") return canCheckCollectionSave(current) ? checkCollectionSave(current, event.receiptCount, event.batchIdUnused) : current;
@@ -312,7 +325,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "startSourceCollection" && typeof raw.eligible === "boolean" && typeof raw.claimed === "boolean") return { type: "startSourceCollection", eligible: raw.eligible, claimed: raw.claimed };
   if (raw.type === "readCollectionTurn" && typeof raw.matches === "boolean") return { type: "readCollectionTurn", matches: raw.matches };
-  if (raw.type === "readLiveSourceConsent" && typeof raw.allowed === "boolean") return { type: "readLiveSourceConsent", allowed: raw.allowed };
+  if (raw.type === "readLiveSourceConsent" && typeof raw.allowed === "boolean" && typeof raw.stillEligible === "boolean") return { type: "readLiveSourceConsent", allowed: raw.allowed, stillEligible: raw.stillEligible };
   if (raw.type === "readCollectionReceipt" && typeof raw.prior === "boolean" && typeof raw.matches === "boolean") return { type: "readCollectionReceipt", prior: raw.prior, matches: raw.matches };
   if (raw.type === "checkCollectionReplay" && Number.isSafeInteger(raw.revision) && typeof raw.sameCount === "boolean" && typeof raw.onlyPending === "boolean") return { type: "checkCollectionReplay", revision: raw.revision, sameCount: raw.sameCount, onlyPending: raw.onlyPending };
   if (raw.type === "checkCollectionSave" && Number.isSafeInteger(raw.receiptCount) && typeof raw.batchIdUnused === "boolean") return { type: "checkCollectionSave", receiptCount: raw.receiptCount, batchIdUnused: raw.batchIdUnused };

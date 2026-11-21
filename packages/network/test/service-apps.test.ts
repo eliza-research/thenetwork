@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
@@ -221,7 +222,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await text(s, clock, p, "Sam 29", { app: FR })).toBe("joined");
     // A known person on a new app (slop by keyword on the shared line): the age check again, then the link notice.
     expect(await text(s, clock, p, "slop")).toBe("join_asked");
-    expect(await text(s, clock, p, "Sam 29")).toBe("joined");
+    // A different first name in the second app, so a grant that replaced it would show.
+    expect(await text(s, clock, p, "Kit 29")).toBe("joined");
     const fr = (await memberOf(FR, p))!, sl = (await memberOf("slop", p))!;
     const slopOut = await outbound(sl.id);
     expect(slopOut.map(x => x.type).sort()).toEqual(["info", "onboarding"]);
@@ -246,8 +248,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       .toEqual([{ kind: "interest", value: "rock climbing", privacy_scope: "matchable", source: "share_grant", status: "confirmed" }]);
     // The copy never names the app it came from.
     for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(String(copies[0]!.id).toLowerCase()).not.toContain(word.toLowerCase());
+    // Nor can a reader of slop's facts find the source app by hashing the value with each app id.
+    for (const app of APP_IDS) expect(String(copies[0]!.id)).not.toContain(createHash("sha256").update(`${app}\nrock climbing`).digest("hex").slice(0, 16));
     // The joined app keeps the first name and city it was told.
-    expect((await sql`select name from network.members where app_id = 'slop' and id = ${sl.id}`)[0]).toEqual({ name: "Sam" });
+    expect((await sql`select name from network.members where app_id = 'slop' and id = ${sl.id}`)[0]).toEqual({ name: "Kit" });
 
     // STOP on the friends app's own line with PLATFORM_STOP_SCOPE=app: that app only.
     const { s: own } = service(clock, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } });

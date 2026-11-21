@@ -27,7 +27,7 @@ let sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,fromId:str
 let classifierFails=false,classifications=0,known=true,posts=0,polls=0,ancillaryPosts=0;
 let classifyGate:Promise<void>|undefined,classifyEntered:(()=>void)|undefined;
 const sent:Array<{id:string;text:string;kind:string;to:string;approvedPhotos?:import("../../core/src/svc/contract.ts").ApprovedRelayPhoto[]}>=[];
-const staffToken="synthetic-photo-safety-token-20261016",staffId=`token:safety#${createHash("sha256").update(staffToken).digest("hex").slice(0,8)}`;
+const staffToken="synthetic-photo-safety-token-20261016",friendsStaffToken="synthetic-friends-safety-token-20261119",staffId=`token:safety#${createHash("sha256").update(staffToken).digest("hex").slice(0,8)}`;
 let photoPolicyEnabled=false,photoResolves=0,reviewerEnabled=true,failPreviewAudit=false,storageReads=0;
 const capabilityUrls:string[]=[];
 const photoBytes=new Map<string,Uint8Array>();
@@ -37,7 +37,7 @@ const start=async()=>{
   service=new NetworkService({url,clock,photoStorage,audit:{kind:audit.kind,list:q=>audit.list(q),close:()=>audit.close(),write:async(entry:AuditEntry)=>{
       if(failPreviewAudit&&entry.action==="read_relay_photo"&&entry.detail?.phase==="requested")throw Error("synthetic preview audit write failure");
       await audit.write(entry);
-    }},photoDeliveryOrigin:"https://backend.photo-fixture.invalid",tokens:`safety@slop:${staffToken}`,
+    }},photoDeliveryOrigin:"https://backend.photo-fixture.invalid",tokens:`safety@slop:${staffToken},safety@friends:${friendsStaffToken}`,
     ...(photoPolicyEnabled?{photoRelayPolicy:{version:"relay-fixture-v1",notice:"Share this selected photo with {{recipient}} only after its designated safety review. Test fixture policy.",authorizeReviewer:async(id:string)=>id===staffId&&reviewerEnabled}}:{}),env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],log:()=>{},
     relayClassifier:async()=>{classifications++;if(classifyGate){classifyEntered?.();await classifyGate;}if(classifierFails)throw new Error("synthetic classifier outage");return {flags:[],source:"clef" as const};},
     adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550210",origin:cloud.url.origin,secret,env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1",SLOP_LIVE_APPROVED:"1"}})});
@@ -216,18 +216,53 @@ test("with two live matches the open context offers both; an unnamed relay asks 
     const [row]=await sql`select response from platform.inbound where id='msg:blooio:two-matches-unnamed'`;
     expect(row.response.context.activeItems).toEqual([{id:"relay-pair-cy",kind:"match",summary:"Match with Cy"},{id:"relay-pair",kind:"match",summary:"Match with Sam"}]);
     const before=posts,calls=classifications;
-    expect(await(await post(RELAY_PATH,unnamed)).json()).toEqual({decision:"none",senderNotice:"You have more than one match. Tell me which one this is for and I'll pass it on.",delivered:false,replayed:false});
+    expect(await(await post(RELAY_PATH,unnamed)).json()).toEqual({decision:"none",senderNotice:"You have more than one match, so I didn't send that. Send it again and say who it's for.",delivered:false,replayed:false});
     expect(posts).toBe(before);expect(classifications).toBe(calls);
     expect((await sql`select item_id from network.relay_records where from_member=${fromId} and at>${new Date(clock.now()-MINUTE)}`).length).toBe(0);
+    // An answer that only names the match is not a relay request: the desk kept no unnamed item to send.
+    const answer=await open("two-matches-answer","Sam");
+    expect(await(await post(RELAY_PATH,{...answer,itemId:"relay-pair"})).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});expect(posts).toBe(before);
     // spec/relayDecision.md, "A number ask with several live matches is never scored as abuse"
     const net=service.runtimeFor("friends")!.net,trustBefore=net.trust.get(fromId).score;
     const ask=await open("two-matches-number","can I get her number?");expect(net.trust.get(fromId).score).toBe(trustBefore);
-    expect(await(await post(RELAY_PATH,ask)).json()).toMatchObject({decision:"none",delivered:false});expect(posts).toBe(before);
+    expect(await(await post(RELAY_PATH,ask)).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});expect(posts).toBe(before);
     const named=await open("two-matches-named","tell Sam I'm on my way");
     expect(await(await post(RELAY_PATH,{...named,itemId:"relay-pair"})).json()).toMatchObject({decision:"pass",delivered:true});
     expect(posts).toBe(before+1);expect(sent.at(-1)).toMatchObject({to:b,text:'Ari says: "I\'m on my way"'});
+    // A named match that closed after the turn opened: the member hears that this match is closed, not that they have none.
+    const late=await open("two-matches-closed","tell Cy I'm on my way");
+    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),op=st.opps.find(x=>x.id==="relay-pair-cy")!;op.stage="closed";op.closedFrom="scheduled";n.importState(st);});
+    expect(await(await post(RELAY_PATH,{...late,itemId:"relay-pair-cy"})).json()).toEqual({decision:"block",senderNotice:"That match is closed, so I can't pass anything on to them.",delivered:false,replayed:false});
+    expect(posts).toBe(before+1);
   } finally {
     await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState();st.opps=st.opps.filter(op=>op.id!=="relay-pair-cy");n.importState(st);});
+  }
+},60_000);
+
+// spec/sharedContext.md, "Active item summaries are distinct"
+test("two live matches with the same first name get distinct summaries, or none when the day is shared too, so the agent never guesses",async()=>{
+  const d="+12125550214";
+  for(const [i,text] of ["friends.help","Sam, 31","I enjoy climbing and films","Sunday mornings work for me","Small groups are good"].entries()){
+    clock.advance(MINUTE);expect((await post(TURN_PATH,turn(d,`setup:Sam2:${i}`,text))).status).toBe(200);
+  }
+  const otherSam=(await service.people.getMembership((await service.accounts.personFor(d))!.id,"friends"))!.memberId;
+  clock.advance(11*MINUTE);await fixturePair();
+  const pairs=async(first:number,second:number)=>service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState(),base=st.opps.find(op=>op.id==="relay-pair")!;
+    st.opps=st.opps.filter(op=>op.id!=="relay-pair-sam2");base.createdAt=first;
+    st.opps.push({...base,id:"relay-pair-sam2",participants:[fromId,otherSam],status:[[fromId,"yes"],[otherSam,"yes"]],contacted:[fromId,otherSam],createdAt:second});n.importState(st);});
+  const items=async(id:string)=>{await open(id,"how is it going");const [row]=await sql`select response from platform.inbound where id=${`msg:blooio:${id}`}`;return row.response.context.activeItems;};
+  try {
+    await pairs(Date.UTC(2026,9,9,16),Date.UTC(2026,9,10,16));
+    expect(await items("same-name-days")).toEqual([{id:"relay-pair-sam2",kind:"match",summary:"Match with Sam (introduced Oct 10)"},{id:"relay-pair",kind:"match",summary:"Match with Sam (introduced Oct 9)"}]);
+    await pairs(Date.UTC(2026,9,9,15),Date.UTC(2026,9,9,17));
+    expect(await items("same-name-same-day")).toBeNull();
+    const before=posts,unnamed=await open("same-name-unnamed","tell Sam I'm on my way");
+    expect(await(await post(RELAY_PATH,unnamed)).json()).toMatchObject({decision:"none",senderNotice:"You have more than one match, so I didn't send that. Send it again and say who it's for."});
+    expect((await post(RELAY_PATH,{...(await open("same-name-guess","tell Sam I'm on my way")),itemId:"relay-pair"})).status).toBe(403);
+    expect(posts).toBe(before);
+  } finally {
+    await service.runtimeFor("friends")!.unitOfWork(n=>{const st=n.exportState();st.opps=st.opps.filter(op=>op.id!=="relay-pair-sam2");n.importState(st);});
+    await fixturePair();
   }
 },60_000);
 
@@ -240,6 +275,9 @@ test("a held relay item expires unsent at its review deadline, its sender is tol
   finally {classifierFails=false;}
   const held=(await rt.readState(n=>n.relayHeld())).filter(h=>h.from===fromId&&!heldBefore.has(h.itemId)),before=posts;
   expect(held).toHaveLength(1);const item=held[0]!;expect(item.deadline).toBe(item.at+12*HOUR);
+  // Staff see the deadline in the held relay queue.
+  const listed=await(await fetch(new URL("/relay/held?app=friends",server.url),{headers:{authorization:`Bearer ${friendsStaffToken}`}})).json() as any;
+  expect(listed.items.find((x:any)=>x.itemId===item.itemId)).toMatchObject({createdAt:item.at,deadline:item.deadline});
   clock.advance(11*HOUR);await service.tick();
   expect((await rt.readState(n=>n.relayHeld())).map(h=>h.itemId)).toContain(item.itemId);
   // Past the deadline (a day after the hold, the same daytime hour) and before any tick: a staff release finds the item expired and sends nothing to Sam.

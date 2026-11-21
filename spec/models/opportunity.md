@@ -104,7 +104,7 @@ module opportunity {
     parts: Set[str], alts: Set[str], first: str, requester: str,
     status: str -> str,
     review: Review,
-    contacted: Set[str], sentAt: str -> int, turnAt: str -> int, timeRetry: Set[str], askedAgain: Set[str],
+    contacted: Set[str], told: Set[str], sentAt: str -> int, turnAt: str -> int, timeRetry: Set[str], askedAgain: Set[str],
     meetingAt: int, bookedTold: Set[str], bookedAt: str -> int, confirmed: Set[str], reminded: Set[str],
     feedbackSent: bool, finalized: bool, post: str -> str, feedbackFrom: Set[str],
     outcomeRec: str,
@@ -148,7 +148,7 @@ module opportunity {
     parts: parts, alts: alts, first: first, requester: requester,
     status: strMap("out"),
     review: { decision: "", deadline: 0, decidedAt: 0, invalidated: false },
-    contacted: Set(), sentAt: zeroMap(-1), turnAt: zeroMap(-1), timeRetry: Set(), askedAgain: Set(),
+    contacted: Set(), told: Set(), sentAt: zeroMap(-1), turnAt: zeroMap(-1), timeRetry: Set(), askedAgain: Set(),
     meetingAt: -1, bookedTold: Set(), bookedAt: zeroMap(-1), confirmed: Set(), reminded: Set(),
     feedbackSent: false, finalized: false, post: strMap(""), feedbackFrom: Set(),
     outcomeRec: "",
@@ -250,7 +250,7 @@ module opportunity {
   // owedAnswer (N:4662, SD-043): the yes or no this member still owes, other than on `except`: a probe that
   // went out and was not answered (first), or a booked plan they were told about and did not confirm.
   pure def owedAnswer(s: S, m: str, except: str): Aw = {
-    val pr = OPP_ORDER.select(o => o != except and op(s, o).stage == "probing" and op(s, o).contacted.contains(m) and stat(s, o, m) == "probing")
+    val pr = OPP_ORDER.select(o => o != except and op(s, o).stage == "probing" and op(s, o).told.contains(m) and stat(s, o, m) == "probing")
     if (pr.length() > 0) { kind: "probe", opp: pr[0], at: op(s, pr[0]).sentAt.get(m), clarified: false }
     else {
       val bk = OPP_ORDER.select(o => o != except and op(s, o).stage == "scheduled" and stat(s, o, m) == "yes"
@@ -346,13 +346,18 @@ module opportunity {
       val cands = ORDER.select(a => x.alts.contains(a) and eligible(s, a, o))
       if (cands.length() > 0) {
         val alt = cands[0]
-        // spec/probeDispatch.md, "A replacement asks again every member who agreed to the earlier arrangement":
-        // a member who said yes after a probe goes back to the queue and gets a new probe in their turn.
-        val heard = stay.filter(p => x.status.get(p) == "available" and x.contacted.contains(p))
-        val s1 = putO(s, o, { ...x, alts: Set(), parts: stay.union(Set(alt)),
-                              first: if (x.first == out) alt else x.first,
+        // spec/probeDispatch.md, "A replacement asks again every member who heard about the earlier roster":
+        // a probe that waits for its answer or has still to go out, and a yes after a probe, are about the earlier
+        // roster: the member goes back to the queue and gets a new probe in their turn (roster revision, abstracted
+        // here as `told` and `askedAgain`). `contacted` stays: it records who heard the time and place (minors rule).
+        // When the first participant is out or asked again, the first turn goes to a member asked again.
+        val heard = stay.filter(p => x.status.get(p) == "probing" or (x.status.get(p) == "available" and x.told.contains(p)))
+        val reasked = heard.filter(p => x.told.contains(p))
+        val yeses = heard.filter(p => x.status.get(p) == "available")
+        val s1 = putO(heard.fold(s, (acc, p) => clearAwFor(acc, p, o)), o, { ...x, alts: Set(), parts: stay.union(Set(alt)),
+                              first: if (x.first == out) (if (reasked != Set()) ORDER.select(p => reasked.contains(p))[0] else alt) else x.first,
                               status: heard.fold(x.status.set(out, "out").set(alt, "queued"), (st, p) => st.set(p, "queued")),
-                              contacted: x.contacted.exclude(heard), askedAgain: x.askedAgain.union(heard) })
+                              told: x.told.exclude(heard).exclude(Set(out)), askedAgain: x.askedAgain.union(yeses) })
         advanceTurns(s1, o)
       } else push(putO(s, o, { ...x, alts: Set() }), [J("close", o, "", "no one available")])
     }
@@ -580,7 +585,7 @@ module opportunity {
         val sched = OPP_ORDER.select(o => op(s, o).stage == "scheduled" and stat(s, o, m) == "yes")
         // SD-075 and SD-076 (N:807-812): with no slot, "no" or a cancel takes back a yes to a probe that is
         // not booked yet.
-        val held = OPP_ORDER.select(o => op(s, o).stage == "probing" and op(s, o).contacted.contains(m) and stat(s, o, m) == "available")
+        val held = OPP_ORDER.select(o => op(s, o).stage == "probing" and op(s, o).told.contains(m) and stat(s, o, m) == "available")
         if (intent == "cancel" and sched.length() > 0) push(s, [dropJob(sched[0], m, true)])
         else if (aw.kind == "none" and (intent == "cancel" or yn == "no") and held.length() > 0)
           onProbeAnswer(s, m, held[0], false, false, intent, env)
@@ -673,13 +678,13 @@ module opportunity {
     val y = op(acc, o)
     if (y.stage != "probing" or y.status.get(p) != "probing") acc
     else {
-      val due = if (y.contacted.contains(p)) y.sentAt.get(p) + PROBE_TTL else y.turnAt.get(p) + PROBE_WAIT
+      val due = if (y.told.contains(p)) y.sentAt.get(p) + PROBE_TTL else y.turnAt.get(p) + PROBE_WAIT
       if (acc.now < due) acc
       // N:3430-3433: they said yes and were offered other times: no answer keeps the yes. The slot that
       // points at this item ends first (SD-076).
       else if (y.timeRetry.contains(p)) setStat(clearAwFor(acc, p, o), o, p, "available")
       else {
-        val a1 = if (y.contacted.contains(p)) putO(acc, o, { ...y, expiredSilent: y.expiredSilent.union(Set(p)) }) else acc
+        val a1 = if (y.told.contains(p)) putO(acc, o, { ...y, expiredSilent: y.expiredSilent.union(Set(p)) }) else acc
         val a2 = refreshMemberUnanswered(a1, p)
         push(setStat(clearAwFor(a2, p, o), o, p, "unavailable"), [J("replace", o, p, "")])
       }
@@ -803,7 +808,7 @@ module opportunity {
     val x = op(s, o)
     all {
       idle,
-      x.stage == "probing", x.parts.contains(m), x.status.get(m) == "probing", not(x.contacted.contains(m)),
+      x.stage == "probing", x.parts.contains(m), x.status.get(m) == "probing", not(x.told.contains(m)),
       env.openW.contains(m), not(probeOwed(s, m, o)),
       val invite = x.requester != m
       val checked = if (invite) refreshMemberUnanswered(s, m) else s
@@ -811,7 +816,7 @@ module opportunity {
       val s2 = if (r == "sent") {
                  val s1 = collect(checked, m, "probe", o, invite)
                  val y = op(s1, o)
-                 putM(putO(s1, o, { ...y, contacted: y.contacted.union(Set(m)), sentAt: y.sentAt.set(m, s1.now) }), m,
+                 putM(putO(s1, o, { ...y, contacted: y.contacted.union(Set(m)), told: y.told.union(Set(m)), sentAt: y.sentAt.set(m, s1.now) }), m,
                       { ...mm(s1, m), aw: { kind: "probe", opp: o, at: s1.now, clarified: false } })
                } else push(setStat(checked, o, m, "unavailable"), [J("replace", o, m, ""), J("probes", o, "", "")])
       s' = { ...s2, last: L("probeSend", o, m, r), jobEnv: env },
@@ -1069,7 +1074,7 @@ module opportunity {
   val counterIsNotYes = OPPS.forall(o => {
     val x = op(s, o)
     x.stage == "probing" implies x.parts.forall(p =>
-      (x.status.get(p) == "available" and x.contacted.contains(p)) implies CONSENT.contains(x.accepted.get(p)))
+      (x.status.get(p) == "available" and x.told.contains(p)) implies CONSENT.contains(x.accepted.get(p)))
   })
 
   // The slot routes the consent reply (N:771), so it is consent state. A probe slot points at a probe that
@@ -1087,7 +1092,7 @@ module opportunity {
   val noLostAnswer = OPPS.forall(o => {
     val x = op(s, o)
     x.stage == "probing" implies x.parts.forall(p =>
-      (x.status.get(p) == "probing" and x.contacted.contains(p)) implies
+      (x.status.get(p) == "probing" and x.told.contains(p)) implies
         ((mm(s, p).aw.kind == "probe" and mm(s, p).aw.opp == o) or mm(s, p).aw.kind == "posting"))
   })
 
@@ -1304,6 +1309,18 @@ module opportunity {
       .then(probeSend("o2", "c", ALL_OPEN)).then(settled).then(answer("c", "no", ALL_OPEN)).then(settled)
       .expect(op(s, "o2").parts == Set("a", "b") and stat(s, "o2", "a") == "probing" and op(s, "o2").askedAgain == Set("a")
               and stat(s, "o2", "b") == "queued" and op(s, "o2").revealSent == Set() and safety)
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "b", ALL_OPEN)).then(settled).then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").stage == "scheduled" and op(s, "o2").revealSent == Set("a", "b") and namesAfterAllYes and safety)
+
+  // Audit OPP18 review (probe-replacement-consent.integration.test.ts, the pending case): a's probe described c and
+  // waits for its answer; c stops before their turn and b replaces c. a's open probe is void: a gets a new probe
+  // about the new roster before b is asked, and the names go out only after both yeses.
+  run replacementVoidsAPendingProbeTest =
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(stop("c", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").parts == Set("a", "b") and stat(s, "o2", "a") == "probing" and not(op(s, "o2").told.contains("a"))
+              and op(s, "o2").contacted.contains("a") and stat(s, "o2", "b") == "queued" and mm(s, "a").aw.kind == "none" and safety)
       .then(probeSend("o2", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
       .then(probeSend("o2", "b", ALL_OPEN)).then(settled).then(answer("b", "yes", ALL_OPEN)).then(settled)
       .expect(op(s, "o2").stage == "scheduled" and op(s, "o2").revealSent == Set("a", "b") and namesAfterAllYes and safety)

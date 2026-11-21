@@ -24,6 +24,7 @@ export const PHOTO_UPLOAD_LINK_HEADER = "x-photo-upload-link";
 /** The page the app's site serves for the link. The token is in the fragment, so it never reaches a server log. */
 export const PHOTO_UPLOAD_PAGE = "/photos/add";
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+/** The live states; writePhotoConsent names the same three in its SQL. */
 const LIVE: readonly MembershipState[] = ["active", "paused", "onboarding"];
 /**
  * The multipart body: the photos (at most PHOTO_MAX_BYTES in all, spec/photoUploadLink.md) and the part
@@ -34,6 +35,20 @@ const BODY_CAP = PHOTO_MAX_BYTES + 64 * 1024;
 const DAY_MS = 24 * 60 * 60_000;
 
 export type UploadLinkIssue = { ok: true; url: string; expiresAt: number } | { ok: false; reason: PhotoRefusal | "held" | "not_member" | "daily_limit" };
+
+/**
+ * Stores the photo consent on a live membership in one guarded statement. Only the profile keys change,
+ * and only while the row is live: a ban (state restricted), a leave or an erasure that commits first
+ * makes it write nothing, and one that commits after keeps its own state. A write of the whole row read
+ * before (putMembership) made such a membership live again (spec/models/photos_rating.md, PR-D6).
+ * False: no live membership, nothing written.
+ */
+export async function writePhotoConsent(tx: SQL, personId: string, app: AppId, at: number, source: "text" | "link"): Promise<boolean> {
+  const rows = await tx`update platform.memberships
+    set profile = coalesce(profile, '{}'::jsonb) || jsonb_build_object('photoConsent', ${PHOTO_CONSENT.version}::text, 'photoConsentAt', ${at}::bigint, 'photoConsentSource', ${source}::text)
+    where app_id = ${app} and person_id = ${personId}::uuid and state in ('active', 'paused', 'onboarding') returning 1`;
+  return rows.length === 1;
+}
 
 export interface PhotoUploadLinkOptions {
   sql: SQL;
@@ -63,6 +78,26 @@ export class PhotoUploadLinks {
       adult: refusal !== "adults_only" && refusal !== "not_verified", banned: refusal === "banned", held, liveMember,
     };
     return { holder, refusal: refusal ?? (held ? "held" : liveMember ? undefined : "not_member"), consented: m?.profile.photoConsent === PHOTO_CONSENT.version };
+  }
+
+  /**
+   * Why this person may not get a link now (the issue rule's holder facts; undefined: they may). The text
+   * path asks it before the consent ask, so a held member is not asked for a consent that gives no link.
+   */
+  async refusal(personId: string, app: AppId): Promise<UploadLinkIssue & { ok: false } | undefined> {
+    return this.o.sql.begin(async tx => {
+      const { holder, refusal } = await this.holder(tx, personId, app);
+      return uploadLinkHolderAllowed(holder) ? undefined : { ok: false, reason: refusal ?? "adults_only" } as const;
+    });
+  }
+
+  /** YES PHOTOS: the consent by text, under the person lock, for a holder who may get a link. False: nothing written. */
+  async recordConsent(personId: string, app: AppId): Promise<boolean> {
+    return this.o.sql.begin(async tx => {
+      await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      const { holder } = await this.holder(tx, personId, app);
+      return uploadLinkHolderAllowed(holder) && await writePhotoConsent(tx, personId, app, this.o.now(), "text");
+    });
   }
 
   /** spec/photoUploadLink.md, "A link is issued only to an adult live member of a photo app who is not banned or held" */
@@ -124,12 +159,11 @@ export class PhotoUploadLinks {
       const before: PhotoUploadLink = { phase: row.used_at === null ? "UploadLinkOpen" : "UploadLinkSpent", issuedAt: new Date(row.issued_at).getTime(), expiresAt: new Date(row.expires_at).getTime() };
       if (before.phase !== "UploadLinkOpen") return { refused: "link_unavailable" as const };
       const after = stepLink(before, { type: "redeemUploadLink", holder, sameApp: row.app_id === app, at });
-      await tx`update platform.photo_upload_links set used_at = ${new Date(at)}, outcome = ${after.phase === "UploadLinkSpent" ? "uploaded" : "refused"} where id = ${this.id(token)}`;
-      if (after.phase !== "UploadLinkSpent") return { refused: "link_unavailable" as const };
-      if (!consented) {
-        const people = new PgPeopleStore(tx), m = (await people.getMembership(personId, app))!;
-        await people.putMembership({ ...m, profile: { ...m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: at, photoConsentSource: "link" } });
-      }
+      // The consent goes in by the guarded write: a ban or a leave that commits after the holder read
+      // above leaves no live row, the write changes nothing and the link closes as refused.
+      const spent = after.phase === "UploadLinkSpent" && (consented || await writePhotoConsent(tx, personId, app, at, "link"));
+      await tx`update platform.photo_upload_links set used_at = ${new Date(at)}, outcome = ${spent ? "uploaded" : "refused"} where id = ${this.id(token)}`;
+      if (!spent) return { refused: "link_unavailable" as const };
       return { personId, linkApp: row.app_id as AppId };
     });
     if ("refused" in outcome) return outcome.refused === "consent_required" ? json(400, { ok: false, error: "consent_required" }) : json(410, { ok: false, error: "link_unavailable" });

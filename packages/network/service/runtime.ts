@@ -42,7 +42,7 @@ import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
-  contextActiveItemCount, contextFacetEligible, contextFacetKept, contextFacetSizeLimit, contextMatchItemShown, contextMode, contextSinglePlayer,
+  contextActiveItemCount, contextFacetEligible, contextFacetKept, contextFacetSizeLimit, contextItemLabel, contextMatchItemShown, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
 import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
@@ -85,7 +85,8 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { NOT_SENT, WAITING, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { StateView } from "./state-view.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -192,7 +193,7 @@ export interface RuntimeOptions {
    * own city unless the app's wiring sets its markets: owning a conversation is not a matching market.
    */
   cities: readonly City[];
-  /** platform.networks.matching_enabled: false keeps matching off whatever the stored switch says. */
+  /** The launch-scope decision (matching-scope.ts): false keeps matching off whatever the stored switch says. */
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
   calendarScheduling?: CalendarSchedulingBridge;
@@ -207,10 +208,12 @@ export class NetworkRuntime {
   readonly net: ConsentNetwork;
   readonly pg: PgStore;
   readonly store: NetworkStore;
+  /** The stored version of the Network state in `net` (the queue's checks read it). */
+  readonly view: StateView;
   readonly adapter: ChannelAdapter;
   /** The network capital ledger (packages/capital): every event the Network emits is recorded here and stored in network.capital_events. Its levers are not read yet. */
   readonly capital = capitalWiring(undefined, { reader: false });
-  /** platform.networks.matching_enabled for this network. */
+  /** The launch-scope decision of this network (spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope"). */
   matchingAllowed: boolean;
   /** This app's engine pack, its engine config and its hooks (packs.ts). */
   readonly wiring: AppWiring;
@@ -242,6 +245,7 @@ export class NetworkRuntime {
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
     this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;
     this.pg = new PgStore(host.sql, o.id);
+    this.view = new StateView(o.id);
     this.store = this.serviceStore();
     this.wiring = appWiring(o.app.id);
     this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
@@ -258,7 +262,7 @@ export class NetworkRuntime {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      // The in-memory ledger takes an event when its unit commits (save below): a tick unit that ends unsaved to
+      // The in-memory ledger takes an event when its unit saves (writeUnit): a tick unit that ends unsaved to
       // compute its engine run outside the lock records nothing (spec/runtimeUnit.md).
       onLedger: e => { this.unit.capital.push(e); },
       onAgeStated: (memberId, age, o) => {
@@ -806,7 +810,7 @@ export class NetworkRuntime {
    */
   async start() {
     // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
+    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by seq`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"
@@ -825,6 +829,7 @@ export class NetworkRuntime {
         this.unit = newUnit();
         await this.refresh();
         const state = await this.loadState();
+        await this.scoped(tx => this.view.load(tx));
         this.net.setGatheringRepeatSources([]);
         if (state?.matchingEnabled && this.matchingAllowed && this.id === "ntwrk:nyc" && this.host.accountsFor) {
           // A read failure must retry the unit. Only a successful scan may retire an unbooked source.
@@ -840,8 +845,7 @@ export class NetworkRuntime {
       save: async (state: NetworkState) => {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
-        await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
-        for (const e of u.capital) this.capital.onLedger(e);
+        await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, async tx => { await this.writeUnit(tx, u); await this.view.saved(tx); });
         if (u.recordedAges) this.recordedAges.push(...u.recordedAges);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
@@ -1299,7 +1303,10 @@ export class NetworkRuntime {
     }
     const events = u.events.filter(e => !membersOf(e).some(id => u.forget.has(id))).map(e => ({ ...e, app_id: app, at: new Date(e.at) }));
     for (let i = 0; i < events.length; i += 500) await tx`insert into network.events ${tx(events.slice(i, i + 500))}`;
-    const capital = u.capital.filter(e => !u.forget.has((e as { member?: string }).member ?? "")).map(e => ({
+    // spec/capitalLedger.md: the live ledger records the unit's events here, and only the events it accepted are
+    // stored, in emit order (seq), so a restart replays the same ledger. A commit that fails after this point
+    // leaves the live ledger ahead of the store until the next restart.
+    const capital = u.capital.filter(e => this.capital.onLedger(e)).filter(e => !u.forget.has((e as { member?: string }).member ?? "")).map(e => ({
       app_id: app, id: e.id, type: e.type, member_id: (e as { member?: string }).member ?? null, t: new Date(e.t), event: e,
     }));
     for (let i = 0; i < capital.length; i += 500) await tx`insert into network.capital_events ${tx(capital.slice(i, i + 500))} on conflict (app_id, id) do nothing`;
@@ -1342,6 +1349,8 @@ export class NetworkRuntime {
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
+      // Private source suggestions and their review batches go with the member, not at the later membership removal.
+      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
@@ -1436,10 +1445,33 @@ export class NetworkRuntime {
    */
   private async drainQueue() {
     let ds: Delivery[];
-    try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
-    const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
-    await this.storeStatuses(mine);
+    try {
+      ds = await this.adapter.deliver([]);
+      // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
+      if (!await this.scoped(tx => this.view.isCurrent(tx))) {
+        await this.store.withLock(async () => {
+          const s = await this.store.load();
+          if (s) this.net.importState(s);
+          this.unit = newUnit();
+          this.view.imported();
+        });
+        ds = [...ds, ...await this.adapter.deliver([])];
+      }
+    } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
+    await this.drained(ds);
     await this.projectNotifications();
+  }
+
+  /**
+   * Store the status changes of a queue drain (the runtime's or a direct send's) in network.messages. Then a
+   * message that still shows a waiting status takes the status of its queue row once that row stopped waiting:
+   * a drain whose process stopped after the queue commit lost its changes in memory.
+   */
+  async drained(ds: Delivery[]) {
+    await this.storeStatuses(ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id));
+    await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
+      where m.app_id = ${this.app.id} and m.direction = 'outbound' and o.app_id = m.app_id and o.id = m.id and o.member_id = m.member_id
+      and m.status = any(${tx.array(WAITING_STATUSES, "TEXT")}) and o.status <> all(${tx.array(WAITING, "TEXT")})`);
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
@@ -1475,7 +1507,11 @@ export class NetworkRuntime {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
     await this.scoped(async tx => {
-      for (const d of rows) await tx`update network.messages set status = ${d.status} where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
+      // A queued message takes its queue row's status at the time of this write, not the drain's older change
+      // (a delivery receipt may have moved the row since).
+      for (const d of rows) await tx`update network.messages m set status = coalesce((select o.status from platform.outbound o
+        where o.app_id = m.app_id and o.id = m.id and o.member_id = m.member_id), ${d.status})
+        where m.app_id = ${this.app.id} and m.id = ${d.id} and m.direction = 'outbound'`;
     });
   }
 
@@ -1617,8 +1653,14 @@ export class NetworkRuntime {
       const stored = await this.store.load();
       if (stored) this.net.importState(stored);
       this.unit = newUnit();
-      const shown = this.net.relayLiveMatches(memberId as MemberId).flatMap(({ match, otherFirstName }) => {
-        const summary = `Match with ${otherFirstName}`;
+      const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
+        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(x.match.at)}` }));
+      const shown = live.flatMap(({ match, otherFirstName, day }) => {
+        // spec/sharedContext.md, "Active item summaries are distinct"
+        const sameName = live.filter(x => x.otherFirstName.toLowerCase() === otherFirstName.toLowerCase());
+        const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
+        if (label === "ItemLabelLeftOut") return [];
+        const summary = label === "ItemLabelName" ? `Match with ${otherFirstName}` : `Match with ${otherFirstName} (${day})`;
         // The other member's first name is the one name this item may carry; everything else stays forbidden.
         const itemSafe = (text: string) => outputLeaks(text, { forbidden: forbidden.filter(x => x.toLowerCase() !== otherFirstName.toLowerCase()), facts, contacts: true }).length === 0;
         return contextMatchItemShown(true, ageEligible, !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];

@@ -4,7 +4,8 @@
 // once that the invitation ended and nothing was shared; nothing counts as consent.
 // spec/probeReply.md, "A late answer to an expired probe hears once that the invitation ended"
 import { expect, test } from "vitest";
-import { HOUR } from "@thenetwork/core";
+import { DAY, HOUR } from "@thenetwork/core";
+import type { plans } from "@thenetwork/engine";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
 
@@ -29,9 +30,37 @@ test.each(["yep", "Yes I'm in!", "no thanks"])("a late %s hears once that the in
   expect(w.log("probe_answer").filter(l => l.detail.memberId === id)).toHaveLength(1);
   expect(w.meetings).toEqual([]);
 
-  // Once only: a second reply is ordinary conversation.
+  // Once only: a second reply while that answer is still the latest message gets no new answer and
+  // opens no model turn about the expired probe.
   const again = w.mark();
-  await w.net.onInbound({ id: "late-2", memberId: id, body: late, ts: w.clock.now(), channel: "sms" });
-  expect(w.to(id, again).some(s => s.body === copy.probeEnded)).toBe(false);
+  const second = await w.net.onInbound({ id: "late-2", memberId: id, body: late, ts: w.clock.now(), channel: "sms" });
+  expect(second).toBe("handled");
+  expect(w.to(id, again)).toEqual([]);
   expect(w.log("late_probe_answer")).toHaveLength(1);
+  expect(w.log("late_probe_answer_again")).toMatchObject([{ detail: { oppId, memberId: id } }]);
+  expect(w.log("probe_answer").filter(l => l.detail.memberId === id)).toHaveLength(1);
+});
+
+test("a late answer to an expired plan invitation hears once that the invitation ended", async () => {
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
+  await w.onboard("a", "b");
+  const now = w.clock.now();
+  const plan: plans.Plan = {
+    id: "late_partner", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+    window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: ["a", "b"], alternates: [], partner: true,
+    size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
+  };
+  (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  const item = w.net.reviewQueue()[0]!;
+  expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(await w.runUntil(() => w.probed("a"), 2 * DAY)).toBe(true);
+  expect(await w.runUntil(() => !w.probed("a"), 30 * HOUR)).toBe(true);
+  expect(w.log("probe_answer").filter(l => l.detail.memberId === "a").map(l => l.detail.expired)).toEqual([true]);
+
+  const mark = w.mark();
+  const turn = await w.net.onInbound({ id: "late-plan", memberId: "a", body: "Yes I'm in!", ts: w.clock.now(), channel: "sms" });
+  expect(turn).toBe("handled");
+  expect(w.to("a", mark).map(s => s.body)).toEqual([copy.probeEnded]);
+  expect(w.log("late_probe_answer")).toMatchObject([{ detail: { oppId: item.oppId, memberId: "a" } }]);
+  expect(w.meetings).toEqual([]);
 });

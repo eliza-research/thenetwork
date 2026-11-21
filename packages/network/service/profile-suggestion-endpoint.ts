@@ -6,7 +6,7 @@ import type { AppId } from "../../platform/src/apps.ts";
 import { isAppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
-import { ProfileSuggestions, collectionProposalMatchesStoredCommand, type SuggestionAuthorization, type SuggestionOwner, type SuggestionReviewBatch, type SuggestionProposal } from "./profile-suggestions.ts";
+import { ProfileSuggestions, collectionProposalMatchesStoredCommand, type StoredReviewResult, type SuggestionAuthorization, type SuggestionOwner, type SuggestionReviewBatch, type SuggestionProposal } from "./profile-suggestions.ts";
 import { renderSuggestionReview, reviewSuggestionMessage } from "./profile-suggestion-review.ts";
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
@@ -112,15 +112,24 @@ export async function profileSuggestionEndpoint(d: SuggestionEndpointDeps, req: 
       return batch && reviewText ? json({ kind: "preview", batch, reviewText })
         : json({ kind: "denied", reviewText: "I couldn’t collect those suggestions. Nothing new was saved." }, 403);
     }
+    const denied = () => json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
+    const deleted = () => json({ kind: "deleted", reviewText: "Deleted these suggestions and their linked saved facts." });
+    // spec/profileSuggestionReview.md, "A retried review command returns its stored result"
+    const claim = { turnId: `msg:${channel}:${messageId}`, requestSha256: createHash("sha256").update(raw).digest("hex") };
+    const reply = (result: StoredReviewResult | null | undefined) => {
+      if (!result || result.kind === "denied") return denied();
+      if (result.kind === "deleted") return deleted();
+      if (result.kind === "saved") return json({ ...result, reviewText: `${result.accepted.length} saved; ${result.rejected.length} rejected.` });
+      const reviewText = renderSuggestionReview(result.batch, owner, d.now());
+      return reviewText ? json({ ...result, reviewText }) : denied();
+    };
     if (action === "delete") {
       if (b.text !== `delete ${batchId}`) return json({ error: "invalid_command" }, 400);
-      return await store.deleteBatch(owner, batchId) ? json({ kind: "deleted", reviewText: "Deleted these suggestions and their linked saved facts." }) : json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
+      return await store.deleteBatch(owner, batchId, { claim, now: d.now() }) ? deleted() : denied();
     }
     if (action === "decide") {
-      const result = await reviewSuggestionMessage(store, owner, batchId, b.text as string, d.now());
-      if (!result || result.kind === "denied") return json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
-      if (result.kind === "saved") return json({ ...result, reviewText: `${result.accepted.length} saved; ${result.rejected.length} rejected.` });
-      return json({ ...result, reviewText: renderSuggestionReview(result.batch, owner, d.now()) });
+      const prior = await store.priorReview(owner, batchId, claim, d.now());
+      return reply(prior ?? await reviewSuggestionMessage(store, owner, batchId, b.text as string, d.now(), claim));
     }
     const batch = await store.getPendingBatch(owner, batchId, d.now());
     const reviewText = batch && renderSuggestionReview(batch, owner, d.now());

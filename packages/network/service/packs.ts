@@ -13,10 +13,10 @@
 //            its hiring manager (network.ts seatRoute): the candidate says yes first, then the manager
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
-//            Local only: peon matching and sends are not enabled in production (AGENTS.md decision 4).
+//            Local only: peon matching runs in production only after its live decision (matching-scope.ts).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
-// (the stored switch starts off; platform.networks.matching_enabled only allows the switch). Minors
+// (the stored switch starts off; the launch-scope decision in matching-scope.ts only allows the switch). Minors
 // never enter a pack's input (ConsentNetwork.packInput). Nothing here reads hidden truth.
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {

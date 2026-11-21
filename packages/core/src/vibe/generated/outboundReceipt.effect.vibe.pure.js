@@ -42,6 +42,18 @@ export function canRecordProviderError(outbound) { return M.canRecordProviderErr
 export function recordProviderError(outbound, failure, hasAttemptsLeft) { return M.recordProviderError(outbound, failure, hasAttemptsLeft); }
 /** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) @throws {never} */
 export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft) { return M.lawAnUnknownResultDoesNotRetry(hasAttemptsLeft); }
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) @throws {never} */
+export function returnsPersonSlot(phase) { return M.returnsPersonSlot(phase); }
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) @throws {never} */
+export function lawUncertainSendKeepsSlot(phase) { return M.lawUncertainSendKeepsSlot(phase); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function acceptanceRecordsSend(phase) { return M.acceptanceRecordsSend(phase); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function acceptanceEndsRow(phase, receiptOwner, member) { return M.acceptanceEndsRow(phase, receiptOwner, member); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function lawFailedAcceptanceRecordsNoSend(phase) { return M.lawFailedAcceptanceRecordsNoSend(phase); }
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
+export function lawReceiptOwnerEndsNonMemberRow(phase) { return M.lawReceiptOwnerEndsNonMemberRow(phase); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

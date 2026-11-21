@@ -46,8 +46,8 @@ export async function applyBaseProfileGrants(d: BaseProfileShareDeps, personId: 
       const value = f.value.trim(), seen = held.has(value.toLowerCase());
       // spec/baseProfileShare.md, "A shared value never replaces what the person told this app"
       if (baseFieldCopy("BaseInterest", usable, grant.fields.includes("interests"), true, seen) !== "AddSharedValue") continue;
-      // The copy's id never names the source app: this app learns only that the person shared an interest.
-      const id = `${target.memberId}:share:${createHash("sha256").update(`${grant.fromApp}\n${value.toLowerCase()}`).digest("hex").slice(0, 16)}`;
+      // The copy's id is made from this member and the value only, so nobody can find the source app from it.
+      const id = `${target.memberId}:share:${createHash("sha256").update(`${target.memberId}\n${value.toLowerCase()}`).digest("hex").slice(0, 16)}`;
       const inserted = await target.runtime.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
         values (${target.app}, ${id}, ${target.memberId}, 'interest', ${value}, ${tx.array((f.tags ?? []).filter(t => !t.includes(":")), "TEXT")}, ${f.privacy_scope}, 'said', 'share_grant', 0.8, 'confirmed', ${new Date(d.now)})
         on conflict (id) do nothing returning id`);

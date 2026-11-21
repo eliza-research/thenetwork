@@ -1,6 +1,6 @@
 # Connector tools as the agent sees them
 
-Each app site has its own MCP connector. A connection covers that one app (the host). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
+Each app site has its own MCP connector. A connection covers that one app (the host). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens and the grant storage are in the OAuth and inbox models. The age and leak-gate outcome of each update that `get_updates` reads is here (`connectorUpdateOutcome`).
 
 The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
 
@@ -323,6 +323,47 @@ pure def alwaysShownCountIsSmall(c: Connection): bool = c.lastShown >= 0 and c.l
 pure def stepReadingNeverAddsUnseen(before: Connection, via: str, after: Connection): bool =
   via == "callGetUpdates" implies
     ((after.tokenUnseen implies before.tokenUnseen) and (after.otherUnseen implies before.otherUnseen))
+```
+
+### A reader who cannot be matched never reads an update about another member
+
+A person aged 13 to 17 uses the agent for themselves and is never told about another member. A person of unknown age cannot be matched either. The read decides each selected update from four facts: the update is current (its opportunity, if any, is still open), the reader can be matched (a known age of 18 or more in this app), the update is about another member (it belongs to an opportunity), and its summary passes the output leak gate. An update that is not current, or that is about another member while the reader cannot be matched, is retired: it is not shown and it is marked seen, so no later read on any surface shows it. An update about the reader only (a reminder, an event for themselves) stays readable at every age. Changed: before this rule the connector had no age check, and a member whose lowest age dropped to 13 to 17 still read earlier updates about adults (audit MCP54).
+
+```quint
+type ConnectorUpdateOutcome = InboxUpdateShown | InboxUpdateRetired | InboxUpdateWithheld
+
+pure def connectorUpdateOutcome(stillCurrent: bool, readerMatchable: bool, aboutAnotherMember: bool, passesLeakGate: bool): ConnectorUpdateOutcome =
+  if (not(stillCurrent) or (aboutAnotherMember and not(readerMatchable))) InboxUpdateRetired
+  else if (not(passesLeakGate)) InboxUpdateWithheld
+  else InboxUpdateShown
+
+pure def lawUnmatchableReaderNeverReadsAboutAnotherMember(stillCurrent: bool, passesLeakGate: bool): bool =
+  connectorUpdateOutcome(stillCurrent, false, true, passesLeakGate) == InboxUpdateRetired
+
+pure def lawOwnUpdateReadableAtEveryAge(readerMatchable: bool): bool =
+  connectorUpdateOutcome(true, readerMatchable, false, true) == InboxUpdateShown
+
+pure def lawShownUpdateIsCurrentSafeAndAllowed(stillCurrent: bool, readerMatchable: bool, aboutAnotherMember: bool, passesLeakGate: bool): bool =
+  connectorUpdateOutcome(stillCurrent, readerMatchable, aboutAnotherMember, passesLeakGate) == InboxUpdateShown implies
+    (stillCurrent and passesLeakGate and (readerMatchable or not(aboutAnotherMember)))
+```
+
+### A withheld update stays unseen
+
+A current update that the reader may read but whose summary fails the output leak gate (a phone number, an email address, an internal id or a machine timestamp) is withheld: it is not shown, and it is not marked seen. It stays in the inbox for staff and for a later safe render until it expires. The other updates of the same read are shown or retired as usual. Changed: the read used to mark every selected update seen before the gate dropped the summary, so a withheld update was lost on every surface (audit MCP55).
+
+```quint
+pure def connectorUpdateMarkedSeen(updateOutcome: ConnectorUpdateOutcome): bool = updateOutcome != InboxUpdateWithheld
+
+pure def lawAllowedUpdateFailingGateStaysUnseen(readerMatchable: bool, aboutAnotherMember: bool): bool =
+  (readerMatchable or not(aboutAnotherMember)) implies
+    not(connectorUpdateMarkedSeen(connectorUpdateOutcome(true, readerMatchable, aboutAnotherMember, false)))
+
+pure def lawRetiredUpdateIsMarkedSeen(readerMatchable: bool, aboutAnotherMember: bool, passesLeakGate: bool): bool =
+  connectorUpdateMarkedSeen(connectorUpdateOutcome(false, readerMatchable, aboutAnotherMember, passesLeakGate))
+
+pure def lawFailedGateIsNeverShown(stillCurrent: bool, readerMatchable: bool, aboutAnotherMember: bool): bool =
+  connectorUpdateOutcome(stillCurrent, readerMatchable, aboutAnotherMember, false) != InboxUpdateShown
 ```
 
 ### Request limits count each person's grant, and the client address has only a coarse ceiling

@@ -15,7 +15,7 @@ import { loadPersonas } from "../../../../scripts/synthetic/load.ts";
 import { DATA_DIR, readJsonl, type EdgeRecord, type HiddenTruthRecord, type MemberRecord } from "../../../../scripts/synthetic/common.ts";
 import { CapturingEngine, summarizeRun } from "../engineCapture.ts";
 import { ConsentNetwork, OUTREACH, SIM_AUTO_REVIEWER, type ReviewOptions } from "@thenetwork/network";
-import { appBanner, APPS, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
+import { appBanner, APPS, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
@@ -172,8 +172,8 @@ export class GameSource implements DataSource {
 
     const clock: ClockInfo = { now: this.start, start: this.start, end: this.start + o.days * DAY, day: 1, playing: false, speed: SPEEDS.sixHours, waitingForPlayer: false };
     this.store = new Store({
-      mode: "game", app: this.app, ...(matchingAllowed(this.app) ? {} : { matchingLocked: true }),
-      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${o.city === "nyc" ? "NYC" : "SF/NYC"})` : `${o.personas} generated personas`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}${matchingAllowed(this.app) ? "" : ` · ${MATCHING_OFF_TEXT}`}`,
+      mode: "game", app: this.app,
+      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${o.city === "nyc" ? "NYC" : "SF/NYC"})` : `${o.personas} generated personas`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}`,
       dataset: synthetic ? "synthetic-v1" : `generated-${o.personas}`,
       capabilities: { canStep: true, canIntervene: true, hiddenTruth: true, readOnly: false },
     }, clock);
@@ -204,7 +204,7 @@ export class GameSource implements DataSource {
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.optOutAt.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, review: o.review, engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
+      seed: o.seed, review: o.review, engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
       onEngineRun: (log, proposals, at) => {
         const sum = summarizeRun(log, proposals, { at, city: "nyc", wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
@@ -337,7 +337,7 @@ export class GameSource implements DataSource {
     const judge = this.store.judge;
     const last = this.store.runs.filter(r => !r.shadow).at(-1);
     const alerts = healthAlerts({
-      now, start: this.start, reviewOpen: n?.reviewQueue() ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app), reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
+      now, start: this.start, reviewOpen: n?.reviewQueue() ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
       deferred: n ? n.exportState().deferred.length : null, refusals, guardBlocked: this.recent.filter(x => x.key === "guard_blocked").length,
       lastEngineRun: last?.at, expectEngine: !!n || this.opts.engine === "engine-v1", matchingEnabled: n?.matchingEnabled() ?? true,
       invariants: judge?.invariants ?? null, canaryLeaks: judge?.canaryLeaks ?? null, minorContacts: judge?.minorContacts ?? null,
@@ -730,7 +730,6 @@ export class GameSource implements DataSource {
         case "matching": {
           if (!this.consent) return { ok: false, error: "the matching switch needs the consent Network", code: "no_consent_network" };
           if (typeof cmd.on !== "boolean") return { ok: false, error: "on must be true or false" };
-          if (cmd.on && !matchingAllowed(this.app)) return { ok: false, error: `${this.app}: ${MATCHING_OFF_TEXT}`, code: "matching_locked" };
           const from = this.consent.matchingEnabled();
           this.consent.setMatchingEnabled(cmd.on, actor ?? "player");
           if (from !== cmd.on) this.recordConfig(actor ?? "player", "matching", from, cmd.on);

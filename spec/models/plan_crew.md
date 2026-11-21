@@ -111,7 +111,10 @@ module plan_crew {
    * (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"). It also
    * removes the crew from the Network's crews and resolves its open offer unformed, so the crew stays ended after
    * forget deletes the minor's id. Abstraction: the model keeps the crew and its members, and crewKnownToAMinor
-   * refuses every later session and the forming, which has the same effect on sessions.
+   * refuses every later session and the forming, which has the same effect on sessions. A record that goes under
+   * 18 with no inbound signal is read at the next tick, and also at the moment a session books, falls back or takes
+   * a late yes (planMembersAdult reads the crew members and the askees of the crew's source table): the session
+   * never books for the adults first, so this one atomic step models both.
    */
   action minorSignal(m: str): bool = all {
     not(minors.contains(m)), minors' = minors.union(Set(m)),

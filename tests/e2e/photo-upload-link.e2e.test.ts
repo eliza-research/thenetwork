@@ -161,6 +161,65 @@ describe.skipIf(!pgAvailable)("photo upload link (deployed path for slop.date ph
     expect((await st.svc.photoLinks.issue(await personOf(left.phone), "slop", "agent")).ok).toBe(false);
   }, T);
 
+  test("a held member is not asked for the photo consent, and a YES PHOTOS after the hold records nothing", async () => {
+    const phone = newPhone();
+    expect((await webJoin(st, "slop", phone, { age: 33 })).res.status).toBe(200);
+    const personId = await personOf(phone);
+    // Asked before the hold, answered after it: before the fix the consent was written and the member got "Thanks".
+    expect((await turn(phone, "ADD PHOTOS")).replies!.join(" ")).toContain("Reply YES PHOTOS");
+    await sql.begin(tx => writeStaffHold(tx, personId, "slop", randomUUID(), st.clock.now()));
+    const yes = await turn(phone, "YES PHOTOS");
+    expect(yes.replies!.join(" ")).not.toContain("Thanks");
+    expect((await st.svc.people.getMembership(personId, "slop"))?.profile.photoConsent).toBeUndefined();
+    // Before the fix a held member with no consent got the consent ask again.
+    expect((await turn(phone, "ADD PHOTOS")).replies!.join(" ")).not.toContain("YES PHOTOS");
+    expect((await sql`select 1 from platform.photo_upload_links where person_id = ${personId}`).length).toBe(0);
+  }, T);
+
+  /**
+   * Holds the membership row in a transaction that restricts it (as the staff ban's restrictBannedMemberships
+   * does), starts `act`, waits until `act` waits on that row lock, then commits. Before the fix the consent
+   * write was a putMembership upsert of the row read before the ban, so it made the banned membership active.
+   */
+  const banLandsDuring = async <R>(personId: string, act: () => Promise<R>): Promise<R> => {
+    let result!: Promise<R>;
+    await sql.begin(async tx => {
+      await tx`update platform.memberships set state = 'restricted' where person_id = ${personId}::uuid and app_id = 'slop'`;
+      result = act();
+      for (let i = 0; i < 100; i++) {
+        const [{ n }] = await sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and query ilike '%platform.memberships%'`;
+        if ((n as number) > 0) return;
+        await new Promise(r => setTimeout(r, 50));
+      }
+      throw new Error("the consent write never waited on the membership row");
+    });
+    return result;
+  };
+
+  test("a ban that commits during a link use is not undone by the consent write", async () => {
+    const phone = newPhone();
+    expect((await webJoin(st, "slop", phone, { age: 35 })).res.status).toBe(200);
+    const personId = await personOf(phone);
+    const issued = await st.svc.photoLinks.issue(personId, "slop", "agent");
+    if (!issued.ok) throw new Error(JSON.stringify(issued));
+    const token = /#([A-Za-z0-9_-]{43})$/.exec(issued.url)![1]!;
+    const res = await banLandsDuring(personId, () => upload(token, [png("ban-race")], { consent: true }));
+    expect(res.status).toBe(410);
+    expect((await st.svc.people.getMembership(personId, "slop"))?.state).toBe("restricted");
+    expect(await photoCount(phone)).toBe(0);
+  }, T);
+
+  test("a ban that commits during YES PHOTOS is not undone by the consent write", async () => {
+    const phone = newPhone();
+    expect((await webJoin(st, "slop", phone, { age: 36 })).res.status).toBe(200);
+    const personId = await personOf(phone);
+    expect((await turn(phone, "ADD PHOTOS")).replies!.join(" ")).toContain("Reply YES PHOTOS");
+    const yes = await banLandsDuring(personId, () => turn(phone, "YES PHOTOS"));
+    expect(tokenIn(yes.replies)).toBeUndefined();
+    const m = await st.svc.people.getMembership(personId, "slop");
+    expect([m?.state, m?.profile.photoConsent]).toEqual(["restricted", undefined]);
+  }, T);
+
   test("an unknown token is refused before the body is read", async () => {
     // A body that is not even multipart: before the fix the server read and judged it (415); now the token is looked up first.
     const res = await st.site("slop", "/api/photos/upload", { method: "POST", body: "x".repeat(1024), headers: { "content-type": "text/plain", "x-photo-upload-link": "A".repeat(43) } });

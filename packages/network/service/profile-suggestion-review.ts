@@ -1,5 +1,5 @@
-import { initial, step as stepReview, type ReviewRequest, type ReviewVerb } from "../../core/src/generated/profileSuggestionReview.ts";
-import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision } from "./profile-suggestions.ts";
+import { initial, observedTimeAllowed, step as stepReview, type ReviewRequest, type ReviewVerb } from "../../core/src/generated/profileSuggestionReview.ts";
+import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision, SuggestionReviewClaim } from "./profile-suggestions.ts";
 
 export type { SuggestionReviewBatch } from "./profile-suggestions.ts";
 
@@ -19,8 +19,10 @@ function batchReview(batch: SuggestionReviewBatch, owner: SuggestionOwner, now: 
   if (metadata.phase !== "NeedsItems") return null;
   const itemCount = batch.suggestions.length;
   const distinctIds = new Set(batch.suggestions.map(s => s.id)).size === itemCount;
+  // spec/profileSuggestionReview.md, "Only a bounded batch of distinct, valid suggestions can be shown"
   const allItemsValid = batch.suggestions.every(s => /^[A-Za-z0-9_-]{1,64}$/.test(s.id) && s.value.trim().length > 0 && s.value.length <= 400
-      && !/[\r\n\u0000-\u001f\u007f]/.test(s.value) && Number.isSafeInteger(s.observedAt) && s.observedAt <= now
+      && !/[\r\n\u0000-\u001f\u007f]/.test(s.value) && Number.isSafeInteger(s.observedAt)
+      && observedTimeAllowed(s.source === "google_calendar", s.observedAt, now)
       && ["gmail", "google_calendar"].includes(s.source)
       && ["interest", "goal", "availability_pattern"].includes(s.kind));
   const review = stepReview(metadata, { type: "checkItems", itemCount, distinctIds, allItemsValid });
@@ -72,10 +74,11 @@ export function parseSuggestionReview(text: string, batch: SuggestionReviewBatch
 }
 
 /** Only this store-backed entry verifies the full user/org binding and applies decisions. */
-export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number) {
+export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number,
+  claim?: SuggestionReviewClaim) {
   const batch = await store.getPendingBatch(owner, batchId, now);
   if (!batch) return null;
   const input = parseSuggestionReview(text, batch, owner, now);
   if (!input) return null;
-  return store.decide(owner, input, now);
+  return store.decide(owner, input, now, claim);
 }

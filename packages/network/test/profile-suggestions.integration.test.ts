@@ -9,6 +9,7 @@ import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.t
 import { loadSnapshot } from "../service/snapshot.ts";
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion, type SuggestionAuthorization } from "../service/profile-suggestions.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { APPS } from "../../platform/src/apps.ts";
 import { SimClock } from "@thenetwork/core";
 import { NetworkService } from "../service/service.ts";
 import { renderSuggestionReview, reviewSuggestionMessage } from "../service/profile-suggestion-review.ts";
@@ -276,6 +277,72 @@ test("a canonical ban blocks promotion but permits deleting owned suggestions", 
   expect(await facets()).toHaveLength(0);
 });
 
+// spec/profileSuggestionSource.md, "Resolve the owner and any claimed collection turn before authorizing live sources"
+test("a STOP in the consent ledger stops collection and acceptance before its projection reaches the member row", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const accept = { batchId: b.id, revision: b.revision, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" as const }] };
+  await sql`insert into platform.phone_identities(e164,person_id,verified_at,method) values('+12125550100',${owner.personId},${new Date(now)},'inbound_message')`;
+  await sql`insert into platform.consent_events(e164,app_id,state,source,at) values('+12125550100',null,'opted_out','fixture',${new Date(now)})`;
+  expect((await sql`select opted_out from network.members where id='owned-member'`)[0].opted_out).toBe(false);
+  expect(await store.propose(owner, input(), now)).toBeNull();
+  expect(await store.decide(owner, accept, now)).toEqual({ kind: "denied" });
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(1);
+  expect(await facets()).toHaveLength(0);
+  // A newer START for this app beats the older global STOP.
+  await sql`insert into platform.consent_events(e164,app_id,state,source,at) values('+12125550100','ntwrk','opted_in','fixture',${new Date(now + 1)})`;
+  expect(await store.decide(owner, accept, now)).toMatchObject({ kind: "saved" });
+  expect(await facets()).toHaveLength(1);
+});
+
+test("a ban by phone or a hold that lands during the Cloud source calls stops the commit", async () => {
+  await sql`insert into platform.phone_identities(e164,person_id,verified_at,method) values('+12125550100',${owner.personId},${new Date(now)},'inbound_message')`;
+  const racing = (act: () => Promise<unknown>) => new ProfileSuggestions(sql, async () => { await act(); return true; });
+  const banned = racing(() => sql`insert into platform.bans(id,scope,phone_hash,reason,banned_by) values('race-ban','phone','fixture-phone-hash','fixture','fixture')`);
+  expect(await banned.propose(owner, input(), now)).toBeNull();
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+  await sql`delete from platform.bans`;
+  const b = (await store.propose(owner, input(), now))!;
+  const held = racing(() => sql`update platform.phone_identities set hold='recycled_number' where person_id=${owner.personId}`);
+  expect(await held.decide(owner, { batchId: b.id, revision: b.revision, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
+  expect(await facets()).toHaveLength(0);
+  expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("proposed");
+});
+
+test("collection asks Cloud once for each distinct source and connection, not once for each suggestion", async () => {
+  const asked: string[] = [];
+  const counting = new ProfileSuggestions(sql, async (_who, consent) => { asked.push(`${consent.source}:${consent.connectionId}`); return true; });
+  const calendar: SourceSuggestion = { ...candidate(), source: "google_calendar", value: "I enjoy group walks", tags: ["walking"] };
+  const b = await counting.propose(owner, input([candidate(), { ...candidate(), value: "I enjoy hiking", tags: ["hiking"] }, calendar]), now);
+  expect(b?.suggestions).toHaveLength(3);
+  expect(asked.sort()).toEqual(["gmail:owned-google-connection", "google_calendar:owned-google-connection"]);
+});
+
+// spec/profileSuggestionReview.md, "Only a bounded batch of distinct, valid suggestions can be shown"
+test("a saved batch with a future Calendar event start renders for review, so the member is never told that nothing was saved", async () => {
+  const eventStart = now + 3_600_000;
+  const calendar: SourceSuggestion = { ...candidate(), source: "google_calendar", observedAt: eventStart, value: "I enjoy group walks", tags: ["walking"] };
+  const b = (await store.propose(owner, { ...input([calendar]), windowEnd: eventStart + 1000 }, now))!;
+  const text = renderSuggestionReview(b, owner, now);
+  expect(text).toContain("nothing saved yet");
+  expect(text).toContain("Calendar; observed");
+  const reject = await reviewSuggestionMessage(store, owner, b.id, `reject ${b.id}.${b.revision} 1`, now);
+  expect(reject).toMatchObject({ kind: "saved", rejected: [b.suggestions[0]!.id] });
+});
+
+test("leaving deletes the private suggestion batches with the member, even when the membership removal then fails", async () => {
+  await store.propose(owner, input(), now);
+  await sql`insert into platform.phone_identities(e164,person_id,verified_at,method) values('+12125550100',${owner.personId},${new Date(now - 1000)},'inbound_message')`;
+  await sql.unsafe(`create function platform.fail_membership_removal() returns trigger language plpgsql as $$ begin if new.state='removed' then raise exception 'fixture crash'; end if; return new; end $$;
+    create trigger fail_membership_removal before update on platform.memberships for each row execute function platform.fail_membership_removal()`);
+  const service = new NetworkService({ url: `${base}/${db}`, clock: new SimClock(now), env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }], log: () => {} });
+  try {
+    await expect(service.accounts.leave(APPS.ntwrk, { e164: "+12125550100", personId: owner.personId })).rejects.toThrow("fixture crash");
+    expect((await sql`select state from platform.memberships where person_id=${owner.personId}`)[0].state).toBe("active");
+    expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+    expect(await sql`select id from platform.profile_suggestions`).toHaveLength(0);
+  } finally { await service.close(); }
+});
+
 const httpSecret = "local-suggestion-review-fixture-secret-only";
 async function storedTurn(messageId: string, text: string, app = "ntwrk", memberId = "owned-member") {
   await sql`insert into platform.inbound(id,received_at,arrived_at,status,sender_hash,response,request_hash)
@@ -328,11 +395,15 @@ test("real HTTP review joins the signed stored turn, private preview, exact huma
     expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     expect((await http.post("preview", "preview", b.id)).status).toBe(403);
-    expect((await http.post("decide", "accept", b.id, { text })).status).toBe(403);
+    // spec/profileSuggestionReview.md, "A retried review command returns its stored result"
+    expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     await storedTurn("delete", `delete ${b.id}`);
     expect((await http.post("delete", "delete", b.id, { text: `delete ${b.id}` })).body.kind).toBe("deleted");
     expect(await facets()).toHaveLength(0);
+    expect((await http.post("delete", "delete", b.id, { text: `delete ${b.id}` })).body.kind).toBe("deleted");
+    await storedTurn("delete-again", `delete ${b.id}`);
+    expect((await http.post("delete", "delete-again", b.id, { text: `delete ${b.id}` })).status).toBe(403);
   } finally { await http.stop(); }
 });
 
@@ -891,9 +962,20 @@ async function contextFixture() {
   const input: LearningConsentContextRequest = { version: 1, purpose: 'network_profile_learning_v1', selectionSha256: NETWORK_LEARNING_ENTRY_SELECTION_SHA256,
     review: { version: 1, channel: 'blooio', messageId: 'consent-identity', app: 'ntwrk', memberId: 'owned-member', batchId,
       action: 'collect', commandSha256: digest(`collect ${batchId}`), networkAuthority: f.policy.authority, requestNonce: randomUUID() } };
-  const http = await reviewHttp(undefined, undefined, f.policy);
+  const http = await reviewHttp(boundIdentity, undefined, f.policy);
   return { f, http, input, async stop() { await http.stop(); await f.stop(); } };
 }
+
+test("with profile review off the membership context signs no learning consent proof", async () => {
+  const t = await contextFixture();
+  const off = await reviewHttp(undefined, undefined, t.f.policy);
+  try {
+    expect((await t.http.context(t.input)).status).toBe(200);
+    const r = await off.context(t.input);
+    expect(r.status).toBe(503);
+    expect(r.body).toEqual({ error: "identity_unavailable" });
+  } finally { await off.stop(); await t.stop(); }
+});
 
 test("membership context derives and signs only the current Network person without consent or Cloud identity inputs", async () => {
   const t = await contextFixture();

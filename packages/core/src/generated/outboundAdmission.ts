@@ -5,6 +5,10 @@
 export type Admission = "Proceed" | "Expired" | "ApprovalMissing" | "OptedOut" | "RecipientIneligible" | "ReplyTooOld" | "InvalidZone" | "QuietHours" | "AwaitingReply" | "LinePaused" | "RecipientCap" | "LineCap" | "NewConversationCap" | "PersonCap" | "LeakReview" | "Admit";
 /** Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out (spec/outboundAdmission.md) */
 export interface ConversationAdmission { decision: Admission; reengage: boolean }
+/** Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it (spec/outboundAdmission.md) */
+export type DispatchFailure = "RetryDispatch" | "ParkDispatch";
+/** Story: Recheck a queued message at send time / A claim needs the Network state that its checks read (spec/outboundAdmission.md) */
+export type ViewCheck = "ViewCurrent" | "ViewChanged";
 
 /** Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan (spec/outboundAdmission.md) */
 export const bookedCancellationPrefix: string = "booked-cancellation:";
@@ -112,6 +116,45 @@ export function quietPolicy(agent: boolean, validZone: boolean, quiet: boolean):
 //@ pure
 export function conversationPolicy(compliance: boolean, atCap: boolean, agent: boolean, reengaged: boolean, waited: boolean): ConversationAdmission {
   return compliance || !atCap ? ({ decision: "Proceed", reengage: false } as ConversationAdmission) : (agent && !reengaged && waited ? ({ decision: "Proceed", reengage: true } as ConversationAdmission) : ({ decision: "AwaitingReply", reengage: false } as ConversationAdmission));
+}
+
+/** Story: Recheck a queued message at send time / A row does not wait for an answer that the person already gave (spec/outboundAdmission.md) */
+//@ pure
+export function holdForReply(personWroteSinceRead: boolean): Admission {
+  return personWroteSinceRead ? "Proceed" : "AwaitingReply";
+}
+
+/** Story: Recheck a queued message at send time / A row does not wait for an answer that the person already gave (spec/outboundAdmission.md) */
+//@ pure
+export function lawWriteDuringCheckReleasesRow(personWroteSinceRead: boolean): boolean {
+  //@ ensures \result === true
+  return !(holdForReply(personWroteSinceRead) === "AwaitingReply") || !personWroteSinceRead;
+}
+
+/** Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it (spec/outboundAdmission.md) */
+//@ pure
+export function dispatchFailurePolicy(hasAttemptsLeft: boolean): DispatchFailure {
+  return hasAttemptsLeft ? "RetryDispatch" : "ParkDispatch";
+}
+
+/** Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it (spec/outboundAdmission.md) */
+//@ pure
+export function lawDispatchParksOnlyWithoutAttempts(hasAttemptsLeft: boolean): boolean {
+  //@ ensures \result === true
+  return (dispatchFailurePolicy(hasAttemptsLeft) === "ParkDispatch") === !hasAttemptsLeft;
+}
+
+/** Story: Recheck a queued message at send time / A claim needs the Network state that its checks read (spec/outboundAdmission.md) */
+//@ pure
+export function viewPolicy(storedVersion: string, viewVersion: string): ViewCheck {
+  return viewVersion !== "" && storedVersion === viewVersion ? "ViewCurrent" : "ViewChanged";
+}
+
+/** Story: Recheck a queued message at send time / A claim needs the Network state that its checks read (spec/outboundAdmission.md) */
+//@ pure
+export function lawClaimOnlyFromStoredVersion(storedVersion: string, viewVersion: string): boolean {
+  //@ ensures \result === true
+  return !(viewPolicy(storedVersion, viewVersion) === "ViewCurrent") || (viewVersion !== "" && storedVersion === viewVersion);
 }
 
 /** Story: Recheck a queued message at send time / Apply line controls and sending caps before checking the text (spec/outboundAdmission.md) */

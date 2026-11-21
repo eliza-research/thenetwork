@@ -8,7 +8,7 @@ A member needs to read their own saved profile without restarting onboarding or 
 
 Check ownership, app scope, opt-out, revision, and expiry. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [saved-profile read spec](../savedProfileRead.md) generates the production classification and resolution steps for flow A. Its terminal outcomes match this flow's `Reply` values. The [suggestion review spec](../profileSuggestionReview.md) generates batch admission and command handling in flow B. Like the production text preview and command boundary, the model requires every displayed item's observed time to be at or before the review time, for Gmail and Calendar rows. The standalone model also covers routing, membership state and batch storage.
+The [saved-profile read spec](../savedProfileRead.md) generates the production classification and resolution steps for flow A. Its terminal outcomes match this flow's `Reply` values. The [suggestion review spec](../profileSuggestionReview.md) generates batch admission and command handling in flow B. Like the production text preview and command boundary, the model requires every displayed Gmail item's observed time to be at or before the review time; a Calendar item carries its event start, which can be in the future (spec/profileSuggestionReview.md observedTimeAllowed, which the store also applies when it saves). The standalone model also covers routing, membership state and batch storage.
 
 The [profile journey](../savedProfileJourney.md) follows reads and
 leaving an app through signed turns. It compares disclosed profile
@@ -45,16 +45,16 @@ Imported from `quint/profile_read.qnt` at `30d950e`. See [model index](README.md
 //   The pure defs readDecision and currentBatch give the same decisions as the generated
 //   savedProfileRead readIntent/resolveRead and profileSuggestionReview checkBatch/checkItems. Each
 //   shell handler is an action that calls them and does not decide again.
-//   Compared with the code on branch vibestack-matching on 2026-11-18. Closed drift: suggestionOk
-//   allowed a Calendar row with a future observedAt (SD-240); batchReview now refuses any row with
-//   observedAt > now, for both sources.
+//   Compared with the code on branch vibestack-matching on 2026-11-18, after the SD-240 fix of that
+//   day: batchReview and the store's propose share spec/profileSuggestionReview.md observedTimeAllowed,
+//   so a Calendar row with a future event start is shown and a Gmail row with a future time is not.
 //   The gateway is a nondeterministic environment: the member id of a turn can belong to another
 //   person (a wrong or a forged binding), and a turn can come from another chat.
 //
 // BOUNDS
 //   People 1 and 2. Apps SLOP and PEON (NONE is no app). Time 0..MAX_T. One batch at a time. Each
 //   suggestion row is three values: valid (id, text, a known source and a known kind), calendar (the
-//   source is google_calendar; it has the same time rule as gmail) and observedAt. A batch has
+//   source is google_calendar: its observedAt can be in the future, SD-240) and observedAt. A batch has
 //   one representative row and a count. The owner is (person, app, chat); the user and organization
 //   binding of the store (profile-suggestions.ts batch()) is part of `person` here.
 //
@@ -133,8 +133,9 @@ module profile_read {
 
   pure def sameOwner(b: Batch, o: Owner): bool = b.owner == o
 
-  // profile-suggestion-review.ts batchReview: every row needs observedAt <= now, Gmail and Calendar.
-  pure def suggestionOk(s: Suggestion, now: int): bool = s.valid and s.observedAt <= now
+  // profile-suggestion-review.ts batchReview, spec/profileSuggestionReview.md observedTimeAllowed: a
+  // Calendar event start can be in the future (the store accepts it); a Gmail time cannot (SD-240).
+  pure def suggestionOk(s: Suggestion, now: int): bool = s.valid and (s.calendar or s.observedAt <= now)
 
   pure def currentBatch(b: Batch, o: Owner, now: int): bool = and {
     b.status == Pending, sameOwner(b, o),
@@ -390,8 +391,9 @@ module profile_read {
   val witness_noRender = not(batchLog.exists(l => l.kind == "render"))
   // A scope change or an edit gives a new revision, and a later saved decision is taken on it.
   val witness_noRejectAfterPreview = not(batchLog.exists(l => l.kind == "saved") and batch.revision > 2)
-  // A Calendar suggestion is shown once its observed time has come.
-  val witness_noCalendarRender = not(batchLog.exists(l => l.kind == "render") and batch.rows.exists(s => s.calendar))
+  // A Calendar suggestion with a future event start is still shown (SD-240).
+  val witness_noFutureCalendar = not(batchLog.exists(l => l.kind == "render") and batch.status == Pending
+                                     and batch.rows.exists(s => s.calendar and s.observedAt > clock))
   // A saved decision on a batch of two leaves the batch current with the next revision.
   val witness_noPartialSave = not(batchLog.exists(l => l.kind == "saved") and batch.status == Pending and batch.count > 0)
 
@@ -438,12 +440,12 @@ module profile_read {
     .then(tick)
     .then(all { assert(not(currentBatch(batch, { person: 1, app: SLOP, chat: 1 }, clock))), stutter })
 
-  // A future observed time is refused for Gmail and for Calendar; the present time is accepted.
+  // A Gmail time in the future is refused; a Calendar event start in the future is not (SD-240).
   run futureCalendarTest = init.then(makeBatch(1, 1, 3))
     .then(all { assert(not(currentBatch({ ...batch, rows: Set({ valid: true, calendar: false, observedAt: clock + 1 }) },
                                         { person: 1, app: SLOP, chat: 1 }, clock))
-                       and not(currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock + 1 }) },
-                                            { person: 1, app: SLOP, chat: 1 }, clock))
+                       and currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock + 1 }) },
+                                        { person: 1, app: SLOP, chat: 1 }, clock)
                        and currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock }) },
                                         { person: 1, app: SLOP, chat: 1 }, clock)), stutter })
 }

@@ -90,7 +90,7 @@ import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented
 import {
   alternateAllowed, canRecordReply, groupMayRemainWithoutAlternate, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
   needsProbeSend, probeAvailability, probeExpired, probeExpiryDeadline, probeIsInvite, probeQuestionHoldUntil, probeResponseMs,
-  agreedToRoster, initial as initialProbe, partnerPlanBackfill, probeTiming, reviewProbePreviewCurrent, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
+  agreedToRoster, canRecordProbeSent, initial as initialProbe, partnerPlanBackfill, probeTiming, queuedProbeCurrent, reviewProbePreviewCurrent, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
 import { reviewPlanPreviewCurrent } from "../../core/src/generated/staffReview.ts";
@@ -3540,8 +3540,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : ended.sentAt;
     const receivedAt = msg.signedReceivedAt ?? msg.ts;
     // spec/probeReply.md, "A late answer to an expired probe hears once that the invitation ended"
+    const latestIsEndNotice = ended.told && m.lastSent?.consentProbe === null && !!m.lastSent.body.endsWith(this.copy.probeEnded);
     const route = lateProbeRoute(this.memberReply && !msg.reaction, answered, latestOutboundMatchesProbe(m.lastSent, ended.oppId, ended.sentAt),
-      acceptedAt !== undefined, acceptedAt ?? 0, ended.endedAt, Math.min(receivedAt, now), ended.told);
+      acceptedAt !== undefined, acceptedAt ?? 0, ended.endedAt, Math.min(receivedAt, now), ended.told, latestIsEndNotice);
+    if (route === "AlreadyToldProbeEnded") { this.ctx.log("late_probe_answer_again", { oppId: ended.oppId, memberId: m.id }); return true; }
     if (route !== "TellProbeEnded") return false;
     m.endedProbe = { ...ended, told: true };
     this.ctx.log("late_probe_answer", { oppId: ended.oppId, memberId: m.id });
@@ -3706,6 +3708,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (after.phase === "Queued" && before.phase !== "Queued") {
         if (before.told) askedAgain.push(p);
         if (before.phase === "Available") o.askedAgain = [...new Set([...(o.askedAgain ?? []), p])];
+        const waiting = this.members.get(p);
+        if (waiting?.awaiting?.kind === "probe" && waiting.awaiting.oppId === o.id) waiting.awaiting = undefined;
         o.primed.delete(p);
         if (o.sentAt) delete o.sentAt[p];
         if (o.picks) delete o.picks[p];
@@ -3716,7 +3720,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       storeProbe(o, p, after);
     }
     o.roster = (o.roster ?? 0) + 1;
-    storeProbe(o, alternate, { ...initialProbe, roster: o.roster, about: o.roster });
+    if (o.participants.includes(alternate)) storeProbe(o, alternate, { ...initialProbe, roster: o.roster, about: o.roster });
     return askedAgain;
   }
 
@@ -4575,12 +4579,16 @@ export class ConsentNetwork implements NetworkUnderTest {
   private knownMinorsIn(ids: MemberId[]): MemberId[] { return ids.filter(id => this.knownMinor(id)); }
 
   /**
-   * At the moment a plan books or falls back, a member on it or asked about it whose record now says minor goes
-   * through the minors policy (syncMember), which closes the plan. Returns whether the plan is still open
-   * (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
+   * At the moment a plan books, falls back or takes a late joiner, a member on it, asked about it or about a plan
+   * whose time and place it keeps (timeAndPlaceChain), or in the crew whose session it is (knowsCrew), whose
+   * record now says minor goes through the minors policy (syncMember), which closes the plan. Returns whether the
+   * plan is still open (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person").
    */
   private planMembersAdult(o: Opp): boolean {
-    for (const id of new Set([...o.participants, ...o.contacted])) {
+    const crewId = o.plan?.crewId;
+    const crew = crewId === undefined ? undefined : this.crews.find(c => c.id === crewId);
+    const crewKnown = crew ? [...crew.members, ...this.timeAndPlaceChain(this.crewSource(crew.id)).flatMap(s => [...s.contacted])] : [];
+    for (const id of new Set([...o.participants, ...this.timeAndPlaceChain(o).flatMap(s => [...s.contacted]), ...crewKnown])) {
       const m = this.members.get(id);
       if (m && this.knownMinor(id)) this.syncMember(m);
     }
@@ -4892,7 +4900,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!m || !o.plan || !o.planRun) return;
     // A prior seat can close or backfill the plan while the same pass is in progress.
     if (!this.planProbeWindowOpen(o.stage, o.plan, now)
-      || !planTurnDue(o.planRun.answers[id] === "pending", o.contacted.has(id))) return;
+      || !planTurnDue(o.planRun.answers[id] === "pending", participantProbe(o, id).told)) return;
     const about = o.participants.filter(peer => peer === id || (o.stage === "scheduled"
       ? o.status.get(peer) === "yes" : activeOpportunityParticipant(o, peer)));
     const friends = this.appPack()?.id === "friends";
@@ -5042,22 +5050,20 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private askPartnerPlanAgain(o: Opp, alternate: MemberId): boolean {
     const run = o.planRun!;
-    // spec/probeDispatch.md, "A replacement asks again every member who agreed to the earlier arrangement"
-    const askedAgain = o.participants.filter(p => p !== alternate && run.answers[p] === "yes"
-      && stepProbe(participantProbe(o.status.get(p)), { type: "voidProbeAcceptance", heardEarlierArrangement: o.contacted.has(p) }).phase === "Queued");
-    if (!askedAgain.length) return false;
+    // spec/probeDispatch.md, "An activity-partner plan asks the member who agreed again before its alternate"
+    const heard = o.participants.filter(p => p !== alternate && run.answers[p] === "yes" && participantProbe(o, p).told);
+    const backfill = partnerPlanBackfill(run.bench, alternate, heard.length);
+    if (backfill.askAlternate) return false;
+    const askedAgain = this.changeRoster(o, alternate);
     const { [alternate]: _, ...answers } = run.answers;
+    const now = this.now();
     for (const p of askedAgain) {
       answers[p] = "pending";
-      o.status.set(p, "probing");
-      o.contacted.delete(p); o.primed.delete(p);
-      if (o.sentAt) delete o.sentAt[p];
-      if (o.picks) delete o.picks[p];
-      o.deferLogged = o.deferLogged?.filter(x => x !== p);
-      o.turnAt = { ...o.turnAt, [p]: this.now() };
+      // The plan lane sends the new probe; an open plan seat is a turn awaiting its probe.
+      storeProbe(o, p, stepProbe(participantProbe(o, p), { type: "openTurn", first: true, firstAvailable: false }));
+      o.turnAt = { ...o.turnAt, [p]: now };
     }
-    o.planRun = { ...run, answers, bench: [alternate, ...run.bench] };
-    o.askedAgain = [...new Set([...(o.askedAgain ?? []), ...askedAgain])];
+    o.planRun = { ...run, answers, bench: backfill.bench };
     this.ctx.log("probe_replaced", { oppId: o.id, in: alternate, askedAgain, proposal: this.toProposal(o) });
     return true;
   }
@@ -5161,6 +5167,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** A late yes after booking (until 6 hours before): the member joins and gets the booked plan; the sim's meeting is updated in place. */
   private planJoin(o: Opp, id: MemberId) {
+    if (!this.planMembersAdult(o)) return;
     const plan = o.plan!;
     if (this.publicEventRefusal(o)) { o.status.set(id, "unavailable"); return; }
     const going = o.participants.filter(p => o.status.get(p) === "yes");
@@ -5618,6 +5625,8 @@ export class ConsentNetwork implements NetworkUnderTest {
           this.expireInitialInvitation(o, p, sent + probeResponseMs, now);
           this.counters.probeExpired++;
           this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true, plan: true });
+          // spec/probeReply.md, "A late answer to an expired probe hears once that the invitation ended"
+          if (m?.awaiting?.kind === "probe" && m.awaiting.oppId === o.id) m.endedProbe = { oppId: o.id, sentAt: m.awaiting.at, endedAt: now, told: false, receiptKey };
         }
         if (m?.awaiting?.kind === "probe" && m.awaiting.oppId === o.id) m.awaiting = undefined;
         this.planAnswer(o, p, false, true);
@@ -5632,14 +5641,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       // A probe expires 26 hours after it went out; one that could not go out within the wait expires unsent.
       for (const p of [...o.participants]) {
         if (o.stage !== "probing") continue;
-        const current = participantProbe(o.status.get(p));
+        const current = participantProbe(o, p);
         const sent = o.sentAt?.[p];
         const deadline = probeExpiryDeadline(sent !== undefined, (sent ?? 0) + probeResponseMs, (o.turnAt?.[p] ?? o.createdAt) + PROBE_WAIT);
         const next = stepProbe(current, { type: "expireProbe", expired: probeExpired(now, deadline), timeQuestion: !!o.timeRetry?.includes(p) });
         if (next === current) continue;
-        if (next.phase === "Available") { o.status.set(p, "available"); continue; }
+        if (next.phase === "Available") { storeProbe(o, p, next); continue; }
         if (sent !== undefined) this.expireInitialInvitation(o, p, deadline, now);
-        if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
+        if (current.told) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
         const m = this.members.get(p);
         // spec/probeReply.md, "A late answer to an expired probe hears once that the invitation ended"
         if (m?.awaiting?.kind === "probe" && m.awaiting.oppId === o.id && sent !== undefined) {
@@ -6881,9 +6890,14 @@ export class ConsentNetwork implements NetworkUnderTest {
         },
       };
       case "probe": return {
-        valid: () => !!o && o.stage === "probing" && o.participants.includes(h.id) && o.status.get(h.id) === "probing",
+        // spec/probeDispatch.md, "A queued probe goes out only for the roster that it describes"
+        valid: () => !!o && o.stage === "probing" && o.participants.includes(h.id) && o.status.get(h.id) === "probing"
+          && queuedProbeCurrent((o.roster ?? 0) !== (h.roster ?? 0), false),
         onSent: messageId => {
           if (!o) return;
+          // spec/probeDispatch.md, "Wait for the member's send window and current availability"
+          const turn = participantProbe(o, h.id);
+          if (canRecordProbeSent(turn)) storeProbe(o, h.id, stepProbe(turn, { type: "recordProbeSent" }), messageId);
           m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId, probeInboundCount: m.msgsIn };
           m.endedProbe = undefined;
           m.asked++; o.contacted.add(h.id);
@@ -6930,6 +6944,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         valid: () => !!o && !!o.planRun && o.planRun.answers[h.id] === "pending",
         onSent: messageId => {
           if (!o) return;
+          const turn = participantProbe(o, h.id);
+          if (canRecordProbeSent(turn)) storeProbe(o, h.id, stepProbe(turn, { type: "recordProbeSent" }), messageId);
           m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId };
           if (h.options) o.offered = { ...o.offered, [h.id]: h.options };
           m.asked++; o.contacted.add(h.id);
@@ -7058,7 +7074,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /**
    * Send-time recipient policy (audit P1-5). Every send: not declined, not opted out. Agent-started
    * sends: not on hold; proactive ones: not on "only when I ask". Anything about another member:
-   * the recipient is not a minor and not on watch, every other person is a known adult not on
+   * the recipient is a known adult not on watch, every other person is a known adult not on
    * watch, and no block stands between them.
    */
   recipientPolicy(memberId: MemberId, kind: SendKind, o: { about?: MemberId[]; proactive?: boolean } = {}): RecipientCheck {
@@ -7613,6 +7629,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const venue = x.fixedVenue ? VENUES.find(v => v.id === x.fixedVenue) : undefined;
       this.opps.set(x.id, {
         ...x, primed: new Set(x.primed), status: new Map(x.status), contacted: new Set(x.contacted), reminded: new Set(x.reminded), feedbackFrom: new Set(x.feedbackFrom), fixedVenue: venue,
+        // State saved before the roster revision: a participant's current probe went out when it reached them (sentAt).
+        probeDelivery: x.probeDelivery ?? Object.fromEntries(x.participants.filter(p => x.sentAt?.[p] !== undefined && x.contacted.includes(p)).map(p => [p, ""])),
       });
     }
     this.requests.length = 0; this.requests.push(...st.requests);
@@ -7699,10 +7717,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The match a relay request goes to: the named live match, or the member's only one; none when they must name it. */
   relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId).match; }
   /** The member's live relay matches, newest first, each with the other member's first name (the shared context's active items). */
-  relayLiveMatches(memberId: MemberId): { match: RelayMatch; otherFirstName: string }[] {
+  relayLiveMatches(memberId: MemberId): { match: RelayMatch; otherFirstName: string; meeting: boolean }[] {
     return this.relayDesk.liveMatches(memberId).map(match => {
       const other = this.relayHost().member(match.participants.find(p => p !== memberId)!);
-      return { match, otherFirstName: (other?.firstName ?? "").trim().split(/\s+/)[0] ?? "" };
+      // match.at is the planned meeting when there is one, else the introduction (relayMatchOf).
+      return { match, otherFirstName: (other?.firstName ?? "").trim().split(/\s+/)[0] ?? "", meeting: this.opps.get(match.id)?.meetingAt !== undefined };
     });
   }
   /** Held relay items at their review deadline expire unsent; each sender is told, and the expiry counts as a missed review. */

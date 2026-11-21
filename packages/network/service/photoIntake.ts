@@ -69,8 +69,12 @@ export interface PhotoIntakeDeps {
   people: PeopleStore;
   accounts: Accounts;
   photos: PhotoService;
-  /** The single-use upload links (spec/photoUploadLink.md). The service passes them; the simulation's in-memory stores have none, so ADD PHOTOS is not handled there. */
-  links?: Pick<PhotoUploadLinks, "issue">;
+  /**
+   * The single-use upload links (spec/photoUploadLink.md), and the holder check and guarded consent write
+   * they share. The service always passes them. The simulation's in-memory stores have none: ADD PHOTOS is
+   * not handled there, and YES PHOTOS uses the memory fallback in holderRefusal and recordConsent below.
+   */
+  links?: Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent">;
   /** The keyed phone hash (pending texts and rate limits). */
   phoneKey: (e164: string) => string;
   now: () => number;
@@ -134,18 +138,36 @@ export class PhotoIntake {
     await this.d.people.deletePending(key, "photo_consent", PHOTO_APP);
     const who = await this.member(e164);
     if (a === "yes") {
-      const refused = who ? await this.d.photos.mayTake(who.person.id, PHOTO_APP) : "not_member";
-      if (who && !refused) {
-        await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
+      // The consent is kept only for a holder who may get a link (adult, live, not banned, not held), by
+      // a guarded write that never makes a banned or departed membership live again (recordConsent).
+      const refused = who ? await this.holderRefusal(who.person.id) : "not_member";
+      if (who && !refused && await this.recordConsent(who.person.id)) {
         const link = await this.d.links?.issue(who.person.id, PHOTO_APP, "text");
         await this.d.reply(e164, link?.ok ? `Thanks. ${PHOTO_TEXT.link(link.url)}` : PHOTO_TEXT.agreed, `sys:${ref}`);
-      } else if (refused === "adults_only" || refused === "not_verified") {
+      } else if (refused && refused !== "banned" && refused !== "not_member") {
         // Not swallowed in silence: the same plain answer a photo gets (once a day).
         await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
       }
     } else {
       await this.d.reply(e164, PHOTO_TEXT.declined, `sys:${ref}`);
     }
+    return true;
+  }
+
+  /** The issue rule's holder facts (spec/photoUploadLink.md); in memory, the photo checks alone. */
+  private async holderRefusal(personId: string) {
+    return this.d.links ? (await this.d.links.refusal(personId, PHOTO_APP))?.reason : await this.d.photos.mayTake(personId, PHOTO_APP);
+  }
+
+  /**
+   * The YES PHOTOS consent. In Postgres, the guarded write (writePhotoConsent: profile keys only, while
+   * live). In memory, nothing runs between the read and the write, so the live row read just before is kept.
+   */
+  private async recordConsent(personId: string): Promise<boolean> {
+    if (this.d.links) return this.d.links.recordConsent(personId, PHOTO_APP);
+    const m = await this.d.people.getMembership(personId, PHOTO_APP);
+    if (!m || !["active", "paused", "onboarding"].includes(m.state)) return false;
+    await this.d.people.putMembership({ ...m, profile: { ...m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
     return true;
   }
 
@@ -157,7 +179,9 @@ export class PhotoIntake {
     if (app !== PHOTO_APP || !this.d.links || !photoAddRequest(text)) return false;
     const who = await this.member(e164);
     if (!who) return false;
-    const refused = await this.d.photos.mayTake(who.person.id, PHOTO_APP);
+    // The issue rule's holder facts, staff hold included, before the consent ask: a held member is not
+    // asked for a consent that gives no link.
+    const refused = await this.holderRefusal(who.person.id);
     if (refused) {
       if (refused !== "banned") await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
       return true;

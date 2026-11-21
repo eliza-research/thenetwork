@@ -8,7 +8,7 @@ The [queue model](models/outbound_queue.md) includes workers, leases, retry and 
 
 ### A current row needs live approval and the recipient's eligibility
 
-A stale or expired row ends first. An exact neutral outcome notice for an accepting member may still pass admission after its opportunity closes. Every message needs live approval. Except for compliance messages, a current opt-out or recipient restriction stops the row.
+A stale or expired row ends first. An exact neutral outcome notice for an accepting member may still pass admission after its opportunity closes. Every message needs live approval. Except for compliance messages, a current opt-out or recipient restriction stops the row. The claim transaction reads the consent ledger again for every row except compliance, a direct text to someone who is not a member too. Changed 2026-11-18: the claim read the ledger again only for a row with a member (Q-outbound_queue-1), so a STOP that committed during the checks did not stop a direct text.
 
 ```quint
 type Admission = Proceed | Expired | ApprovalMissing | OptedOut | RecipientIneligible | ReplyTooOld |
@@ -73,7 +73,7 @@ pure def lawRestrictedRosterCannotProceed(rosterBlocked: bool): bool =
 
 ### Replies, quiet hours and unanswered messages limit when a send can go out
 
-A reply must follow a recent inbound. An agent-initiated message needs a valid time zone and waits through quiet hours. Read the current member's saved window and local zone, falling back to the queue's settings when absent. Equal window endpoints turn quiet hours off. Recheck under the current member lock just before claiming. If the row must wait, schedule it for the first allowed time without using a provider attempt or a person-cap slot. Replies and compliance messages are exempt from quiet hours. After the unanswered limit, an eligible agent-initiated message can use one re-engagement after its waiting period. Otherwise the row waits for an answer. Compliance skips the unanswered limit.
+A reply must follow a recent inbound. An agent-initiated message needs a valid time zone and waits through quiet hours. Read the current member's saved window and local zone, falling back to the queue's settings when absent. Equal window endpoints turn quiet hours off. Recheck under the current member lock just before claiming. If the row must wait, schedule it for the first allowed time without using a provider attempt or a person-cap slot. Replies and compliance messages are exempt from quiet hours. After the unanswered limit, an eligible agent-initiated message can use one re-engagement after its waiting period. Otherwise the row waits for an answer. Compliance skips the unanswered limit. A reply that the gateway sent in a signed turn counts in the unanswered streak as a queued send does. Changed 2026-11-18: an accepted gateway reply did not count (SD-148), so a fourth unanswered message could go.
 
 ```quint
 pure def replyPolicy(reply: bool, recentInbound: bool): Admission =
@@ -88,6 +88,44 @@ pure def conversationPolicy(compliance: bool, atCap: bool, agent: bool, reengage
   if (compliance or not(atCap)) { decision: Proceed, reengage: false }
   else if (agent and not(reengaged) and waited) { decision: Proceed, reengage: true }
   else { decision: AwaitingReply, reengage: false }
+```
+
+### A row does not wait for an answer that the person already gave
+
+A row waits for an answer only when the person did not write after the check read the conversation. When the person wrote during the check, the release of held rows may already have run, so the row is due again at once. Changed 2026-11-18: the queue held such a row although the person had written (SD-147), and it waited until the next message or its expiry.
+
+```quint
+pure def holdForReply(personWroteSinceRead: bool): Admission = if (personWroteSinceRead) Proceed else AwaitingReply
+
+pure def lawWriteDuringCheckReleasesRow(personWroteSinceRead: bool): bool =
+  holdForReply(personWroteSinceRead) == AwaitingReply implies not(personWroteSinceRead)
+```
+
+### A check that cannot answer delays the row and never sends it
+
+When a send-time check throws (the stale check of a notification, or a database error in the claim transaction), the row is not sent. It counts one attempt and waits with the provider backoff, then runs every check again with the same provider key. Only when its attempts are used up is it parked for a person. The error changes the row only while it still has the status the check read. Changed 2026-11-18: a stale check that threw read as current and the row was sent (SD-299), and any other error parked the row at once with no retry (SD-117).
+
+```quint
+type DispatchFailure = RetryDispatch | ParkDispatch
+
+pure def dispatchFailurePolicy(hasAttemptsLeft: bool): DispatchFailure = if (hasAttemptsLeft) RetryDispatch else ParkDispatch
+
+pure def lawDispatchParksOnlyWithoutAttempts(hasAttemptsLeft: bool): bool =
+  dispatchFailurePolicy(hasAttemptsLeft) == ParkDispatch iff not(hasAttemptsLeft)
+```
+
+### A claim needs the Network state that its checks read
+
+The stale check, the recipient check and the leak check read the replica's copy of the Network state. The claim transaction locks the stored state. After the checks that read the stored rows, it claims a row only when the stored version is still the version of the copy; otherwise the row waits with the same provider key and without its person-cap slot. A runtime drain that ends with a copy that is not the stored version loads the stored state and drains once more. A copy whose unit failed before its save has no known version. Changed 2026-11-19: a replica sent from an old copy after another replica closed the item or held the member (SD-020).
+
+```quint
+type ViewCheck = ViewCurrent | ViewChanged
+
+pure def viewPolicy(storedVersion: str, viewVersion: str): ViewCheck =
+  if (viewVersion != "" and storedVersion == viewVersion) ViewCurrent else ViewChanged
+
+pure def lawClaimOnlyFromStoredVersion(storedVersion: str, viewVersion: str): bool =
+  viewPolicy(storedVersion, viewVersion) == ViewCurrent implies (viewVersion != "" and storedVersion == viewVersion)
 ```
 
 ### Apply line controls and sending caps before checking the text

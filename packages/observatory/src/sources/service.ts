@@ -65,7 +65,7 @@ export interface ServiceConfig {
 
 /** The service's GET /health (packages/network/service/service.ts health()). */
 export interface ServiceHealth {
-  ok: boolean; instance: string; channel: string; reviewMode: "human"; matchingEnabled: boolean;
+  ok: boolean; instance: string; channel: string; reviewMode: "human"; matchingAllowed: boolean; matchingEnabled: boolean;
   lastTick: { thisInstance: { at: number; ran: boolean } | null; stored: number | null; savedAt: number | null };
   lockHolder: { pid: number; application: string } | null;
   backlog: { review: number; reviewOverdue: number; deferred: number; outboundWaiting: number };

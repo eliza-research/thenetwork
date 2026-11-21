@@ -1,6 +1,6 @@
 # Operations alert dispatch
 
-The [runtime operations model](models/runtime_ops.md) includes alert dispatch alongside retention, ticks, and recovery. The VibeLang shell reads alert history and executes the generated decisions through the backend's existing transaction and webhook adapters.
+The [runtime operations model](models/runtime_ops.md) includes alert dispatch alongside retention, ticks, and recovery. The VibeLang shell reads alert history and executes the generated decisions through the backend's existing transaction and webhook adapters. The turn watch shell (`packages/network/service/turn-watch.ts`) reads the signed gateway turns and the queued deliveries of the shared line, and the alert evaluation in `deploy/backend/ops.ts` turns its counts into alerts.
 
 ## Story: Receive useful operations alerts without duplicate notices
 
@@ -98,4 +98,76 @@ type RoundReport = { logSummary: bool, logFailure: bool, logLimit: bool, pingHea
 pure def roundReport(hasNotices: bool, postAttempted: bool, delivered: bool, heldNotices: bool, heartbeatConfigured: bool): RoundReport =
   { logSummary: hasNotices, logFailure: postAttempted and not(delivered), logLimit: heldNotices,
     pingHeartbeat: heartbeatConfigured }
+```
+
+## Story: Hear when a shared-line turn may have reached nobody
+
+> As an operator, I want an alert when a signed gateway turn or a Cloud delivery stays without a confirmed result, so that a member who may have heard nothing, or a STOP confirmation that may not have gone out, gets a person's attention.
+
+### Each unconfirmed turn condition becomes overdue after its threshold
+
+This rule is new (audit finding SHA65): before it, nothing watched the signed gateway turn for failure. The watch has three conditions. A handled turn whose collected replies have no receipt, or a receipt with an unknown result, is unconfirmed. A rejected receipt is unconfirmed when the turn has a STOP or other compliance reply: the gateway then knows that the confirmation did not go out, and an operator must record it. A rejected ordinary reply is a known, final failure that the send failures already show, so it leaves the watch; an accepted receipt confirms the turn. (Changed after review: a rejected receipt first confirmed every turn, so a rejected STOP confirmation raised no alert.) A signed turn that did not complete (it ended unresolved before it was handled, or it stays in processing) and that staff have not resolved is unresolved. A turn that was handled first and later erased (a forgotten invitee's notice) or sealed by retention is not one. (Changed after review: erased turns that were handled first raised false possible-STOP alerts.) A queued delivery (through Eliza Cloud or the provider) whose acceptance is unknown waits for a receipt lookup. A row with a STOP or other compliance reply is overdue after 2 minutes, and any other row after 15 minutes. An unresolved turn keeps no text, so it always counts as a possible STOP. Unconfirmed replies and unknown deliveries older than 24 hours leave the watch, because no operator step can change them then: an unknown delivery ends as failed after its own retention and shows in the send failures. An unresolved turn stays in the watch until staff resolve it, or until retention deletes its tombstone (the inbox retention plus `turnTombstoneKeepMs` after it arrived); the runbook asks staff to resolve it long before. (Changed after review: the prose first said only staff end it.)
+
+```quint
+type TurnWatchCondition = RepliesUnconfirmed | TurnUnresolved | DeliveryUnknown
+type TurnWatchReceipt = NoReceipt | ReceiptUnknown | ReceiptRejected | ReceiptAccepted
+
+pure def turnWatchUnconfirmed(receipt: TurnWatchReceipt, complianceReply: bool): bool =
+  receipt == NoReceipt or receipt == ReceiptUnknown or (receipt == ReceiptRejected and complianceReply)
+
+pure def lawAcceptedReceiptConfirms(complianceReply: bool): bool =
+  not(turnWatchUnconfirmed(ReceiptAccepted, complianceReply))
+
+pure def lawRejectedComplianceIsWatched(receipt: TurnWatchReceipt): bool =
+  turnWatchUnconfirmed(receipt, false) implies turnWatchUnconfirmed(receipt, true)
+
+pure val turnWatchComplianceAfterMs: int = 120000
+pure val turnWatchReplyAfterMs: int = 900000
+pure val turnWatchWindowMs: int = 86400000
+
+pure def turnWatchPossibleCompliance(condition: TurnWatchCondition, complianceReply: bool): bool =
+  condition == TurnUnresolved or complianceReply
+
+pure def turnWatchAfterMs(possibleCompliance: bool): int =
+  if (possibleCompliance) turnWatchComplianceAfterMs else turnWatchReplyAfterMs
+
+pure def turnWatchOverdue(condition: TurnWatchCondition, complianceReply: bool, ageMs: int): bool =
+  ageMs >= turnWatchAfterMs(turnWatchPossibleCompliance(condition, complianceReply)) and
+    (condition == TurnUnresolved or ageMs < turnWatchWindowMs)
+
+pure val ageMsValues = Set(0, turnWatchComplianceAfterMs - 1, turnWatchComplianceAfterMs, turnWatchReplyAfterMs - 1,
+  turnWatchReplyAfterMs, turnWatchWindowMs - 1, turnWatchWindowMs)
+
+pure def lawComplianceIsWatchedSooner(condition: TurnWatchCondition, ageMs: int): bool =
+  turnWatchOverdue(condition, false, ageMs) implies turnWatchOverdue(condition, true, ageMs)
+
+pure def lawFreshTurnIsNotOverdue(condition: TurnWatchCondition, complianceReply: bool, ageMs: int): bool =
+  ageMs < turnWatchComplianceAfterMs implies not(turnWatchOverdue(condition, complianceReply, ageMs))
+
+pure def lawUnresolvedTurnStaysWatched(complianceReply: bool, ageMs: int): bool =
+  ageMs >= turnWatchComplianceAfterMs implies turnWatchOverdue(TurnUnresolved, complianceReply, ageMs)
+```
+
+### Each condition is one alert, and a possible STOP makes it bad and first
+
+This rule is new (audit finding SHA65). Each condition has one alert key for the whole line, so the existing dispatch posts it once when it starts and again only when it gets worse or reaches its repeat time. The alert counts the overdue rows and the rows among them with a possible STOP or compliance reply. It is bad when one of them may be a STOP or compliance reply, and a warning otherwise. A bad turn alert comes before every other alert of the round. The alert carries counts only, never a message body, a number or a member.
+
+```quint
+pure def turnWatchAlertKey(condition: TurnWatchCondition): str =
+  if (condition == RepliesUnconfirmed) "turn_unconfirmed"
+  else if (condition == TurnUnresolved) "turn_unresolved"
+  else "deliver_unknown"
+
+pure def turnWatchRaises(overdueCount: int): bool = overdueCount > 0
+
+pure def turnWatchLevel(complianceCount: int): str =
+  if (complianceCount > 0) "bad" else "warn"
+
+pure def turnWatchLeads(complianceCount: int): bool = complianceCount > 0
+
+pure def lawPossibleStopIsBad(complianceCount: int): bool =
+  complianceCount > 0 implies (turnWatchLevel(complianceCount) == "bad" and turnWatchLeads(complianceCount))
+
+pure def lawTurnWatchKeysDiffer(first: TurnWatchCondition, second: TurnWatchCondition): bool =
+  first != second implies turnWatchAlertKey(first) != turnWatchAlertKey(second)
 ```

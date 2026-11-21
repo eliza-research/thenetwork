@@ -34,7 +34,11 @@ export interface PhotoRelayChoiceDeps {
   now: () => number;
 }
 
-export type PhotoChoiceResult = { entry: PhotoRelayEntry; decision: "none" | "hold" | "block"; notice: string };
+/**
+ * commit: the writes of a listing, run by the caller in the transaction that completes the relay action
+ * (relay-endpoint.ts completeAction), so a unit that fails leaves no list for a reply the member never got.
+ */
+export type PhotoChoiceResult = { entry: PhotoRelayEntry; decision: "none" | "hold" | "block"; notice: string; commit?: (tx: SQL) => Promise<void> };
 
 /** The member's photo request when no approved item is ready for this match. */
 export async function choosePhoto(d: PhotoRelayChoiceDeps, input: { app: AppId; personId: string; threadId: string; text: string; requestId: string }): Promise<PhotoChoiceResult> {
@@ -52,13 +56,16 @@ export async function choosePhoto(d: PhotoRelayChoiceDeps, input: { app: AppId; 
   switch (entry) {
     case "OfferPhotoChoices": {
       const ids = photos.map(p => p.id);
-      await d.sql`insert into platform.photo_relay_offers (sender_person_id, app_id, thread_id, photo_ids, policy_version, policy_notice, offered_at)
+      const commit = async (tx: SQL) => { await tx`insert into platform.photo_relay_offers (sender_person_id, app_id, thread_id, photo_ids, policy_version, policy_notice, offered_at)
         values (${personId}::uuid, ${app}, ${threadId}, ${ids}, ${notice!.version}, ${notice!.policyNotice}, ${new Date(at)})
         on conflict (sender_person_id, app_id, thread_id) do update set photo_ids = excluded.photo_ids, policy_version = excluded.policy_version,
-          policy_notice = excluded.policy_notice, offered_at = excluded.offered_at`;
-      return { entry, decision: "none", notice: PHOTO_CHOICE_TEXT.list(ids.length, notice!.notice) };
+          policy_notice = excluded.policy_notice, offered_at = excluded.offered_at`; };
+      return { entry, decision: "none", notice: PHOTO_CHOICE_TEXT.list(ids.length, notice!.notice), commit };
     }
     case "RecordPhotoChoice": {
+      // PhotoRelayService.select writes in its own transaction. If the relay unit fails after it, the item
+      // stays pending: it is keyed by requestId (no second item), and review and release check the parties,
+      // the photo and the notice again, so it is never delivered on a stale authority.
       const item = await d.relay.select(app, personId, threadId, offered[choice - 1]!, notice!.version, true, input.requestId);
       return item && item.state === "pending"
         ? { entry, decision: "hold", notice: PHOTO_CHOICE_TEXT.recorded }

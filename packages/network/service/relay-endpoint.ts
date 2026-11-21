@@ -242,7 +242,7 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
           // spec/photoRelayItem.md, "A photo request delivers an approved choice, lists the photos, or records the named photo"
           const chosen = d.choosePhoto ? await d.choosePhoto({ app, personId: who.person.id, threadId: match.id, text, requestId: key }) : undefined;
           const r: StoredRelay = chosen ? { decision: chosen.decision, notice: chosen.notice } : {decision:"block",notice:NOTICE.photo};
-          rt.unit.completeAction = async tx => {await lock(tx);await complete(tx,r);};
+          rt.unit.completeAction = async tx => {await lock(tx);await chosen?.commit?.(tx);await complete(tx,r);};
           return r;
         }
         if (photo) key = photo.itemId;

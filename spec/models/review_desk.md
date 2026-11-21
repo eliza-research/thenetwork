@@ -12,6 +12,8 @@ Imported from `quint/review_desk.qnt` at `30d950e`. Compared with `vibestack-mat
 
 The browser calls the [staff review controller](../staffReview.md) for selected card, mode, draft scope, and response ownership. The pure defs in this model have the names of that spec. The standalone model also explores server races and the matching switch.
 
+Compared again 2026-11-19: `review.tsx`, `store.ts` and `admin.tsx` have not changed since the 2026-11-18 comparison; the server side (`ConsentNetwork.decide`, `reviewBlock`, `POST /review/:oppId` with its required revision) still agrees with `serverApply`. The only new code is the launch scope of the matching switch, which this model leaves out (see OUTSIDE THE MODEL).
+
 Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`ReviewQueue`, `onKey`) does not ignore key-repeat events. A held `a` approves the selected card. When the accepted answer moves the selection, the next repeat event approves the next card. `repeatNeverDecides` states the rule. It is not part of `safety`; `heldKeyDecidesTest` replays the defect.
 
 ```quint
@@ -61,6 +63,8 @@ Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`Re
 //     that decision. Here it is part of the nondeterministic environment of approveBlock (not modelled).
 //   - The opportunity panel (panels.tsx) mounts its own ReviewActions with its own controller. Not modelled.
 //   - Errors and toasts, the score disclosure, the app and sign-in scope of a response, popovers.
+//   - The launch scope of the matching switch (spec/runtimeUnit.md matchingSwitchAllowed, setMatching refuses
+//     "on" outside it). This model's network is inside its scope; staff_console models the refusal.
 //   - The approval re-check after approve (approvalCheck, review_invalidated) and edit leak checks
 //     (editBlock). The model keeps decision "approve" with the version it was approved at.
 module review_desk {

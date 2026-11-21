@@ -141,6 +141,40 @@ export function lawEventEntryIsItsOwnEvidence(publicEvent, namesMember) {
     //@ ensures \result === true
     return !publicEvent || evidenceOwner(publicEvent, namesMember) === "EventEvidence";
 }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) */
+//@ pure
+export function appMatchingLocalOnly(app) {
+    return app === "friends" || app === "peon";
+}
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) */
+//@ pure
+export function matchingSwitchAllowed(registryAllows, app, production, liveApproved) {
+    return registryAllows && (!appMatchingLocalOnly(app) || !production || liveApproved);
+}
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) */
+//@ pure
+export function lawRegistryOffNeverAllowsMatching(app, production, liveApproved) {
+    //@ ensures \result === true
+    return !matchingSwitchAllowed(false, app, production, liveApproved);
+}
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) */
+//@ pure
+export function lawLocalOnlyAppNeedsLiveDecisionInProduction(registryAllows, app) {
+    //@ ensures \result === true
+    return !appMatchingLocalOnly(app) || !matchingSwitchAllowed(registryAllows, app, true, false);
+}
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) */
+//@ pure
+export function lawLocalOnlyAppMatchesOutsideProduction(app, liveApproved) {
+    //@ ensures \result === true
+    return matchingSwitchAllowed(true, app, false, liveApproved);
+}
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) */
+//@ pure
+export function lawPilotAppFollowsRegistry(registryAllows, app, production, liveApproved) {
+    //@ ensures \result === true
+    return !(!appMatchingLocalOnly(app)) || matchingSwitchAllowed(registryAllows, app, production, liveApproved) === registryAllows;
+}
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure
 export function matchingDisabledByRegistry(matchingAllowed) {

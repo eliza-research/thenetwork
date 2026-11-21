@@ -103,6 +103,25 @@ pure def lawIneligibleAgeGetsNoActiveItem(liveMatch: bool, summarySafe: bool): b
   not(contextMatchItemShown(liveMatch, false, summarySafe))
 ```
 
+### Active item summaries are distinct
+
+Two offered items never carry the same summary, so the agent never has to guess between two matches. The shell counts, among the member's live matches, the matches whose other member has the same first name, and the matches that also have the same day label. The day label is "meeting" and the day of the planned meeting, or "introduced" and the day of the introduction when no meeting is planned, in New York time (every network is in New York); both members know it. A first name that no other live match has is the whole summary. A shared first name adds the day label. When the first name and the day label are both shared, the shell leaves those items out, and a relay without an item gets the "which match" question. New rule: two live matches with the same first name got the same summary, so the agent could pick the wrong match (review of audit SHA38).
+
+```quint
+type ContextItemLabel = ItemLabelName | ItemLabelNameAndDay | ItemLabelLeftOut
+
+pure def contextItemLabel(sameName: int, sameNameAndDay: int): ContextItemLabel =
+  if (sameName <= 1) ItemLabelName
+  else if (sameNameAndDay <= 1) ItemLabelNameAndDay
+  else ItemLabelLeftOut
+
+pure def lawNameAloneOnlyWhenTheNameIsUnique(sameName: int, sameNameAndDay: int): bool =
+  contextItemLabel(sameName, sameNameAndDay) == ItemLabelName implies sameName <= 1
+
+pure def lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: int, sameNameAndDay: int): bool =
+  contextItemLabel(sameName, sameNameAndDay) == ItemLabelNameAndDay implies (sameName > 1 and sameNameAndDay <= 1)
+```
+
 ### A member whose context is unavailable still gets an answer
 
 When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The shared line never stays silent for a member. Added on 2026-11-17 (audit SHA40): before, the turn answered handled with no reply and the gateway called no model.

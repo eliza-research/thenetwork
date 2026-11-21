@@ -26,7 +26,11 @@ shell under the existing alert-store transaction. The backend
 evaluates the alerts it could collect, may close a missing episode without
 a prior successful post, and can still ping its heartbeat after a failed
 alert delivery. The retained model below describes different behavior for
-those cases.
+those cases. The same spec decides the shared-line turn watch (audit
+finding SHA65): unconfirmed turn replies, unresolved signed turns and
+deliveries with an unknown acceptance become one alert per condition. The
+model below does not include these inputs; the alerts reach the dispatcher
+it models like any other alert.
 
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
 eligibility, and aggregate outcome rules. The backend reads saved
@@ -49,7 +53,7 @@ Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md)
 //   M-144 migration-runner       packages/observatory/db/migrate.ts:78-112
 //   M-147 cf-backend-cutover     deploy/cloudflare/worker.ts
 //   M-149 wrangler-deploy-guard  scripts/wrangler.sh:56-129
-//   M-150 alert-dispatcher       deploy/backend/ops.ts:200-232, 285-320, 438-489, 574-592
+//   M-150 alert-dispatcher       deploy/backend/ops.ts collectNetwork, evaluate, AlertDispatcher.dispatch, createOps().tick
 //   M-151 bias-report-cadence    packages/network/service/service.ts:541-583
 //   M-152 bias-alert-lifecycle   ops.ts:256-257 (24 h window), ops.ts:305-309, ops.ts:460-467
 //   M-153 llm-call               packages/core/src/llm.ts:238-338
@@ -208,7 +212,12 @@ module runtime_ops {
    */
   pure def biasLate(bi: Bias, now: int): bool =
     if (bi.reports.size() == 0) now > WEEK + DAY else now - lastReportAt(bi) > WEEK + DAY
-  /** evaluate() (ops.ts:285-320) for one network. A read error gives only ops_read (ops.ts:289). */
+  /**
+   * evaluate() (ops.ts evaluate) for one network. A read error gives only ops_read. The line-wide turn-watch
+   * alerts (turn_unconfirmed, turn_unresolved, deliver_unknown, turn_read; spec/opsAlertDispatch.md) are not
+   * inputs of this per-network model: evaluate() puts a bad turn alert before every other alert of the round,
+   * and the dispatcher treats each turn key like any other key.
+   */
   pure def current(x: S, readOk: bool): str -> Cur =
     if (not(readOk))
       ALERT_KEYS.mapBy(k => if (k == "read") { on: true, count: 1, bump: false } else OFF)
@@ -406,7 +415,10 @@ module runtime_ops {
    * store.ts runTick, spec/runtimeUnit.md "The engine runs on a snapshot outside the store lock" (OPS23): the first
    * tick unit takes the lock, loads, reaches its engine run, records the request, ends without a save and releases
    * the lock, in one step. The engine run then computes without the lock: inbound units take the lock meanwhile.
-   * A tick of this replica does not start while its engine run computes.
+   * A tick of this replica does not start while its engine run computes. Abstraction: the model has no tick time
+   * in this step; the commit unit ticks at the capture time, so its expiries and deferred-send timing are late by
+   * the compute time (the send queue checks quiet hours, caps, consent and bans again at send time). Public events
+   * that start during the run are evidence of their own (spec/runtimeUnit.md), so the model does not show them.
    */
   action tickCapture(r: str): bool = all {
     s.st.unit.get(r).phase == "idle", s.st.lockHolder == "", s.st.eng.get(r).phase == "idle",

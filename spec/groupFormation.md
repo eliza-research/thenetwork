@@ -8,7 +8,7 @@ The [candidate pool model](models/candidate_pool.md) follows groups into the Net
 
 ### Only eligible adults enter the group search
 
-A forced participant who fails the adult check makes the whole request ineligible. Other candidates who fail it stay outside the search. The Network applies the same check to each invitee and host of a plan at the moment it submits the plan for review, whoever built it: a plan with one who is not an adult then is not submitted. The planner's view of the members can be older than the member records. A candidate already in the partial group, or incompatible with any of its members, cannot extend that group.
+A forced participant who fails the adult check makes the whole request ineligible. Other candidates who fail it stay outside the search. The Network applies the same check to each invitee and host of a plan at the moment it submits the plan for review, whoever built it: a plan with one who is not an adult then is not submitted. The planner's view of the members can be older than the member records. Changed 2026-11-17 (age safety review): the Network now checks each invitee and host again at submit, because the planner's view can be older than the records. A candidate already in the partial group, or incompatible with any of its members, cannot extend that group.
 
 ```quint
 type FormationPhase = AwaitingPool | Forming | PrimaryChosen | RankingAlternates | Finished

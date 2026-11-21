@@ -163,7 +163,7 @@ The page shows "LOCAL DATABASE · read-only · PII scrubbed". There are no game 
 | `OBSERVATORY_AUDIT_DATABASE_URL` | none | A writable login in role `network_observatory_audit`. Audit rows go to `network.staff_audit` (4.2). |
 | `OBSERVATORY_AUDIT_DIR` | `runs/audit` | The folder of the JSONL audit file, when there is no audit database |
 | `OBSERVATORY_REAL_ONLY` | off | `1` turns game mode, game commands and the lab off (4.3) |
-| `OBSERVATORY_HOST` | `127.0.0.1` | The bind address. Another value prints a warning. Use it only behind an access proxy (section 7). |
+| `OBSERVATORY_HOST` | `127.0.0.1` | The bind address. Another value prints a warning. Use it only behind an access proxy (deploy.md section 2.6). |
 | `OBSERVATORY_ALLOWED_ORIGINS` | none | Comma-separated origins allowed besides the server's own (for example the public hostname behind the proxy) |
 | `OBSERVATORY_REVEAL_PII` | off | `1` shows full names, member message bodies and feedback text for everyone. **Local use only.** The server refuses it for a database that is not local, and the banner says so. |
 | `OBSERVATORY_ENV_LABEL` | `LOCAL DATABASE` or `PRODUCTION DATA` | The environment banner (for example `STAGING`) |
@@ -273,7 +273,7 @@ Today shadow proposals are not sent to a review queue. To label them, a reviewer
 
 **Caution:** do not call `onInbound()`, `tick()` or a staff action on the Network directly in production. Use `runTick()` or `runStored()`. A change made outside them is not saved, and the next stored unit of work loads over it.
 
-Tested (until 2026-10-08, when the unit tests were deleted; git history at 16cde70): `packages/network/test/store.test.ts` ran save, load, row counts, row deletion, participations after a re-roll and after an under-13 decline, the lock (a second holder gets nothing), `runTick`, and two Networks on one store (a STOP survives the other's tick) against a per-process database on the :54339 cluster. The original command is preserved in that revision.
+Tested: `packages/network/test/store.test.ts` (integration suite) runs save, load, row counts, row deletion, participations after a re-roll and after an under-13 decline, the lock (a second holder gets nothing), `runTick`, a restart from stored state in the NYC world, and two Networks on one store (a STOP survives the other's tick) against a per-process database on the :54339 cluster: `node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration packages/network/test/store.test.ts`.
 
 ### 6.3 How a reviewer works in production
 
@@ -328,7 +328,7 @@ Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed
 
 | Variable | Default | What it does |
 |---|---|---|
-| `NETWORK_DATABASE_URL` | `DATABASE_URL` | Postgres with the `network` and `platform` schemas. A login that can read and write them (`network_rw`, 7.2). Required. |
+| `NETWORK_DATABASE_URL` | `DATABASE_URL` | Postgres with the `network` and `platform` schemas. A login that can read and write them (the service login, deploy.md section 2.1). Required. |
 | `NETWORK_SERVICE_TOKENS` | none | Staff role tokens, `admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>` (the Observatory's scheme), or per app `reviewer@slop:<t>`. Without them, every staff route answers 401. **[CREDENTIALS]** |
 | `NETWORK_SERVICE_AUDIT_DATABASE_URL` | the database URL | The login that writes `network.staff_audit` |
 | `NETWORK_SERVICE_HOST`, `NETWORK_SERVICE_PORT` | `127.0.0.1`, `4848` | The bind address. Another host prints a warning. |
@@ -366,7 +366,7 @@ Staff API (send `Authorization: Bearer <token>`; admin for an app passes every r
 
 - A refused action answers 409 with the Network's reason (for example `not_in_review`, `matching_paused`, `participant_minor`).
 - Every staff action writes a "requested" row and a "result" row to `network.staff_audit`, and the Network logs it (`review_decision`, `safety_action`, `matching_switch`).
-- A new stored state starts with matching off. An admin turns it on with `POST /matching {"on": true}` **[FOUNDER]** (7.4 check 8).
+- A new stored state starts with matching off. An admin turns it on with `POST /matching {"on": true}` **[FOUNDER]** (spec/product/pilot.md).
 - The review mode is not exposed. The service refuses to start with any mode but "human".
 - `/health` is for the heartbeat alert (PRD 35.2). Use the analyst token for the monitor.
 - STOP, STOP ALL, START and HELP: the service answers them through the platform consent ledger (`platform.consent_events`) with the app's own texts. STOP on one app's line stops that app (`PLATFORM_STOP_SCOPE=app`, the default); STOP on the shared line and STOP ALL stop every app. Each one also sets `network.members.opted_out` and pauses the membership. "leave <app>" leaves one app. The one word "cancel" is a STOP keyword. The founder must decide which system owns keywords on the Blooio line (6.4 item 4).
@@ -375,107 +375,13 @@ Checked on 2026-10-07 on a scratch local database: `--once --dry-run` ticked and
 
 Checked again on 2026-10-07, later, on a new scratch database (both schema files, then dropped): `--once --dry-run` printed `sends dry-run, review "human"` and `tick done`. In service mode on port 4861: `/health` with no token gave 401 and with the analyst token gave `matchingEnabled: false` and the backlog; `GET /review` with the analyst token gave 403 and with the reviewer token `{"ok":true,"items":[]}`; `/review-mode` gave 404; `POST /matching {"on":true}` as admin gave `{"ok":true}`; an unsigned webhook gave 401.
 
-## 7. Deployment plan (for later)
+## 7. Deployment
 
-**Do not deploy anything now.** This is the plan for when the founder approves a deploy.
+The earlier standalone plan in this section (a separate matcher worker, a `network_rw` login, a Worker for the Blooio webhook, no connectors) was removed on 2026-11-18 because the code no longer follows it. Use these sources:
 
-Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Cloud (Cloudflare Workers, Railway Postgres through Hyperdrive). The plan below is a standalone stack on Railway and Cloudflare under `ntwrk.party`. It uses the same pieces (Railway Postgres, a Railway matcher worker, a Cloudflare Worker with Hyperdrive), so most steps carry over if the founder picks the Eliza Cloud path.
-
-### 7.1 Before any deploy (code work)
-
-| # | Work | Owner area | Status |
-|---|---|---|---|
-| 1 | Persist all ConsentNetwork state in the `network` schema; make the tick resumable | `packages/network`, schema | Built: `PgStore`, `runTick()` (6.2) |
-| 2 | A production entry point for the matcher: `runTick()` on a schedule, and `runStored()` for inbound messages and staff actions | `packages/network` | Built: `packages/network/service/main.ts` (6.5). Not deployed. |
-| 3 | A migration runner and a ledger (section 1.2). The service checks the tables at start and does not migrate. | schema | Built: `pnpm run db:migrate` (local hosts only). A reviewed way to run it against staging and production is missing. |
-| 4 | The Network admin API for review decisions, the matching switch and safety actions, with staff auth and an audit row (section 6.4) | `packages/network/service` | Built (6.5), with the Observatory's role tokens and `network.staff_audit`. The Observatory's real mode calls it (4.4). |
-| 5 | Leak check on the Blooio send path. The queue runs the leak guard; pass `forbiddenProvider(net, memberOf)` from `@thenetwork/network` as its `forbiddenProvider` and `blooioRecipientPolicy(net, memberOf)` as its `recipientPolicy` ([network.md](network.md) 6.5). | `packages/blooio`, the entry point | Wired in the service's `BlooioAdapter` (6.5). Tested with a fake provider only. |
-| 6 | A server flag that turns off game mode in the Observatory | `packages/observatory` | Built: `OBSERVATORY_REAL_ONLY=1` (4.3) |
-| 7 | Age at join. A member with no age is no longer declined: the Network asks once and treats them as a minor until they answer ([network.md](network.md) section 6.3). An age at join still avoids that. | onboarding | Open |
-| 8 | JWT verification for Cloudflare Access (4.1) | `packages/observatory` | Built |
-| 9 | The service records the signed-in person as the reviewer of record (it reads `X-Network-Staff-Id` from the console's token only) | `packages/network/service` | Missing (6.4 item 2) |
-| 10 | One owner for STOP, START and HELP on the Blooio line (6.4 item 4) | service, Eliza Cloud | **[FOUNDER]** Open |
-| 11 | The four apps: the `platform` schema, `app_id` and row-level security, one service for every network, the public API, the four sites ([runbook-platform.md](runbook-platform.md)) | platform, service, sites, schema | Built, local only. Not deployed. |
-| 12 | Rename `buddies` to `friends` and allow 13+ to join every app (PRD 40.2, 40.3) | platform, schema, sites, obs | Done (migration 0007, 2026-10-08) |
-| 13 | Route `/api/*` on each app domain to the shared API (a zone route, or a service binding with `run_worker_first`) | sites, ops | **[FOUNDER]** Missing |
-| 14 | Logins for the per-app roles (`network_observatory_<app>`, `network_observatory_cross_app`, `network_service`, `platform_service`) | ops | **[CREDENTIALS]** The SQL is in [deploy.md](deploy.md) 2.1 (service) and 2.6 (console). Not created yet. |
-| 15 | Monitoring, alerts and a cost ledger with budgets | `deploy/backend/ops.ts`, `packages/network/service/cost.ts` | Built ([deploy.md](deploy.md) section 7). The webhook and the uptime monitor need an account **[CREDENTIALS]**. |
-| 16 | Daily dump to R2 and a restore drill | `deploy/backup/` | Built ([deploy.md](deploy.md) section 8, section 8 below). The bucket and the cron service are not created yet **[CREDENTIALS]**. |
-
-### 7.2 Railway
-
-1. **[FOUNDER] [CREDENTIALS]** Create (or choose) the Railway project. Create a `staging` environment and a `production` environment. Do every step in staging first.
-2. Add a Postgres service.
-3. Enable pgvector: `create extension if not exists vector;` (PRD 32.4 uses pgvector HNSW for embeddings).
-4. Apply the schema (section 1.1, both files), then run the migrations.
-5. **[CREDENTIALS]** Create the logins and keep the passwords in Railway variables only:
-   - `network_rw` for the matcher worker, in roles `network_service` and `platform_service` (section 2);
-   - one console login per app, in role `network_observatory_<app>`, and one in `network_observatory_cross_app` (section 2);
-   - an admin login (superuser or `BYPASSRLS`) for migrations only.
-6. Turn on daily backups: the Railway volume backups and the R2 dump ([deploy.md](deploy.md) section 8). **[FOUNDER]** Run the restore drill (section 8 below) before launch (PRD 28.5 gate: "backup restore tested").
-7. Add a read replica if the plan allows it. Point the Observatory at the replica (PRD 31.4: analytics never read the primary at peak).
-8. **Matcher worker service (`network-matcher`).**
-   - Build from this repository with Node 26 and pnpm.
-   - Start command: `node --import tsx --env-file-if-exists=.env packages/network/service/main.ts` (6.5), with `NETWORK_SERVICE_HOST=0.0.0.0` only behind the access proxy.
-   - Each tick, for each network: `runTick(net, new PgStore(DATABASE_URL, "<app>:<city>"), now)`. It takes `pg_try_advisory_lock(hashtext('network-tick-<app>:<city>'))`. If the lock is held, the tick is skipped. Each inbound message and staff action: `runStored(net, store, fn)`, which waits for the same lock. Every call loads the newest stored state before it runs and saves after, so two instances run one unit of work at a time and never overwrite each other's saves.
-   - The service ticks every minute (fixed in `main.ts`). The engine runs once a day inside the tick (09:00 New York). Initial invites and asks go in each member's send window (12:00 New York plus up to 2 hours of spread, open for 6 hours, or a time learned from their replies), so the one-minute tick keeps sends close to the slot ([network.md](network.md) 6.4).
-   - Run one replica first. A second replica is safe (the lock), but each replica has its own in-memory Blooio queue.
-   - Sends stay dry-run. Live Blooio sends need `NETWORK_CHANNEL=blooio`, `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and the app's `<APP>_LIVE_APPROVED=1`, and the founder's approval **[FOUNDER]** (6.5).
-   - The platform variables: `PLATFORM_HASH_KEY` (required with `NODE_ENV=production`), `OTP_PROVIDER=twilio` with the Twilio Verify credentials, `TURNSTILE_SECRET_KEY`, `PLATFORM_STOP_SCOPE` **[CREDENTIALS]** ([runbook-platform.md](runbook-platform.md) section 5).
-   - Variables (6.5): `NETWORK_DATABASE_URL` (the `network_rw` login), `NETWORK_SERVICE_TOKENS` (one token per role, plus the console token with the admin role) **[CREDENTIALS]**, `NETWORK_SERVICE_AUDIT_DATABASE_URL` (optional), `BLOOIO_WEBHOOK_SECRET`, `BLOOIO_API_KEY` and `BLOOIO_FROM` **[CREDENTIALS]**, `SURPLUS_API_KEY` and `OPENAI_API_KEY` **[CREDENTIALS]** (gpt-6-luna for every LLM use; the Network calls the engine without an LLM today).
-   - Review mode stays `"human"` (the default). Never set `"auto"` outside the simulator.
-   - `/health` reports the last tick, the lock holder, the backlog and the refusals, for the heartbeat alert (PRD 35.2). It needs a staff token.
-9. **Observatory service.**
-   - Start command: `node --import tsx --env-file-if-exists=.env packages/observatory/src/server.ts --mode real`, with `OBSERVATORY_REAL_ONLY=1` (4.3).
-   - Variables: `NETWORK_DATABASE_URL` (a read login on the replica), `OBSERVATORY_DATABASE_URL_<APP>` (each app's read login) and `OBSERVATORY_PLATFORM_DATABASE_URL` (the cross-app login), `NETWORK_SERVICE_URL` (the matcher service's private address) and `NETWORK_SERVICE_TOKEN` (4.4) **[CREDENTIALS]**, `OBSERVATORY_TOKENS` with one token per role **[CREDENTIALS]**, `OBSERVATORY_AUDIT_DATABASE_URL` (the `observatory_audit_writer` login on the primary, section 2) **[CREDENTIALS]**, `OBSERVATORY_HOST=0.0.0.0` (the container must listen on all interfaces; it is safe only behind Access, step 7.3.3), `OBSERVATORY_ALLOWED_ORIGINS=https://observatory.ntwrk.party`, `OBSERVATORY_ENV_LABEL=STAGING` in staging, `NODE_ENV=production`.
-   - Never set `OBSERVATORY_REVEAL_PII`. For named staff, set `OBSERVATORY_TRUST_CF_ACCESS=1` with `OBSERVATORY_CF_ACCESS_TEAM` and `OBSERVATORY_CF_ACCESS_AUD` (4.1): a request without a valid Access token is refused.
-   - Do not give the service a public Railway domain. Reach it only through Cloudflare (7.3).
-
-### 7.3 Cloudflare
-
-Use `scripts/wrangler.sh` for every Wrangler command. It runs as the ntwrk.party account and refuses commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set.
-
-**Caution:** Do not set `NTWRK_ALLOW_DEPLOY=1` without the founder's approval for that exact deploy. Checked: `bash scripts/wrangler.sh deploy` without it exits with code 3 and deploys nothing.
-
-1. **[CREDENTIALS]** Log in once: `XDG_CONFIG_HOME=$HOME/.config/wrangler-ntwrk npx wrangler login`.
-2. **The public webhook path.** The service already takes the Blooio webhook (`POST /webhooks/blooio`, signature checked) and serves the staff API (6.5). Only the webhook may be public.
-   - **[FOUNDER]** Pick one: a Cloudflare route (or a Worker) that forwards only `POST /webhooks/blooio` on `api.ntwrk.party` to the matcher service, or a Worker that verifies the signature, answers STOP and HELP, and writes through Hyperdrive. The first reuses the tested service code. The second needs new code.
-   - The staff API stays private: the Observatory reaches it on the Railway private network (`NETWORK_SERVICE_URL`). Never route `/review`, `/safety/*`, `/matching` or `/health` through a public hostname.
-   - Only for the Worker option: database access through Hyperdrive to the Railway Postgres. **[FOUNDER] [CREDENTIALS]** `scripts/wrangler.sh hyperdrive create ...` with the `network_rw` connection string.
-   - Check the build: `scripts/wrangler.sh deploy --dry-run`.
-   - **[FOUNDER]** Deploy: `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh deploy`, staging first.
-   - Secrets (Blooio keys, webhook secret): **[FOUNDER] [CREDENTIALS]** `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh secret put <NAME>`.
-3. **Cloudflare Access in front of the Observatory.** **[FOUNDER] [CREDENTIALS]**
-   - Create an Access application for `observatory.ntwrk.party` (and `observatory-staging.ntwrk.party`).
-   - Policy: named staff emails only, with a second factor. No bypass rules. No service tokens.
-   - Access is the first sign-in. On Railway, the Observatory role tokens are the second check (4.1).
-   - Named staff sign-in (`OBSERVATORY_TRUST_CF_ACCESS=1`) verifies the Access JWT against the team's keys and the application's AUD (4.1). With it on, the server takes the email from the verified token and does not ask for a role token.
-4. **DNS on ntwrk.party.** **[FOUNDER]**
-   - `observatory.ntwrk.party`: a proxied CNAME to the Observatory service's Railway target (Railway custom domain). Proxied, so Access applies.
-   - `api.ntwrk.party`: a Worker custom domain or route, through `scripts/wrangler.sh` (the guard refuses it without `NTWRK_ALLOW_DEPLOY=1`).
-   - Do not touch `mcp.ntwrk.party`. Connectors are not in the MVP (PRD 28.4).
-5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) is a Cloudflare Pages project (founder decision 8: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`). Check a build with `node --import tsx --env-file-if-exists=.env sites/sites.ts` (it writes `sites/<domain>/dist` with `_worker.js` and `_routes.json`). slop.date deploys first; all four are deployed this round by the coordinator ([deploy.md](deploy.md) section 3). `/api/*` on each site reaches the shared API through the signed router.
-
-### 7.4 Go-live checks
-
-Do these in staging, then in production. Each one is a PRD 28.5 launch gate or follows from one.
-
-1. Shadow mode for at least two weeks on real seed data (PRD 34.6). Reviewers label shadow proposals. No member is contacted.
-2. The review queue is enforced: a test opportunity waits as queued, and nobody is contacted before approval. An item past its SLA expires unsent.
-3. Every outbound path runs the leak check.
-4. STOP, HELP, block and report work on every channel.
-5. At least 40 committed NYC seed members before proactive matching is turned on **[FOUNDER]**.
-6. Simulated traffic is forbidden in production (PRD 31.5). The production service refuses `review: "auto"` at start and does not expose the review mode (6.5). The Observatory runs with `OBSERVATORY_REAL_ONLY=1`.
-7. The audit log is on Postgres (`network.staff_audit`), and an admin can read it.
-8. For check 5, start the Network with matching off (the service's default for a new stored state). Turn matching on only after the founder approves **[FOUNDER]**.
-9. Per app: the app's `<APP>_LIVE_APPROVED` stays unset until the founder approves that app's launch. slop and peon matching stays off (`platform.networks`) until their engine packs pass their gates (PRD 40.8).
-10. A test phone joins two apps; STOP on the shared line stops both; leaving one app keeps the other; export and delete work per app ([runbook-platform.md](runbook-platform.md) section 3).
-
-### 7.5 Roll back
-
-- Matcher: stop the Railway service. Nothing is sent while it is stopped. Queued items expire at their SLA instead of being sent late.
-- Worker: **[FOUNDER]** `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh rollback`.
-- Database: restore the last backup into a new database (section 8.3), then repoint the services. Never restore over the primary.
+- [deploy.md](deploy.md): the backend on Railway (`deploy/backend/server.ts`, one process for every network, the public API, `/internal/*` and the MCP server), its variables, the first deploy (the service login is created from `NETWORK_DATABASE_URL`), the four Pages sites, the go-live checklist (section 6), roll back (sections 2.7 and 3.2), monitoring and backups. The live-send table is in deploy.md section 6; turning sends on is a separate founder decision.
+- [spec/product/pilot.md](../spec/product/pilot.md): the launch gates (shadow review for at least 14 days, the committed adult cohort, separate approval for live sends).
+- Sections 4 and 6 of this runbook: the Observatory in real mode and the review desk.
 
 ## 8. Backups, the restore drill and alerts
 
@@ -537,6 +443,10 @@ Do this once before the first real member joins, then on the first working day o
 | `safety_signal:<network>` | The safety on-call reads the waiting signals (service `GET /signals`) and decides each one. |
 | `line_safety` | Open the Blooio dashboard for the line and read the safety notice. Texts wait (nothing is lost; compliance texts still go). Tell the founder; do not send from another number. |
 | `leak_review:<app>` | A safety reviewer opens the console's held texts and releases or drops each one with a reason. |
+| `turn_unconfirmed` | The Eliza Cloud gateway took handled turns but sent no receipt (or only an `unknown` one) for their replies, or it reported a STOP or other compliance reply as `rejected`: 2 minutes for a turn with a STOP or other compliance reply, 15 minutes for others, over the last 24 h. Bad means a STOP, START, HELP, leave or the Eliza notice may not have reached the person. The consent change itself is already in force in the backend and in the gateway's send fence. Check the gateway logs for failed `POST /internal/turn-receipt` calls and the backend log for `receipt_conflict` or `route_authority_invalid` answers. Tell the gateway owner. If a STOP confirmation did not go out (a `rejected` compliance receipt is final and stays in the count until it is 24 h old), do not send one from another number; record it in the incident log. |
+| `turn_unresolved` | A signed turn did not complete: it failed after its effects committed, or its worker stopped (`[alert] signed turn ... lost its claim`). It keeps no text, so treat each one as a possible STOP: it is always bad after 2 minutes. Find the ids with the read-only login: `select id, status, arrived_at from platform.inbound where request_hash is not null and sender_hash is not null and handled_at is null and status in ('unresolved','processing') order by arrived_at`. A turn that was handled and later erased (a forgotten invitee's notice) is not counted. Read the backend log around `arrived_at`, then release each sender with `POST /inbound/resolve {"id": "<id>"}` (role `admin@*`; audited). The alert resolves when no such turn is left. Retention deletes a stuck turn's tombstone after the inbox retention plus `turnTombstoneKeepMs`, so resolve each one before then. |
+| `deliver_unknown` | A queued delivery (Eliza Cloud deliver or Blooio) has an unknown acceptance and waits for a receipt lookup: 2 minutes for a compliance text, 15 minutes for others. Do not resend. Check Eliza Cloud's or Blooio's status. The queue looks the receipt up with the same key, and after 6 hours ends the row as `failed_unknown` (it then counts in `send_failures`). Bad means a compliance text may not have gone out. |
+| `turn_read` | The backend could not read `platform.inbound` or `platform.outbound` for the turn watch. Check the database and the grants of the backend's login (`GET /ops/metrics` shows the error in `turns`). |
 | `bias_report:<network>` | An admin or analyst opens the bias panel (Metrics) and records what to do in the incident log. |
 | `precision:<network>` | Shadow precision (person decisions approved without edits, 7 days, at least 20 decisions) is under the 80% gate (PRD 32.8). Do not switch matching on for that app. The reviewers and an analyst read the rejected items' reason codes in the Review tab; the console scorecard row "Shadow precision" shows the same number over the whole period. |
 | `queue_outbound` or `queue_review` | Check the review staffing, and Blooio for held or deferred messages. |

@@ -69,6 +69,18 @@ export declare function canRecordProviderError(outbound: ReceiptLifecycle): bool
 export declare function recordProviderError(outbound: ReceiptLifecycle, failure: FailureKind, hasAttemptsLeft: boolean): ReceiptLifecycle;
 /** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) */
 export declare function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft: boolean): boolean;
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) */
+export declare function returnsPersonSlot(phase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) */
+export declare function lawUncertainSendKeepsSlot(phase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+export declare function acceptanceRecordsSend(phase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+export declare function acceptanceEndsRow(phase: ReceiptPhase, receiptOwner: boolean, member: boolean): boolean;
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+export declare function lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+export declare function lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: ReceiptLifecycle, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

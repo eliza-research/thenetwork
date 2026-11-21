@@ -54,6 +54,18 @@ export function lawStaleRunNeverCommits(sameKey, sameConfig, sameSharedEvidence,
 export function lawMemberEntryIsNeverShared(publicEvent, namesMember) { return M.lawMemberEntryIsNeverShared(publicEvent, namesMember); }
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) @throws {never} */
 export function lawEventEntryIsItsOwnEvidence(publicEvent, namesMember) { return M.lawEventEntryIsItsOwnEvidence(publicEvent, namesMember); }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
+export function appMatchingLocalOnly(app) { return M.appMatchingLocalOnly(app); }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
+export function matchingSwitchAllowed(registryAllows, app, production, liveApproved) { return M.matchingSwitchAllowed(registryAllows, app, production, liveApproved); }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
+export function lawRegistryOffNeverAllowsMatching(app, production, liveApproved) { return M.lawRegistryOffNeverAllowsMatching(app, production, liveApproved); }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
+export function lawLocalOnlyAppNeedsLiveDecisionInProduction(registryAllows, app) { return M.lawLocalOnlyAppNeedsLiveDecisionInProduction(registryAllows, app); }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
+export function lawLocalOnlyAppMatchesOutsideProduction(app, liveApproved) { return M.lawLocalOnlyAppMatchesOutsideProduction(app, liveApproved); }
+/** Story: Work from the latest saved network state / Matching runs for an app only inside its launch scope (spec/runtimeUnit.md) @throws {never} */
+export function lawPilotAppFollowsRegistry(registryAllows, app, production, liveApproved) { return M.lawPilotAppFollowsRegistry(registryAllows, app, production, liveApproved); }
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export function matchingDisabledByRegistry(matchingAllowed) { return M.matchingDisabledByRegistry(matchingAllowed); }
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */

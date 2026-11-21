@@ -108,7 +108,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
-        updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),
+        updates: (personId, app, assistant, token, passesLeakGate) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token, passesLeakGate) : Promise.resolve([])),
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
     }),

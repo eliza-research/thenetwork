@@ -31,6 +31,7 @@ import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityR
 import { engineQuestionDeliveryPrefix, queuedEngineQuestionAllowed } from "../../core/src/generated/engineAsks.ts";
 import { friendPlanProbeDeliveryPrefix } from "../../core/src/generated/friendsPlanTimeChoice.ts";
 import { queuedPlanProbeAllowed } from "../../core/src/generated/planDispatch.ts";
+import { queuedProbeRosterAdmission } from "./probe-roster-admission.ts";
 import { reengagementDeliveryPrefix, reengagementMayDispatch } from "../../core/src/generated/outreachPolicy.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { effectiveParticipation } from "./snapshot.ts";
@@ -357,7 +358,8 @@ async function engineQuestionAdmission(tx: SQL, row: QueueRow, runtimeId: string
 async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: number): Promise<RecipientCheck> {
   const reviewedKey = row.id.startsWith(friendPlanProbeDeliveryPrefix);
   const refused = { ok: false, reason: "plan_probe_changed" } as const;
-  if (row.kind !== "proactive" || !row.memberId) return reviewedKey ? refused : { ok: true };
+  if (!row.memberId) return reviewedKey ? refused : { ok: true };
+  if (row.kind !== "proactive") return reviewedKey ? refused : queuedProbeRosterAdmission(tx, row, rt.pg.id);
   const [probe] = await tx<QueuedProbe[]>`select msg.type,opp.category,member.prefs,member.participation_state,member.participation_window,member.opted_out,
       (msg.opportunity_id=${row.oppId ?? null} and msg.body=${row.text}) as exact_message
     from network.messages msg join network.members member on member.app_id=msg.app_id and member.id=msg.member_id
@@ -370,7 +372,7 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
   const categoryAllowed = probe.category !== null && Array.isArray(categories) && categories.includes(probe.category)
     && (probe.category !== "romance" || probe.prefs?.romanceOptIn === true);
   if (queuedProbePolicy(true, paused, categoryAllowed) !== "Proceed") return { ok: false, reason: "matching_settings_changed" };
-  if (probe.type !== "plan_probe") return { ok: true };
+  if (probe.type !== "plan_probe") return queuedProbeRosterAdmission(tx, row, rt.pg.id);
 
   // lockPeerOpportunityContact already shares the exact runtime row against
   // updates to either the plan or the recipient's check-in state.
@@ -621,6 +623,8 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
     // PgStore.save locks the state before erasing members. Dispatch takes the
     // same order, then the existing admit check revalidates current parties.
     lockAdmission: async (row, tx) => {
+      // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
+      await tx`select id from network.network_state where id=${rt.pg.id} for share`;
       if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
       if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
       if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
@@ -702,6 +706,13 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
     capTake: row => rt.capTake(row.id, row.memberId as MemberId),
     capRelease: row => rt.capRelease(row.id),
   };
+  // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
+  // The stored checks above answer first; a row they admit waits when the runtime's copy is not the stored version.
+  const admitStored = checks.admit!;
+  checks.admit = async (row, tx) => {
+    const decision = await admitStored(row, tx);
+    return decision.ok && !await rt.view.isCurrent(tx) ? { ok: false, reason: "network_state_changed", retryAt: o.clock.now() } : decision;
+  };
   return new OutboundQueue({
     sql: rt.db, clock: o.clock, provider: o.provider, line: o.line, app: o.app, checks, instance: rt.instance,
     perLinePerDay: num("BLOOIO_LINE_DAILY_CAP"), newChatsPerLinePerDay: num("BLOOIO_LINE_NEW_CHATS_PER_DAY"), ...o.limits, leakAllow: OWN_DOMAINS,
@@ -719,6 +730,7 @@ export class BlooioAdapter implements ChannelAdapter {
   private readonly city: string;
   private readonly gate?: (app: string) => boolean;
   private q?: OutboundQueue;
+  private rt?: NetworkRuntime;
 
   constructor(private readonly o: BlooioAdapterOptions) {
     this.env = o.env ?? process.env;
@@ -740,6 +752,7 @@ export class BlooioAdapter implements ChannelAdapter {
   }
 
   attach(rt: NetworkRuntime) {
+    this.rt = rt;
     this.q = lineQueue(rt, { provider: this.o.provider, clock: this.o.clock, line: this.o.from!, app: this.app, env: this.env,
       live: () => this.live, cloud: this.name === "eliza_cloud", limits: this.o.limits, log: this.log });
   }
@@ -770,7 +783,8 @@ export class BlooioAdapter implements ChannelAdapter {
   async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
     if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
     await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
-    await this.queue.drain();
+    // The drain also sends the other due rows of the line: their changes go to network.messages as a runtime drain's do.
+    await this.rt!.drained(await this.queue.drain());
     return (await this.queue.statusOf(id)) ?? "failed";
   }
 

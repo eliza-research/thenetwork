@@ -209,7 +209,7 @@ pure def alwaysTheAnswerIsNotAheadOfTheRoster(participant: ParticipantProbe): bo
 
 ### A queued probe goes out only for the roster that it describes
 
-A probe can wait in the delivery queue after the Network wrote it. While the roster of the opportunity has never changed, a queued probe is current. After a change, a queued probe goes out only when it is the probe that the Network sent for the member's current turn; a probe written for an earlier roster is refused. Added in this revision: before, a probe written for the earlier roster still went out after a replacement (audit OPP18).
+A probe can wait in the delivery queue after the Network wrote it. While the roster of the opportunity has never changed, a queued probe is current. After a change, a queued probe goes out only when it is the probe that the Network sent for the member's current turn, or the time question that the member's current turn waits on; a probe written for an earlier roster is refused. The rule holds for every probe and time question of a one-to-one opportunity, an invite or not: a requester's own confirmation and time question also describe the other person. Added in this revision: before, a probe written for the earlier roster still went out after a replacement (audit OPP18); the review of that fix found that the queue checked only invites, so a requester's confirmation or time question still went out, and it now checks them too.
 
 ```quint
 pure def queuedProbeCurrent(rosterChanged: bool, currentTurnProbe: bool): bool =

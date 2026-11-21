@@ -155,6 +155,45 @@ export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft: boolean): boolea
   return recordProviderError(initial, "UnknownResult", hasAttemptsLeft).phase === "AcceptanceUnknown";
 }
 
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) */
+//@ pure
+export function returnsPersonSlot(phase: ReceiptPhase): boolean {
+  return phase === "ProviderFailed" || phase === "ProviderBlocked";
+}
+
+/** Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot (spec/outboundReceipt.md) */
+//@ pure
+export function lawUncertainSendKeepsSlot(phase: ReceiptPhase): boolean {
+  //@ ensures \result === true
+  return !(phase === "AcceptanceUnknown" || phase === "AcceptanceExpired" || receiptRank(phase) > 0) || !returnsPersonSlot(phase);
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function acceptanceRecordsSend(phase: ReceiptPhase): boolean {
+  return receiptRank(phase) > 0;
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function acceptanceEndsRow(phase: ReceiptPhase, receiptOwner: boolean, member: boolean): boolean {
+  return phase === "ProviderDelivered" || phase === "ProviderRead" || phase === "ProviderFailed" || (receiptOwner && !member && receiptRank(phase) > 0);
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): boolean {
+  //@ ensures \result === true
+  return !(phase === "ProviderFailed") || !acceptanceRecordsSend(phase);
+}
+
+/** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
+//@ pure
+export function lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): boolean {
+  //@ ensures \result === true
+  return !(receiptRank(phase) > 0) || acceptanceEndsRow(phase, true, false);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ReceiptLifecycle, event: Event): boolean {

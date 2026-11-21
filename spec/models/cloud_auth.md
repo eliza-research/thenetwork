@@ -32,7 +32,8 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //   packages/core/src/svc/profile-review-*.ts  owner, source, withdrawal and disconnect proof windows
 //   packages/platform/src/sessions.ts           create, authenticate (rotation after 24 h), revoke
 //   packages/platform/src/pg-store.ts           admitMembership: every person-less session of the number gets
-//                                               the new person (there is no bindSessions on this branch)
+//                                               the new person (there is no bindSessions on this branch;
+//                                               DEFECT AE-3, see textJoin and textJoinCode)
 //
 // Proof states: issued (the callback stored it in a session), validated (a live `validated` cache entry,
 // api.ts), expired (now >= expiresAt), revoked (Cloud denies it: `denied`).
@@ -65,10 +66,27 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //  - Assumption (recycled numbers, phone_identity and auth_edge): when a carrier gives a number with a
 //    person to another human, the number is held for staff (accounts.held); the model sets `held` in
 //    `recycle`. That keeps the old person out of this model; the 12-month rule itself is not here.
-//  - Assumption (carrier aging, the same as auth_edge): a disconnected number ages at least 45 days
-//    before the carrier gives it to another human, so every Cloud proof for that number (at most one
-//    hour) has expired at the reassignment (`recycleWith` guard). Every session and grant of the earlier
-//    holder ends with its proof.
+//  - ASSUMPTION ASSUME_CARRIER_AGING (environment, the same as auth_edge; no code enforces it): a
+//    disconnected number ages at least 45 days before the carrier gives it to another human, so every
+//    Cloud proof for that number (at most one hour in production) has expired at the reassignment. Then
+//    every Cloud session and Cloud grant of the earlier holder has ended with its proof. OTP sessions of
+//    the earlier holder (30 days, rotated every 24 h) can still be live; auth_edge covers them
+//    (staleSessionNoAct, AE-3). The step uses `recycle` (both assumptions). The assumption does NOT hold
+//    for staging-local (parseCloudIdentity has no one-hour cap, see the open drift above) or for a
+//    number that is handed over without aging: `recycleUnaged` and `recycleStale` drop it, and the
+//    traces w3_126NullGrantTest and ae3CodeBindsStaleSessionTest show what then breaks.
+//  - DEFECT AE-3 (open in the code, recorded in auth_edge): `textJoin` keeps the intended rule (every
+//    person-less session of the number ends, SD-054). The code (admitMembership) gives those sessions the
+//    new person instead; `textJoinCode` is that behaviour and is not in `step`. Without carrier aging a
+//    Cloud request that Cloud answered "valid" before the reassignment then acts for the new holder
+//    (ae3CodeBindsStaleSessionTest); with the intended rule the same trace is refused
+//    (ae3IntendedRevokesTest).
+//  - OPEN DRIFT AE-5 (spec and code disagree): in production parseNetworkDelegation allows 0 s of issue
+//    time ahead of the local clock; spec/cloudSignIn.md allows 30 s. This model follows the code
+//    (cloudProofClockRules); auth_edge keeps the spec rule (cloudSkewTolerated). One of them must change.
+//    DECISION (founder or the owner of spec/cloudSignIn.md, not made): either cloudSignIn.md takes 0 s
+//    for production, or parseNetworkDelegation takes 30 s. The code is the stricter side, so no safety
+//    rule is weaker; until the decision, the two models keep their two rules and both name AE-5.
 //  - ASSUMPTION ASSUME_CLOUD_PHONE_CURRENT (W3-127, upstream, not confirmed): the phone that Cloud signs
 //    into a Network delegation names the current holder of the number. Cloud signs the account's
 //    "matching verified phone projection" (docs/results/2026-10-18-production-cloud-network-handoff.md),
@@ -485,12 +503,12 @@ module cloud_auth {
     now' = now, cfg' = cfg, sess' = sess, cache' = cache, flight' = flight, ghost' = ghost,
   }
 
-  // The carrier gives number p to human h (after the 45-day aging). With ASSUME_CLOUD_PHONE_CURRENT, Cloud
-  // drops the binding of every other account to p at once. A number with a person goes on hold.
-  action recycleWith(p: str, h: str, assumeCloudCurrent: bool): bool = all {
+  // The carrier gives number p to human h. With ASSUME_CLOUD_PHONE_CURRENT, Cloud drops the binding of
+  // every other account to p at once. With ASSUME_CARRIER_AGING every proof for p has expired first.
+  // A number with a person goes on hold.
+  action recycleWith(p: str, h: str, assumeCloudCurrent: bool, assumeAged: bool): bool = all {
     world.holder.get(p) != h,
-    // Carrier aging: every proof for p has expired.
-    world.proofs.keys().forall(k => world.proofs.get(k).phone != p or world.proofs.get(k).expiresAt <= now),
+    assumeAged implies world.proofs.keys().forall(k => world.proofs.get(k).phone != p or world.proofs.get(k).expiresAt <= now),
     world' = { ...world,
                holder: world.holder.set(p, h),
                cloudPhone: if (assumeCloudCurrent) HUMANS.mapBy(x => if (x != h and world.cloudPhone.get(x) == p) "" else world.cloudPhone.get(x))
@@ -498,17 +516,27 @@ module cloud_auth {
                held: if (world.person.get(p) != "") world.held.union(Set(p)) else world.held },
     now' = now, cfg' = cfg, sess' = sess, cache' = cache, flight' = flight, ghost' = ghost,
   }
-  action recycle(p: str, h: str): bool = recycleWith(p, h, true)
-  // The same carrier event without the assumption (W3-127): Cloud keeps the earlier holder's binding.
-  action recycleStale(p: str, h: str): bool = recycleWith(p, h, false)
+  action recycle(p: str, h: str): bool = recycleWith(p, h, true, true)
+  // Without carrier aging (staging-local, or a number handed over at once); Cloud is current.
+  action recycleUnaged(p: str, h: str): bool = recycleWith(p, h, true, false)
+  // Without either assumption (W3-126, W3-127): Cloud keeps the earlier holder's binding.
+  action recycleStale(p: str, h: str): bool = recycleWith(p, h, false, false)
 
-  // A text join (service.ts NetworkService.join, accounts.createPerson, pg-store.ts admitMembership): the
-  // holder gets a person on p, and every person-less session of p gets that person (admitMembership:
-  // `update platform.sessions set person_id ... where e164 = ... and person_id is null`). The source
-  // branch revoked those sessions instead (SD-054); auth_edge records that defect. For this model the
-  // difference does not matter: with carrier aging every session of an earlier holder has ended before a
-  // recycled number gets a person. OAuth grants are not touched.
+  // A text join (service.ts NetworkService.join, accounts.createPerson): the holder gets a person on p,
+  // and every person-less session of p ends (the intended rule, SD-054). OAuth grants are not touched.
+  // DEFECT AE-3: the code (pg-store.ts admitMembership: `update platform.sessions set person_id ...
+  // where e164 = ... and person_id is null`) gives those sessions the new person instead: textJoinCode.
   action textJoin(p: str): bool = all {
+    world.person.get(p) == "",
+    not(world.banned.contains(p)),
+    world' = { ...world, person: world.person.set(p, world.holder.get(p)) },
+    sess' = { ...sess, rows: sess.rows.keys().mapBy(k => val r = sess.rows.get(k)
+                                                     if (r.phone == p and r.person == "") { ...r, revoked: true } else r) },
+    now' = now, cfg' = cfg, cache' = cache, flight' = flight, ghost' = ghost,
+  }
+
+  // The code's text join today (AE-3, not in `step`): every person-less session of p gets the person.
+  action textJoinCode(p: str): bool = all {
     world.person.get(p) == "",
     not(world.banned.contains(p)),
     world' = { ...world, person: world.person.set(p, world.holder.get(p)) },
@@ -743,10 +771,10 @@ module cloud_auth {
       .then(cloudLogin("bob", "slop"))
       .expect(ghost.staleLogin and ghost.foreignAct and not(cloudActsForHolder))
 
-  // W3-126: bob gets a Cloud grant on Y while Y has no person (personId null). The grant ends with its
-  // proof (grantExpiresAt, at most one hour), so the carrier cannot give Y to alice while the grant is
-  // live (carrier aging). After the reassignment and alice's text join the grant is refused before any
-  // Cloud call (validateCloudGrant: the authority expired), even without ASSUME_CLOUD_PHONE_CURRENT.
+  // W3-126 (counterexample, neither assumption): bob gets a Cloud grant on Y while Y has no person
+  // (personId null). The carrier gives Y to alice while the grant is live and alice joins by text: the
+  // grant passes the owner check of validateCloudGrant (null personId) and Cloud's answer, and acts for
+  // alice's person. `cloudActsForHolder` fails: the invariant is not vacuous.
   run w3_126NullGrantTest =
     initWith("production")
       .then(cloudLogin("bob", "slop"))
@@ -754,14 +782,40 @@ module cloud_auth {
       .then(cloudAnswer(1, true))
       .then(reqEnd(1))
       .expect(world.grants.keys() == Set(1) and world.grants.get(1).personId == "")
-      .then(tick(HOUR))
       .then(recycleStale("Y", "alice"))
       .then(textJoin("Y"))
       .then(grantBegin(1))
-      .expect(flight.reqs == Map() and ghost.grantsValid == 0 and safety)
+      .then(cloudAnswer(2, true))
+      .then(grantEnd(2))
+      .expect(ghost.grantsValid == 1 and ghost.foreignAct and not(cloudActsForHolder))
 
-  // W3-126 with the assumption: the same trace; Cloud also no longer binds Y to bob.
+  // W3-126 with ASSUME_CLOUD_PHONE_CURRENT and no aging: Cloud denies the earlier holder's delegation;
+  // the grant is not valid.
   run w3_126AssumptionTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "grant"))
+      .then(cloudAnswer(1, true))
+      .then(reqEnd(1))
+      .then(recycleUnaged("Y", "alice"))
+      .then(textJoin("Y"))
+      .then(grantBegin(1))
+      .then(cloudAnswer(2, true))
+      .then(grantEnd(2))
+      .expect(ghost.grantsValid == 0 and safety)
+
+  // W3-126 with carrier aging: the grant ends with its proof (at most one hour), so the carrier cannot
+  // give Y to alice while it is live; after the reassignment the grant is refused before any Cloud call.
+  run w3_126AgedTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "grant"))
+      .then(cloudAnswer(1, true))
+      .then(reqEnd(1))
+      .then(recycle("Y", "alice"))
+      .fail()
+
+  run w3_126AgedRefusedTest =
     initWith("production")
       .then(cloudLogin("bob", "slop"))
       .then(reqBegin(1, "grant"))
@@ -772,6 +826,31 @@ module cloud_auth {
       .then(textJoin("Y"))
       .then(grantBegin(1))
       .expect(flight.reqs == Map() and ghost.grantsValid == 0 and world.cloudPhone.get("bob") == "" and safety)
+
+  // AE-3, intended rule: bob's request on his person-less Cloud session on Y got Cloud's "valid" before
+  // the carrier gave Y to alice (no aging). Alice's text join ends bob's session, so the late answer
+  // acts for nobody.
+  run ae3IntendedRevokesTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "auth"))
+      .then(cloudAnswer(1, true))
+      .then(recycleUnaged("Y", "alice"))
+      .then(textJoin("Y"))
+      .then(reqEnd(1))
+      .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and safety)
+
+  // AE-3, the code today (admitMembership): the same trace with textJoinCode. Bob's session stays live
+  // and gets alice's person, and the late "valid" acts for alice. `cloudActsForHolder` fails.
+  run ae3CodeBindsStaleSessionTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "auth"))
+      .then(cloudAnswer(1, true))
+      .then(recycleUnaged("Y", "alice"))
+      .then(textJoinCode("Y"))
+      .then(reqEnd(1))
+      .expect(ghost.freshAccepts == 1 and ghost.foreignAct and not(cloudActsForHolder))
 
   // Bans by phone: a grant validation that begins after the ban is refused before the Cloud call; one
   // in flight when the ban commits can still answer valid (concurrent, like SD-013's remainder).

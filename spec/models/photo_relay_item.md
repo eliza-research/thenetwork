@@ -49,6 +49,19 @@ Production uses [selected-photo consent and review](../photoRelayReview.md) for 
 //   the reviewer authorization (authorizeReviewer: a refused reviewer changes nothing), the staff preview
 //   token, the descriptor and recipient checks of issueDelivery (a mismatch changes nothing), the outbound
 //   row checks of resolveRelayPhoto, and the choice of which offered photo (one item stands for it).
+//   choosePhoto (photoIntakeRelayChoice.ts:51) is abstracted: relayOn is the constant true (the
+//   PhotoRelayOff branch, relay.enabled false or no notice, is not explored), approvedReady is false as the
+//   code passes it (DeliverApprovedPhoto is never taken there), photoCount is 1, and the stored list always
+//   has OFFER_SIZE = 2 ids (the code passes offered.length, up to the upload limit, and a list may be longer
+//   or shorter than the photos now live). The code's offer check compares policy_version and policy_notice;
+//   the model compares only offerVersion, because policyVersion merges the version and its notice text.
+//
+// KNOWN CODE DEFECT (2026-11-18; spec/models/README.md)
+//   PRI-D1 PhotoRelayService.revoke has one caller: the signed-in site route /api/relay-photos/revoke. The
+//   conversation (/internal/relay, choosePhoto) has no withdraw command, and the sites have no account
+//   portal (founder correction 2026-10-19), so a member who chose a photo by text cannot withdraw it before
+//   delivery. The `revoke` action below is the intended behaviour (the story: withdraw consent before
+//   delivery), not the code as it is.
 module photo_relay_item {
 
   pure val PHOTO_TTL = 15
@@ -57,6 +70,10 @@ module photo_relay_item {
   pure val NONE = -1
   pure val ACTIONS = Set("act1", "act2")
   pure val INTENTS = Set("int1", "int2")
+  /** The number of photos on the offered list (photo_ids); one item stands for the chosen one. */
+  pure val OFFER_SIZE = 2
+  /** "send them my photo" (0) and "send them my photo N" (photoChoice). */
+  pure val CHOICES = Set(0, 1, 2, 3)
 
   type Item = {
     selected: bool, state: str, consent: bool, noticeVersion: int, expiresAt: int,
@@ -77,6 +94,7 @@ module photo_relay_item {
     revokedClaimed: bool,
     textChoice: bool,             // the item came from a numbered choice by text
     choiceWithoutLiveOffer: bool, // a text choice recorded an item without a live list of the same notice
+    choiceOutsideList: bool,      // a text choice recorded an item for a number that is not on the list
   }
 
   var now: int
@@ -119,6 +137,13 @@ module photo_relay_item {
     and deadline == i.deliveryExpiresAt and deadline <= i.expiresAt and photoDeliveryStillLive(deadline, i.expiresAt, at)
   pure def photoRelayOfferLive(offeredAt: int, at: int, sameNotice: bool): bool =
     sameNotice and at >= offeredAt and at - offeredAt < OFFER_TTL
+  pure def photoRelayEntryFor(relayOn: bool, approvedReady: bool, photoCount: int, choice: int, offerLive: bool, offerSize: int): str =
+    if (approvedReady) "DeliverApprovedPhoto"
+    else if (not(relayOn)) "PhotoRelayOff"
+    else if (choice == 0 and photoCount > 0) "OfferPhotoChoices"
+    else if (choice == 0) "AskForPhotosFirst"
+    else if (offerLive and choice >= 1 and choice <= offerSize) "RecordPhotoChoice"
+    else "PhotoChoiceUnknown"
 
   // ---------------------------------------------------------------- the shell (photo-relay.ts)
 
@@ -149,7 +174,7 @@ module photo_relay_item {
     g' = { fetches: 0, fetchedWithoutConsent: false, fetchedNotApproved: false, fetchedLate: false,
            badEdge: false, actionChanged: false, intentChanged: false, deadlineChanged: false, unrevoked: false,
            approvedNotByReview: false, reviewedSafe: false, revokedClaimed: false,
-           textChoice: false, choiceWithoutLiveOffer: false },
+           textChoice: false, choiceWithoutLiveOffer: false, choiceOutsideList: false },
   }
 
   action frame = all { now' = now, policyVersion' = policyVersion, pair' = pair, offerAt' = offerAt, offerVersion' = offerVersion }
@@ -173,19 +198,26 @@ module photo_relay_item {
     now' = now, policyVersion' = policyVersion, pair' = pair, pri' = pri, g' = g,
   }
 
-  // choosePhoto, RecordPhotoChoice: "send them my photo 2" within OFFER_TTL of the list and under the same
-  // notice records one pending item through select (consent true, the current version).
-  action chooseByText: bool = all {
+  // choosePhoto: "send them my photo N". The shell computes live as the code does (a stored list and
+  // photoRelayOfferLive with the same notice) and takes the branch that photoRelayEntryFor returns. Only
+  // RecordPhotoChoice records one pending item through select (consent true, the current version). The
+  // ghosts below restate "a live list of the notice in force" and "a number on the list" from the raw
+  // state, not from these decisions, so the two laws check the entry decision as the shell calls it.
+  action chooseByText(choice: int): bool = {
+    val live = offerAt != NONE and photoRelayOfferLive(offerAt, now, offerVersion == policyVersion)
+    all {
     not(pri.selected),
-    photoRelayOfferLive(offerAt, now, offerVersion == policyVersion),
+    photoRelayEntryFor(true, false, 1, choice, live, OFFER_SIZE) == "RecordPhotoChoice",
     checkSelection(true, true, policyVersion, policyVersion),
     pair,
     pri' = { selected: true, state: "pending", consent: true, noticeVersion: policyVersion,
               expiresAt: now + PHOTO_TTL, boundAction: "", intent: "", deliveryExpiresAt: NONE },
     g' = { ...g, textChoice: true,
            choiceWithoutLiveOffer: g.choiceWithoutLiveOffer or offerAt == NONE or offerVersion != policyVersion
-             or now - offerAt >= OFFER_TTL },
+             or now < offerAt or now - offerAt >= OFFER_TTL,
+           choiceOutsideList: g.choiceOutsideList or choice < 1 or choice > OFFER_SIZE },
     frame,
+    }
   }
 
   // review: a designated reviewer decides (the staff release reviews "safe", the staff reject "unsafe").
@@ -289,7 +321,8 @@ module photo_relay_item {
     nondet notice = Set(1, 2).oneOf()
     selectPhoto(consent, notice),
     offerList,
-    chooseByText,
+    nondet choice = CHOICES.oneOf()
+    chooseByText(choice),
     nondet decision = Set("safe", "unsafe", "unknown").oneOf()
     review(decision),
     nondet a = ACTIONS.oneOf()
@@ -307,6 +340,8 @@ module photo_relay_item {
 
   // Rule: the platform never sends a member's photo without that member's consent to the notice
   // that is in force (founder decision 9, "per-item consent check"). Generated: checkSelection.
+  // Both ways to make an item (selectPhoto, chooseByText) call checkSelection with consent, so this rule
+  // mostly restates their guards; it guards against a later path that makes an item without it.
   // Code: photo-relay.ts select and delivery (photoFetchAllowed, current).
   val fetchOnlyWithConsent = not(g.fetchedWithoutConsent)
 
@@ -335,15 +370,16 @@ module photo_relay_item {
   val stepAnIntentBindingNeverChanges = not(g.intentChanged)
   val stepAFixedDeadlineNeverChanges = not(g.deadlineChanged)
 
-  // lawChoiceNeedsLiveOffer (spec/photoRelayItem.md): a choice by text records an item only from a live list
-  // of the notice in force.
+  // lawChoiceNeedsLiveOffer and lawChoiceStaysInsideTheList (spec/photoRelayItem.md): a choice by text
+  // records an item only from a live list of the notice in force, and only for a number on that list.
   val lawChoiceNeedsLiveOffer = not(g.choiceWithoutLiveOffer)
+  val lawChoiceStaysInsideTheList = not(g.choiceOutsideList)
 
   val safety = and {
     fetchOnlyWithConsent, fetchOnlyApprovedReviewed, edgesOnly, stepOnlyReviewApproves, stepRevocationIsFinal,
     approvedWasReviewed, deadlineInItem, fetchInTime,
     stepAnActionBindingNeverChanges, stepAnIntentBindingNeverChanges, stepAFixedDeadlineNeverChanges,
-    lawChoiceNeedsLiveOffer,
+    lawChoiceNeedsLiveOffer, lawChoiceStaysInsideTheList,
   }
 
   // ---------------------------------------------------------------- reachability witnesses (expected VIOLATED)
@@ -370,7 +406,7 @@ module photo_relay_item {
     init
       .then(offerList)
       .then(tick(1))
-      .then(chooseByText)
+      .then(chooseByText(1))
       .then(review("safe"))
       .then(claim("act1"))
       .then(issue("int1"))
@@ -381,14 +417,25 @@ module photo_relay_item {
     init
       .then(offerList)
       .then(tick(20))
-      .then(chooseByText)
+      .then(chooseByText(1))
       .fail()
 
   run newNoticeListNoItemTest =
     init
       .then(offerList)
       .then(policyChange)
-      .then(chooseByText)
+      .then(chooseByText(1))
+      .fail()
+
+  run numberNotOnListNoItemTest =
+    init
+      .then(offerList)
+      .then(chooseByText(3))
+      .fail()
+
+  run noListNoItemTest =
+    init
+      .then(chooseByText(1))
       .fail()
 
   run noConsentNoItemTest =

@@ -81,7 +81,7 @@ The Observatory has an app switcher (ntwrk, slop, peon, friends, all). Each app 
 
 - Every app's world uses the NYC synthetic members and The Network's engine, with that app's brand words and join age.
 - In every app, personas whose stated age is under 13 never join (13+ may join every app; matching is 18+). Before 2026-10-08 slop, peon and friends had a join age of 18, and personas whose stated age was under 18 never joined (the app's join age; a persona that lies about its age can still join, and the Network's age rules then apply). In ntwrk, personas under 13 try to join and the Network declines them.
-- slop and peon run with matching off ("matching off until pack"). Joins, onboarding and safety still run. The matching switch answers 409 `matching_locked`.
+- Every app may match in its simulated world, peon included (spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope"). In production the service keeps friends and peon matching off until their live decision.
 - "all" shows one line per app (members, review backlog, SLA misses, send failures, matching). It does not start a world.
 - The levels (2.4) are ntwrk scenarios. In other apps, the join-age filter can remove part of a level's cast.
 - To see one app only, start the server with a per-app token: `OBSERVATORY_TOKENS="admin@*:<32+ chars>,reviewer@slop:<32+ chars>" pnpm run observatory`, then open `http://127.0.0.1:4747/#token=<the slop reviewer token>`. The slop reviewer sees slop only.
@@ -303,7 +303,7 @@ Three flags. All are off by default. With all three off, the run log is identica
 | `WorldOptions.timeAware` | `World` | Time-dependent attendance (below). It also turns on `PolicyOptions.timeAware` for the default persona agent. |
 | `StubOptions.timeAware` | `StubNetwork` | The stub picks the meeting slot from availability instead of 19:00 two days after the last yes (below). |
 
-**Hidden availability.** A 2-hour slot is free when it starts between waking + 1 hour and 2 hours before bedtime, and the day has no one-off commitment (p = 0.15 per day). Evenings (from 17:00) are free on the routine's free evenings, and on 30% of other weekend evenings. Weekday daytime is free outside the busy blocks, then half the time. Weekend daytime is free 60% of the time. A persona on a trip is not free for a meeting in another city. The draws are the same as the engine harness's `hiddenAvailability` (`packages/engine/experiments/attention.ts`), so both give the same answer for the same seed. The Network never sees this.
+**Hidden availability.** A 2-hour slot is free when it starts between waking + 1 hour and 2 hours before bedtime, and the day has no one-off commitment (p = 0.15 per day). Evenings (from 17:00) are free on the routine's free evenings, and on 30% of other weekend evenings. Weekday daytime is free outside the busy blocks, then half the time. Weekend daytime is free 60% of the time. A persona on a trip is not free for a meeting in another city. The model is the former engine harness's `hiddenAvailability` (`packages/engine/experiments/attention.ts`, removed in the 2026-10-08 cleanup); `packages/sim/src/agent/availability.ts` keeps it. The Network never sees this.
 
 **Answers to time options** (`SimMeta.timeOptions`: `{ key, start, end, label }[]`, 2-3 options, keys "a", "b", "c"). The persona decides yes or no as before (probe, proposal or scheduling message). A yes names the options it is free for. The template words take these forms, and the first sentence always carries the answer:
 
@@ -314,7 +314,7 @@ Three flags. All are off by default. With all three off, the run log is identica
 | one | "Thursday works.", "Thursday 7pm works for me.", "The first one works." |
 | two of three | "Thursday or Saturday works.", "a or c works for me.", "Thursday 7pm or Saturday 10am works for me." |
 
-A Network must parse all of these forms. The test `packages/sim/test/time-aware.test.ts` has a reference parser that maps every form back to the picks. The ConsentNetwork's parser (`parseProbeReply` in `packages/network/src/classify.ts`) is checked against every form in `packages/network/test/units.test.ts`.
+A Network must parse all of these forms. The ConsentNetwork's parser (`parseProbeReply` in `packages/network/src/classify.ts`) is checked by the sim's `evals` block (`scripts/sim/evals.ts`) against the probe-reply corpora in `evals/network/` (for example `probe-offered-slots.jsonl`).
 
 **Booked-plan reveals** (`SimMeta.booked`: `{ proposalId, at, optOutHours: 48 }`). The persona judges the named plan as a proposal, then:
 
@@ -375,7 +375,7 @@ Do this when the Network, the engine, the oracle, the personas or the dataset ch
 
 3. Run one command twice and compare the JSON. It must be identical. If it is not, someone changed the code during the run; run again.
 4. Write a new results doc `docs/results/YYYY-MM-DD-<topic>.md`. Give the commands, seeds, sample sizes and confidence intervals. Say what changed since the last baseline.
-5. If a test threshold depends on the numbers (for example the all-yes threshold in `packages/network/test/network.test.ts`), update its comment with the new measured values.
+5. If a sim gate threshold depends on the numbers (for example the push all-yes threshold in `scripts/sim/network.ts`), update its comment with the new measured values.
 
 The runs are CPU-heavy. On 2026-10-07 one arm took about 7-8 seconds on a quiet machine, and 70-110 seconds on a heavily loaded one.
 

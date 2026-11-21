@@ -6,7 +6,7 @@ import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
-import { matchingAllowed, type AppId } from "./apps.ts";
+import type { AppId } from "./apps.ts";
 import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, ReportKind, SafetyInfo, SafetyReport, ScoreMetric } from "./types.ts";
 
 /** Alerts look at the last 24 hours (sim time in game mode) unless they say otherwise. */
@@ -338,6 +338,6 @@ export function appHealth(app: AppId, st: ObsState, slaHours: number): AppHealth
   return {
     app, available: !st.env.error, ...(st.env.error ? { error: st.env.error } : {}),
     members: st.members.filter(m => m.joined && !m.declined).length, reviewBacklog: open.length, slaMisses: late + expired, slaHours, sendFailures: failures,
-    matching: !matchingAllowed(app) ? "locked" : st.network?.matchingEnabled === false ? "off" : "on", ...(worst ? { worst } : {}),
+    matching: st.env.matchingLocked ? "locked" : st.network?.matchingEnabled === false ? "off" : "on", ...(worst ? { worst } : {}),
   };
 }

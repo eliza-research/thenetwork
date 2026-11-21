@@ -41,7 +41,7 @@ pure def lawSensitiveFactIsNeverShared(interest: bool, confirmed: bool, privateS
 
 ### A shared value never replaces what the person told this app
 
-The join in this app already asked for the first name, and the home city selects the member's city network, so a grant keeps both as this app has them. A grant adds a shareable interest that this app does not hold yet. A copy keeps the source privacy scope and never widens it. New rule (audit CRI11). Changed on 2026-11-18 (audit CRI11): a SHARE reply now grants interests only and the link notice offers only interests, because the old notice promised a first name and city that no grant can change. The copy is made once, when the person replies SHARE; after that it is this app's fact, which the person can correct or remove here. The stored copy does not name the app it came from.
+The join in this app already asked for the first name, and the home city selects the member's city network, so a grant keeps both as this app has them. A grant adds a shareable interest that this app does not hold yet. A copy keeps the source privacy scope and never widens it. New rule (audit CRI11). Changed on 2026-11-18 (audit CRI11): a SHARE reply now grants interests only and the link notice offers only interests, because the old notice promised a first name and city that no grant can change. The copy is made once, when the person replies SHARE; after that it is this app's fact, which the person can correct or remove here. The stored copy does not name the app it came from, and its id is made from the member and the value only, so nobody can find the source app from it.
 
 ```quint
 type BaseProfileField = BaseFirstName | BaseCity | BaseInterest

@@ -27,7 +27,7 @@ import type {
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
   SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
-import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
+import { appUrlEnv, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import type { GatheringRequest } from "../gatherings.ts";
 import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
@@ -169,6 +169,8 @@ export class RealSource implements DataSource {
   /** The Network's stored state is in the database (read through network.network_state_console): what the console shows from it. */
   private netState?: { matchingEnabled: boolean; deferred: number; savedAt: number; trust: Map<string, "ok" | "watch" | "hold">; info: NetworkInfo };
   private networkDirty = false;
+  /** The service's launch-scope decision for this app (its /health matchingAllowed; spec/runtimeUnit.md): the console keeps no list of its own. */
+  private serviceMatchingAllowed?: boolean;
   /** OBSERVATORY_REVEAL_PII was set for a database that is not local, or not marked dev: refused (admin-console 4.4). */
   private revealRefused = false;
   /** The database login is not fit for the console (loginProblem): nothing is read. */
@@ -210,7 +212,7 @@ export class RealSource implements DataSource {
       dataset: "network schema", database: this.url ? redactUrl(this.url) : undefined, error: error ?? this.refused,
       capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: true, staffActions: !!this.service }, piiRevealed: this.reveal,
       ...(this.service ? { service: this.service.url } : {}),
-      app: this.app, appIsolation: this.isolation, ...(matchingAllowed(this.app) ? {} : { matchingLocked: true }),
+      app: this.app, appIsolation: this.isolation, ...(this.serviceMatchingAllowed === false ? { matchingLocked: true } : {}),
     };
   }
 
@@ -518,6 +520,7 @@ export class RealSource implements DataSource {
       sql<{ yes: number; total: number }[]>`select count(*) filter(where payload->>'worthwhile'='true')::int as yes,count(*)::int as total
         from network.events where app_id=${app} and type='interruption_feedback' and payload->>'worthwhile' in ('true','false')`,
     ]);
+    if (service && !("error" in service)) this.serviceMatchingAllowed = service.matchingAllowed;
     // Network state (stored by the Network's PgStore).
     const row = (st as any[])[0];
     if (row) {
@@ -564,9 +567,9 @@ export class RealSource implements DataSource {
     const minorContacts = this.minorContacts(contacts as any[]);
     const alerts = healthAlerts({
       now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
-      sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app),
+      sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: this.serviceMatchingAllowed === false,
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
-      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app),
+      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? this.serviceMatchingAllowed !== false,
       invariants: s.counts.invariantViolations, canaryLeaks: leaks, minorContacts,
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
@@ -860,7 +863,7 @@ export class RealSource implements DataSource {
       last[key] = to;
     }
     return {
-      matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app), reviewMode: this.netState ? "human" : null, network: {},
+      matchingEnabled: this.netState?.matchingEnabled ?? this.serviceMatchingAllowed !== false, reviewMode: this.netState ? "human" : null, network: {},
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history, canChange: !!this.service,
     };
   }
@@ -906,7 +909,6 @@ export class RealSource implements DataSource {
         return await this.shadowing;
       }
       // Staff actions go to the Network service, which runs the same checks as the Network (decide()).
-      if (cmd.type === "matching" && cmd.on && !matchingAllowed(this.app)) return { ok: false, error: `${this.app}: ${MATCHING_OFF_TEXT}`, code: "matching_locked" };
       if (cmd.type === "review" || cmd.type === "matching") {
         if (!this.service) return { ok: false, error: `real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to send "${cmd.type}" to the Network service`, code: "read_only" };
         return this.afterAction(cmd.type === "review" ? await this.service.review(actor, cmd) : await this.service.matching(actor, cmd.on));

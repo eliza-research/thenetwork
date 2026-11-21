@@ -28,7 +28,8 @@ import { platformHooks } from "../../packages/mcp/src/hooks.ts";
 import { PhotoIntake, PHOTO_TEXT } from "../../packages/network/service/photoIntake.ts";
 import { biasReport, type BiasMember, type BiasOpp } from "../../packages/network/service/bias.ts";
 import { reviewerOfRecord, slaAlerts } from "../../packages/network/service/service.ts";
-import { APP_REASONS, DEFAULT_SLA_HOURS, PACK_READY, toNetworkReason } from "../../packages/observatory/src/apps.ts";
+import { APP_REASONS, DEFAULT_SLA_HOURS, toNetworkReason } from "../../packages/observatory/src/apps.ts";
+import { networkMatchingAllowed } from "../../packages/network/service/matching-scope.ts";
 import { checkInReport, URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { runScenario, type NetScenario } from "../../packages/network/harness/index.ts";
 import type { StaffUser } from "../../packages/observatory/src/types.ts";
@@ -353,13 +354,14 @@ export async function safetyBlock(b: Block): Promise<void> {
   });
 
   // ------------------------------------------------------------------ review
-  await b.run("review: the reviewer of record is the signed-in person only with the console token; slop is in PACK_READY; slop SLA alerts at 6 h, once", () => {
+  await b.run("review: the reviewer of record is the signed-in person only with the console token; slop may match in production and peon may not before its live decision; slop SLA alerts at 6 h, once", () => {
     const user: StaffUser = { id: "token:admin#0badc0de", roles: ["admin"], via: "token" } as StaffUser;
     const req = (token: string) => new Request("http://staff/review/x", { headers: { authorization: `Bearer ${token}`, "x-network-staff-id": "pat@example.com" } });
     expect(reviewerOfRecord(req("console-token-0123456789"), user, "console-token-0123456789").id).toBe("pat@example.com");
     expect(reviewerOfRecord(req("other-token-0123456789"), user, "console-token-0123456789").id).toBe(user.id);
     expect(reviewerOfRecord(req("console-token-0123456789"), user, undefined).id).toBe(user.id);
-    expect(PACK_READY.has("slop")).toBe(true);
+    expect(networkMatchingAllowed({ PLATFORM_ENV: "production" }, "slop", true)).toBe(true);
+    expect(networkMatchingAllowed({ PLATFORM_ENV: "production" }, "peon", true)).toBe(false);
     // The slop rubric: its own codes, each stored as a PRD 32.8 base code with the slop code kept in the note.
     expect(APP_REASONS.slop.map(r => r.code)).toEqual(["weak_reason", "preference_mismatch", "safety_concern", "privacy_risk", "wrong_timing", "tone", "duplicate", "other"]);
     expect(toNetworkReason("slop", "preference_mismatch", "she wants 30+")).toEqual({ reason: "weak_reason", note: "[preference_mismatch] she wants 30+" });

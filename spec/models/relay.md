@@ -33,9 +33,13 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 //   relay-match-view      packages/network/src/network.ts:5374-5379 (relayMatchOf), modelled as `matchOpen`
 //
 // Outside the bounds: the model has one match. A member with two or more live matches must name one by an
-// active item of the open context, or the desk asks which one and decides nothing (RelayDesk.matchFor,
-// spec/relayDecision.md "A relay names its match when the member has more than one live match", audit SHA38).
-// shared-relay.integration.test.ts covers it with two live matches.
+// active item of the open context, or the desk decides nothing, keeps no unnamed item and asks the member to
+// send the message again with the match named (RelayDesk.matchFor, spec/relayDecision.md "A relay names its
+// match when the member has more than one live match", audit SHA38). Offered summaries are distinct
+// (spec/sharedContext.md "Active item summaries are distinct"). shared-relay.integration.test.ts covers both.
+// Also outside: a selected photo held for safety review (platform.photo_relay_items 'pending') is not a desk item.
+// It expires at PHOTO_RELAY_TTL (15 minutes, shorter than any review SLA, so no SLA alert can come first) and
+// its sender gets no expiry notice. That is a separate finding for the photo relay owner (spec/models/photo_relay_item.md).
 //   photo-relay-item      packages/platform/src/photo-relay.ts (select, review, revoke, claimForAction, issueDelivery, delivery)
 //   action-receipt        packages/network/service/relay-endpoint.ts:175-263
 //   relay-classifier-hook packages/engine/src/relay.ts:411-434 (relayItemAsync), an oracle

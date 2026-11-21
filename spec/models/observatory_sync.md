@@ -12,7 +12,7 @@ Imported from `quint/observatory_sync.qnt` at `30d950e`. See [model index](READM
 
 The browser calls [Observatory snapshot and live updates](../observatorySync.md) for the current load, delta versions, and feed sequence. Reveal, filters, and other separate console state remain in this standalone model.
 
-Compared with `vibestack-matching` on 2026-11-18. Two open defects, both in `packages/observatory/web`:
+Compared with `vibestack-matching` on 2026-11-18, and again on 2026-11-19 (no change in `store.ts`, `map.ts`, `drawer.tsx` or the generated `observatorySync`; `unreveal`, `loadReveals` and `matchFeed` are as described below). Two open defects, both in `packages/observatory/web`:
 
 - The PII reveal badge no longer follows the server grant. `store.ts` `unreveal` removes the badge whatever the DELETE answer is (a 403, a 500 or a network error leaves the grant on the server). `loadReveals` sets `reveals = r.data ?? []`, so a failed GET removes the badge, and a GET that the server read before a POST answer replaces the list after it (it checks only the load generation). The earlier fix (`revealGen`, `revealMerge`, `revealReread`, the `badgeEnds` rule) is gone. `unrevealRun`, `badgeFollowsGrant` and `revealReadPending` state the rules; they are not part of `safety`.
 - The Safety tab filters its events with `store.ts` `matchFeed`, which applies the Origin filter. The filter bar dims Origin on that tab (`filterApplies` in [console navigation](../consoleNavigation.md)), so a dimmed filter hides safety events that have no opportunity of that origin. `tabNonInterference` and `safetyIgnoresOrigin` state the rules; they are not part of `safety`.

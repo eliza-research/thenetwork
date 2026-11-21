@@ -1,0 +1,100 @@
+# The whole-flow Quint models in spec/models (spec/models/README.md). `pnpm run quint:check` typechecks
+# each model, replays its `run` traces, simulates `safety` with the model's own `// quint-check:` bounds
+# and the fixed seed, and fails when an invariant is violated, when a `witness_*` state is not reached,
+# or when a model has no `safety` or no witness. The models are standalone: only a model edit, the script
+# or the pinned Quint version can change a result, so the job runs for those paths, on main, on demand,
+# and once a week. Two shards split the 31 models (about 50 CPU minutes in all).
+name: quint-models
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'spec/models/**'
+      - 'scripts/quint-check.ts'
+      - 'packages/core/src/runtime/process.ts'
+      - 'packages/core/src/runtime/streams.ts'
+      - 'tools/vibestack/package.json'
+      - 'tools/vibestack/pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.nvmrc'
+      - '.github/workflows/quint-models.yml'
+  pull_request:
+    paths:
+      - 'spec/models/**'
+      - 'scripts/quint-check.ts'
+      - 'packages/core/src/runtime/process.ts'
+      - 'packages/core/src/runtime/streams.ts'
+      - 'tools/vibestack/package.json'
+      - 'tools/vibestack/pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.nvmrc'
+      - '.github/workflows/quint-models.yml'
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quint-models-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  models:
+    name: quint models (shard ${{ matrix.shard }} of 2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Install the toolkit (tools/vibestack, which pins Quint)
+        run: pnpm run spec:setup
+        timeout-minutes: 5
+      - name: Cache the Quint Rust evaluator
+        # Quint downloads its Rust evaluator into ~/.quint on first use. Its version follows the pinned Quint.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.quint
+          key: quint-home-${{ runner.os }}-${{ hashFiles('tools/vibestack/pnpm-lock.yaml') }}
+      - name: Select the models of this shard
+        id: shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          models="$(find spec/models -maxdepth 1 -name '*.md' -exec basename {} .md \; | grep -E '^[a-z][a-z0-9_]*$' | sort | awk -v s="$SHARD" '(NR - 1) % 2 == s' | tr '\n' ' ')"
+          if [ -z "$models" ]; then echo "No Quint models for shard $SHARD"; exit 1; fi
+          echo "Shard $SHARD: $models"
+          printf 'models=%s\n' "$models" >> "$GITHUB_OUTPUT"
+      - name: Fetch the Quint Rust evaluator once
+        # The parallel checks below would otherwise all download it at the same time on a cold cache.
+        env:
+          MODELS: ${{ steps.shard.outputs.models }}
+        run: |
+          first="${MODELS%% *}"
+          pnpm run quint:check "$first" --tangle-only
+          tools/vibestack/node_modules/.bin/quint run "runs/quint-models/$first.qnt" --main "$first" \
+            --backend rust --seed 0x5eed --max-steps 1 --max-samples 1
+        timeout-minutes: 5
+      - name: Check the models (safety and witnesses)
+        env:
+          MODELS: ${{ steps.shard.outputs.models }}
+        run: |
+          read -ra names <<< "$MODELS"
+          pnpm run quint:check "${names[@]}" --jobs 4
+        timeout-minutes: 30

@@ -497,9 +497,12 @@ module oauth_mcp {
   }
 
   /**
-   * T:317-328 get_updates and SVC:672-690 updatesFor. SD-214 fix: a minor reads nothing (and nothing is
-   * marked seen). SD-430 fix: readUpdates marks every unseen item of the app seen; the leak gate and the
-   * closed-opportunity filter then drop items.
+   * T get_updates, SVC updatesFor and inboxUpdateOutcomes, and notify scheduler readUpdates. Each
+   * selected item gets connectorUpdateOutcome (spec/connectorTools.md): an item whose opportunity
+   * closed (SD-430), or an item about another member ("intro", "probe") when the reader cannot be
+   * matched (MCP54: a minor, or unknown age), is retired: not shown, marked seen. An item that fails the
+   * leak gate is withheld: not shown and NOT marked seen (MCP55). The rest are shown and marked seen.
+   * An "own" item (a reminder for the reader alone) stays readable at every age.
    */
   action getUpdates(t: int): bool = all {
     bearerOk(t),
@@ -507,14 +510,13 @@ module oauth_mcp {
     val gr = oa.grants.get(g)
     val now = personForKey(pf, gr.phone)
     if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "getUpdates")
-    else if (pf.minor.contains(now)) all {
-      gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: Set() } },
-      oa' = oa, pf' = pf, ib' = ib, pc' = pc,
-    } else {
+    else {
       val mine = ITEMS.filter(i => ib.items.get(i).live and not(ib.items.get(i).seen) and ib.items.get(i).person == now and ib.items.get(i).app == gr.app and now != NONE)
-      val shown = mine.filter(i => not(ib.items.get(i).leaky) and ib.items.get(i).oppOpen)
+      val retired = mine.filter(i => not(ib.items.get(i).oppOpen) or (ib.items.get(i).kind != "own" and pf.minor.contains(now)))
+      val withheld = mine.filter(i => not(retired.contains(i)) and ib.items.get(i).leaky)
+      val shown = mine.filter(i => not(retired.contains(i)) and not(ib.items.get(i).leaky))
       all {
-        ib' = { ...ib, items: ib.items.keys().mapBy(i => if (mine.contains(i)) { ...ib.items.get(i), seen: true } else ib.items.get(i)) },
+        ib' = { ...ib, items: ib.items.keys().mapBy(i => if (mine.contains(i) and not(withheld.contains(i))) { ...ib.items.get(i), seen: true } else ib.items.get(i)) },
         gh' = { ...gh, last: { kind: "getUpdates", person: now, grant: g, ok: true, status: "", items: shown } },
         oa' = oa, pf' = pf, pc' = pc,
       }
@@ -679,17 +681,18 @@ module oauth_mcp {
   }
   /**
    * SVC delivered: a member-facing send becomes an inbox item. An intro names another member, so it
-   * exists only for an adult who can be matched (AGENTS decision 1). The leak flag is an oracle.
+   * exists only for an adult who can be matched (AGENTS decision 1). An "own" item (notify.add of a
+   * reminder for the reader alone) has no opportunity. The leak flag is an oracle.
    */
   action produceItem(i: int, p: str, a: str, kind: str, leaky: bool): bool = all {
     not(ib.items.get(i).live), pf.member.get((p, a)) == "active", not(pf.banned.contains(p)),
-    kind == "probe" or not(pf.minor.contains(p)),
+    kind != "intro" or not(pf.minor.contains(p)),
     ib' = { ...ib, items: ib.items.set(i, { live: true, person: p, app: a, kind: kind, seen: false, oppOpen: true, leaky: leaky }) },
     oa' = oa, pf' = pf, pc' = pc, gh' = { ...gh, last: eff("item", p, 0, true) },
   }
   /** The opportunity behind an item closes (completed, cancelled, skipped). The item is not touched. */
   action closeOpp(i: int): bool = all {
-    ib.items.get(i).live, ib.items.get(i).oppOpen,
+    ib.items.get(i).live, ib.items.get(i).oppOpen, ib.items.get(i).kind != "own",
     ib' = { ...ib, items: ib.items.setBy(i, x => { ...x, oppOpen: false }) },
     oa' = oa, pf' = pf, pc' = pc, gh' = { ...gh, last: eff("closeOpp", NONE, 0, true) },
   }
@@ -714,9 +717,10 @@ module oauth_mcp {
     { ...gh, audits: gh.audits.union(gone.map(g => ("revoked", g))), revokedEver: gh.revokedEver.union(gone), last: last }
 
   /**
-   * ACC leave one app: hooks.onForget (SVC:829-839) runs the listener, which calls
-   * revokeAllFor(e164, app, {forget:true}) (serve.ts:107-112). SD-089 fix: a listener error now stops
-   * the leave before the membership goes (SVC:838), so the person can try again.
+   * ACC leave one app: hooks.onForget (SVC hooks().onForget) runs the listener, which calls
+   * mcp.forgetPerson(personId, app) (serve.ts svc.onForget). SD-089 fix, restored for OPS61: a listener
+   * error is not caught, so it stops the leave before forgetMembership and the request fails; the
+   * consent opt-out already holds, and a retry deletes the grants and ends the membership.
    */
   action leave(p: str, a: str, listenerFails: bool): bool = all {
     val ns = phonesOf(pf, p)
@@ -817,7 +821,7 @@ module oauth_mcp {
     nondet i = ITEMS.oneOf()
     nondet b = Set(true, false).oneOf()
     nondet b2 = Set(true, false).oneOf()
-    nondet kind = Set("intro", "probe").oneOf()
+    nondet kind = Set("intro", "probe", "own").oneOf()
     nondet t = oa.toks.keys().union(Set(0)).oneOf()
     // The progress families are listed twice: the simulator picks among enabled branches, so this
     // doubles their weight against the environment. It adds no behaviour.
@@ -945,9 +949,19 @@ module oauth_mcp {
     not(gh.last.kind == "status" and gh.last.status == "active" and held)
     and not(gh.last.kind == "profile" and gh.last.ok and held)
 
-  /** SD-214. AGENTS decision 1: minors are never matched or connected; no intro reaches a minor. */
+  /**
+   * SD-214, MCP54. AGENTS decision 1: minors are never matched or connected; a reader who cannot be
+   * matched reads only items about themselves (spec/connectorTools.md).
+   */
   val noIntroToMinor = gh.last.kind == "getUpdates" implies
-    gh.last.items.forall(i => not(ib.items.get(i).kind == "intro" and pf.minor.contains(gh.last.person)))
+    gh.last.items.forall(i => not(ib.items.get(i).kind != "own" and pf.minor.contains(gh.last.person)))
+
+  /**
+   * MCP55. spec/connectorTools.md "A withheld update stays unseen": a leaky item of an open opportunity
+   * is marked seen only when it was retired for a reader who cannot be matched.
+   */
+  val withheldStaysUnseen = ITEMS.forall(i => (ib.items.get(i).live and ib.items.get(i).leaky and ib.items.get(i).oppOpen and ib.items.get(i).seen)
+    implies (ib.items.get(i).kind != "own" and pf.minor.contains(ib.items.get(i).person)))
 
   /**
    * SD-430. T:327 next_step "They answer by replying to the text": an update shown as new must still
@@ -986,7 +1000,7 @@ module oauth_mcp {
 
   val safety = and {
     noBannedUse, replayIsTrue, codeOnce, oneRefreshHead, revokedTerminal, servedOnLiveOwnGrant,
-    activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, noIntroToMinor, noStaleUpdate,
+    activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, noIntroToMinor, withheldStaysUnseen, noStaleUpdate,
     everyRevocationAudited, oneOutcome, grantHasCodeAndAudit, requestRetention, clientKeptOnceGranted,
     quotaCountsAccepted, numberChangeWorks,
   }
@@ -1004,8 +1018,12 @@ module oauth_mcp {
     and oa.toks.keys().exists(t => oa.toks.get(t).g == g and oa.toks.get(t).kind == "access" and not(oa.toks.get(t).expired))))
   /** A true code or refresh replay revokes the grant. */
   val witness_trueReplay = not(gh.last.kind == "replay" and gh.last.status == "true")
-  /** A withheld update is marked seen (SD-183 state; the register refutes the harm). */
-  val witness_withheldSeen = not(ITEMS.exists(i => ib.items.get(i).live and ib.items.get(i).leaky and ib.items.get(i).seen))
+  /** MCP55: a read leaves a withheld update of the read app unseen. */
+  val witness_withheldKept = not(gh.last.kind == "getUpdates" and gh.last.grant > 0 and ITEMS.exists(i => ib.items.get(i).live
+    and ib.items.get(i).leaky and not(ib.items.get(i).seen) and ib.items.get(i).person == gh.last.person
+    and ib.items.get(i).app == oa.grants.get(gh.last.grant).app))
+  /** MCP54: a reader who cannot be matched reads an update about themselves. */
+  val witness_minorReadsOwn = not(gh.last.kind == "getUpdates" and pf.minor.contains(gh.last.person) and gh.last.items.size() > 0)
   /** A person leaves an app and the grants of that app are deleted. */
   val witness_leaveDeletes = not(gh.last.kind == "leave" and gh.last.ok and pf.forgotten.size() > 0
     and REQS.exists(g => oa.grants.get(g).st == "deleted"))
@@ -1091,7 +1109,7 @@ module oauth_mcp {
       .then(deleteAll("p2"))
       .expect(oa.grants.get(1).st == "deleted" and grantDiesWithPerson and safety)
 
-  /** SD-089 fix (e2e "a failed forget listener stops the leave, and a retry deletes the grant"). */
+  /** SD-089 and OPS61 fix (e2e "a leave whose grant cleanup fails is not completed, and a retry ends the app's grants"). */
   run leaveListenerFailsTest =
     init.then(connect(1, "cF", false))
       .then(leave("p1", "friends", true))
@@ -1115,11 +1133,23 @@ module oauth_mcp {
       .then(approveRead(1, false)).then(denyRead(1)).then(denyFinish(1)).then(approveCommit(1, false))
       .expect(gh.last.kind == "approveExpired" and oa.grants.get(1).st == "none" and oneOutcome and safety)
 
-  /** SD-214 fix (e2e "a member who becomes a minor does not read an earlier item that names an adult"). */
+  /**
+   * SD-214 and MCP54 fix (e2e "a member whose age drops below 18 reads only their own updates, never one
+   * about another member"): the intro is retired, the reminder is shown.
+   */
   run minorIntroTest =
     init.then(connect(1, "cF", false)).then(produceItem(1, "p1", "friends", "intro", false))
+      .then(produceItem(2, "p1", "friends", "own", false))
       .then(becomeMinor("p1")).then(getUpdates(1))
-      .expect(gh.last.items == Set() and not(ib.items.get(1).seen) and noIntroToMinor and safety)
+      .expect(gh.last.items == Set(2) and ib.items.get(1).seen and ib.items.get(2).seen and noIntroToMinor and safety)
+
+  /** MCP55 fix (e2e "an update that fails the output leak gate is withheld and stays unseen"). */
+  run withheldTest =
+    init.then(connect(1, "cF", false)).then(produceItem(1, "p1", "friends", "own", true))
+      .then(produceItem(2, "p1", "friends", "own", false)).then(getUpdates(1))
+      .expect(gh.last.items == Set(2) and not(ib.items.get(1).seen) and ib.items.get(2).seen and withheldStaysUnseen and safety)
+      .then(getUpdates(1))
+      .expect(gh.last.items == Set() and not(ib.items.get(1).seen) and safety)
 
   /** SD-430 fix (e2e "get_updates does not return a probe whose opportunity closed"): reading still marks it seen. */
   run staleProbeTest =

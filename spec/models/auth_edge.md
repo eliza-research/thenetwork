@@ -44,6 +44,9 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 //  - SD-181 is open again in production (defect AE-5): parseNetworkDelegation refuses any issuedAt
 //    after the local clock. spec/cloudSignIn.md allows 30 s, and only the staging-local callback
 //    (parseCloudIdentity) allows it. cloud_auth models the code; this model keeps the spec rule.
+//    DECISION (founder or the owner of spec/cloudSignIn.md, not made): either cloudSignIn.md takes 0 s
+//    for production, or parseNetworkDelegation takes 30 s. The code is the stricter side, so no safety
+//    rule is weaker; until the decision, the two models keep their two rules and both name AE-5.
 //  - PLATFORM_PROXY_SECRET_PREVIOUS does not exist on this branch: normalizeEdge verifies with one
 //    secret. The model now has one backend secret (closed drift).
 //  - Session rotation is two writes (revokeSession with the grace time, then create), not one
@@ -54,7 +57,9 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 //   packages/platform/src/otp.ts          OtpService.start / verify and the rate buckets
 //   packages/platform/src/sessions.ts     SessionService.create / authenticate / revoke / fresh
 //   packages/platform/src/accounts.ts     join, leave, deleteAll, exportApp, createPerson (who = {e164, personId, session})
-//   packages/platform/src/pg-store.ts     hitAll, sessions, deleteAll, bindSessions, forgetPersonlessSessions, purge
+//   packages/platform/src/pg-store.ts     hit, sessions, revokeSession, attachPerson, admitMembership, deleteAll, purge
+//     (bindSessions in this model is the intended SD-054 rule, not a pg-store function: AE-3; textJoinCode is
+//     the code's binding, not in `step`)
 //   packages/platform/src/cloud-delegation.ts and packages/core/src/svc/network-delegation.ts
 //   packages/platform/src/proxy.ts, deploy/router.ts, deploy/backend/backend.ts (normalizeEdge)
 //   packages/core/src/svc/svc-auth.ts and the signed endpoints that use it
@@ -193,7 +198,7 @@ module auth_edge {
     val id = w.phoneOf.get(p)
     if (id != NONE and w.alive.contains(id)) id else NONE
 
-  // pg-store.ts hit and hitAll: one advisory-locked transaction.
+  // pg-store.ts hit: one advisory-locked transaction for one bucket (there is no hitAll on this branch: AE-1).
   pure def bucketOf(b: (str, str) -> Bucket, key: (str, str)): Bucket =
     if (b.keys().contains(key)) b.get(key) else { start: NONE, n: 0, last: NONE }
   pure def hitOk(b: (str, str) -> Bucket, key: (str, str), window: int, at: int, limit: int, gap: int): bool =
@@ -231,7 +236,8 @@ module auth_edge {
   pure def dropRows(rows: int -> Session, keep: int => bool): int -> Session =
     rows.keys().filter(k => keep(k)).mapBy(k => rows.get(k))
 
-  // accounts.ts createPerson and pg-store.ts bindSessions (SD-054 fix): the number has a
+  // The intended SD-054 rule (no such function in pg-store.ts on this branch: AE-3; the code's
+  // admitMembership and attachPerson give the person to every person-less session): the number has a
   // person now. Of its sessions with no person, `keepSid` gets the person and every other one is revoked
   // at `at` (it may belong to an earlier holder of the number). NONE keeps no session (a text join).
   pure def bindSessions(rows: int -> Session, p: str, pid: int, keepSid: int, at: int): int -> Session =
@@ -306,7 +312,8 @@ module auth_edge {
     else if (st == 2) { key: ("day", p), window: DAY, limit: PER_PHONE_DAY, gap: 0 }
     else { key: ("global", ""), window: HOUR, limit: GLOBAL_PER_HOUR, gap: 0 }
 
-  // otp.ts with store.hitAll (pg-store.ts, SD-380 fix): one transaction checks the four
+  // The intended SD-380 rule (the source-branch store.hitAll is not on this branch; the code's otp.ts
+  // OtpService.start calls pg-store.ts hit once per bucket: AE-1): one transaction checks the four
   // buckets in order and counts the hit in all of them, or in none when one refuses. `burned` is true
   // when a refused request still changed a bucket (otp.ts says it must not).
   pure def startBuckets(b: (str, str) -> Bucket, h: str, p: str, at: int): { ok: bool, burned: bool, buckets: (str, str) -> Bucket } =
@@ -569,8 +576,8 @@ module auth_edge {
   // is an oracle; a human that Cloud has revoked always gets "invalid".
   // who = { e164: session.phone, personId: session.person, session: token hash } (api.ts). The
   // Accounts calls use personFor(who.e164) and do not compare who.personId (accounts.ts). This is
-  // safe after the SD-054 fix: when a number gets a person, every person-less session of the number other
-  // than the joining one ends (createPerson and bindSessions, accounts.ts).
+  // safe only under the intended SD-054 rule: when a number gets a person, every person-less session of the
+  // number other than the joining one ends (bindSessions, the model's rule; the code binds them all: AE-3).
   action account(h: str, op: str, age: int, cloudSays: str): bool = {
     val sid = sess.jar.get(h)
     val s = sess.rows.get(sid)
@@ -635,9 +642,9 @@ module auth_edge {
           sess' = sess, world' = world, ghost' = ghost,
         } else if (newFloor < APP_MIN_AGE) all {
           // accounts.ts: under_age. The age floor is written; under 13, declineUnderAge
-          // (accounts.ts) forgets every membership of the person. SD-491 fix: a number with no
-          // person keeps no session (forgetPersonlessSessions, pg-store.ts), and api.ts
-          // clears the cookies of a session with no person. A number with a person keeps its sessions:
+          // (accounts.ts) forgets every membership of the person. The intended SD-491 rule (the
+          // source-branch forgetPersonlessSessions is not in pg-store.ts on this branch: AE-4): a number
+          // with no person keeps no session, and api.ts clears the cookies of a session with no person. A number with a person keeps its sessions:
           // its data is already stored, so the "nothing stored" rule is about a number with no person
           // (under13At).
           sess' = { ...sess,
@@ -647,20 +654,20 @@ module auth_edge {
           world' = { ...world, floor: world.floor.set(s.phone, newFloor),
                      member: if (newFloor < JOIN_FLOOR) world.member.exclude(Set(target)) else world.member },
           // The ghost `lowered` is not recorded here. A rotation that read a person-less session before
-          // bindSessions creates its next row after it (no re-read, AE-6), so a session from before the
+          // the intended bindSessions creates its next row after it (no re-read, AE-6), so a session from before the
           // person can still act for it. DEFECT AE-4: the code drops no session and clears no cookie here.
           ghost' = { ...ghost, under13At: if (age < JOIN_FLOOR and target == NONE) ghost.under13At.put(s.phone, sess.nextSid) else ghost.under13At },
         } else if (isMember) all {
           // accounts.ts "existing": a repeated join is still an age statement on
-          // personFor(who.e164), and bindSessions gives this session the person (the others with no
-          // person end).
+          // personFor(who.e164), and the intended bindSessions gives this session the person (the others
+          // with no person end; the code binds nothing here: AE-3).
           sess' = { ...sess, rows: bindSessions(sess.rows, s.phone, target, sid, now) },
           world' = { ...world, floor: world.floor.set(s.phone, newFloor) },
           ghost' = { ...ghost, ageLoweredByOther: ghost.ageLoweredByOther or lowered },
         } else {
-          // accounts.ts: a person (when none), the membership, unsuppress, bindSessions: of the
-          // person-less sessions of the number, only this request's session gets the person; the others
-          // end now (SD-054 fix).
+          // accounts.ts: a person (when none), the membership, unsuppress, then the intended bindSessions:
+          // of the person-less sessions of the number, only this request's session gets the person; the
+          // others end now (SD-054 rule; the code's admitMembership binds them all: AE-3).
           val pid = if (target != NONE) target else world.nextPerson
           all {
             sess' = { ...sess, rows: bindSessions(sess.rows, s.phone, pid, sid, now) },
@@ -690,8 +697,8 @@ module auth_edge {
   // The text channel (accounts text join, founder 2026-10-09 item 3): only the holder of a number can
   // text from it; a banned number is refused. An adult joins; the person is created when absent and
   // the join is a new opt-in (suppression lifted). service.ts creates the person with
-  // accounts.createPerson and no session to keep, so every person-less web session of the number ends
-  // (SD-054 fix).
+  // accounts.createPerson and no session to keep, so under the intended SD-054 rule every person-less web
+  // session of the number ends.
   action textJoin(p: str): bool = {
     val h = world.holder.get(p)
     val target = personFor(world, p)
@@ -707,6 +714,30 @@ module auth_edge {
                  nextPerson: if (target != NONE) world.nextPerson else world.nextPerson + 1,
                  suppressed: world.suppressed.exclude(Set(p)) },
       sess' = if (target != NONE) sess else { ...sess, rows: bindSessions(sess.rows, p, pid, NONE, now) },
+      now' = now, mode' = mode, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
+    }
+  }
+
+  // DEFECT AE-3, the code's text join (service.ts join -> PgPeopleStore.admitMembership, and
+  // attachPerson): `update platform.sessions set person_id = .. where e164 = .. and person_id is null`.
+  // Every person-less session of the number gets the person and stays live, the earlier holder's too.
+  // Not in `step`: the model keeps the intended rule (textJoin); ae3OtpStaleSessionActsTest shows the failure.
+  action textJoinCode(p: str): bool = {
+    val target = personFor(world, p)
+    val pid = if (target != NONE) target else world.nextPerson
+    all {
+      not(world.banned.contains(p)),
+      world' = { ...world,
+                 phoneOf: world.phoneOf.set(p, pid),
+                 bornAt: if (target != NONE) world.bornAt else world.bornAt.put(pid, sess.nextSid),
+                 bornBy: if (target != NONE) world.bornBy else world.bornBy.put(pid, NONE),
+                 alive: world.alive.union(Set(pid)),
+                 member: world.member.union(Set(pid)),
+                 nextPerson: if (target != NONE) world.nextPerson else world.nextPerson + 1,
+                 suppressed: world.suppressed.exclude(Set(p)) },
+      sess' = { ...sess, rows: sess.rows.keys().mapBy(k =>
+                  val r = sess.rows.get(k)
+                  if (r.phone == p and r.person == NONE) { ...r, person: pid } else r) },
       now' = now, mode' = mode, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
     }
   }
@@ -888,7 +919,8 @@ module auth_edge {
   // from before a person existed (it may belong to an earlier holder of the number) never acts for that
   // person, except the session whose web join created it. A login made after the person exists gets the
   // person of the number by the recycled-number policy (accounts.ts), which this model scopes out.
-  // Was violated at ad67275 (SD-054); holds after 6ddfc8f.
+  // Was violated at ad67275 (SD-054); 6ddfc8f is not on this branch, so the code still breaks it (AE-3,
+  // ae3OtpStaleSessionActsTest).
   val staleSessionNoAct = ghost.foreignActs == Set()
 
   // AGENTS.md age policy: "Lowest stated age wins"; a person's age is lowered only by a statement of
@@ -1053,8 +1085,8 @@ module auth_edge {
       .then(cloudLogin("alice", "X", 0))
       .expect(ghost.cloudLogins == 0 and bannedNoSession)
 
-  // SD-054 (fixed, 6ddfc8f; "SD-054 a session from before a text join ..."): bob logs in on Y before Y
-  // has a person; the carrier gives Y to alice; alice joins by text. The text join ends bob's session,
+  // SD-054, the intended rule (the source-branch fix 6ddfc8f is not on this branch: AE-3): bob logs in on Y
+  // before Y has a person; the carrier gives Y to alice; alice joins by text. The text join ends bob's session,
   // so it can neither export alice's data nor make an age statement for her.
   run sd054StaleSessionTest =
     initWith("otp")
@@ -1064,7 +1096,7 @@ module auth_edge {
       .then(textJoin("Y"))
       .expect(sess.rows.get(1).revoked == now and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
 
-  // SD-054 (fixed, 6ddfc8f; "SD-054 a web join binds only the joining session ..."): bob and then alice
+  // SD-054, the intended rule (6ddfc8f is not on this branch: AE-3): bob and then alice
   // log in on Y (the carrier gave Y to alice in between); alice's web join gives the person to her own
   // session only and ends bob's.
   run sd054WebJoinTest =
@@ -1079,6 +1111,18 @@ module auth_edge {
       .expect(sess.rows.get(2).person == 1 and sess.rows.get(2).revoked == NONE
               and sess.rows.get(1).person == NONE and sess.rows.get(1).revoked == now
               and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
+
+  // DEFECT AE-3, the code: the same start as sd054StaleSessionTest, but the text join is the code's
+  // (textJoinCode). bob's old OTP session gets alice's person, stays live and exports her data.
+  run ae3OtpStaleSessionActsTest =
+    initWith("otp")
+      .then(otpStartBegin("bob", "Y")).then(otpStartAll(1))
+      .then(otpVerify("bob", "Y"))
+      .then(carrierReassign("Y", "alice"))
+      .then(textJoinCode("Y"))
+      .expect(sess.rows.get(1).person == 1 and usableSession(world, sess, sess.jar.get("bob"), now))
+      .then(account("bob", "export", 0, "valid"))
+      .expect(not(staleSessionNoAct))
 
   // SD-491 (fixed, b56267f; "SD-491 an under-13 web join keeps no session with the number"): two logins
   // on X, then an under-13 web join. Only the age floor stays; no session row and no cookie.

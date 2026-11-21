@@ -90,8 +90,10 @@ describe("roles per app", () => {
     expect(healthAlerts({ ...base, reviewOpen: [item], sla: { app: "ntwrk", hours: 12 } }).find(a => a.key === "review_app_sla")).toBeUndefined();
   });
 
-  test("lab allows the shipped Slop pack and keeps Peon matching off", () => {
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).toContain("--max-new");
+  // spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope": a lab run is a local
+  // simulation, where peon may match too.
+  test("lab runs match for the Slop pack and for Peon", () => {
+    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).not.toContain("--max-new");
     expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--max-new");
   });
 });
@@ -177,8 +179,11 @@ describe("the console for four apps (game mode)", () => {
     const all = await (await as("adm", "/api/apps/health")).json() as { apps: AppHealth[] };
     expect(all.apps.map(a => a.app)).toEqual(["ntwrk", "slop", "peon", "friends"]);
     expect(all.apps.find(a => a.app === "peon")?.available).toBe(false); // its world was never opened
+    // spec/runtimeUnit.md, "Matching runs for an app only inside its launch scope": a game world is a local
+    // simulation, where peon may match; production keeps peon off until its live decision (the service's
+    // decision, peon-matching-scope.integration.test.ts).
     const peon = await post("adm", "/api/control?app=peon", { type: "matching", on: true });
-    expect([peon.status, (await peon.json()).code]).toEqual([409, "matching_locked"]);
+    expect([peon.status, (await peon.json()).ok]).toEqual([200, true]);
   }, T);
 });
 

@@ -4,7 +4,8 @@
 //                  sends of the last 24 h by outcome, review SLA misses, safety events (reports, minor
 //                  signals after contact, holds, bans, agent safety signals waiting for staff, bias
 //                  monitor alerts of the last 24 h); the shared line (Blooio safety actions on it, texts
-//                  parked for leak review per app); and today's cost per app against the budgets.
+//                  parked for leak review per app); the signed gateway turns without a confirmed result
+//                  (turn-watch.ts); and today's cost per app against the budgets.
 //                  Counts and network ids only: never a member id, a phone number or a text.
 //   evaluate()     the snapshot as alerts (key, level, count, text).
 //   AlertDispatcher  dedupe and a rate limit, with its state in network.ops_alerts (a restart or a
@@ -17,7 +18,9 @@
 // The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { cachedOpsMetricsFresh, opsRoundDue, roundReport } from "../../packages/core/src/generated/opsAlertDispatch.ts";
+import {
+  cachedOpsMetricsFresh, opsRoundDue, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
+} from "../../packages/core/src/generated/opsAlertDispatch.ts";
 import {
   dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
 } from "../../packages/core/src/vibe/opsAlertShell.js";
@@ -25,6 +28,8 @@ import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
+import type { TurnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
+export { turnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 /** The start of the UTC day of a time (the cost ledger's day). */
@@ -156,6 +161,8 @@ export interface OpsMetrics {
   networks: NetworkMetrics[];
   /** The shared line (lineMetrics); absent when the runner has no line reader. */
   line?: LineMetrics | { error: string };
+  /** The signed gateway turns and queued deliveries without a confirmed result (turnWatchMetrics); absent without a reader. */
+  turns?: TurnWatchMetrics | { error: string };
   cost: { day: string; totalUsd: number; byApp: Partial<Record<CostApp, number>>; budgets: BudgetLine[] } | { error: string };
   alerts?: { open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number };
 }
@@ -269,8 +276,16 @@ export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } f
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
 /** The snapshot as alerts. Pure: the same snapshot gives the same alerts. */
-export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
+export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"]; turns?: OpsMetrics["turns"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
   const out: Alert[] = [];
+  // spec/opsAlertDispatch.md, "Each condition is one alert, and a possible STOP makes it bad and first"
+  const leading: Alert[] = [];
+  if (m.turns && "error" in m.turns) out.push({ key: "turn_read", level: "warn", count: 1, text: `Could not read the shared-line turns: ${m.turns.error}` });
+  else for (const t of m.turns?.conditions ?? []) {
+    if (!turnWatchRaises(t.overdue)) continue;
+    const alert: Alert = { key: turnWatchAlertKey(t.condition), level: turnWatchLevel(t.compliance) as AlertLevel, count: t.overdue, text: TURN_WATCH_TEXT[t.condition](t.overdue, t.compliance) };
+    (turnWatchLeads(t.compliance) ? leading : out).push(alert);
+  }
   for (const n of m.networks) {
     const id = n.network;
     if (n.error) { out.push({ key: `ops_read:${id}`, level: "warn", count: 1, text: `Could not read ${id} for monitoring: ${n.error}` }); continue; }
@@ -313,8 +328,14 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (b.share < c.budgetWarnShare) continue;
     out.push({ key: `budget:${b.scope}`, level: b.share >= 1 ? "bad" : "warn", count: Math.round(b.share * 100), text: `Cost ${b.scope === "total" ? "for every app" : `for ${b.scope}`} today: $${b.usedUsd.toFixed(2)} of the $${b.budgetUsd.toFixed(2)} daily budget (${Math.round(b.share * 100)}%)` });
   }
-  return out;
+  return [...leading, ...out];
 }
+
+const TURN_WATCH_TEXT: Record<TurnWatchCondition, (overdue: number, compliance: number) => string> = {
+  RepliesUnconfirmed: (n, c) => `${n} handled shared-line turn(s) have replies the gateway never confirmed it sent, or a compliance reply it rejected (${c} with a STOP or compliance reply)`,
+  TurnUnresolved: n => `${n} signed shared-line turn(s) stay unresolved; each may have been a STOP (console: resolve the turn, POST /inbound/resolve)`,
+  DeliveryUnknown: (n, c) => `${n} queued delivery(ies) have an unknown acceptance and wait for a receipt lookup (${c} compliance)`,
+};
 
 // ------------------------------------------------------------------ the dispatcher
 
@@ -411,6 +432,8 @@ export interface OpsDeps {
   probes: () => NetworkProbe[];
   /** The shared line's state (lineMetrics on the platform tables). Without it there are no line alerts. */
   line?: () => Promise<LineMetrics>;
+  /** The signed gateway turns (turnWatchMetrics on the platform tables). Without it there are no turn alerts. */
+  turns?: (now: number) => Promise<TurnWatchMetrics>;
   cost?: Pick<CostLedger, "totals" | "accrue">;
   store: AlertStore;
   now: () => number;
@@ -440,6 +463,7 @@ export function createOps(d: OpsDeps) {
     const now = d.now();
     const networks = await Promise.all(d.probes().map(p => collectNetwork(p, now)));
     const line: OpsMetrics["line"] = d.line ? await d.line().catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
+    const turns: OpsMetrics["turns"] = d.turns ? await d.turns(now).catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
     let cost: OpsMetrics["cost"];
     try {
       const day = dayOf(now);
@@ -456,7 +480,7 @@ export function createOps(d: OpsDeps) {
       const totalUsd = Math.round(Object.values(byApp).reduce((s, x) => s + (x ?? 0), 0) * 10_000) / 10_000;
       cost = { day, totalUsd, byApp, budgets: budgetLines(byApp, c.budgets) };
     } catch (e) { cost = { error: (e as Error).message.slice(0, 200) }; }
-    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
+    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), ...(turns ? { turns } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
     last = { at: now, metrics: m };
     return m;
   }
