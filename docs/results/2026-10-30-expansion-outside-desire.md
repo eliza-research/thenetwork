@@ -7,7 +7,7 @@ Two holes are closed.
 1. A first desire below `minSim` used to hide a later desire that had a real provider.
 2. A blocked strongest provider used to take the only slot. The hard filter then dropped that pair as `blocked`. A viable second provider was never scored.
 
-The pool uses the shared pair rule, `pairReason`. That rule rejects a blocked pair, a dealbreaker, an active duplicate, a pair cooldown, and a negative-feedback cooldown. Open PR #290 adds the same pool check and still scores only `outside[0]`. This note's scan scores every outside desire, so the change stands if #290 does not merge. PR #246 was still open on 14 November 2026. Its scenario-repetition gate is not on main. This branch did not wait for it. The network block registers `inviteRootGate` from merged #319 and `expansionDesireGate`.
+The pool uses the shared pair rule, `pairReason`. That rule rejects a blocked pair, a dealbreaker, an active duplicate, a pair cooldown, and a negative-feedback cooldown. Open PR #290 adds the same pool check and still scores only `outside[0]`. This note's scan scores every outside desire, so the change stands if #290 does not merge. The scenario-repetition gate from #246 is on main as `scenarioRepetitionGate`, merged in #483. The network block registers that gate, `inviteRootGate` from merged #319, and `expansionDesireGate`.
 
 This note is hand-written. The counts come from the command output.
 
@@ -56,7 +56,7 @@ packages/network/test/expansion-desire.integration.test.ts:
  4 pass
  0 fail
  16 expect() calls
-Ran 4 tests across 1 file. [64.00ms]
+Ran 4 tests across 1 file. [56.00ms]
 ```
 
 The log also printed one line that no Surplus or OpenAI key is set. That path does not call a model.
@@ -76,12 +76,12 @@ No model. Simulated reviewer (`review: "auto"`). Output is in the next section.
 ## NYC world, quick sim
 
 ```
--- network: 53/53 blocking gates pass, 1 tracked (131.9s)
+-- network: 57/57 blocking gates pass, 1 tracked (139.9s)
 
-PASS: 53/53 blocking gates, 0 tracked off target, 131.9s (network 131.9s)
+PASS: 57/57 blocking gates, 0 tracked off target, 139.9s (network 139.9s)
 ```
 
-The five expansion gates pass, including the blocked-strongest gate. `inviteRootGate` from merged #319 also passes. Invariant violations, minor contacts, and canary leaks are 0. The fingerprint for seed 3 over 10 days is `24bb81f068060b33`. That is the same digest the earlier note recorded. A second run on current main with this pair filter removed was not made.
+The five expansion gates pass, including the blocked-strongest gate. `scenarioRepetitionGate` and `inviteRootGate` from merged #319 also pass. Invariant violations, minor contacts, and canary leaks are 0. The fingerprint for seed 3 over 10 days is `3324e683e0e37345` on main `64d85fb`. A second run on current main with this pair filter removed was not made.
 
 ## Other implementations
 
@@ -93,4 +93,4 @@ The change scores each outside desire on its own, and only among providers the p
 
 ## Limits
 
-The blocked fixture is one seeker and two providers. No agent client sends a message. The engine judge is off, so there is no model call. The quick NYC run printed the same fingerprint as the earlier note. The 21-day consent comparison is not in `--quick`. It was not run.
+The blocked fixture is one seeker and two providers. No agent client sends a message. The engine judge is off, so there is no model call. The quick NYC run on main `64d85fb` printed fingerprint `3324e683e0e37345`. The 21-day consent comparison is not in `--quick`. It was not run.
