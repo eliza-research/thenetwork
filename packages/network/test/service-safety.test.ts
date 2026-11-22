@@ -375,6 +375,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     let probeNo = 0;
     const competingPeonItem = async () => {
       clock.advance(MINUTE);
+      await sql`insert into network.opportunities (app_id, id, kind, state, city, objective, created_at, updated_at)
+        values ('peon', 'peon.competing-opportunity', 'intro', 'PROPOSED', 'nyc', 'A meeting',
+          ${new Date(clock.now())}, ${new Date(clock.now())}) on conflict (app_id, id) do nothing`;
       await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
         values ('peon', ${"competing-peon-probe-" + ++probeNo}, ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.',
           'dry_run', 'peon.competing-opportunity', true, false, ${new Date(clock.now())})`;
