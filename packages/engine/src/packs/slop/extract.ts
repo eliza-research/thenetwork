@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_A_HALF, AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, AGE_NOT_MEASURE, ageAtLeastMin, canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -158,10 +158,21 @@ const ADJ_LITE = "straight|gay|bi|queer|trans|cis|single|lesbian|pan";
 
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then|"|')\s*$/;
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
-const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|and\\b|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
+const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
+/** A bare "and", "now" or "too" ends an age only at MIN_MEMBER_AGE or older. Under that it is not an age end. */
+const LOOSE_END = `(?=\\s+(?:${AGE_LOOSE_TAIL}))`;
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')${AGE_HALF}${AGE_NOT_MEASURE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})${AGE_HALF}${AGE_NOT_MEASURE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})${AGE_AND_A_HALF}`), age: m => wordNum(m[1]!), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')${AGE_AND_CLAUSE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})${AGE_AND_CLAUSE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})${AGE_AND_CLAUSE}`), age: m => wordNum(m[1]!), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${LOOSE_END}`), age: m => ageAtLeastMin(Number(m[1])), strict: true },
+  { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${LOOSE_END}`), age: m => ageAtLeastMin(Number(m[1])), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})\\b${LOOSE_END}`), age: m => ageAtLeastMin(wordNum(m[1]!)), strict: true },
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`(?<!\\b(?:my|our|his|her|their|a|an|the)\\s+)\\b(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },

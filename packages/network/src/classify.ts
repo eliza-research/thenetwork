@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { parseReply, type Category } from "@thenetwork/core";
+import { AGE_AND_A_HALF, AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, AGE_NOT_MEASURE, MIN_MEMBER_AGE, ageAtLeastMin, parseReply, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
@@ -212,15 +212,15 @@ const YEARS_OLD = "(?:y(?:ears?|rs?)[\\s-]+old|y\\.?\\/?o\\.?|years of age)(?![a
 // "I'm 3 for 3" and "I'm 12 years into my career" are not ages.
 const CLAUSE_END = "$|[.,!?;:)]|but\\b|so\\b|btw\\b|lol\\b|haha\\b|lmao\\b|here\\b|tho(?:ugh)?\\b|y(?:ea)?rs?\\s*(?:$|[.,!?;:)])";
 const AGE_END = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}))`;
-// "and", "now" and "too" also end an age, but only for 13 and up: "I'm 3 and 0 this season" or
-// "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
-// Also "actually", "tbh", "honestly", "fyi" and "last week": "I'm 15 actually", "I turned 13 last week".
-const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
+// "and", "now" and "too" also end an age, but only at MIN_MEMBER_AGE or older: "I'm 3 and 0 this
+// season" or "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
+// The words after AGE_LOOSE_TAIL are this reader's own. The slop reader does not use them.
+// "I'm 15 honestly" is an age here and is not an age there.
+const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|${AGE_LOOSE_TAIL}|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
 const IDENTITY_WORD = "person|guy|girl|boy|man|woman|kid|teen";
 const SELF_AGE_TAIL = "here\\b|from\\b|looking for\\b|in (?:high|middle) school\\b";
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
-const atLeast13 = (n: number) => (n >= 13 ? n : NaN);
 /** Ages the loose forms may read: a teen or an adult. Under 13 needs a strict form. */
 const teenOrAdult = (n: number) => (n >= 10 && n < 100 ? n : NaN);
 const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junior: 16, senior: 17 };
@@ -234,7 +234,12 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
 /** A clause break. The words before it do not apply to an age after it. */
 const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
-type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean };
+type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean | ((m: RegExpExecArray) => boolean) };
+const explicitAtLeastMin = (m: RegExpExecArray): boolean => {
+  const raw = m[1]!;
+  const n = /^\d/.test(raw) ? Number(raw) : AGE_WORDS[raw]!;
+  return n >= MIN_MEMBER_AGE;
+};
 const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|my age is\\s+)(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
@@ -244,11 +249,17 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
-  // "I'm 15", "I'm only 15", "I just turned 12!", "I'm fifteen".
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END}`), age: m => Number(m[1]) },
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },
+  // "I'm 12 and a half", "I'm 4.5", "I just turned 12 1/2". A decimal is not a clause end, and a
+  // measure after it is not an age ("I'm 12.5 minutes away").
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_HALF}${AGE_NOT_MEASURE}`), age: m => Number(m[1]), explicit: explicitAtLeastMin },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_AND_A_HALF}`), age: m => AGE_WORDS[m[1]!]!, explicit: explicitAtLeastMin },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_AND_CLAUSE}`), age: m => Number(m[1]), explicit: explicitAtLeastMin },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_AND_CLAUSE}`), age: m => AGE_WORDS[m[1]!]!, explicit: explicitAtLeastMin },
+  // "I'm 15", "I'm only 15", "I just turned 12!", "I'm fifteen". A digit after a decimal is not this age.
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_END}`), age: m => Number(m[1]) },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_END_LOOSE}`), age: m => ageAtLeastMin(Number(m[1])) },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[1]!]! },
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => atLeast13(AGE_WORDS[m[1]!]!) },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => ageAtLeastMin(AGE_WORDS[m[1]!]!) },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
@@ -287,8 +298,8 @@ const shortAgeRule = (form: string, age: AgeRule["age"]): AgeRule => (
   { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age }
 );
 const SHORT_AGE_RX = [
-  shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => atLeast13(shortAge(m[1]!))),
-  shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => atLeast13(shortAge(m[1]!))),
+  shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => ageAtLeastMin(shortAge(m[1]!))),
+  shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => ageAtLeastMin(shortAge(m[1]!))),
   shortAgeRule("(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha|rn)", m => shortAge(m[1]!)),
   shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17),
   shortAgeRule("(?:almost|nearly|turning)\\s+(?:18|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(?:18|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", () => 17),
@@ -349,6 +360,21 @@ function notNowBefore(text: string, at: number): boolean {
   return NOT_NOW.test(before.slice(from).slice(-24));
 }
 
+/** Age scan sentences. A dot between digits is a decimal, not a new sentence ("I'm 12.5"). */
+function ageSentences(t: string): { text: string; at: number }[] {
+  const parts = sentencesOf(t);
+  const out: { text: string; at: number }[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    let s = parts[i]!;
+    while (/\d\.$/.test(s.text) && /\d/.test(t[s.at + s.text.length] ?? "") && parts[i + 1]) {
+      const next = parts[++i]!;
+      s = { text: t.slice(s.at, next.at + next.text.length), at: s.at };
+    }
+    out.push(s);
+  }
+  return out;
+}
+
 /**
  * The youngest age the sender states about themselves, and the youngest they state in the explicit
  * form ("I am 12 years old"). Every occurrence counts, in every sentence: "I'm 30. I'm 15." is 15,
@@ -362,14 +388,15 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
   const out: { age?: number; explicit?: number } = {};
   // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
   // are read on each sentence. On the whole message they would see only the first sentence.
-  for (const s of sentencesOf(t)) {
+  for (const s of ageSentences(t)) {
     for (const { rx, age, explicit } of AGE_RX) {
       for (const m of allMatches(rx, s.text)) {
         if (notNowBefore(t, s.at + m.index)) continue;
         const a = age(m);
         if (!Number.isFinite(a)) continue;
         if (out.age === undefined || a < out.age) out.age = a;
-        if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+        const marked = typeof explicit === "function" ? explicit(m) : explicit;
+        if (marked && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
       }
     }
   }

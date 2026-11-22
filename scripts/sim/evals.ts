@@ -7,7 +7,7 @@
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { ageAnswer, agesStated, classify, extractProfile, otherAgeStated, parseProbeReply, statedAge } from "../../packages/network/src/classify.ts";
 import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
@@ -111,6 +111,32 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`teen ages: recall >= 95% (n ${teen.length})`, teen.length >= 150 && teens.filter(l => minor(l.text)).length / teens.length >= 0.95, pct(teens.filter(l => minor(l.text)).length / teens.length));
   const adultAsMinor = adults.filter(l => minor(l.text)).map(l => l.text);
   b.gate("teen ages: 0 adults (or teachers) read as minors", adultAsMinor.length === 0, adultAsMinor.slice(0, 5).join(" | "));
+  await b.run("age clauses: a half age counts, and a unit or a following number does not", () => {
+    expect(statedAge("I'm 12 and a half")).toBe(12);
+    expect(agesStated("I'm 12 and a half").explicit).toBeUndefined();
+    expect(statedAge("I'm twelve and a half")).toBe(12);
+    expect(statedAge("I'm 4.5")).toBe(4);
+    expect(agesStated("I'm 16 and a half").explicit).toBe(16);
+    expect(statedAge("I'm 12.5 minutes away")).toBeUndefined();
+    expect(classify("I'm 12.5 minutes away").minorSignal).toBe(false);
+    expect(statedAge("I'm 3.5 steps away")).toBeUndefined();
+    expect(statedAge("I'm 10.5 inches tall lol")).toBeUndefined();
+    expect(statedAge("I'm 2 and a half years into my phd")).toBeUndefined();
+    expect(statedAge("I'm 5 and a half months sober")).toBeUndefined();
+    expect(statedAge("I'm 3 and 0 this season")).toBeUndefined();
+    expect(statedAge("I'm 12 and 0 this season")).toBeUndefined();
+    expect(statedAge("I'm 8 now")).toBeUndefined();
+    expect(statedAge("I'm 12 and I like games")).toBe(12);
+    expect(agesStated("I'm 12 and I like games").explicit).toBeUndefined();
+    expect(statedAge("i'm twelve and i like games")).toBe(12);
+    expect(statedAge("I'm 11 and we live in queens")).toBe(11);
+    expect(agesStated("I'm 11 and we live in queens").explicit).toBeUndefined();
+    expect(statedAge("I'm 15 now")).toBe(15);
+    expect(statedAge("I'm 15 too")).toBe(15);
+    expect(statedAge("I'm 38 and divorced")).toBe(38);
+    expect(statedAge("I'm 38 and I like games")).toBe(38);
+    expect(agesStated("I'm 38 and I like games").explicit).toBe(38);
+  });
   const thirdParty = teen.filter(l => l.other !== undefined && (otherAgeStated(l.text) ?? null) !== (l.other ?? null)).map(l => l.text);
   b.gate("third-party ages are read exactly", thirdParty.length === 0, thirdParty.slice(0, 5).join(" | "));
   const statedMiss = teen.filter(l => l.age !== undefined && classify(l.text).statedAge !== l.age).map(l => `${JSON.stringify(l.text)} -> ${classify(l.text).statedAge ?? "none"} (want ${l.age})`);
