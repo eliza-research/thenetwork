@@ -13,7 +13,22 @@ Simulated worlds for the apps on The Network's shared matching engine, one folde
   gates: `docs/results/2026-10-08-slop-pack.md`.
 - `peon/`: peon.biz (hiring). Candidates, companies and jobs with hidden truth and a sealed store,
   the application-flow harness, the adverse-impact audit, `officialGates`:
-  `docs/results/2026-10-08-peon-pack.md`.
+  `docs/results/2026-10-08-peon-pack.md`. `yardstick.ts` is an offline yardstick for the peon
+  selector. It never runs in the engine path and never changes a proposal. Each week the engine-backed
+  matcher (`packMatcher`) records a `PeonMarket`: the eligible Hire pairs that the engine scored, the
+  value that the greedy order uses for each pair (the score times 1,000, rounded), and the room of each
+  member. The room is rebuilt from the pack and engine rules, not read from the run: 0 in an open
+  opportunity, else the smaller of the proactive budget left and the pack limit (a seat's slate cap,
+  the Hire weekly capacity of a candidate). `load` holds every proposal of the run, in all lanes, for
+  each member, against the same room. `optimumSelection` finds the largest total value of pairs within
+  every room, each pair at most once: a maximum-weight b-matching, solved exactly as a min-cost flow
+  (successive shortest paths with potentials on source, candidate, seat, sink, cost minus the value).
+  It stops at the first path that does not raise the total, so the flow has the largest value, not the
+  largest size. It is deterministic: the pairs are sorted and ties keep the first path. The other
+  matchers record no market. `marketMeasures` sums the weeks of one run, and `trackedGates`
+  (`gates.ts`) prints the tracked measures: the role-level gap of backed pairs, the greedy share of the
+  optimum, proposals over room, and the load of candidates and seats. Each tracked measure has a
+  target, and the targets never block. Results: `docs/results/2026-11-22-peon-level-gap-and-yardstick.md`.
 - `friends/`: friends.help (NYC friendship). Personas, meetups, crews, `officialGates` and tracked
   metrics: `docs/results/2026-10-08-friends-pack.md`.
 

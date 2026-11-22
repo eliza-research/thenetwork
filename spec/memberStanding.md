@@ -201,6 +201,21 @@ pure def lawRatingUncertaintyGrowsWithSpread(photos: int, spreadLow: int, spread
     ratingUncertainty(photos, lower, spreadHigh) >= ratingUncertainty(photos, spreadLow, spreadHigh))
 ```
 
+### A standing that staff reviewed as a property of the offer has the floor uncertainty
+
+Some standings are not estimates of a person. The role level of a job seat is a property of the seat: the employer states it in the posting, and staff review the posting before the seat can be matched. So the seat's standing is its level, and its uncertainty is the floor, whatever count of facts the shell finds. A standing that is estimated from a member's facts keeps the count rule above. The shell passes true only for a standing that the reviewed offer itself defines. In the peon pack (`packages/engine/src/packs/peon/match.ts`, `standing`), a seat passes true, because an unverified seat has no membership. A candidate passes false with a count of reviewed facts: the level itself when a trusted source gave it, and each demonstrated or interview-verified skill at or above that level. The count takes one fact for each facet, as in the network pack, so a trusted facet that carries both the level and a skill is one reviewed fact.
+
+Decision (2026-11-17): the Hire lane gives a staff-reviewed posting level the floor uncertainty, not the uncertainty of one reviewed fact. Before, a posting got 18 points, so the parity check (band 15 plus both uncertainties) admitted a gap of 15 + 18 + 18 = 51 points against a candidate with one reviewed fact, which is two role levels of 25 points. On the peon block's pinned seeds, 142 of 4,767 proposed pairs with a backed candidate level had a role-level gap above one level. With the floor, the Hire limit is the band plus 3 plus the candidate's uncertainty, so no candidate is shown two levels away. The Hire band is 22, so the limit runs from 28 to 45 points and every candidate can be shown one level up or down. The measured effect and the band decision are in the Hire prose of the [lane table](matchLane.md).
+
+```quint
+pure def standingUncertaintyFor(reviewedCount: int, reviewedProperty: bool): int =
+  if (reviewedProperty) standingUncertaintyFloor else standingUncertainty(reviewedCount)
+
+pure def lawReviewedPropertyHasFloorUncertainty(reviewedCount: int, reviewedProperty: bool): bool =
+  standingUncertaintyFor(reviewedCount, true) == standingUncertaintyFloor and
+    standingUncertaintyFor(reviewedCount, true) <= standingUncertaintyFor(reviewedCount, reviewedProperty)
+```
+
 ## Story: Move standing slowly
 
 > As a member, I want my private standing to change gradually, so that one new fact or one rating does not move me to a different group of people in one week.
