@@ -1133,7 +1133,7 @@ module join_age {
   run nextEighteenthBirthdayKeepsMinorFloorTest =
     init.then(joinNtwrkByText(M_SAM15.with("age", 17).with("explicit", false)))
       .expect(db.floor == 17 and db.net.get("ntwrk").minor)
-      .then(memberText(M_SAM25, "ntwrk"))
+      .then(receive(M_SAM25, "ntwrk")).then(lfCloseStep).then(unitStep).then(flushStep).then(doneStep(true))
       .expect(db.floor == 17 and APPS.forall(a => not(matchable(db, a))) and safety)
 
   // A 15-year-old joins by text: single-player, matchable nowhere, the minor looking-for question.
