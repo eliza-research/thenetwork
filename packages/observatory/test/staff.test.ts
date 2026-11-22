@@ -3,7 +3,7 @@
 // PII reveal, the audit log (written before data is returned), the production switch
 // (OBSERVATORY_REAL_ONLY) and the simulation lab.
 import { setTimeout as sleep } from "node:timers/promises";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -472,6 +472,36 @@ describe("simulation lab", () => {
       if (!stopped) await server.stop();
       const deadline = performance.now() + 5000;
       while (lab.running && performance.now() < deadline) await sleep(10);
+    }
+  }, T);
+
+  test("accepting a lab run in the same second after restart preserves both files", async () => {
+    // spec/consolePanels.md, "A lab run starts only in the simulated world with a valid request"
+    const labDir = join(dir, "lab-run-identities");
+    const labs: Lab[] = [];
+    const newLab = () => {
+      const lab = new Lab({ dir: labDir });
+      labs.push(lab);
+      return lab;
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-22T18:30:00Z"));
+    try {
+      const first = newLab();
+      const prior = await first.start({ arms: ["consent"], seeds: [1], days: 1 }, "first-instance");
+      await first.dispose();
+      const saved = await readFile(prior.file, "utf8");
+      const second = newLab();
+      const next = await second.start({ arms: ["consent"], seeds: [2], days: 1 }, "second-instance");
+      await second.dispose();
+      expect(next.createdAt).toBe(prior.createdAt);
+      expect(next.id).not.toBe(prior.id);
+      expect(await readFile(prior.file, "utf8")).toBe(saved);
+      const reloaded = await newLab().list();
+      expect(reloaded.map(run => [run.id, run.request.seeds]).sort()).toEqual([[prior.id, [1]], [next.id, [2]]].sort());
+    } finally {
+      vi.useRealTimers();
+      await Promise.all(labs.map(lab => lab.dispose()));
     }
   }, T);
 
