@@ -12,6 +12,7 @@ import {TURN_PATH,RELAY_PATH,DELIVER_PATH,RELAY_PHOTO_RESOLVE_PATH,type RelaySen
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {loadSnapshot} from "../service/snapshot.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
 import type {NetworkState} from "../src/network.ts";
@@ -74,7 +75,7 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216"]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216","+12125550217","+12125550218"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
       posts++;sent.push(input);
       if(input.approvedPhotos){
@@ -406,3 +407,49 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }finally{resume?.();checks.leaks=original;if(pending)await pending;known=true;}
   }
 },120_000);
+
+test("a signed relay self-age closes the match and lowers the person's age across apps", async () => {
+  const sender = "+12125550217", recipient = "+12125550218";
+  async function join(app: "friends" | "slop", phone: string, name: string) {
+    const messages = [app === "friends" ? "friends.help" : "slop.date", name + ", 29",
+      "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
+    for (const [index, text] of messages.entries()) {
+      clock.advance(MINUTE);
+      const id = "relay-age-join:" + app + ":" + name + ":" + index;
+      expect((await post(TURN_PATH, { ...turn(phone, id, text), app })).status).toBe(200);
+    }
+    const person = await service.accounts.personFor(phone);
+    if (!person) throw new Error("Missing relay fixture person");
+    const membership = await service.people.getMembership(person.id, app);
+    if (!membership) throw new Error("Missing relay fixture membership");
+    return membership.memberId;
+  }
+  const senderFriends = await join("friends", sender, "Bo");
+  const recipientFriends = await join("friends", recipient, "Jae");
+  const senderSlop = await join("slop", sender, "Bo");
+  await fixturePair(false, "friends", [senderFriends, recipientFriends]);
+  const controls = [
+    ["other", "tell them my 15 year old will be with me"],
+    ["quote", "tell them I heard her say, \"I'm 16\""],
+    ["school", "tell them homeroom starts soon"],
+  ] satisfies [string, string][];
+  for (const [suffix, phrase] of controls) {
+    clock.advance(11 * MINUTE);
+    const request = await open("relay-age-" + suffix, phrase, sender);
+    expect((await post(RELAY_PATH, request)).status).toBe(200);
+    expect((await service.accounts.personFor(sender))?.lowestAge).toBe(29);
+  }
+  clock.advance(11 * MINUTE);
+  const request = await open("relay-age-self", "tell them 16f here", sender);
+  const before = posts;
+  const response = await post(RELAY_PATH, request);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ decision: "block", delivered: false, replayed: false });
+  const replay = await post(RELAY_PATH, request);
+  expect(await replay.json()).toMatchObject({ decision: "block", delivered: false, replayed: true });
+  expect(posts).toBe(before);
+  expect(await pairClosed()).toBe(true);
+  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
+  const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
+  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
+}, 60_000);

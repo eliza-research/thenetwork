@@ -131,7 +131,7 @@ import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext,
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -1087,9 +1087,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const a = ageAnswer(body);
       if (a !== undefined) c = { ...c, statedAge: Math.min(a, c.statedAge ?? a), explicitAge: a, minorSignal: c.minorSignal || isMinor(a) };
     }
-    if (c.statedAge !== undefined && (m.statedAge === undefined || c.statedAge < m.statedAge)) m.statedAge = c.statedAge;
     const attested = this.attestedAge(m);
-    const known = attested ?? m.statedAge;
     // Decline (and delete) only on the attested age under the join age, or an explicit age under it
     // ("I am 12 years old", or a bare answer to the age question) when the record does not say adult.
     // A looser statement ("I'm 5, maybe 10 minutes away", "I'm in 6th grade") never declines: it
@@ -1099,12 +1097,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if ((attested !== undefined && !this.canJoinApp(attested)) || (c.explicitAge !== undefined && !this.canJoinApp(c.explicitAge) && !adultRecord)) {
       return this.declineUnderMinAge(m, Math.min(...[attested, c.explicitAge].filter((x): x is number => x !== undefined && !this.canJoinApp(x))), currentDanger);
     }
-    if (c.statedAge !== undefined) this.opts.onAgeStated?.(m.id, c.statedAge, { explicit: c.explicitAge === c.statedAge, declined: false });
-    if (m.statedAge !== undefined && !this.canJoinApp(m.statedAge) && !m.ageConflict) {
-      m.ageConflict = true;
-      this.ctx.log("age_conflict", { memberId: m.id, attestedAge: attested, statedAge: m.statedAge });
-      this.caseEvent(m.id, { at: now, kind: "age_conflict", points: 0 });
-    }
+    this.rememberStatedAge(m, c.statedAge, c.explicitAge === c.statedAge, attested);
+    const known = attested ?? m.statedAge;
     if (c.minorSignal && m.minor) m.minorSignal = true;
     if (known === undefined) {
       // Unknown age (6.3): treated as a minor (single-player, never matched) and asked once, early.
@@ -1117,14 +1111,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const age = Math.min(...[attested, m.statedAge].filter(validAge));
     if ((isMinor(age) || c.minorSignal) && !m.minor) {
-      m.minor = true; m.minorSignal = true;
-      // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
-      this.minorAfterContact(m.id);
-      this.dropMember(m.id, "minors policy");
-      this.ctx.log("minor_signal", { memberId: m.id });
+      this.applyMinorSignal(m);
       if (this.app.minJoinAge > 13) {
-        // An 18+ app: no teen copy and no teen service; out of matching, and staff review (network-consent-19).
-        this.caseEvent(m.id, { at: now, kind: "age_review", points: 0 });
         if (currentDanger) this.safetyReply(m, "", true);
         return;
       }
@@ -1601,6 +1589,28 @@ export class ConsentNetwork implements NetworkUnderTest {
   private sid(id: string) { return this.app.id === "ntwrk" ? id : `${this.app.id}.${id}`; }
 
   /** The app's join age (core canJoin: 13+; an 18+ app also declines 13-17). */
+  private rememberStatedAge(m: MemberState, age: number | undefined, explicit: boolean, attested: number | undefined) {
+    if (age !== undefined) {
+      if (m.statedAge === undefined || age < m.statedAge) m.statedAge = age;
+      this.opts.onAgeStated?.(m.id, age, { explicit, declined: false });
+    }
+    if (m.statedAge !== undefined && !this.canJoinApp(m.statedAge) && !m.ageConflict) {
+      m.ageConflict = true;
+      this.ctx.log("age_conflict", { memberId: m.id, attestedAge: attested, statedAge: m.statedAge });
+      this.caseEvent(m.id, { at: this.now(), kind: "age_conflict", points: 0 });
+    }
+  }
+
+  private applyMinorSignal(m: MemberState) {
+    m.minorSignal = true;
+    if (m.minor) return;
+    m.minor = true;
+    this.minorAfterContact(m.id);
+    this.dropMember(m.id, "minors policy");
+    this.ctx.log("minor_signal", { memberId: m.id });
+    if (this.app.minJoinAge > 13) this.caseEvent(m.id, { at: this.now(), kind: "age_review", points: 0 });
+  }
+
   private canJoinApp(age: number) { return canJoin(age) && age >= this.app.minJoinAge; }
 
   /** Under the app's join age (13 for ntwrk): decline once, kindly, and keep nothing but the fact that we declined. */
@@ -7313,6 +7323,14 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!m || this.declinedIds.has(id)) return undefined;
         this.syncRecord(m);
         return relayMemberOf(m, this.trust.level(id) === "hold" || this.reportHeld(id));
+      },
+      observeSenderAge: (id, text) => {
+        const m = this.members.get(id);
+        const { age, explicit } = agesStated(text, { directOnly: true });
+        if (!m || !validAge(age) || canBeMatched(age)) return false;
+        this.rememberStatedAge(m, age, age === explicit, this.attestedAge(m));
+        this.applyMinorSignal(m);
+        return true;
       },
       matchesOf: id => {
         const now = this.now(), out: RelayMatch[] = [];

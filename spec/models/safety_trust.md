@@ -76,7 +76,7 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 // 1532-1545); the block-abuse 14-day window (trust.ts:99-106, 116, W3-230); inviter accountability
 // (network.ts:1266-1272, W3-229); the slot of a meeting in New York time against slotOf's UTC reading
 // (engine slop profile.ts:224-230, W3-225, W3-237); the hold notice kind from outboundKind (decisions.ts:109,
-// W3-225); the relay ageSignal (engine relay.ts:129, 355; read by nothing in the service, W3-232, W3-237).
+// W3-225); the direct age statement in the member-authored relay body (W3-232, W3-237).
 module safety_trust {
   // ------------------------------------------------------------------ types
   type Mid = { app: str, p: str, g: int }
@@ -140,8 +140,8 @@ module safety_trust {
     // ghosts (never read by the modelled code)
     // (person, "*" or app): a staff hold that the rule says holds the person on that scope
     staffHeldP: Set[(str, str)],
-    // members whose own relayed text carried a minor self-disclosure (RelayRecord.ageSignal)
-    ageSignals: Set[Mid],
+    // people with a direct minor age committed from their own relay text
+    statedRelayMinors: Set[str],
     autoHeldP: Set[(str, str)],
     minorP: Set[(str, str)],
     heldMids: Set[Mid],
@@ -253,6 +253,7 @@ module safety_trust {
   // runtime restriction projection. The retained person hold relation expresses desired coverage.
   pure def matchable(st: State, m: Mid): bool =
     st.live.get(m) and not(st.banned.contains(m.p)) and lvl(st, m) == "ok" and not(st.minorF.get(m))
+      and not(st.statedRelayMinors.contains(m.p))
       and not(reportHeld(st, m)) and not(carriedReportHeld(st, m)) and not(st.restricted.contains(m)) and not(covered(st, m))
   // blocked(): this Network's block or a person block from the snapshot
   pure def blockedPair(st: State, a: Mid, b: Mid): bool =
@@ -467,7 +468,6 @@ module safety_trust {
     leaving: st.leaving.exclude(Set(m)),
     banning: st.banning.exclude(Set(m)),
     clearing: st.clearing.exclude(Set(m)),
-    ageSignals: st.ageSignals.exclude(Set(m)),
   }
 
   // network.ts:1381 holdMember, decideReports 1421: with no report id every open report about them reads "held";
@@ -535,7 +535,7 @@ module safety_trust {
     invitedBy: ALL_MIDS.mapBy(m => if (m == INVITEE) INVITER else NOBODY),
     invitesBlockedUntil: ALL_MIDS.mapBy(_ => -1),
     staffHeldP: Set(),
-    ageSignals: Set(),
+    statedRelayMinors: Set(),
     autoHeldP: Set(),
     minorP: Set(),
     heldMids: Set(),
@@ -871,7 +871,7 @@ module safety_trust {
   // app only, one network at a time (W3-232). Each unit: clearMinorSignal and dismiss the open minor reports.
   action clearMinorStart(m: Mid, scope: str): bool = all {
     s.live.get(m), s.clearing == Set(), scope == "*" or scope == m.app,
-    s.minorP.exists(x => x._1 == m.p) or s.ageSignals.exists(x => x.p == m.p),
+    s.minorP.exists(x => x._1 == m.p), not(s.statedRelayMinors.contains(m.p)),
     s' = { ...s, clearing: liveMidsOf(s, m.p).filter(x => scope == "*" or x.app == m.app), lastAction: "clearMinorStart" },
   }
   action clearMinorApply(x: Mid): bool = all {
@@ -880,7 +880,6 @@ module safety_trust {
       minorF: s.minorF.set(x, false),
       reports: s.reports.map(r => if (r.subject == x and r.kind == "minor" and r.status == "open") { ...r, status: "dismissed" } else r),
       minorP: s.minorP.exclude(Set((x.p, x.app))),
-      ageSignals: s.ageSignals.exclude(Set(x)),
       clearing: s.clearing.exclude(Set(x)),
       lastAction: "clearMinorApply" },
   }
@@ -967,19 +966,21 @@ module safety_trust {
     }
   }
 
-  // A relayed message inside a date (RelayDesk.apply): pass, hold (staff relay queue), a block for the form
-  // (party, consent, format, photo) or a block for the sender's own words (harass_severe, llm_severe,
-  // clef_severe), which writes a 0-point case event relay_block:<families> (severeBlock, SD-254). `ageSig`: the
-  // sender's own text carried a minor self-disclosure (engine relay.ts:355 ageSignal). The record keeps the flag
-  // and relay.ts:259 drops the text, but nothing in the Network or the service reads it (W3-232, W3-237).
-  action relaySend(k: str, m: Mid, decision: str, ageSig: bool): bool = {
+  // The signed relay can expose a direct self-age after the request prefix is removed. Commit that age
+  // for the person and remove the sender from the current app's opportunities before dispatch. The
+  // other relay policy outcomes, including moderation holds, do not supply a stated age.
+  action relaySend(k: str, m: Mid, decision: str, selfAge: bool): bool = {
     val o = s.opps.get(k)
     all {
       o.kind == "date", o.stage == "scheduled" or o.stage == "done", o.going.contains(m), s.live.get(m),
-      s' = { ...(if (decision == "blockSevere") caseEv(s, m, "relay_block") else s),
-             relayLog: s.relayLog.union(Set((m, decision))),
-             ageSignals: if (ageSig) s.ageSignals.union(Set(m)) else s.ageSignals,
-             lastAction: "relaySend" },
+      if (selfAge) s' = { ...s,
+        minorF: s.minorF.set(m, true),
+        statedRelayMinors: s.statedRelayMinors.union(Set(m.p)),
+        opps: dropOpps(s.opps, m),
+        lastAction: "relayAgeObserved" }
+      else s' = { ...(if (decision == "blockSevere") caseEv(s, m, "relay_block") else s),
+        relayLog: s.relayLog.union(Set((m, decision))),
+        lastAction: "relaySend" },
     }
   }
 
@@ -1169,11 +1170,10 @@ module safety_trust {
   // no live profile-share grant and no pending text flow; the ban transaction removes both and a share reads the ban.
   val banRevokesShares = s.banned.forall(p => not(s.shareGrants.contains(p)) and not(s.pendingTexts.contains(p)))
 
-  // AGENTS.md founder decision 1 "Minors (13-17) are never matched"; "Age is a person-level fact (the lowest age
-  // ever stated or recorded wins)"; engine relay.ts:128 "the platform re-checks the person's lowest age". A
-  // member whose own relayed text says they are a minor is out of matching until staff clear it (W3-232,
-  // W3-237: nothing reads RelayRecord.ageSignal).
-  val relayAgeSignalReachesAgePolicy = s.ageSignals.forall(m => s.live.get(m) implies not(matchable(s, m)))
+  // spec/memberAge.md: the member's own direct age from the bound relay text enters the same
+  // durable age floor as a direct chat statement. It keeps that person ineligible on every app.
+  val relayAgeSignalReachesAgePolicy = s.statedRelayMinors.forall(p =>
+    liveMidsOf(s, p).forall(m => not(matchable(s, m))))
 
   // "report X" and the check-in are both reports; trust.ts:8-10 each credible reporter who met them counts
   // once per target. SD-229 (fixed in db4ea4c).
@@ -1775,12 +1775,14 @@ module safety_trust {
       .then(checkIn("o1", ANA_S, "fine", "none"))
       .expect(not(slotFromMeeting) and s.inters.exists(i => i.slot == -1))
 
-  // W3-232, W3-237: ben's own relayed text says he is 16; nothing reads the ageSignal and ben stays matchable.
-  run w3_232RelayAgeSignalTest =
+  run relaySelfAgeCommitsBeforeDispatchTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
-      .then(relaySend("o1", BEN_S, "hold", true))
-      .expect(not(relayAgeSignalReachesAgePolicy) and matchable(s, BEN_S))
+      .then(relaySend("o1", BEN_S, "hold", false))
+      .expect(matchable(s, BEN_S) and matchable(s, BEN_P))
+      .then(relaySend("o1", BEN_S, "pass", true))
+      .expect(relayAgeSignalReachesAgePolicy and s.opps.get("o1").stage == "closed"
+        and not(matchable(s, BEN_S)) and not(matchable(s, BEN_P)) and not(s.relayLog.contains((BEN_S, "pass"))))
 
   // W3-232: a block closes a probing item on its app at once and on the other app at the tick; it cannot book.
   run w3_232ProbingBlockTest =
