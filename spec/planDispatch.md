@@ -81,9 +81,15 @@ pure def checkAllowance(invite: PlanDispatch, admitted: bool): PlanDispatch =
 
 ### A usable message must be sent before the daily record changes
 
-Render the invitation using the current roster, including promoted replacements. After booking, use the booked members and the pending recipient. If no usable anonymous message can be rendered for the member, the seat becomes unavailable. A rendered invitation goes through the normal send checks against that roster. Its outbound record keeps the approved opportunity ID so the queue can recheck its category and current state. Only a send confirmed by that path uses the daily slot and updates the selected allowance's counters.
+Render the invitation using the current roster, including promoted replacements. After booking, use the booked members and the pending recipient. If no usable anonymous message can be rendered for the member, the seat becomes unavailable. A rendered invitation goes through the normal send checks against that roster. Its outbound record keeps the approved opportunity ID so the queue can recheck its category and current state. Only a send confirmed by that path uses the daily slot and updates the selected allowance's counters. A word can match a member's name and still occur in a public venue, activity, or fixed frame. A name in an optional participant hint or a menu label keeps that frame from sending. Every frame still passes the leak check.
 
 ```quint
+pure def anonymousPlanFrameAllowed(hasIdentifyingText: bool, passesLeakCheck: bool): bool =
+  not(hasIdentifyingText) and passesLeakCheck
+
+pure def lawIdentifyingPlanFrameCannotSend(passesLeakCheck: bool): bool =
+  not(anonymousPlanFrameAllowed(true, passesLeakCheck))
+
 pure def canRenderInvite(invite: PlanDispatch): bool = invite.phase == RenderingInvite
 pure def renderInvite(invite: PlanDispatch, usable: bool): PlanDispatch =
   if (usable) { ...invite, phase: SendingInvite } else { phase: Unavailable, reason: "plan_copy" }

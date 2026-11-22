@@ -20,6 +20,10 @@ The [original booking notice rule](../meetingReschedule.md#a-named-booking-notic
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+The copy check uses the plan dispatch rule for public wording. A venue word
+that coincides with a participant's name is allowed in the public frame.
+An identifying hint or menu label still makes its frame unusable.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=40 max-samples=50000 verify-steps=2
