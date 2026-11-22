@@ -934,8 +934,11 @@ export class NetworkRuntime {
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
-    if (this.app.id === "slop" && state) {
-      const originalNotices = pendingSlopIntroductions(state.opps, state.interactions).flatMap(opp =>
+    if ((this.app.id === "slop" || this.app.id === "peon") && state) {
+      const introductions = this.app.id === "slop" ? pendingSlopIntroductions(state.opps, state.interactions)
+        : state.opps.filter(opp => opp.seat && opp.seatAcceptedAt === undefined && opp.meetingAt !== undefined
+          && (opp.stage === "scheduled" || (opp.stage === "done" && !opp.finalized)));
+      const originalNotices = introductions.flatMap(opp =>
         opp.participants.map(memberId => ({ oppId: opp.id, memberId, revision: 0, lane: null })));
       if (originalNotices.length) await this.scoped(async tx => {
         const receipts = await currentBookingReceipts(tx, this.app.id, originalNotices);
