@@ -8,7 +8,7 @@
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
 import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, parseReply, type Category } from "@thenetwork/core";
-import { reportsAbsence } from "./reports.ts";
+import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
@@ -40,6 +40,8 @@ export interface Classified {
   desireId?: string; category?: Category; tags: string[];
   /** The member asks the Network to find people now, rather than stating a profile preference. */
   directPeopleAsk?: boolean;
+  /** The member describes a past absence, without a separate cancellation. */
+  pastAbsence?: true;
   /** The whole message is the speaker's own affirmative cofounder goal. */
   cofounderAffirmed?: boolean;
   /** Wants the member said they do NOT want ("I don't want to meet other founders"). */
@@ -78,7 +80,7 @@ const RX = {
   sexual: /\b(send|sending|share|text|dm) (me )?(some |your |a )?(nudes?|nude (pics?|photos?|selfies?)|naked (pics?|photos?|selfies?)|dick pics?|pics of your (body|tits|boobs|ass))\b|\b(wanna|want to|let me) see (you )?naked\b/i,
   invite: /\b[Mm]y (?:friend|buddy|pal|coworker|roommate|cousin) ([A-Z][a-z]+)\b/,
   inviteIntent: /\b(invite|bring|add|sign \w+ up|sign up|refer|include|loop in)\b|\bwould (love|like|enjoy|be into) (this|it|that|joining)\b|\b(wants?|wanted) (to join|in)\b|\bhas been (wanting|looking)\b|\bshould (join|be here|get an invite)\b|\blooking for something like this\b/i,
-  cancel: /\b(can'?t make it|have to bail|can'?t come|need to cancel|something came up)\b/i,
+  cancel: /\b(can'?t make it|have to bail|can'?t come|need to cancel)\b/i,
   block: /^\s*(?:please\s+)?block\s+(?!(?:back|on|out|off|of|time|my|the|this|that|it|in|for|a)\b)(.+)$/i,
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
@@ -159,9 +161,12 @@ export function classify(body: string): Classified {
   const blk = RX.block.exec(t), rep = RX.report.exec(t);
   if (blk) return { ...out, kind: "block", target: blk[1]!.trim() };
   if (rep) return { ...out, kind: "report", target: rep[1]!.replace(/[,;:.!?].*$/, "").trim() };
-  if (RX.cancel.test(t)) return { ...out, kind: "cancel" };
+  const absence = attendanceAbsences(t);
+  const mentionsAbsence = absence.self || absence.other;
+  if (RX.cancel.test(t) || (!mentionsAbsence && /\bsomething came up\b/i.test(t))) return { ...out, kind: "cancel" };
   const inv = RX.invite.exec(t);
   if (inv && RX.inviteIntent.test(t)) return { ...out, kind: "invite_friend", friendName: inv[1] };
+  if (mentionsAbsence) return { ...out, kind: "feedback_like", pastAbsence: true };
   if (RX.feedback.test(t)) return { ...out, kind: "feedback_like" };
 
   // What do they want? Wants the member negates are left out ("I don't want to meet founders").
@@ -635,8 +640,7 @@ export function explicitRepeatRequest(body: string): boolean {
  */
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
-  const selfNoShow = /couldn'?t make it|didn'?t make it|had to bail/.test(t);
-  const otherNoShow = reportsAbsence(t);
+  const { self: selfNoShow, other: otherNoShow } = attendanceAbsences(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);

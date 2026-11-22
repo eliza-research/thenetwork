@@ -14,6 +14,10 @@ export interface SafetyReport {
 }
 export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor"]);
 const ABSENCE = /\b(no[- ]?show(ed)?|(?:never|didn'?t|did not) (?:show(?:ed)?(?: up)?|c[ao]me|turn(?:ed)? up|arriv(?:e|ed))(?!\s+(?:me|us|you|him|her|them|up|off|around|any|much)\b)|stood (?:me|us) up)\b/i;
+const MISSED_MEETING = /\b(?:(?:couldn'?t|could not|didn'?t|did not)\s+make\s+it\b(?!\s+(?:happen|work|awkward|worse|better|easy|hard)\b)|had\s+to\s+bail\b(?!\s+(?:me|us|you|him|her|them|out)\b))/i;
+const ABSENCE_PHRASE = new RegExp(`${ABSENCE.source}|${MISSED_MEETING.source}`, "gi");
+const FIRST_PERSON_ABSENCE = /\b(?:i|we)(?:\s+(?:[a-z]+ly|just|still|even|also|both))*(?:\s+(?:was|were)(?:\s+(?:a|the))?)?\s+$/i;
+const IMPLIED_FIRST_PERSON = /^\s*(?:sorry|sadly|unfortunately)?\s*$/i;
 
 const KINDS: [ReportKind, RegExp][] = [
   ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
@@ -47,15 +51,28 @@ export function emergencyCheckInReportKind(text: string): ReportKind | undefined
   }
 }
 
+const reportClauseBefore = (text: string, at: number) =>
+  text.slice(0, at).split(/[,.!?:;]|\b(?:but|however|although)\b/i).at(-1) ?? "";
+
 function reportsHarm(text: string, marker: RegExp): boolean {
   for (const m of text.matchAll(new RegExp(marker.source, "gi"))) {
-    const clause = text.slice(0, m.index).split(/[,.!?:;]|\b(?:but|however|although)\b/i).at(-1) ?? "";
-    if (!ACTIVE_DENIAL.test(clause)) return true;
+    if (!ACTIVE_DENIAL.test(reportClauseBefore(text, m.index))) return true;
   }
   return false;
 }
 
-export const reportsAbsence = (text: string): boolean => reportsHarm(text, ABSENCE);
+/** Read the speaker's past absence separately from an allegation about a counterpart. */
+export function attendanceAbsences(text: string): { self: boolean; other: boolean } {
+  const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
+  let self = false, other = false;
+  for (const match of t.matchAll(ABSENCE_PHRASE)) {
+    const prefix = reportClauseBefore(t, match.index);
+    if (ACTIVE_DENIAL.test(prefix)) continue;
+    if (FIRST_PERSON_ABSENCE.test(prefix) || (IMPLIED_FIRST_PERSON.test(prefix) && MISSED_MEETING.test(match[0]))) self = true;
+    else other = true;
+  }
+  return { self, other };
+}
 
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
@@ -63,7 +80,7 @@ export function reportKindOf(text: string): ReportKind {
   for (const [k, re] of KINDS) {
     if (k === "minor" ? re.test(t) : reportsHarm(t, re) || (k === "lying" && CORRECTED_MARRIAGE.test(t))) return k;
   }
-  if (reportsAbsence(t) || reportsHarm(t, /\bghosted me\b/i)) return "no_show";
+  if (attendanceAbsences(t).other || reportsHarm(t, /\bghosted me\b/i)) return "no_show";
   return "other";
 }
 

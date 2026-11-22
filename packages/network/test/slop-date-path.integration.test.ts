@@ -16,10 +16,12 @@ import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { APPS } from "../../platform/src/apps.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { copy } from "../src/copy.ts";
+import { meetingFeedbackKey } from "../src/network.ts";
 import { Mini, START } from "./mini.ts";
 
 const T = 300_000;
@@ -394,6 +396,88 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect(byText).toMatchObject({ kind: "unsafe", source: "message", status: "open", reporterId: sam });
     expect(net.eligible(rae as never)).toBe(false);
     await judgeCost("after-complete-date-path");
+  }, T);
+
+  test.each(["while answering feedback", "while a later booking awaits a reply"] as const)
+    ("a signed own absence is feedback about the finished date %s", async scenario => {
+    // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+    // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+    await svc?.close();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const secret = "synthetic-slop-absence-turn-signing-secret";
+    const service = svc = new NetworkService({
+      url: URL_, clock, log: () => {}, photoStorage: null, notify: false,
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "slop:nyc", matchingEnabled: false }], adapter: () => new DryRunAdapter(() => {}),
+    });
+    await service.start();
+    const app = APPS.slop;
+    const people = [];
+    for (const [phone, name] of [[RAE, "Rae"], [SAM, "Sam"]] as const) {
+      const result = await service.accounts.join(app, { e164: phone, personId: null }, {
+        firstName: name, age: 30, consent: { sms: true, wording: app.consent.text },
+      });
+      if (!result.ok) throw new Error("Fixture member could not join");
+      people.push({ id: result.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["climbing"], skills: ["belaying"] });
+    }
+    const ids = people.map(person => person.id);
+    const [rae, sam] = ids as [string, string];
+    const world = new Mini(people, { plans: false, growth: false });
+    await world.onboard(...ids);
+    const id = world.propose(ids);
+    await world.answerProbes(ids);
+    const seeded = world.net.exportState();
+    const past = seeded.opps.find(opp => opp.id === id)!;
+    expect(past.stage).toBe("scheduled");
+    clock.set(past.meetingAt! + 4 * HOUR);
+    const future = { ...past, id: "next-slop-booking", meetingAt: clock.now() + DAY };
+    past.stage = "done";
+    past.feedbackSent = true;
+    for (const member of seeded.members) member.awaiting = { kind: "feedback", oppId: id, at: clock.now() };
+    const rt = service.runtimeFor("slop")!;
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: seeded.members, opps: [past, future] }));
+    const state = async () => (await rt.pg.load())!;
+    const own = "I did not show up.";
+    await signedText(service, clock, secret, RAE, "absence-unreceived", own);
+    expect((await state()).opps.find(opp => opp.id === id)?.post).toBeUndefined();
+    expect((await state()).reports).toEqual([]);
+
+    const queue = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records prompt receipts"); } } });
+    const prompt = "How did your date go?";
+    await sql.begin(async tx => {
+      for (const [index, memberId] of ids.entries()) {
+        const key = meetingFeedbackKey(id, memberId);
+        await tx`insert into network.messages (app_id,id,member_id,direction,channel,body,type,status,opportunity_id,proactive,system,ts)
+          values ('slop',${key},${memberId},'outbound','imessage',${prompt},'feedback_request','collected',${id},false,false,${new Date(clock.now())})`;
+        await queue.recordCollected(tx, [{ id: key, memberId, to: [RAE, SAM][index]!, kind: "transactional", text: prompt }]);
+        await queue.collectedReceipt(tx, [key], "accepted", clock.now());
+      }
+    });
+    const laterBookingAwaits = scenario === "while a later booking awaits a reply";
+    if (laterBookingAwaits) await rt.unitOfWork(net => {
+      const saved = net.exportState();
+      saved.members.find(member => member.id === rae)!.awaiting = { kind: "booked", oppId: future.id, at: clock.now() };
+      net.importState(saved);
+    });
+    clock.advance(MINUTE);
+    await signedText(service, clock, secret, RAE, "absence-exact-receipt", laterBookingAwaits ? "I couldn't make it. Something came up." : own);
+    const afterSelf = await state();
+    expect({
+      upcoming: afterSelf.opps.find(opp => opp.id === future.id)?.stage,
+      post: afterSelf.opps.find(opp => opp.id === id)?.post?.[rae],
+      reports: afterSelf.reports,
+      blocks: afterSelf.blocks,
+    }).toMatchObject({ upcoming: "scheduled", post: { came: false, otherNoShow: false }, reports: [], blocks: [] });
+    await signedText(service, clock, secret, RAE, "absence-next-cancellation", "I can't make it anymore.");
+    expect((await state()).opps.find(opp => opp.id === future.id)?.stage).toBe("closed");
+
+    await signedText(service, clock, secret, SAM, "absence-other-participant", "I came, but Rae couldn't make it.");
+    const afterOther = await state();
+    expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: true });
+    expect(afterOther.reports).toMatchObject([{ reporterId: sam, subjectId: rae, kind: "no_show", opportunityId: id, source: "check_in" }]);
+    await service.close(); svc = undefined;
   }, T);
 
   // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to
