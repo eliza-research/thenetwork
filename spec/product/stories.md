@@ -200,7 +200,7 @@ Models: [opportunity](../models/opportunity.md), [review desk](../models/review_
 
 ### Every relay item has consent and a dispatch check
 
-Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
+Open the thread after the required match consent. Identify the sender and share only approved content. Optional number exchange requires both sides to agree. A refusal of a pending number swap takes back the member's consent. Forward a photo only when a member selects it and per-item policy allows it. Apply moderation and leak checks, hold risk for staff, and close affected access on STOP, leave, block, hold or match closure. Announce delivery only when the sender system confirms it.
 
 Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_item.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 

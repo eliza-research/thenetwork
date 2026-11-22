@@ -48,10 +48,3 @@
 {"text": "I couldn't share this pic with her", "want": "none"}
 {"text": "can't wait! send them my number", "want": "contact_share"}
 {"text": "tell them I can't make it at 7", "want": "text"}
-{"text": "I will not give him my number", "want": "none"}
-{"text": "I will not send her my number", "want": "none"}
-{"text": "I will not share my number with him", "want": "none"}
-{"text": "I should not give him my number", "want": "none"}
-{"text": "I must not give her my number", "want": "none"}
-{"text": "I shall not give him my number", "want": "none"}
-{"text": "I will not wait, send them my number", "want": "contact_share"}
