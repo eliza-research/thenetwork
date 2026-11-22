@@ -1242,7 +1242,7 @@ test("explicit saved-profile reads select the app without consuming onboarding o
 
 // spec/memberAge.md, "Commit a stated age before projecting it across apps".
 test("a signed dotted age statement lowers the durable age across apps", async () => {
-  const e164 = "+12125550194";
+  const e164 = "+16465550194";
   for (const app of [APPS.friends, APPS.slop]) {
     await service.accounts.invite(app, e164);
     const person = (await service.accounts.personFor(e164))!;
