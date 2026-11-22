@@ -46,3 +46,18 @@ test.each([
     code: 1, stderr: expect.stringContaining("non-negative safe integer"),
   });
 }, 100_000);
+
+
+test.each([
+  { args: ["--arms", "pack", "--realism", "v3"], reason: "invalid Peon realism" },
+  { args: ["--arms", "keyword,pack", "--gate-arm", "pak"], reason: "invalid Peon gate arm" },
+  { args: ["--arms", "pack", "--gate-arm", "pack"], reason: "invalid Peon gate arm" },
+])("Peon rejects an invalid selector before emitting a result", async ({ args, reason }) => {
+  await expect(cli("packages/sim/src/apps/peon/cli.ts", ["--seeds", "1", "--weeks", "1", "--per-city", "2", "--jobs", "2", ...args]))
+    .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(reason), stdout: "" });
+}, 100_000);
+
+test.each([["--preset", "missing"], ["--preset=constructor"], ["--preset="]])("Slop refuses an invalid preset before emitting a result", async (...args) => {
+  await expect(cli("packages/sim/src/apps/slop/packEval.ts", ["--seeds", "1", "--weeks", "1", "--per-city", "2", "--arms", "slop", ...args]))
+    .rejects.toMatchObject({ code: 2, stderr: expect.stringContaining("unknown Slop preset:"), stdout: "" });
+}, 100_000);

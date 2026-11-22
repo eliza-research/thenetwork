@@ -12,12 +12,28 @@ async function main() {
   const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
   const perCity = Number(arg("per-city", "400")?.trim() || NaN), jobsPerCity = Number(arg("jobs", "80")?.trim() || NaN), weeks = Number(arg("weeks", "8"));
   const arms = arg("arms", "keyword,keyword3,greedy,oracle,pack")!.split(",");
-  const realism = arg("realism", "v2") === "v1" ? REALISM_V1 : REALISM_V2;
+  const unknown = arms.filter(name => !Object.hasOwn(ARMS, name));
+  if (unknown.length) throw new Error(`unknown arm ${unknown.map(name => name || "<empty>").join(", ")}; known: ${Object.keys(ARMS).join(", ")}`);
+
+  const argv = process.argv.slice(2);
+  const selector = (name: string) => {
+    const at = argv.findIndex(value => value === `--${name}` || value.startsWith(`--${name}=`));
+    if (at < 0) return undefined;
+    const token = argv[at]!;
+    return token.includes("=") ? token.slice(name.length + 3) : argv[at + 1] ?? "";
+  };
+  const realismName = selector("realism") ?? "v2";
+  if (realismName !== "v1" && realismName !== "v2") throw new Error(`invalid Peon realism "${realismName}"; expected v1 or v2`);
+  const realism = realismName === "v1" ? REALISM_V1 : REALISM_V2;
+  const requestedGate = selector("gate-arm");
+  const gateArm = requestedGate ?? "pack";
+  if (requestedGate !== undefined && (!arms.includes(gateArm) || !arms.includes("keyword"))) {
+    throw new Error(`invalid Peon gate arm "${gateArm}"; select both the gate arm and keyword for comparison`);
+  }
 
   const all: Record<string, PeonMetrics[]> = {};
   for (const a of arms) {
-    const arm = ARMS[a];
-    if (!arm) throw new Error(`unknown arm ${a}; known: ${Object.keys(ARMS).join(", ")}`);
+    const arm = ARMS[a]!;
     all[a] = [];
     for (const seed of seeds) {
       const t = performance.now();
@@ -75,7 +91,6 @@ async function main() {
   for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${arms.map(a => fmt(all[a]!.map(f), pct, d)).join(" | ")} |`);
 
   // ---- gates (the pack against keyword on the same seeds) -----------------------------------------
-  const gateArm = arg("gate-arm", "pack")!;
   if (all[gateArm] && all.keyword) {
     const show = (title: string, gs: GateResult[]) => {
       console.log(`\n| ${title} | ${ARMS[gateArm]!.name} | pass |\n|---|---:|---|`);

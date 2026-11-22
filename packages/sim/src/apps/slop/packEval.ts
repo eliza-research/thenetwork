@@ -356,8 +356,18 @@ if (import.meta.main) {
   const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
   const weeks = Number(arg("weeks", "4")), perCity = Number(arg("per-city", "300"));
   const arms = arg("arms", "random,greedy,oracle,slop")!.split(",").filter(Boolean);
+  const presets = argv.flatMap((token, i) => token === "--preset" ? [argv[i + 1] ?? ""]
+    : token.startsWith("--preset=") ? [token.slice("--preset=".length)] : []);
+  const unknown = presets.filter(name => !Object.hasOwn(PRESETS, name));
+  if (unknown.length) {
+    console.error(`unknown Slop preset: ${unknown.map(name => name || "<empty>").join(", ")}; known: ${Object.keys(PRESETS).join(", ")}`);
+    process.exit(2);
+  }
   const variants = all("variant"), names = all("variant-name");
-  for (const p of all("preset")) for (const [n, v] of PRESETS[p] ?? []) { variants.push(JSON.stringify(v)); names.push(n); }
+  for (const preset of presets) for (const [name, variant] of PRESETS[preset]!) {
+    variants.push(JSON.stringify(variant));
+    names.push(name);
+  }
   // --verification / --world '<WorldSpec>': the world of the slop arms (and variants); the baselines
   // stay the world-doc baselines unless a variant runs one with "$baseline" (so "cut vs random" is vs today's floor).
   // --population '<WorldSpec>' (e.g. {"catfish":0.005}) applies to EVERY arm, baselines included.
