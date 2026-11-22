@@ -46,6 +46,11 @@ test("a past date reference neither books nor replaces the active time choice", 
   expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
   expect(world.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
   expect(await world.runUntil(() => world.probed("rae"))).toBe(true);
+  for (const unoffered of ["9pm works", "Friday anytime works", "Friday 7pm works"]) {
+    await world.say("rae", unoffered);
+    expect(world.log("probe_answer").filter(item => item.detail.memberId === "rae")).toEqual([]);
+    expect(world.meetings).toEqual([]);
+  }
   await world.say("rae", "Saturday or Sunday works.");
   expect(await world.runUntil(() => world.probed("sam"))).toBe(true);
   await world.say("sam", pastReply);
