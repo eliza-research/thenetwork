@@ -25,13 +25,13 @@ test.each([networkPack, friendsPack])("$id scores a shared area during the meeti
   const candidate: Candidate = {
     key: "window-locality", kind: "intro", generator: "shared_intent", category: "social", participants: [a, b],
     roles: { [a]: "peer", [b]: "peer" }, format: "one_to_one", objective: "coffee", city: "nyc",
-    fixedWindow: true, window: { start, end }, channels: new Set(["semantic"]), evidence: {},
+    fixedWindow: { start, end }, window: { start, end }, channels: new Set(["semantic"]), evidence: {},
     fit: 1, benefit: { [a]: 1, [b]: 1 }, warm: 0, alternates: [], exploration: false,
     safetyClass: "low", timeSensitive: false, riskText: "",
   };
   const score = (extra: Presence[], withWindow = true) =>
     computeComponents(new World({ ...input, presence: [...homes, ...extra] }, resolveConfig(), localEmbed, pack),
-      withWindow ? candidate : { ...candidate, window: undefined });
+      withWindow ? candidate : { ...candidate, fixedWindow: undefined, window: undefined });
   const late = [visit(b, "nyc", west, end + DAY, end + 2 * DAY)];
   const baseline = score([]);
   expect(baseline.activationCost).toBe(0.3);
