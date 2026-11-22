@@ -17,6 +17,7 @@ import {
   adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
   plantedPairTruth, randomGroups, statedIdentityGroup, statedOpenness, type PlantedTruth,
 } from "../../packages/sim/src/planted.ts";
+import { bestPacking, packingValue } from "./circleOracle.ts";
 import { Block } from "./gate.ts";
 import {
   checkSearchCost, fault, hardWorlds, LADDER_FULL, LADDER_QUICK, ladderGates, lanesOf, noFaults, packOf, PRIMARY_LANE, printLadder,
@@ -28,9 +29,13 @@ interface Plan {
   readonly exactN: readonly number[];
   readonly engineN: number;
   readonly ladder: readonly number[];
+  readonly oracleN: number;
 }
-export const MATCHING_PINNED: Plan = { seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], exactN: [100, 200, 400], engineN: 200, ladder: LADDER_FULL };
-const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, ladder: LADDER_QUICK };
+const ORACLE_N = 30;
+const ORACLE_NODES = 60_000_000;
+const ORACLE_SHARE = 0.8;
+export const MATCHING_PINNED: Plan = { seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], exactN: [100, 200, 400], engineN: 200, ladder: LADDER_FULL, oracleN: ORACLE_N };
+const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, ladder: LADDER_QUICK, oracleN: ORACLE_N };
 
 export const MATCHING_PACKS = ["ntwrk", "slop", "peon", "friends"] as const;
 /** The slop block's low-tier exposure rule: no quintile under 0.85x the overall rate (packEval.ts gates3). */
@@ -57,6 +62,9 @@ interface LaneStats {
   readonly precision: number[]; readonly precisionRandom: number[];
   readonly valueAuc: number[]; readonly keptRecall: number[];
   readonly runPairs: number[];
+  readonly circleSizes: number[]; readonly circleLow: number[]; readonly circleMean: number[];
+  readonly placed: { members: number; inCircle: number };
+  readonly oracle: { greedy: number[]; best: number[]; exact: number; runs: number };
   readonly low: { members: number; proposed: number }; readonly all: { members: number; proposed: number };
 }
 
@@ -68,6 +76,8 @@ const laneStats = (lane: MatchLane): LaneStats => ({
   logged: { members: 0, exact: 0 },
   rho: [], rhoRandom: [], worse: [], worseRandom: [], ari: [], ariRandom: [], purity: [], purityRandom: [], precision: [], precisionRandom: [],
   valueAuc: [], keptRecall: [], runPairs: [],
+  circleSizes: [], circleLow: [], circleMean: [], placed: { members: 0, inCircle: 0 },
+  oracle: { greedy: [], best: [], exact: 0, runs: 0 },
   low: { members: 0, proposed: 0 }, all: { members: 0, proposed: 0 },
 });
 
@@ -271,7 +281,13 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
       const closed = opennessFault(lane, members.map(q => q.memberId), st);
       if (closed) fault(s.openness, `${at}: circle ${circle.members.join(",")}: ${closed}`);
       groups.push(members.map(q => q.memberId));
+      s.circleSizes.push(size);
+      s.circleLow.push(circle.evidence.lowestPairValue);
+      s.circleMean.push(circle.evidence.pairValueTotal / Math.max(1, circle.evidence.pairCount));
     }
+    const laneMembers = new Set(own.map(q => q.memberId));
+    s.placed.members += laneMembers.size;
+    s.placed.inCircle += groups.flat().filter(id => laneMembers.has(id)).length;
     if (groups.length) {
       const labels = plantedLabels(truth);
       const random = randomGroups(groups.map(g => g.length), [...new Set(own.map(q => q.memberId))], `matching-${seed}-${lane}`);
@@ -287,6 +303,17 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   s.low.members += low.length; s.low.proposed += low.filter(id => proposed.has(id)).length;
   s.all.members += members.length; s.all.proposed += members.filter(id => proposed.has(id)).length;
   for (const id of members) { const row = groupRow(s, st.group(id)); row.members++; if (proposed.has(id)) row.proposed++; }
+}
+
+function oracleRun(pack: AppPack, seed: number, n: number, s: LaneStats): void {
+  const { input } = plantedEngineInput({ seed: `matching-oracle-${seed}`, n, lanes: [s.lane], app: pack.id });
+  const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
+  const greedy = packingValue(w.match.circles(s.lane));
+  const own = w.match.profiles.filter(p => p.lane === s.lane && p.capacity > 0);
+  const best = bestPacking(own, laneLimits(s.lane), (a, b) => w.match.value(a, b), greedy, ORACLE_NODES);
+  s.oracle.runs++;
+  if (best.exact) s.oracle.exact++;
+  s.oracle.greedy.push(greedy); s.oracle.best.push(best.value);
 }
 
 function rankAuc(scored: readonly { readonly score: number; readonly good: boolean }[]): number {
@@ -323,6 +350,10 @@ function valueQuality(w: World, truth: PlantedTruth, s: LaneStats): void {
 const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
 const fixed = (x: number, digits = 3): string => (Number.isFinite(x) ? x.toFixed(digits) : "-");
 const versus = (a: readonly number[], b: readonly number[]): string => `${fixed(mean(a))} / ${fixed(mean(b))}`;
+const oracleShare = (s: LaneStats): number => {
+  const best = s.oracle.best.reduce((t, x) => t + x, 0);
+  return best > 0 ? s.oracle.greedy.reduce((t, x) => t + x, 0) / best : NaN;
+};
 const lowRatio = (s: LaneStats): number => (s.low.members && s.all.proposed ? (s.low.proposed / s.low.members) / (s.all.proposed / s.all.members) : NaN);
 
 type Row = readonly [string, (s: LaneStats) => string];
@@ -348,6 +379,10 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
     ["ARI circles / random", s => versus(s.ari, s.ariRandom)],
     ["purity circles / random", s => versus(s.purity, s.purityRandom)],
     ["pair precision circles / random", s => versus(s.precision, s.precisionRandom)],
+    ["circle size mean (3/4/5/6)", s => `${fixed(mean(s.circleSizes), 2)} (${[3, 4, 5, 6].map(k => s.circleSizes.filter(x => x === k).length).join("/")})`],
+    ["circle lowest / mean pair value", s => `${fixed(mean(s.circleLow), 1)} / ${fixed(mean(s.circleMean), 1)}`],
+    ["members placed in a circle", s => pct(s.placed.inCircle, s.placed.members)],
+    ["greedy / oracle packing (exact runs)", s => `${fixed(oracleShare(s), 3)} (${s.oracle.exact}/${s.oracle.runs})`],
     ["low quintile / overall rate", s => fixed(lowRatio(s), 2)],
     ["pair value AUC (hidden good pairs)", s => fixed(mean(s.valueAuc), 3)],
     ["good pairs kept (recall)", s => fixed(mean(s.keptRecall), 3)],
@@ -442,6 +477,12 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
     ranked.length > 0 && ranked.every(s => mean(s.valueAuc) > 0.5),
     perLane(s => `AUC ${fixed(mean(s.valueAuc), 3)}, recall in kept lists ${fixed(mean(s.keptRecall), 3)}`));
 
+  if (circled.length) {
+    b.track(`${id}: greedy circles reach at least ${ORACLE_SHARE} of the best packing's member-weighted least pair value (N ${plan.oracleN}, ${runs})`,
+      circled.every(s => oracleShare(s) >= ORACLE_SHARE),
+      circled.map(s => `${s.lane} ${fixed(oracleShare(s), 3)}${s.oracle.exact < s.oracle.runs ? " (an upper bound: a run not proved optimal gives a lower bound on the best packing)" : ""}, ${s.oracle.exact}/${s.oracle.runs} proved optimal`).join("; "));
+  }
+
   b.track(`${id}: lowest standing quintile proposal rate >= ${LOW_QUINTILE_RATIO}x overall (${runs})`,
     lanes.every(s => lowRatio(s) >= LOW_QUINTILE_RATIO),
     perLane(s => `ratio ${fixed(lowRatio(s), 2)}, no kept candidate ${pct(s.noKept, s.laneProfiles)}`));
@@ -473,6 +514,9 @@ export async function matchingBlock(b: Block, o: { quick: boolean; matchingPack?
         exactness(w, s, `N ${n} seed ${seed}`, st);
         if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s, st);
       }
+    }
+    for (const seed of plan.seeds) for (const s of lanes) {
+      if (laneLimits(s.lane).circleMaximum >= 3) oracleRun(pack, seed, plan.oracleN, s);
     }
     const ladder = runLadder(app, "planted", plan.ladder);
     printTable(pack, lanes, plan);

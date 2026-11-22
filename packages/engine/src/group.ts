@@ -10,7 +10,7 @@ import {
 import { laneLimits, laneShape, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { isMinor, memberReason } from "./filters.ts";
-import { buildCircles, type Circle } from "./match/circles.ts";
+import { buildCircles, repeatTables, type Circle } from "./match/circles.ts";
 import { compareText, type EntityId, type MatchProfile } from "./match/profile.ts";
 import { mutualEdges, type MatchEdge } from "./match/search.ts";
 import type { GroupStats, Role } from "./types.ts";
@@ -52,6 +52,7 @@ export interface PoolGraph {
   readonly pairs: readonly { readonly a: MemberId; readonly b: MemberId; readonly value: number }[];
   /** The value of an edge in this pool. */
   value(a: MemberId, b: MemberId): number | undefined;
+  readonly incumbents: readonly (readonly EntityId[])[];
 }
 
 type PoolPairScore = (a: MatchProfile, b: MatchProfile, key: string) => number | undefined;
@@ -91,7 +92,9 @@ export function poolGraph(w: World, lane: MatchLane, ids: readonly MemberId[], s
     if (row) row.set(y, value); else links.set(x, new Map([[y, value]]));
   };
   for (const p of pairs) { link(p.a, p.b, p.value); link(p.b, p.a, p.value); }
-  return { lane, profiles, edges, pairs, value: (a, b) => links.get(a)?.get(b) };
+  return {
+    lane, profiles, edges, pairs, value: (a, b) => links.get(a)?.get(b), incumbents: repeatTables(w, id => profiles.get(id)),
+  };
 }
 
 /** A circle of pool members with the evidence and limits that admit it (spec/groupFormation.md). */
@@ -119,9 +122,14 @@ export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minim
     return { members: [...forced, ...members.filter(id => !forced.includes(id))], evidence: circle.evidence, limits };
   };
   const containsForced = (circle: Circle) => forcedProfiles.every(profile => circle.members.includes(profile.id));
-  const circles = buildCircles(graph.edges, byEntity, { ...lane, circleMinimum: limits.minimum, circleMaximum: limits.maximum },
-    profile => profile.capacity, rankCircle && (c => containsForced(c) ? rankCircle(asGroup(c)) : undefined));
-  return circles
+  const buildLimits = { ...lane, circleMinimum: limits.minimum, circleMaximum: limits.maximum };
+  const incumbents = graph.incumbents
+    .map(ids => ids.filter(id => byEntity.has(id)))
+    .filter(ids => forcedProfiles.every(profile => ids.includes(profile.id)));
+  return buildCircles(graph.edges, byEntity, buildLimits, profile => profile.capacity, {
+    rankCircle: rankCircle && (c => containsForced(c) ? rankCircle(asGroup(c)) : undefined), incumbents,
+    forced: forcedProfiles.map(profile => profile.id),
+  })
     .filter(containsForced)
     .map(asGroup);
 }
