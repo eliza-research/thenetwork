@@ -1,11 +1,10 @@
 // Game scoring and missions (docs/observatory.md section 4). One scoring function for every source,
 // so the player, engine-v1 and the random baseline are compared on the same hidden ground truth.
 import { DAY, type MemberId } from "@thenetwork/core";
-import { isTerminal } from "./projector.ts";
-import type { Mission, ObsOpportunity, ParticipantStatus, ScoreLine } from "./types.ts";
+import { countsAsAcceptance, isTerminal } from "./projector.ts";
+import type { Mission, ObsOpportunity, ScoreLine } from "./types.ts";
 
 export const POINTS = { accept: 10, decline: -2, noShow: -15, unsafe: -150, meetingScale: 100, peek: -25 } as const;
-const SAID_YES: ReadonlySet<ParticipantStatus> = new Set(["accepted", "countered", "confirmed", "attended", "no_show", "cancelled_with_notice"]);
 const HELD = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
 
 export const isHeld = (o: ObsOpportunity) => HELD.has(o.state);
@@ -19,7 +18,7 @@ export interface OppScore { points: number; parts: { label: string; points: numb
 /** Points one opportunity earned so far. */
 export function scoreOpportunity(o: ObsOpportunity): OppScore {
   const parts: OppScore["parts"] = [];
-  const yes = o.participants.filter(id => SAID_YES.has(o.status[id]!)).length;
+  const yes = o.participants.filter(id => countsAsAcceptance(o.status[id])).length;
   const no = o.participants.filter(id => o.status[id] === "declined").length;
   const noShow = o.participants.filter(id => o.status[id] === "no_show").length;
   if (yes) parts.push({ label: `${yes} accepted`, points: yes * POINTS.accept });
@@ -46,7 +45,7 @@ export function scoreboard(opps: Iterable<ObsOpportunity>, extra: Record<string,
       points += scoreOpportunity(o).points;
       for (const id of o.participants) {
         const st = o.status[id]!;
-        if (SAID_YES.has(st)) accepted++;
+        if (countsAsAcceptance(st)) accepted++;
         if (st === "declined") declined++;
         if (st === "attended" || st === "no_show" || st === "cancelled_with_notice") { slots++; if (st === "attended") attended++; }
       }
@@ -73,7 +72,7 @@ interface MissionDef { id: string; title: string; description: string; check(pla
 
 export const MISSIONS: MissionDef[] = [
   { id: "first_spark", title: "First spark", description: "Get one of your intros accepted.",
-    check: p => { const n = p.filter(o => o.participants.some(id => SAID_YES.has(o.status[id]!))).length; return { done: n > 0, progress: `${n}/1` }; } },
+    check: p => { const n = p.filter(o => o.participants.some(id => countsAsAcceptance(o.status[id]))).length; return { done: n > 0, progress: `${n}/1` }; } },
   { id: "good_chemistry", title: "Good chemistry", description: "A meeting you arranged averages at least 70% enjoyment.",
     check: p => { const best = Math.max(0, ...p.filter(isHeld).map(meanEnjoyment)); return { done: best >= 0.7, progress: `best ${(best * 100).toFixed(0)}%` }; } },
   { id: "bridge_builder", title: "Bridge builder", description: "Bring together people from different communities, and they both enjoy it (60%+).",

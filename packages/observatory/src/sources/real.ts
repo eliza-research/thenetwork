@@ -20,6 +20,7 @@ import { runEngineSummarized } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
+import { ACCEPTED_PARTICIPATION_STATUSES, countsAsAcceptance } from "../projector.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
 import { emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
@@ -54,7 +55,6 @@ export interface RealOptions {
 
 /** The booked plan's opt-out window (the Network's OPT_OUT_HOURS, which it does not export; game mode reads it from SimMeta.booked). */
 const BOOKED_OPT_OUT_HOURS = 48;
-const SAID_YES = ["accepted", "countered", "confirmed", "attended", "no_show", "cancelled_with_notice"];
 const HELD = ["COMPLETED", "FEEDBACK_COLLECTED"];
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
 export const HIDDEN_MESSAGE = "[member message hidden]";
@@ -304,7 +304,7 @@ export class RealSource implements DataSource {
             count(*) filter (where direction = 'outbound' and proactive and status = 'delivered')::int as proactive
           from network.messages where app_id = ${app} and not system group by member_id`,
       sql`select p.member_id, count(*)::int as proposals,
-            count(*) filter (where p.status = any(${`{${SAID_YES.join(",")}}`}::text[]))::int as accepted,
+            count(*) filter (where p.status = any(${`{${ACCEPTED_PARTICIPATION_STATUSES.join(",")}}`}::text[]))::int as accepted,
             count(*) filter (where p.status = 'attended')::int as meetings,
             coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[])), 0)::float8 as enjoyment_sum,
             count(*) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[]))::int as enjoyment_n
@@ -421,7 +421,7 @@ export class RealSource implements DataSource {
       if (held) c.meetingsHeld++;
       for (const id of o.participants) {
         const st = o.status[id];
-        if (st && SAID_YES.includes(st)) c.accepts++;
+        if (countsAsAcceptance(st)) c.accepts++;
         if (st === "declined") c.declines++;
         if (st === "attended") { c.attended++; if (held && o.enjoyment[id] !== undefined) { c.enjoymentSum += o.enjoyment[id]!; c.enjoymentN++; } }
         if (st === "no_show") c.noShows++;
