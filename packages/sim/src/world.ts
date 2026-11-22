@@ -371,9 +371,10 @@ export class World {
       joined: this.joined.size, optedOut: this.optedOut.size,
     } });
     const metrics = computeMetrics(this.records);
+    const personas = this.personaList();
     let dir: string | undefined;
-    if (this.opts.writeLog !== false) dir = await this.write(metrics);
-    return { runId: this.runId, dir, records: this.records, metrics, personas: this.opts.personas, wallMs, events: s.processed, memories: this.memories, channel: this.channel };
+    if (this.opts.writeLog !== false) dir = await this.write(metrics, personas);
+    return { runId: this.runId, dir, records: this.records, metrics, personas, wallMs, events: s.processed, memories: this.memories, channel: this.channel };
   }
 
   private finish(end: number) {
@@ -383,11 +384,11 @@ export class World {
     }
   }
 
-  private async write(metrics: Metrics): Promise<string> {
+  private async write(metrics: Metrics, personas: readonly Persona[]): Promise<string> {
     const dir = join(this.opts.runsDir ?? join(REPO_ROOT, "runs"), this.runId);
     mkdirSync(dir, { recursive: true });
     await writePath(join(dir, "events.jsonl"), this.records.map(r => JSON.stringify(r)).join("\n") + "\n");
-    await writePath(join(dir, "personas.json"), JSON.stringify(this.opts.personas, null, 1));
+    await writePath(join(dir, "personas.json"), JSON.stringify(personas, null, 1));
     await writePath(join(dir, "metrics.json"), JSON.stringify(metrics, null, 2));
     return dir;
   }
