@@ -92,7 +92,7 @@ import {
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
 import { reviewPlanPreviewCurrent } from "../../core/src/generated/staffReview.ts";
-import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachEngagementSource, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { inviteJoinNoticeConflictsWithRole, inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachEngagementSource, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import {
   interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
   interruptionFeedbackUsesFollowupSlot,
@@ -1914,19 +1914,19 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
-    if (this.inviteJoinText(inv, notice) === undefined) return;
+    if (this.inviteJoinCopy(inv, notice) === undefined) return;
     inv.pendingInviteJoins = [...(inv.pendingInviteJoins ?? []).filter(x => this.now() - x.at < inviteJoinNoticeLifetimeMs && x.inviteeId !== notice.inviteeId), notice];
     if (!inv.onlyWhenAsked) this.send(inv, "", { type: "info" }, "invite_notice", { about: [notice.inviteeId], hook: { t: "invite_notice", notice } });
   }
 
-  private inviteJoinText(inviter: MemberState, notice: InviteJoinNotice): string | undefined {
+  private inviteJoinCopy(inviter: MemberState, notice: InviteJoinNotice): { first: string; text: string } | undefined {
     const invitee = this.members.get(notice.inviteeId);
     const verifiedExternalName = !invitee ? this.ctx.verifiedJoinedInviteeName?.(inviter.id, notice.inviteeId) : undefined;
     const first = invitee?.first ?? verifiedExternalName;
     if (!first) return;
     const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [notice.inviteeId], reply: false }).ok;
     const attributed = (invitee?.invitedBy === inviter.id || !!verifiedExternalName) && this.invitedIds.has(notice.inviteeId);
-    if (inviteJoinNoticeCurrent(attributed, !invitee?.optedOut, eligible, this.now() - notice.at)) return copy.inviteeJoined(first);
+    if (inviteJoinNoticeCurrent(attributed, !invitee?.optedOut, eligible, this.now() - notice.at)) return { first, text: copy.inviteeJoined(first) };
   }
 
   /**
@@ -6615,9 +6615,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const standaloneNotice = o.hook?.t === "invite_notice" ? o.hook.notice : undefined;
     let sentStandaloneNotice = standaloneNotice;
     if (standaloneNotice) {
-      const status = this.inviteJoinText(m, standaloneNotice);
+      const status = this.inviteJoinCopy(m, standaloneNotice);
       if (status === undefined || m.onlyWhenAsked) return this.refuse(m.id, kind, "invite_notice_not_current", fns);
-      body = `${body}${status}`;
+      body = `${body}${status.text}`;
     }
     const baseBody = body;
     const deliveredInviteJoins: InviteJoinNotice[] = [];
@@ -6627,13 +6627,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!standaloneNotice && !o.memberInviteLink && !meta.privateInviteVouch && m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, false)) {
       const current: InviteJoinNotice[] = [];
       const roles = new Set([...(opportunity?.participants ?? []), ...(opportunity?.alternates ?? [])]);
+      const roleNames = new Set([...roles].map(id => this.members.get(id)?.first.toLowerCase()));
       for (const notice of m.pendingInviteJoins) {
-        const status = this.inviteJoinText(m, notice);
+        const status = this.inviteJoinCopy(m, notice);
         if (status === undefined) continue;
         current.push(notice);
-        if (!inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, roles.has(notice.inviteeId))) continue;
-        if (body.length + status.length + 1 <= INVITE_REPLY_MAX_CHARS && !this.guardCheck(status, m.id).length) {
-          body += ` ${status}`;
+        const conflicts = inviteJoinNoticeConflictsWithRole(roles.has(notice.inviteeId), roleNames.has(status.first.toLowerCase()));
+        if (!inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, conflicts)) continue;
+        if (body.length + status.text.length + 1 <= INVITE_REPLY_MAX_CHARS && !this.guardCheck(status.text, m.id).length) {
+          body += ` ${status.text}`;
           deliveredInviteJoins.push(notice);
         }
       }
@@ -6830,7 +6832,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       };
       case "invite_notice": return {
         valid: () => (m.pendingInviteJoins ?? []).some(x => x.inviteeId === h.notice.inviteeId && x.at === h.notice.at)
-          && this.inviteJoinText(m, h.notice) !== undefined && !m.onlyWhenAsked,
+          && this.inviteJoinCopy(m, h.notice) !== undefined && !m.onlyWhenAsked,
         onSent: () => {
           m.pendingInviteJoins = m.pendingInviteJoins?.filter(x => x.inviteeId !== h.notice.inviteeId || x.at !== h.notice.at);
         },
