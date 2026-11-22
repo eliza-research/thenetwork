@@ -12,6 +12,10 @@ needs separate opt-in and the mutual preferences required by the app.
 Check these settings when searching for a requested match, before
 approving a proposal, and when trying an alternate. Apply the same
 participation check when an initial probe would contact a member.
+A request for public venues still returns personal suggestions without
+an events opt-in. Only offer a plan buddy when the requester allows
+event matches. Skip earlier requests from members who do not allow
+event matches before attaching either request to a proposal.
 An accepted booking's logistics and a consensual relay use their
 existing consent and safety checks.
 

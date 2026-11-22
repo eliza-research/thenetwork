@@ -3005,15 +3005,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     const tags = [...c.tags, ...(known ? [...known.interests] : [])].slice(0, 4);
     // New ideas on a repeat ask: venues suggested in the last week are left out (nothing new: no list).
     const venues = nearbyVenues(place.area ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
-    // The "see if anyone else is up" offer only where it can be kept: never to a minor, a member who
-    // cannot be matched, or while matching is off (judge minor_contact: a minor offered a connection).
-    const offer = !m.minor && this.eligible(m.id) && this.opts.matchingEnabled;
+    // spec/newMatchParticipation.md, "Recheck the member and category before a new contact"
+    const offer = !m.minor && this.eligible(m.id) && this.opts.matchingEnabled && this.allowsMatchCategory(m.id, "events");
     if (venues.length) this.send(m, (offer ? this.copy.plans : this.copy.plansNoOffer)(venues.map(v => v.name)), { type: "concierge", proactive: false }, "reply", { hook: { t: "suggested", venues: venues.map(v => v.id) } });
     if (!offer) return;
     // Plans buddy: someone else who asked for plans in the last 3 days, nearby. Asking for plans is
     // not consent to meet a stranger, so neither is primed: both are asked first (and it is reviewed).
     const other = this.requests.find(r => r.kind === "plans" && r.memberId !== m.id && now - r.at < 3 * DAY && !r.oppId
-      && this.eligible(r.memberId) && this.pairAllowed(m.id, r.memberId) && !this.pairHistory(m.id, r.memberId, 60)
+      && this.eligible(r.memberId) && this.allowsMatchCategory(r.memberId, "events")
+      && this.pairAllowed(m.id, r.memberId) && !this.pairHistory(m.id, r.memberId, 60)
       && this.member(r.memberId).first.toLowerCase() !== m.first.toLowerCase()
       && (this.minutesBetween(m.area, this.member(r.memberId).area) ?? Infinity) <= 35);
     if (other && venues[0]) {

@@ -48,6 +48,26 @@ test("a matching pause blocks a probe while an existing booking can use its logi
 });
 
 
+test("a public venue request skips earlier members who opted out of event matches", async () => {
+  const w = new Mini([
+    { id: "a", name: "Alice Able", age: 30, area: "Williamsburg" },
+    { id: "b", name: "Boris Bell", age: 32, area: "Williamsburg" },
+    { id: "c", name: "Casey Cole", age: 31, area: "Williamsburg" },
+  ], { review: "human", onboardingRequests: false, plans: false });
+  await w.onboard("a", "b", "c");
+  const first = w.members.find(member => member.id === "a")!;
+  first.prefs.categoriesOptIn = first.prefs.categoriesOptIn.filter(category => category !== "events");
+  w.restart();
+  for (const id of ["a", "b", "c"]) await w.say(id, "Anything fun near Williamsburg this weekend?");
+  expect(w.sent.find(message => message.to === "a" && message.body.startsWith("A few ideas nearby"))?.body)
+    .toContain("Happy to suggest more anytime.");
+  const [queued] = w.net.reviewQueue();
+  expect(queued?.proposal.participants).toEqual(["c", "b"]);
+  expect(w.net.requests.find(request => request.memberId === "a")?.oppId).toBeUndefined();
+  expect(w.net.requests.find(request => request.memberId === "b")?.oppId).toBe(queued?.oppId);
+  expect(w.sent.some(message => message.meta.type === "probe")).toBe(false);
+});
+
 // spec/newMatchParticipation.md, "Keep the seat's role when another member takes it"
 test.each([["helper", "available"], ["peer", "receiving"]] as const)("a staff reroll keeps the %s seat's role", async (role, picked) => {
   const w = new Mini([
