@@ -130,6 +130,34 @@ pure def lawKeepingTheBookingVetoesABookedDecline(ordinaryDecline: bool, swapWit
   not(bookedReplyDeclines(ordinaryDecline, swapWithdrawal, directAttendanceDecline, true))
 ```
 
+### A player can confirm the future booking in the prompt
+
+In the staff simulation, a clear yes sets the player's plan to attend the
+booking named in the current prompt. This applies before that booking starts.
+A cancellation request or a request that names a booking cannot confirm by
+the same reply. A mixed or unclear answer supplies no confirmation.
+An attendance commitment leaves the world's cancellation and attendance checks in force.
+
+```quint
+pure def playerBookingConfirmationAllowed(exactPromptBooking: bool, startAt: int, receivedAt: int,
+    cancellationRequest: bool, directYes: bool): bool =
+  exactPromptBooking and startAt > receivedAt and not(cancellationRequest) and directYes
+
+pure def lawPlayerCannotConfirmAStartedBooking(exactPromptBooking: bool, startAt: int, receivedAt: int,
+    cancellationRequest: bool, directYes: bool): bool =
+  startAt <= receivedAt implies
+    not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, directYes))
+
+pure def lawPlayerCanConfirmOnlyThePromptBooking(startAt: int, receivedAt: int, cancellationRequest: bool, directYes: bool): bool =
+  not(playerBookingConfirmationAllowed(false, startAt, receivedAt, cancellationRequest, directYes))
+
+pure def lawCancellationRequestCannotConfirmPlayerAttendance(exactPromptBooking: bool, startAt: int, receivedAt: int, directYes: bool): bool =
+  not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, true, directYes))
+
+pure def lawPlayerAttendanceConfirmationNeedsAClearYes(exactPromptBooking: bool, startAt: int, receivedAt: int, cancellationRequest: bool): bool =
+  not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, false))
+```
+
 ### A new minor signal closes an unbooked opportunity involving that person
 
 Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster. A booked opportunity also closes when the minor received a probe for it and was replaced before the booking: a minor who was asked stays on its roster, so a reminder or feedback request about it describes them. Decision 2026-11-17 (NYC world, seed 3): a member who stated 20 declined a probe, was replaced, and was found to be 16 the next day; the two adults then got 4 messages about the booked plan.

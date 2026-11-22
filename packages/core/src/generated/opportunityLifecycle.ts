@@ -187,6 +187,40 @@ export function lawKeepingTheBookingVetoesABookedDecline(ordinaryDecline: boolea
   return !bookedReplyDeclines(ordinaryDecline, swapWithdrawal, directAttendanceDecline, true);
 }
 
+/** Story: Book and conclude a proposal that comes together / A player can confirm the future booking in the prompt (spec/opportunityLifecycle.md) */
+//@ pure
+export function playerBookingConfirmationAllowed(exactPromptBooking: boolean, startAt: number, receivedAt: number, cancellationRequest: boolean, directYes: boolean): boolean {
+  return exactPromptBooking && startAt > receivedAt && !cancellationRequest && directYes;
+}
+
+/** Story: Book and conclude a proposal that comes together / A player can confirm the future booking in the prompt (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawPlayerCannotConfirmAStartedBooking(exactPromptBooking: boolean, startAt: number, receivedAt: number, cancellationRequest: boolean, directYes: boolean): boolean {
+  //@ ensures \result === true
+  return !(startAt <= receivedAt) || !playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, directYes);
+}
+
+/** Story: Book and conclude a proposal that comes together / A player can confirm the future booking in the prompt (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawPlayerCanConfirmOnlyThePromptBooking(startAt: number, receivedAt: number, cancellationRequest: boolean, directYes: boolean): boolean {
+  //@ ensures \result === true
+  return !playerBookingConfirmationAllowed(false, startAt, receivedAt, cancellationRequest, directYes);
+}
+
+/** Story: Book and conclude a proposal that comes together / A player can confirm the future booking in the prompt (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawCancellationRequestCannotConfirmPlayerAttendance(exactPromptBooking: boolean, startAt: number, receivedAt: number, directYes: boolean): boolean {
+  //@ ensures \result === true
+  return !playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, true, directYes);
+}
+
+/** Story: Book and conclude a proposal that comes together / A player can confirm the future booking in the prompt (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawPlayerAttendanceConfirmationNeedsAClearYes(exactPromptBooking: boolean, startAt: number, receivedAt: number, cancellationRequest: boolean): boolean {
+  //@ ensures \result === true
+  return !playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, false);
+}
+
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {
