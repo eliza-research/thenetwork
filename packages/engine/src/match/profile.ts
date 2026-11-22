@@ -45,6 +45,7 @@ export interface EntityStanding {
  * segments only as a superset of its own pair rules.
  */
 export interface EntitySegment { readonly own: string; readonly partners: readonly string[] }
+export interface EntityMask { readonly own: number; readonly accepts: number }
 export interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
 /** Scalar attributes compared by closeness: `of` returns one whole number per entry of `costs`. */
 export interface PackTraits {
@@ -62,6 +63,8 @@ export interface PackVectors {
   segment?(w: World, entity: MatchEntity): EntitySegment | undefined;
   /** Directed value of `b` for `a`, 0..1000 (whole number). */
   packValue?(w: World, a: MatchProfile, b: MatchProfile): number;
+  packBound?(w: World, a: MatchProfile, b: MatchProfile): number;
+  masks?(w: World, entity: MatchEntity): readonly EntityMask[];
 }
 
 export interface MatchProfile {
@@ -81,6 +84,7 @@ export interface MatchProfile {
   readonly traits: readonly number[];
   /** Absent: the profile reaches every partner and every partner reaches it. */
   readonly segment?: MatchSegment;
+  readonly masks?: readonly EntityMask[];
 }
 
 /** The legacy category whose opt-in, cooldowns and pack pair rules apply to a lane. */
@@ -127,7 +131,13 @@ interface Draft {
   readonly entity: MatchEntity; readonly id: EntityId; readonly key: string;
   readonly capacity: number; readonly tags: EntityTags; readonly standing: EntityStanding; readonly traits: readonly number[];
   readonly segment?: MatchSegment;
+  readonly masks?: readonly EntityMask[];
 }
+
+const maskBits = (bits: number): number => {
+  if (!Number.isSafeInteger(bits) || bits < 0 || bits > 0xffffffff) throw new RangeError(`mask must be a whole number in 0..2^32-1, got ${bits}`);
+  return bits;
+};
 
 /**
  * Profiles in canonical order (block key, then entity id). A member who cannot be matched (minor or
@@ -139,6 +149,7 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
   if (!vectors) return [];
   const existingFriendPlan = mode === "existingFriendPlan";
   const traitCount = vectors.traits?.costs.length ?? 0;
+  let maskCount: number | undefined;
   const drafts: Draft[] = [];
   const seen = new Set<string>();
   // Packs memoize partner lists, so members with the same list share one set.
@@ -166,9 +177,12 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       const traits = vectors.traits ? vectors.traits.of(w, entity).map(t => wholeNumber(t, "trait")) : [];
       if (traits.length !== traitCount) throw new Error(`entity ${id} has ${traits.length} traits, the pack declares ${traitCount}`);
       const segment = vectors.segment?.(w, entity);
+      const masks = vectors.masks?.(w, entity).map(m => ({ own: maskBits(m.own), accepts: maskBits(m.accepts) }));
+      if (masks && masks.length !== (maskCount ??= masks.length)) throw new Error(`entity ${id} has ${masks.length} masks, another has ${maskCount}`);
       drafts.push({
         entity, id, key: blockKey(lane, side, market), capacity, traits,
         ...(segment ? { segment: { own: segment.own, partners: partnerSet(segment.partners) } } : {}),
+        ...(masks ? { masks } : {}),
         tags: { offers: normalTags(raw.offers), seeks: normalTags(raw.seeks), interests: normalTags(raw.interests) },
         standing: {
           standing: clamp(wholeNumber(rated.standing, "standing"), standingCeiling),
@@ -191,6 +205,7 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       offers: interner.tagSet(d.tags.offers), seeks: interner.tagSet(d.tags.seeks), interests: interner.tagSet(d.tags.interests),
       traits: d.traits,
       ...(d.segment ? { segment: d.segment } : {}),
+      ...(d.masks ? { masks: d.masks } : {}),
     };
   });
 }
