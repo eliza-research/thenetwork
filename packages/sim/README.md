@@ -117,6 +117,30 @@ Hard flags make a proposal incompatible: minor, adversary, exes, romance mismatc
 
 The LLM persona agent writes only the words, given the decision the choice model has already made. `llmDecides: true` lets the model choose instead, for A/B experiments.
 
+### Planted worlds and the matching block
+
+`src/planted.ts` builds the planted worlds of the matching block (`scripts/sim/matching.ts`, `pnpm run sim --only matching`). The block runs the generic match core and `runEngine` on these worlds, engine only, offline and deterministic, for each pack and each lane that the pack offers. Pinned: seeds 1-10, exactness against brute force at N 100, 200 and 400, the engine gates at N 200 (the shipped config, plus a greedy-only arm for stability), the scale ladder (`scripts/sim/scale.ts`, seed 1) at N 1,000 to 20,000 for every lane and at 50,000 and 100,000 for each pack's primary lane, and the harder worlds up to N 5,000. `--quick`: seeds 1-3, exactness at N 100 and 200, the ladder to N 20,000, the harder worlds up to N 5,000. The block reads the hidden truth (planted circles and standing); network code never reads it. The ladder, its gates and its commands are in `docs/results/2026-11-17-scale-ladder.md`.
+
+The default world:
+
+- The vocabulary has about two topics per circle, so circles rarely share a topic set.
+- Each planned offer or seek tag is replaced by a random skill with probability 1 - purity. Members outside a circle draw all four at random.
+- Minors never hold a Date membership.
+- In slop, each circle has one date pool, so a planted circle stays mutually compatible: a mixed circle alternates women and men who seek each other, and a same-pool circle seeks its own pool. Outside a circle, most women and men seek the other pool and a fifth seek their own. The age range of each member covers every circle mate, and a circle shares one ZIP inside every member's radius, so planted pairs stay feasible.
+
+The default world is easy, and partly circular with the engine's own terms (`docs/research/2026-11-17-matching-optimization/R9-test-data-quality.md`, section 4). Tags, area, home, ZIP, pool and age window all identify the circle. Observed standing correlates about 0.98 with hidden standing. The hidden utility rewards shared interests and offer-seek exchange, which are the engine's own affinity and complement terms.
+
+The option `world` selects an opt-in harder world. The default (`"planted"`) draws exactly as before this option existed.
+
+| World | What changes |
+|---|---|
+| `zipf` | Tag popularity is Zipf (exponent 1; rank k has weight 1/k) over a vocabulary of 200 (friends: its 42 activity tags). Interest counts are heavy-tailed (Pareto, alpha 1.5, minimum 2, at most half the vocabulary). |
+| `dense` | 42 tags. Each member holds each tag independently with probability 0.19 (as in the friends app world), so a member can hold no tag. Offers and seeks are uniform. Tags carry no circle signal. |
+| `graded` | Each interest comes, with probability 0.5, from the topics of the member's own circle and of a second random circle (circles overlap), else from the whole vocabulary. Offers, seeks and traits identify the circle only half the time (purity 0.5). Observed standing is noisy (SD 25, 15, 10, 6 by reviewed evidence; 30% newcomers). Area, home, ZIP, date pool and age window do not follow the circle. The hidden utility still rewards stated interest overlap and exchange, so this world is less circular, not free of circularity. |
+| `one-segment` | Every member is in one segment (one home, ZIP, pool, travel limit and radius), with one hidden and observed standing (50) and the widest age window (18-70). |
+| `one-tag` | The default world plus one interest that every member holds. |
+| `ties` | `one-segment` with identical interests, offers, seeks and traits, so every feasible pair value ties. |
+
 ### Ground-truth isolation
 
 Hidden cards stay inside the simulator process. The Network gets only `ctx.send` and `ctx.snapshot()`. Personas reveal their public side, with noise, through the conversation.

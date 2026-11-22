@@ -1,51 +1,36 @@
-// The matching block: the generic match core (packages/engine/src/match) and runEngine on planted
-// worlds (packages/sim/src/planted.ts), engine only, offline and deterministic, for each pack and
-// each lane the pack offers. Every proposal is checked in its own lane. Quality metrics grade
-// the planted lane, including when a mixed Network fixture produces its other lane's proposals.
-// PINNED (CI): seeds 1-10; exactness at N 100, 200 and 400; the engine gates at N 200 (the shipped
-// config, plus a greedy-only arm for stability); cost at N 1,000 (every lane), 10,000 and 100,000
-// (each pack's primary lane, seed 1). --quick: seeds 1-3, exactness at N 100 and 200, cost at N
-// 1,000 and 10,000. The hidden truth (planted circles and standing) is read here only.
 import { hash32, Rng, type MemberId } from "../../packages/core/src/index.ts";
 import { searchTouchesPerCheck } from "../../packages/core/src/generated/candidateSearch.ts";
-import { laneLimits, laneOffered, laneOffset, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
+import { laneLimits, laneOffset, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
 import { pairValueScale, parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
 import { pairReason } from "../../packages/engine/src/filters.ts";
 import { bruteForceCandidates, laneCategory, pairSideOf, partnerBlock, type MatchProfile, type SearchResult } from "../../packages/engine/src/match/mod.ts";
-import { eligiblePair, segmentReaches, vectorsOf } from "../../packages/engine/src/match/pair.ts";
-import { searchWindowMetrics } from "../../packages/engine/src/match/search.ts";
+import { eligiblePair, vectorsOf } from "../../packages/engine/src/match/pair.ts";
 import type { AppPack } from "../../packages/engine/src/pack.ts";
-import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
-import { appWiring } from "../../packages/network/service/packs.ts";
 import {
-  adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
+  adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, plantedEngineInput, plantedLabels,
   plantedPairTruth, randomGroups, type PlantedTruth,
 } from "../../packages/sim/src/planted.ts";
 import { Block } from "./gate.ts";
+import {
+  checkSearchCost, fault, hardWorlds, LADDER_FULL, LADDER_QUICK, ladderGates, lanesOf, noFaults, packOf, PRIMARY_LANE, printLadder,
+  runLadder, shippedConfig, type Faults, type Rung,
+} from "./scale.ts";
 
 interface Plan {
   readonly seeds: readonly number[];
   readonly exactN: readonly number[];
   readonly engineN: number;
-  readonly costN: readonly number[];
-  readonly everyLaneUpTo: number;
-  readonly costSeed: number;
+  readonly ladder: readonly number[];
 }
-export const MATCHING_PINNED: Plan = {
-  seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], exactN: [100, 200, 400], engineN: 200,
-  costN: [1_000, 10_000, 100_000], everyLaneUpTo: 1_000, costSeed: 1,
-};
-const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, costN: [1_000, 10_000], everyLaneUpTo: 1_000, costSeed: 1 };
+export const MATCHING_PINNED: Plan = { seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], exactN: [100, 200, 400], engineN: 200, ladder: LADDER_FULL };
+const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, ladder: LADDER_QUICK };
 
 export const MATCHING_PACKS = ["ntwrk", "slop", "peon", "friends"] as const;
-const shippedConfig = (pack: AppPack, seed: number): EngineConfigInput => ({ ...appWiring(pack.id).engine, seed });
-const PRIMARY_LANE: Readonly<Record<string, MatchLane>> = { ntwrk: "Intro", slop: "Date", peon: "Hire", friends: "Friend" };
-const lanesOf = (pack: AppPack): MatchLane[] => PLANTED_LANES.filter(lane => laneOffered(pack.id, lane));
 /** The slop block's low-tier exposure rule: no quintile under 0.85x the overall rate (packEval.ts gates3). */
 const LOW_QUINTILE_RATIO = 0.85;
 // No exploration slice and no exposure-floor pass, so blockingPairs measures the greedy phase alone.
@@ -53,20 +38,7 @@ const greedyConfig = (pack: AppPack, seed: number): EngineConfigInput => {
   const config = shippedConfig(pack, seed);
   return { ...config, exploration: { ...config.exploration, rate: 0 }, selection: { ...config.selection, exposureFloorShare: 0 } };
 };
-// The match core reads no embedding; a flat one keeps a 100,000-member World cheap to build.
-const flatEmbed = (): number[] => [1];
-
 type Pair = readonly [MemberId, MemberId];
-interface Faults { count: number; first?: string }
-/**
- * What a budgeted search faced, summed over the budgeted profiles: the window (partners in reached
- * segments and in the standing window), the summed and the shortest tag range inside it, and the
- * partner segments the profile lists (for friends the homes in transit tolerance, for slop the
- * pools sought times the cells in the radius).
- */
-interface Budgeted { profiles: number; window: number; ranges: number; shortest: number; partnerSegments: number }
-/** `segmentShare`: summed over profiles, the share of the partner block in segments the profile reaches. */
-interface CostRow { profiles: number; exact: number; checks: number; touches: number; ms: number; segmentShare: number; budgeted: Budgeted }
 interface LaneStats {
   readonly lane: MatchLane;
   searches: number; exact: number; certificates: number; runs: number; laneProfiles: number; noKept: number;
@@ -80,10 +52,8 @@ interface LaneStats {
   readonly ari: number[]; readonly ariRandom: number[]; readonly purity: number[]; readonly purityRandom: number[];
   readonly precision: number[]; readonly precisionRandom: number[];
   readonly low: { members: number; proposed: number }; readonly all: { members: number; proposed: number };
-  readonly cost: Map<number, CostRow>;
 }
 
-const noFaults = (): Faults => ({ count: 0 });
 const laneStats = (lane: MatchLane): LaneStats => ({
   lane, searches: 0, exact: 0, certificates: 0, runs: 0, laneProfiles: 0, noKept: 0, pairs: 0, groups: 0, otherLane: 0, circles: 0, blockingPairs: 0,
   empty: noFaults(), minors: noFaults(), mismatch: noFaults(), missed: noFaults(),
@@ -91,20 +61,10 @@ const laneStats = (lane: MatchLane): LaneStats => ({
   searchCost: noFaults(), segmentSuperset: noFaults(), segmentRefused: 0,
   logged: { members: 0, exact: 0 },
   rho: [], rhoRandom: [], worse: [], worseRandom: [], ari: [], ariRandom: [], purity: [], purityRandom: [], precision: [], precisionRandom: [],
-  low: { members: 0, proposed: 0 }, all: { members: 0, proposed: 0 }, cost: new Map(),
+  low: { members: 0, proposed: 0 }, all: { members: 0, proposed: 0 },
 });
-const fault = (f: Faults, what: string): void => { f.count++; f.first ??= what; };
 
 const ids = (rows: readonly { readonly profile: MatchProfile; readonly value: number }[]) => rows.map(r => `${r.profile.id}:${r.value}`).join(",");
-
-function checkSearchCost(s: LaneStats, p: MatchProfile, result: SearchResult, at: string): void {
-  const budget = laneLimits(p.lane).searchBudget;
-  const touchLimit = searchTouchesPerCheck * budget;
-  const { checks, touches, exact } = result;
-  if (!Number.isSafeInteger(checks) || checks < 0 || checks > budget) fault(s.searchCost, `${at} ${p.id}: ${checks} pair checks outside 0..${budget}`);
-  if (!Number.isSafeInteger(touches) || touches < checks || touches > touchLimit) fault(s.searchCost, `${at} ${p.id}: ${touches} touches outside ${checks}..${touchLimit}`);
-  if (!exact && checks < budget && touches < touchLimit) fault(s.searchCost, `${at} ${p.id}: search closed before either budget was exhausted`);
-}
 
 // A Budgeted search with a full kept list has worst-kept value at most unseenBound, or it would
 // close Exact. Every checked and dropped pair is at or below that value. A non-full list drops
@@ -131,7 +91,7 @@ function checkCertificate(w: World, s: LaneStats, p: MatchProfile, result: Searc
 function exactness(w: World, s: LaneStats, at: string): void {
   for (const p of w.match.profiles) {
     const result = w.match.candidates(p);
-    checkSearchCost(s, p, result, at);
+    checkSearchCost(s.searchCost, p, result, at);
     s.searches++;
     if (result.exact) {
       const brute = bruteForceCandidates(w, w.match.index, p);
@@ -288,48 +248,6 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   s.all.members += members.length; s.all.proposed += members.filter(id => proposed.has(id)).length;
 }
 
-function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
-  const { input } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: [s.lane], app: pack.id });
-  const w = new World(input, resolveConfig(shippedConfig(pack, seed)), flatEmbed, pack);
-  const profiles = w.match.profiles;
-  const t = performance.now();
-  const results = profiles.map(p => w.match.candidates(p));
-  const ms = Math.round(performance.now() - t);
-  const at = `N ${n} seed ${seed}`;
-  let exact = 0, checks = 0, touches = 0, sampled = 0, segmentShare = 0;
-  const budgeted: Budgeted = { profiles: 0, window: 0, ranges: 0, shortest: 0, partnerSegments: 0 };
-  for (const [i, profile] of profiles.entries()) {
-    const result = results[i]!;
-    checkSearchCost(s, profile, result, at);
-    if (result.exact) exact++;
-    checks += result.checks;
-    touches += result.touches;
-    // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits": the search
-    // reads only the segments the profile reaches (reach depends only on the other's segment).
-    const block = partnerBlock(w.match.index, profile);
-    if (block) segmentShare += block.segments.reduce((t, x) => t + (segmentReaches(profile, block.profiles[x.start]!) ? x.end - x.start : 0), 0) / block.profiles.length;
-    // Keep the cost run subquadratic while exercising real budgeted results in large worlds.
-    if (!result.exact && sampled < 3) {
-      checkCertificate(w, s, profile, result, at);
-      sampled++;
-    }
-    if (!result.exact && block) {
-      const counts = searchWindowMetrics(block, profile);
-      budgeted.profiles++;
-      budgeted.window += counts.window;
-      budgeted.ranges += counts.ranges;
-      budgeted.shortest += counts.shortest;
-      budgeted.partnerSegments += profile.segment?.partners.size ?? 0;
-    }
-  }
-  if (!profiles.length) fault(s.searchCost, `${at}: no ${s.lane} world profiles`);
-  const tally = w.match.tally();
-  if (tally.checks !== checks || tally.touches !== touches) {
-    fault(s.searchCost, `${at}: tally ${tally.checks} checks / ${tally.touches} touches differs from ${checks} / ${touches}`);
-  }
-  s.cost.set(n, { profiles: profiles.length, exact, checks, touches, ms, segmentShare, budgeted });
-}
-
 const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
 const fixed = (x: number, digits = 3): string => (Number.isFinite(x) ? x.toFixed(digits) : "-");
 const versus = (a: readonly number[], b: readonly number[]): string => `${fixed(mean(a))} / ${fixed(mean(b))}`;
@@ -337,7 +255,6 @@ const lowRatio = (s: LaneStats): number => (s.low.members && s.all.proposed ? (s
 
 type Row = readonly [string, (s: LaneStats) => string];
 function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): void {
-  const costRow = (label: string, f: (c: CostRow) => string) => plan.costN.map((n): Row => [`${label} N ${n}`, s => { const c = s.cost.get(n); return c ? f(c) : "-"; }]);
   const rows: Row[] = [
     [`profiles per run (N ${plan.engineN})`, s => fixed(s.laneProfiles / Math.max(1, s.runs), 1)],
     ["exact searches", s => pct(s.exact, s.searches)],
@@ -359,15 +276,6 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
     ["purity circles / random", s => versus(s.purity, s.purityRandom)],
     ["pair precision circles / random", s => versus(s.precision, s.precisionRandom)],
     ["low quintile / overall rate", s => fixed(lowRatio(s), 2)],
-    ...costRow("exact searches", c => pct(c.exact, c.profiles)),
-    ...costRow("checks/profile", c => fixed(c.checks / Math.max(1, c.profiles), 1)),
-    ...costRow("touches/profile", c => fixed(c.touches / Math.max(1, c.profiles), 1)),
-    ...costRow("search ms", c => String(c.ms)),
-    ...costRow("segment window share", c => pct(c.segmentShare, c.profiles)),
-    ...costRow("budgeted: window size", c => fixed(c.budgeted.window / c.budgeted.profiles, 1)),
-    ...costRow("budgeted: tag range entries", c => fixed(c.budgeted.ranges / c.budgeted.profiles, 1)),
-    ...costRow("budgeted: shortest tag range", c => fixed(c.budgeted.shortest / c.budgeted.profiles, 1)),
-    ...costRow("budgeted: partner segments", c => fixed(c.budgeted.partnerSegments / c.budgeted.profiles, 1)),
   ];
   const table = [["", ...lanes.map(s => s.lane)], ...rows.map(([label, f]) => [label, ...lanes.map(f)])];
   const widths = table[0]!.map((_, k) => Math.max(...table.map(r => r[k]!.length)));
@@ -375,7 +283,7 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
   for (const r of table) console.log(`    ${r.map((c, k) => (k ? c.padStart(widths[k]!) : c.padEnd(widths[k]!))).join("  ")}`);
 }
 
-function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: Plan): void {
+function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: Plan, ladder: readonly Rung[]): void {
   const id = `matching ${pack.id}`;
   const runs = `${plan.seeds.length} seeds`;
   const merged = (...picks: ((s: LaneStats) => Faults)[]): Faults => {
@@ -403,8 +311,9 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
     `segment refusals checked ${perLane(s => String(s.segmentRefused))}; ${show(superset)}`);
 
   const cost = merged(s => s.searchCost);
-  b.gate(`${id}: each search stays within searchBudget checks and ${searchTouchesPerCheck} × searchBudget touches (N ${plan.costN.join("/")})`, cost.count === 0,
-    `${perLane(s => [...s.cost].map(([n, c]) => `N ${n} ${fixed(c.checks / Math.max(1, c.profiles), 1)} checks, ${fixed(c.touches / Math.max(1, c.profiles), 1)} touches per profile, ${c.ms}ms`).join(", "))}; ${show(cost)}`);
+  for (const r of ladder) if (r.faults.cost.count) { cost.count += r.faults.cost.count; cost.first ??= r.faults.cost.first; }
+  b.gate(`${id}: each search stays within searchBudget checks and ${searchTouchesPerCheck} × searchBudget touches (N ${plan.exactN.join("/")} and the ladder N ${[...new Set(ladder.map(r => r.n))].join("/")})`, cost.count === 0,
+    `${perLane(s => ladder.filter(r => r.lane === s.lane).map(r => `N ${r.n} ${fixed(r.checks / Math.max(1, r.profiles), 1)} checks, ${fixed(r.touches / Math.max(1, r.profiles), 1)} touches per profile, ${r.ms}ms`).join(", "))}; ${show(cost)}`);
 
   const parity = merged(s => s.parity);
   b.gate(`${id}: no proposed pair has a standing gap beyond band + both uncertainties (${runs})`, parity.count === 0,
@@ -439,10 +348,10 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
     lanes.every(s => lowRatio(s) >= LOW_QUINTILE_RATIO),
     perLane(s => `ratio ${fixed(lowRatio(s), 2)}, no kept candidate ${pct(s.noKept, s.laneProfiles)}`));
 
-  const primary = lanes.find(s => s.lane === PRIMARY_LANE[pack.id]);
-  if (primary) {
-    const shares = [...primary.cost].sort(([x], [y]) => x - y).map(([n, c]) => ({ n, share: c.profiles > 1 ? c.checks / ((c.profiles * (c.profiles - 1)) / 2) : NaN }));
-    b.track(`${id}: ${primary.lane} pair checks as a share of all pairs fall with N`,
+  const primary = ladder.filter(r => r.lane === PRIMARY_LANE[pack.id]);
+  if (primary.length) {
+    const shares = primary.map(r => ({ n: r.n, share: r.profiles > 1 ? r.checks / ((r.profiles * (r.profiles - 1)) / 2) : NaN }));
+    b.track(`${id}: ${primary[0]!.lane} pair checks as a share of all pairs fall with N`,
       shares.length > 1 && shares.every((x, k) => k === 0 || x.share < shares[k - 1]!.share),
       shares.map(x => `N ${x.n} ${x.share.toExponential(2)}`).join(", "));
   }
@@ -453,7 +362,7 @@ export async function matchingBlock(b: Block, o: { quick: boolean; matchingPack?
   const packs = MATCHING_PACKS.filter(app => o.matchingPack === undefined || app === o.matchingPack);
   if (!packs.length) throw new RangeError(`Unknown matching pack: ${o.matchingPack}`);
   for (const app of packs) {
-    const pack = appWiring(app).pack ?? networkPack;
+    const pack = packOf(app);
     const lanes = lanesOf(pack).map(laneStats);
     for (const n of plan.exactN) {
       console.log(`  ${pack.id}: exactness N ${n}, ${plan.seeds.length} seeds${n === plan.engineN ? " and engine gates" : ""}`);
@@ -466,12 +375,11 @@ export async function matchingBlock(b: Block, o: { quick: boolean; matchingPack?
         if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s);
       }
     }
-    for (const n of plan.costN) for (const s of lanes) {
-      if (n > plan.everyLaneUpTo && s.lane !== PRIMARY_LANE[pack.id]) continue;
-      console.log(`  ${pack.id}: ${s.lane} search cost N ${n}, seed ${plan.costSeed}`);
-      costRun(pack, n, plan.costSeed, s);
-    }
+    const ladder = runLadder(app, "planted", plan.ladder);
     printTable(pack, lanes, plan);
-    packGates(b, pack, lanes, plan);
+    printLadder(ladder);
+    packGates(b, pack, lanes, plan, ladder);
+    ladderGates(b, `matching ${pack.id}`, ladder);
   }
+  hardWorlds(b, packs);
 }
