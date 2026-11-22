@@ -282,14 +282,15 @@ jobs:
           pg_isready -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
           node --import tsx packages/observatory/db/dev-pg.ts up
+      # Use the four hosted CPUs. Keep the package default for local runs.
       - name: Integration suite (includes the security suite)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run test:integration
+          pnpm run test:integration --maxWorkers=4
         timeout-minutes: 30
       - name: E2E suite (tests/e2e)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run test:e2e
+          pnpm run test:e2e --maxWorkers=4
         timeout-minutes: 10
 
