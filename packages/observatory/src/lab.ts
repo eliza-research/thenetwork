@@ -5,6 +5,7 @@
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
 import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { labAcceptsWork, labRunInterrupted } from "../../core/src/generated/consolePanels.ts";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { APP_IDS, DEFAULT_APP, isAppId, matchingAllowed, type AppId } from "./apps.ts";
@@ -85,7 +86,6 @@ export class Lab {
   private runs = new Map<string, LabRun>();
   private queue: { run: LabRun; seed: number }[] = [];
   private active = 0;
-  private seq = 0;
   private loaded: Promise<void>;
   private children = new Set<ReturnType<typeof spawnProcess>>();
   private jobs = new Set<Promise<void>>();
@@ -137,7 +137,8 @@ export class Lab {
     if (!labAcceptsWork(this.stopping)) throw new Error("the simulation lab has stopped");
     if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
     const now = Date.now();
-    const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
+    // spec/consolePanels.md, "A lab run starts only in the simulated world with a valid request"
+    const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${randomUUID()}`;
     const run: LabRun = {
       id, request: req, requestedBy, status: "queued", createdAt: now, progress: { done: 0, total: req.seeds.length }, results: [],
       file: join(this.dir, `${id}.json`),
