@@ -208,6 +208,32 @@ export function lawSlateRespectsRemaining(planned: number, remaining: number): b
   return !(remaining >= 0) || capSlate(planned, remaining) <= remaining;
 }
 
+/** Story: Reserve one opening for each candidate still in the hiring flow / Trusted postings can use their opening slate (spec/peonCapacity.md) */
+//@ pure
+export function normalJobSeatUsesOpenBudget(participation: string): boolean {
+  return participation === "normal";
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Trusted postings can use their opening slate (spec/peonCapacity.md) */
+//@ pure
+export function peonProbationRemaining(limit: number, sent: number, reserved: number): number {
+  return remainingOpenings(limit, exact_peonCapacity(sent + reserved));
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Trusted postings can use their opening slate (spec/peonCapacity.md) */
+//@ pure
+export function lawPeonJobSeatKeepsOtherBudgets(participation: string): boolean {
+  //@ ensures \result === true
+  return !(participation !== "normal") || !normalJobSeatUsesOpenBudget(participation);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Trusted postings can use their opening slate (spec/peonCapacity.md) */
+//@ pure
+export function lawPeonProbationCountsPriorAndReserved(limit: number, sent: number, reserved: number): boolean {
+  //@ ensures \result === true
+  return !(reserved >= 0 && exact_peonCapacity(sent + reserved) >= limit) || peonProbationRemaining(limit, sent, reserved) === 0;
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: SeatLedger, event: Event): boolean {
