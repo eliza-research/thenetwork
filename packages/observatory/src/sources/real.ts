@@ -9,6 +9,7 @@
 // build a WorldSnapshot from the database and run engine-v1 on it in memory; proposals are shown as
 // ghosts and never written (PRD 34.6).
 import { SQL } from "../../../core/src/runtime/postgres.ts";
+import { heldMeetingMinimum, observatoryMeetingHeld } from "../../../core/src/generated/observatoryRoster.ts";
 import { consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
 import {
   DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
@@ -303,12 +304,19 @@ export class RealSource implements DataSource {
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
             count(*) filter (where direction = 'outbound' and proactive and status = 'delivered')::int as proactive
           from network.messages where app_id = ${app} and not system group by member_id`,
-      sql`select p.member_id, count(*)::int as proposals,
+      sql`with held as (
+            select o.id from network.opportunities o
+            join network.participations a on a.app_id = o.app_id and a.opportunity_id = o.id
+            where o.app_id = ${app} and o.source <> 'shadow' and o.state = any(${`{${HELD.join(",")}}`}::text[])
+              and a.role = 'participant' and a.status = 'attended'
+            group by o.id having count(*) >= ${heldMeetingMinimum}
+          )
+          select p.member_id, count(*)::int as proposals,
             count(*) filter (where p.status = any(${`{${ACCEPTED_PARTICIPATION_STATUSES.join(",")}}`}::text[]))::int as accepted,
-            count(*) filter (where p.status = 'attended')::int as meetings,
-            coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[])), 0)::float8 as enjoyment_sum,
-            count(*) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[]))::int as enjoyment_n
-          from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
+            count(*) filter (where p.status = 'attended' and h.id is not null)::int as meetings,
+            coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and h.id is not null), 0)::float8 as enjoyment_sum,
+            count(*) filter (where p.status = 'attended' and h.id is not null)::int as enjoyment_n
+          from network.participations p left join held h on h.id = p.opportunity_id
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
       sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app}`,
       sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
@@ -417,7 +425,7 @@ export class RealSource implements DataSource {
     c.meetingsScheduled = t.meetings_scheduled; c.blocks = t.blocks; c.adversarialAttempts = t.adversarial; c.invariantViolations = t.invariants;
     for (const o of s.opps.values()) {
       if (o.source === "shadow") continue;
-      const held = HELD.includes(o.state);
+      const held = HELD.includes(o.state) && observatoryMeetingHeld(o.participants.filter(id => o.status[id] === "attended").length);
       if (held) c.meetingsHeld++;
       for (const id of o.participants) {
         const st = o.status[id];

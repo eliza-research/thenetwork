@@ -33,3 +33,17 @@ pure def closedProbeUpdate(terminal: bool, recordedAlternates: bool): bool =
 pure def lawClosedReplayWithoutRosterKeepsTerminal(terminal: bool): bool =
   closedProbeUpdate(terminal, false) == not(terminal)
 ```
+
+### A held meeting needs two attendees
+
+Count a completed meeting for staff only when at least two participants attended. Count it once for each attendee. Keep a person's attendance record when they were the only one to show, but leave it out of held-meeting and enjoyment counts. In the database view, use a completed or feedback-collected opportunity and its recorded participant attendance.
+
+```quint
+pure val heldMeetingMinimum: int = 2
+
+pure def observatoryMeetingHeld(attendees: int): bool =
+  attendees >= heldMeetingMinimum
+
+pure def lawOneAttendeeIsNotAHeldMeeting(attendees: int): bool =
+  attendees <= 1 implies not(observatoryMeetingHeld(attendees))
+```
