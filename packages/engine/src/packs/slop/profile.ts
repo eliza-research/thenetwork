@@ -119,7 +119,7 @@ export function slopProfiles(input: EngineInput, canonical?: MemberIdResolver): 
   }
   const cached = canonical ? entry.byResolver.get(canonical) : entry.defaultProfiles;
   if (cached) return cached;
-  const profiles = buildProfiles(input, canonical ?? memberIdResolver(new Set(input.members.map(member => member.id)), input.idAliases));
+  const profiles = buildProfiles(input, canonical ?? memberIdResolver(input));
   if (canonical) entry.byResolver.set(canonical, profiles);
   else entry.defaultProfiles = profiles;
   return profiles;

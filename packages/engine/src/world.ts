@@ -20,12 +20,14 @@ export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b
 export type MemberIdResolver = (id: MemberId) => MemberId;
 
 /** Follow the aliases from this input and give a current member ID priority. */
-export function memberIdResolver(memberIds: ReadonlySet<MemberId>,
-  aliases: Readonly<Record<MemberId, MemberId>> = {}): MemberIdResolver {
+export function memberIdResolver(input: Pick<EngineInput, "members" | "idAliases">): MemberIdResolver {
+  const aliases = input.idAliases;
+  if (!aliases) return id => id;
+  const memberIds = new Set(input.members.map(member => member.id));
   return id => {
     let current = id;
     let hops = 0;
-    while (mayFollowMemberAlias(memberIds.has(current), aliases[current] !== undefined, hops)) {
+    while (mayFollowMemberAlias(memberIds.has(current), Object.hasOwn(aliases, current), hops)) {
       current = aliases[current]!;
       hops++;
     }
@@ -115,8 +117,7 @@ export class World {
     this.pack = pack;
     this.now = input.now;
     this.embed = embed;
-    const memberIds = new Set(input.members.map(m => m.id));
-    this.canonical = memberIdResolver(memberIds, input.idAliases);
+    this.canonical = memberIdResolver(input);
     const C = this.canonical;
     this.dim = embed("dimension probe").length;
     const now = this.now;

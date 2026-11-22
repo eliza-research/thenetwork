@@ -117,4 +117,5 @@ test("the same Slop pairs have the same date plans with two-hop member aliases",
   expect(view.canonical(first)).toBe(first);
   expect(view.canonical("cycle:a")).toBe("cycle:a");
   expect(view.canonical("unknown")).toBe("unknown");
+  expect(view.canonical("toString")).toBe("toString");
 });

@@ -37,7 +37,7 @@ export function mutualMarkets(a: SlopProfile, b: SlopProfile, o: SlopPackOptions
 }
 
 export function makeRadiusGeo(o: SlopPackOptions): GeoModel {
-  const prof = (w: World) => slopProfiles(w.input, w.canonical);
+  const prof = (w: World) => slopProfiles(w.input);
   return {
     markets: cfg => cfg.cities,
     location: (w, id, start, end) => cityBucketGeo.location(w, id, start, end),
