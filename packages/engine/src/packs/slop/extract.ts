@@ -225,7 +225,8 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
       const after = s.text.slice(m.index + m[0].length);
       if (KIN_AFTER.test(after)) continue;
       const rawAge = r.age(m);
-      const part = r.reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after)) : undefined;
+      const part = r.reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after),
+        { reading: m[0], birthdaySetsProfileAge: true }) : undefined;
       if (part === "FractionalAgeUnknown") continue;
       const a = r.reading === "conjunction" ? ageBeforeConjunction(rawAge, m) : rawAge;
       if (!Number.isFinite(a) || a < 1 || a > 99 || (!r.strict && a < 10)) continue;

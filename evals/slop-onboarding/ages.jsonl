@@ -114,3 +114,11 @@
 {"text":"I'm 12 years and 3 months old in two years.","minor":false}
 {"text":"He said \"I am 17 and 3 months old\".","minor":false}
 {"text":"When I turned 12 and 3 months old, I moved.","minor":false}
+{"text":"I'm 5.5 years old","minor":true,"age":5,"declined":true}
+{"text":"I'm 7 1/2 years old","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7 1/2","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7.5","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7.5 miles away","minor":false}
+{"text":"I just turned 7.5 in two years","minor":false}
+{"text":"My sister said \"I just turned 7.5\".","minor":false}
+{"text":"When I turned 7.5, I moved.","minor":false}

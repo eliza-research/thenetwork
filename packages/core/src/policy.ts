@@ -116,16 +116,21 @@ const AGE_PART_MARKER = new RegExp(`^\\s*${BIRTHDAY_AGE_MARKER}`);
 const AGE_PART_OLD = /^\s+old\b/;
 const MONTHS_OR_QUARTER = new RegExp(`${AGE_MONTHS_OR_QUARTER}$`);
 const HEIGHT_IN_FEET = /^(?:\.5|\s+1\/2)$/;
+const FRACTIONAL_BIRTHDAY_END = /^\s*(?:$|[.!?;](?!\d)|,(?!\s*\d))/;
 const AGE_PART_TAIL = /^\s*(?:$|[,!?;:)]|\.(?!\d)|(?:and|now|too|but|so|btw|lol|haha|lmao|tho(?:ugh)?|actually|tbh|old|in (?:high|middle) school)\b)/;
 
 /** Read the evidence of a first-person fractional age after the caller checks its scope. */
-export function agePartEvidenceOf(age: number, part: string, after: string, atClauseEnd: boolean) {
+export function agePartEvidenceOf(age: number, part: string, after: string, atClauseEnd: boolean,
+  context?: { reading: string; birthdaySetsProfileAge?: true }) {
   const monthsOrQuarter = MONTHS_OR_QUARTER.test(part);
   const old = monthsOrQuarter ? AGE_PART_OLD.exec(after) : null;
   const qualifier = old ? after.slice(old[0].length) : after;
   const future = ageQualifierFollows(AFTER_AGE_NEAR_BIRTHDAY.test(qualifier), AFTER_AGE_DISTANT_BIRTHDAY.test(qualifier));
-  return fractionalAgeEvidence(age, HEIGHT_IN_FEET.test(part), monthsOrQuarter, old !== null || AGE_PART_MARKER.test(after),
-    atClauseEnd, AGE_PART_TAIL.test(after), future);
+  const possibleHeight = HEIGHT_IN_FEET.test(part);
+  const birthday = possibleHeight && context !== undefined && STATED_BIRTHDAY.test(context.reading) && FRACTIONAL_BIRTHDAY_END.test(after);
+  // A birthday can supply a profile age. An existing account still requires explicit age units for a refusal.
+  const writtenAsAge = old !== null || AGE_PART_MARKER.test(after) || (birthday && context?.birthdaySetsProfileAge === true);
+  return fractionalAgeEvidence(age, possibleHeight && !birthday, monthsOrQuarter, writtenAsAge, atClauseEnd || birthday, AGE_PART_TAIL.test(after), future);
 }
 
 const AGE_FORM_EXPLICIT_PART = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})(${AGE_PART})`, "g");

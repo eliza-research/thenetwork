@@ -379,7 +379,7 @@ export function agesStated(body: string, { directOnly = false } = {}): { age?: n
         if (notNowBefore(t, s.at + m.index)) continue;
         const after = s.text.slice(m.index + m[0].length);
         const rawAge = age(m);
-        const part = reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after)) : undefined;
+        const part = reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after), { reading: m[0] }) : undefined;
         if (part === "FractionalAgeUnknown") continue;
         const exact = explicit === true || part === "FractionalAgeExplicit";
         const a = reading === "conjunction" ? ageBeforeConjunction(rawAge, m) : rawAge;

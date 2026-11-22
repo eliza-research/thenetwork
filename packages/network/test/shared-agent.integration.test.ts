@@ -105,7 +105,7 @@ test("signed answers to the enrollment question require a positive app choice", 
 }, 60_000);
 
 // spec/memberAge.md, "Commit a stated age before projecting it across apps"
-test("a sports score leaves a verified adult's age intact across signed app turns", async () => {
+test("a sports score or height leaves a verified adult's age intact across signed app turns", async () => {
   const phone = "+12125550198";
   for (const app of [APPS.friends, APPS.slop]) {
     await service.accounts.invite(app, phone);
@@ -116,18 +116,23 @@ test("a sports score leaves a verified adult's age intact across signed app turn
     expect(joined.ok).toBe(true);
   }
   const person = (await service.accounts.personFor(phone))!;
-  for (const [i, text] of ["I am 3 and I am undefeated.", "I am 3 and my record is 3-1.", "I'm 5 and also my team won."].entries()) {
-    expect((await post(turn(`sports-score-keeps-adult-${i}`, phone, text, "friends"))).status).toBe(200);
+  const controls = ["I am 3 and I am undefeated.", "I am 3 and my record is 3-1.", "I'm 5 and also my team won.", "I'm 5.5"];
+  for (const [i, text] of controls.entries()) {
+    expect((await post(turn(`ambiguous-number-keeps-adult-${i}`, phone, text, "friends"))).status).toBe(200);
     expect(await service.accounts.lowestAge(phone, person)).toBe(29);
   }
   const age = turn("sports-real-age", phone, "I am 17 years old and my team won.", "friends");
   expect((await post(age)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, person)).toBe(17);
 
+  const fractionalBirthday = turn("fractional-birthday-adult-hold", phone, "I just turned 7.5.", "friends");
+  expect((await post(fractionalBirthday)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(13);
+  expect((await service.people.memberships(person.id)).map(member => member.state)).toEqual(["active", "active"]);
+
   const birthday = turn("sports-birthday-age", phone, "I just turned 12 and I am undefeated.", "friends");
   expect((await post(birthday)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, person)).toBe(13);
-  expect((await service.people.memberships(person.id)).map(member => member.state)).toEqual(["active", "active"]);
 }, 60_000);
 
 // spec/travelPresence.md, "Tell the Network my travel dates"
@@ -1317,9 +1322,11 @@ test("signed fractional ages distinguish an explicit current age from a height o
     ["+12125550192", "I'm 5 1/2 years old", 5],
     ["+12125550193", "I'm 12 and 3 months old", 12],
     ["+12125550195", "I'm 12 years and 3 months old", 12],
+    ["+16465550191", "I just turned 7 1/2", 13, "active"],
+    ["+16465550192", "I just turned 7.5", 13, "active"],
   ] as const;
   const app = APPS.friends;
-  for (const [phone, disclosure, age] of cases) {
+  for (const [phone, disclosure, age, expectedState = "removed"] of cases) {
     await service.accounts.invite(app, phone);
     const person = (await service.accounts.personFor(phone))!;
     const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
@@ -1332,7 +1339,8 @@ test("signed fractional ages distinguish an explicit current age from a height o
       return membership?.state;
     };
     const controls = ["I'm 5.5", "I'm 5 1/2, slim", "I'm 12 and 3 months sober",
-      "I'm 12 and 3 months old, in two years", `She said "${disclosure}."`];
+      "I'm 12 and 3 months old, in two years", "I just turned 7.5 miles away",
+      "When I turned 7.5, I moved", `She said "${disclosure}."`];
     for (const [i, text] of controls.entries()) {
       clock.advance(MINUTE);
       expect((await post(turn(`fraction-age-control-${phone}-${i}`, phone, text, "friends"))).status).toBe(200);
@@ -1344,7 +1352,7 @@ test("signed fractional ages distinguish an explicit current age from a height o
     const message = turn(`fraction-age-disclosure-${phone}`, phone, disclosure, "friends");
     expect((await post(message)).status).toBe(200);
     expect(await service.accounts.lowestAge(phone, person)).toBe(age);
-    expect(await state()).toBe("removed");
+    expect(await state()).toBe(expectedState);
     expect((await post(message)).status).toBe(200);
     expect(await service.accounts.lowestAge(phone, person)).toBe(age);
   }
