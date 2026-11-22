@@ -72,6 +72,24 @@ pure def lawPeonAcceptanceHistoryKeepsRecordedTime(acceptedAt: int, legacyReceip
   acceptedAt >= 0 implies peonAcceptedHistoryAt(acceptedAt, legacyReceiptAt, interviewAt) == acceptedAt
 ```
 
+### Interview feedback keeps the application's recorded answers
+
+When feedback replaces the accepted interaction, keep the booked introduction's acceptance time on its first matching attendance record. Both members must belong to the recorded booking and the record must come from a participant's check-in for that booking. Preserve the feedback receipt time and its disposition. Later feedback supplies no second application answer. A completed or missed interview can end the active introduction without returning an employer who answered to probation. Use the same acceptance time and legacy fallback as for the accepted interaction.
+
+```quint
+pure def peonFeedbackRetainsAcceptance(interviewDone: bool, matchingRoster: bool, ownFeedback: bool): bool =
+  interviewDone and matchingRoster and ownFeedback
+
+pure def peonApplicationAnswered(acceptedAt: int, now: int, candidateAccepted: bool, employerAnswered: bool): bool =
+  (acceptedAt >= 0 and acceptedAt <= now) or (candidateAccepted and employerAnswered)
+
+pure def lawUnboundPeonFeedbackKeepsNoAcceptance(interviewDone: bool, matchingRoster: bool): bool =
+  not(peonFeedbackRetainsAcceptance(interviewDone, matchingRoster, false))
+
+pure def lawPeonAcceptanceIsVisibleAtItsRecordedTime(acceptedAt: int, now: int): bool =
+  peonApplicationAnswered(acceptedAt, now, false, false) == (acceptedAt >= 0 and now >= acceptedAt)
+```
+
 ### The next slate stays within remaining openings
 
 Remaining openings are the posted count minus occupied openings, with a minimum of zero. The engine uses the lower of the planned slate and remaining openings when the snapshot supplies a seat limit. The service closes unbooked items when the posting closes or booked occupancy reaches the posted count. Current booked introductions continue.

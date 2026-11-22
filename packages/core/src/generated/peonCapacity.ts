@@ -136,6 +136,32 @@ export function lawPeonAcceptanceHistoryKeepsRecordedTime(acceptedAt: number, le
   return !(acceptedAt >= 0) || peonAcceptedHistoryAt(acceptedAt, legacyReceiptAt, interviewAt) === acceptedAt;
 }
 
+/** Story: Reserve one opening for each candidate still in the hiring flow / Interview feedback keeps the application's recorded answers (spec/peonCapacity.md) */
+//@ pure
+export function peonFeedbackRetainsAcceptance(interviewDone: boolean, matchingRoster: boolean, ownFeedback: boolean): boolean {
+  return interviewDone && matchingRoster && ownFeedback;
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Interview feedback keeps the application's recorded answers (spec/peonCapacity.md) */
+//@ pure
+export function peonApplicationAnswered(acceptedAt: number, now: number, candidateAccepted: boolean, employerAnswered: boolean): boolean {
+  return (acceptedAt >= 0 && acceptedAt <= now) || (candidateAccepted && employerAnswered);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Interview feedback keeps the application's recorded answers (spec/peonCapacity.md) */
+//@ pure
+export function lawUnboundPeonFeedbackKeepsNoAcceptance(interviewDone: boolean, matchingRoster: boolean): boolean {
+  //@ ensures \result === true
+  return !peonFeedbackRetainsAcceptance(interviewDone, matchingRoster, false);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Interview feedback keeps the application's recorded answers (spec/peonCapacity.md) */
+//@ pure
+export function lawPeonAcceptanceIsVisibleAtItsRecordedTime(acceptedAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return peonApplicationAnswered(acceptedAt, now, false, false) === (acceptedAt >= 0 && now >= acceptedAt);
+}
+
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
 //@ pure
 export function remainingOpenings(posted: number, occupied: number): number {
