@@ -502,7 +502,7 @@ const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this) (?:meet
 const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:need to cancel|can'?t make it(?: anymore)?|can'?t come(?: anymore)?|have to bail)[.!]?$/i;
 type BookingCancellation = { localStart?: string };
 
-function explicitBookingCancellation(text: string): BookingCancellation | undefined {
+export function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
   const booking = BOOKING_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
