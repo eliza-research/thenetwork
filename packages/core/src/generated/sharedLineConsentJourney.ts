@@ -1,19 +1,19 @@
 // GENERATED from spec/sharedLineConsentJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type StopConjunct as carrierConsent_StopConjunct, type CoordinatedStop as carrierConsent_CoordinatedStop, appOptInBeatsStop as carrierConsent_appOptInBeatsStop, stopWordAllowsCourtesy as carrierConsent_stopWordAllowsCourtesy, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawCourtesyCannotTurnCancelIntoStop as carrierConsent_lawCourtesyCannotTurnCancelIntoStop, coordinatedStopClause as carrierConsent_coordinatedStopClause, lawIncompleteNegationDoesNotMakeASeparateStop as carrierConsent_lawIncompleteNegationDoesNotMakeASeparateStop, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission } from "./carrierConsent.ts";
+import { type CoordinatedStop as carrierConsent_CoordinatedStop, type StopConjunct as carrierConsent_StopConjunct, appOptInBeatsStop as carrierConsent_appOptInBeatsStop, matchesSpokenAppDomain as carrierConsent_matchesSpokenAppDomain, stopWordAllowsCourtesy as carrierConsent_stopWordAllowsCourtesy, textRefusalStops as carrierConsent_textRefusalStops, coordinatedStopClause as carrierConsent_coordinatedStopClause, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawArticleDoesNotTurnSpacedLabelIntoDomain as carrierConsent_lawArticleDoesNotTurnSpacedLabelIntoDomain, lawCourtesyCannotTurnAmbiguousCommandsIntoStop as carrierConsent_lawCourtesyCannotTurnAmbiguousCommandsIntoStop, lawBareTextRefusalNeedsPermanence as carrierConsent_lawBareTextRefusalNeedsPermanence, lawIncompleteNegationDoesNotMakeASeparateStop as carrierConsent_lawIncompleteNegationDoesNotMakeASeparateStop, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission } from "./carrierConsent.ts";
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-export type StopWording = "StopKeyword" | "StopTextsKeepCalls" | "QuitNow" | "EndPlease";
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-export type ConsentUpdate = "AllOptedOut" | "SlopOptedIn" | "FriendsOptedIn";
+export type StopWording = "StopKeyword" | "StopTextsKeepCalls" | "QuitNow" | "EndPlease" | "StopTextsAnymore" | "SpanishCourtesyStop";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type AppUnderObservation = "Slop" | "Friends";
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+export type ConsentUpdate = "AllOptedOut" | "SlopOptedIn" | "FriendsOptedIn";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export interface LineConsent { slopMayText: boolean; friendsMayText: boolean }
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export interface Turn { state: LineConsent; out: ConsentUpdate[] }
 /** Story: Stop the shared line and resume one app / An ambiguous message leaves shared-line consent unchanged (spec/sharedLineConsentJourney.md) */
-export type OtherWording = "CoordinatedNegation" | "AppNamedInClause" | "ReportedUnsubscribe" | "CancelPlease";
+export type OtherWording = "CoordinatedNegation" | "AppNamedInClause" | "ReportedUnsubscribe" | "CancelPlease" | "TextsAboutOneCategory" | "TextsUntilAugust" | "SpanishCancelPlease" | "SpanishBajaNow";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -32,6 +32,12 @@ export function inv(current: LineConsent): boolean {
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
+export function canTextStop(s: LineConsent, wording: StopWording): boolean {
+  return true;
+}
+
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+//@ pure
 export function sometimesBothAppsStop(s: LineConsent): boolean {
   return !s.slopMayText && !s.friendsMayText;
 }
@@ -40,12 +46,6 @@ export function sometimesBothAppsStop(s: LineConsent): boolean {
 //@ pure
 export function stopCoversEveryApp(explicitAll: boolean, sharedLine: boolean, dedicatedLineGlobal: boolean): boolean {
   return explicitAll || sharedLine || dedicatedLineGlobal;
-}
-
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-//@ pure
-export function canTextStop(s: LineConsent, wording: StopWording): boolean {
-  return true;
 }
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
@@ -134,8 +134,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "textStop" && (raw.wording === "StopKeyword" || raw.wording === "StopTextsKeepCalls" || raw.wording === "QuitNow" || raw.wording === "EndPlease")) return { type: "textStop", wording: raw.wording };
-  if (raw.type === "textOther" && (raw.other === "CoordinatedNegation" || raw.other === "AppNamedInClause" || raw.other === "ReportedUnsubscribe" || raw.other === "CancelPlease")) return { type: "textOther", other: raw.other };
+  if (raw.type === "textStop" && (raw.wording === "StopKeyword" || raw.wording === "StopTextsKeepCalls" || raw.wording === "QuitNow" || raw.wording === "EndPlease" || raw.wording === "StopTextsAnymore" || raw.wording === "SpanishCourtesyStop")) return { type: "textStop", wording: raw.wording };
+  if (raw.type === "textOther" && (raw.other === "CoordinatedNegation" || raw.other === "AppNamedInClause" || raw.other === "ReportedUnsubscribe" || raw.other === "CancelPlease" || raw.other === "TextsAboutOneCategory" || raw.other === "TextsUntilAugust" || raw.other === "SpanishCancelPlease" || raw.other === "SpanishBajaNow")) return { type: "textOther", other: raw.other };
   if (raw.type === "textStart" && (raw.app === "Slop" || raw.app === "Friends") && typeof raw.sentWithLastStop === "boolean") return { type: "textStart", app: raw.app, sentWithLastStop: raw.sentWithLastStop };
   return undefined;
 }

@@ -2,22 +2,35 @@
 //@ backend dafny
 
 /** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
-export type StopConjunct = "ExplicitStop" | "CompleteNegation" | "IncompleteNegation" | "OtherClause";
-/** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
 export type CoordinatedStop = "FirstStops" | "LastStops" | "NeitherStops";
+/** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
+export type StopConjunct = "ExplicitStop" | "CompleteNegation" | "IncompleteNegation" | "OtherClause";
 
 
-/** Story: Stop texts across apps and resume an app / Courtesy and urgency can accompany STOP, QUIT or END (spec/carrierConsent.md) */
+/** Story: Stop texts across apps and resume an app / Courtesy or urgency can accompany a whole-message STOP command (spec/carrierConsent.md) */
 //@ pure
 export function stopWordAllowsCourtesy(word: string): boolean {
-  return word === "STOP" || word === "QUIT" || word === "END";
+  return word === "STOP" || word === "QUIT" || word === "END" || word === "PARA" || word === "PARAR" || word === "ALTO" || word === "BASTA" || word === "DETENER" || word === "NO MAS" || word === "NO MAS MENSAJES";
 }
 
-/** Story: Stop texts across apps and resume an app / Courtesy and urgency can accompany STOP, QUIT or END (spec/carrierConsent.md) */
+/** Story: Stop texts across apps and resume an app / Courtesy or urgency can accompany a whole-message STOP command (spec/carrierConsent.md) */
 //@ pure
-export function lawCourtesyCannotTurnCancelIntoStop(word: string): boolean {
+export function lawCourtesyCannotTurnAmbiguousCommandsIntoStop(word: string): boolean {
   //@ ensures \result === true
-  return !(word === "CANCEL") || !stopWordAllowsCourtesy(word);
+  return !(word === "CANCEL" || word === "CANCELAR" || word === "BAJA") || !stopWordAllowsCourtesy(word);
+}
+
+/** Story: Stop texts across apps and resume an app / A plain refusal of future texts stops the shared line (spec/carrierConsent.md) */
+//@ pure
+export function textRefusalStops(hasDeterminer: boolean, permanentEnding: boolean): boolean {
+  return hasDeterminer || permanentEnding;
+}
+
+/** Story: Stop texts across apps and resume an app / A plain refusal of future texts stops the shared line (spec/carrierConsent.md) */
+//@ pure
+export function lawBareTextRefusalNeedsPermanence(permanentEnding: boolean): boolean {
+  //@ ensures \result === true
+  return textRefusalStops(false, permanentEnding) === permanentEnding;
 }
 
 /** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
@@ -57,4 +70,17 @@ export function appMayText(appOptedIn: boolean, globalOptedOut: boolean, appAt: 
 export function lawNoAppOptInMeansNoPermission(globalOptedOut: boolean, appAt: number, globalAt: number): boolean {
   //@ ensures \result === true
   return !appMayText(false, globalOptedOut, appAt, globalAt);
+}
+
+/** Story: Leave the app I name without stopping the other apps / A spoken domain identifies that one app (spec/carrierConsent.md) */
+//@ pure
+export function matchesSpokenAppDomain(label: string, spaced: string, pronounced: string, ambiguousArticle: boolean): boolean {
+  return label === pronounced || (!ambiguousArticle && label === spaced);
+}
+
+/** Story: Leave the app I name without stopping the other apps / A spoken domain identifies that one app (spec/carrierConsent.md) */
+//@ pure
+export function lawArticleDoesNotTurnSpacedLabelIntoDomain(spaced: string, pronounced: string): boolean {
+  //@ ensures \result === true
+  return !(spaced !== pronounced) || !matchesSpokenAppDomain(spaced, spaced, pronounced, true);
 }

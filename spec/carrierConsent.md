@@ -6,16 +6,29 @@ The text readers recognize requests at the inbound boundary. The platform uses t
 
 > As a person on the shared line, I want STOP to end messages from every app and START to resume the app I chose.
 
-### Courtesy and urgency can accompany STOP, QUIT or END
+### Courtesy or urgency can accompany a whole-message STOP command
 
-A whole message can contain STOP, QUIT or END with courtesy or urgency words. The text reader owns normalization and the list of courtesy and urgency words. A word that asks to cancel a date or another activity does not become a STOP when followed by a courtesy or urgency word.
+A whole message can contain STOP, QUIT or END with courtesy or urgency words. PARA, PARAR, ALTO, BASTA, DETENER, NO MÁS and NO MÁS MENSAJES take Spanish courtesy or urgency words. The text reader owns normalization and the courtesy vocabulary. CANCEL, CANCELAR and BAJA can concern another activity and do not take courtesy or urgency words as STOP commands.
 
 ```quint
 pure def stopWordAllowsCourtesy(word: str): bool =
-  word == "STOP" or word == "QUIT" or word == "END"
+  word == "STOP" or word == "QUIT" or word == "END" or word == "PARA" or word == "PARAR" or
+    word == "ALTO" or word == "BASTA" or word == "DETENER" or word == "NO MAS" or word == "NO MAS MENSAJES"
 
-pure def lawCourtesyCannotTurnCancelIntoStop(word: str): bool =
-  (word == "CANCEL") implies not(stopWordAllowsCourtesy(word))
+pure def lawCourtesyCannotTurnAmbiguousCommandsIntoStop(word: str): bool =
+  (word == "CANCEL" or word == "CANCELAR" or word == "BAJA") implies not(stopWordAllowsCourtesy(word))
+```
+
+### A plain refusal of future texts stops the shared line
+
+The reader accepts a direct whole-clause refusal of messages, such as "I don't want texts anymore" or "I don't want any more texts". A bare message noun needs a permanent ending. The text reader excludes a category, a temporary limit or any other condition from this whole-clause form.
+
+```quint
+pure def textRefusalStops(hasDeterminer: bool, permanentEnding: bool): bool =
+  hasDeterminer or permanentEnding
+
+pure def lawBareTextRefusalNeedsPermanence(permanentEnding: bool): bool =
+  textRefusalStops(false, permanentEnding) == permanentEnding
 ```
 
 ### An independent STOP joined to a negation still takes effect
@@ -57,4 +70,20 @@ pure def appMayText(appOptedIn: bool, globalOptedOut: bool, appAt: int, globalAt
 
 pure def lawNoAppOptInMeansNoPermission(globalOptedOut: bool, appAt: int, globalAt: int): bool =
   not(appMayText(false, globalOptedOut, appAt, globalAt))
+```
+
+## Story: Leave the app I name without stopping the other apps
+
+> As a member on the shared line, I want a leave request to recognize the app when I say its domain out loud.
+
+### A spoken domain identifies that one app
+
+An app name can be the exact domain with "dot" spoken or with spaces in place of its dots. In the spaced form, a preceding "the" can make the words refer to something else. An explicit unsubscribe still names the app in that form. The reader preserves the existing exact app, brand and written-domain names. The advisory reader uses the same domain forms when the caller supplies the app's domain.
+
+```quint
+pure def matchesSpokenAppDomain(label: str, spaced: str, pronounced: str, ambiguousArticle: bool): bool =
+  label == pronounced or (not(ambiguousArticle) and label == spaced)
+
+pure def lawArticleDoesNotTurnSpacedLabelIntoDomain(spaced: str, pronounced: str): bool =
+  spaced != pronounced implies not(matchesSpokenAppDomain(spaced, spaced, pronounced, true))
 ```

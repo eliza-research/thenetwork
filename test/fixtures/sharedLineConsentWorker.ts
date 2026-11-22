@@ -9,6 +9,8 @@ const stopMessages: Record<StopWording, string> = {
   StopTextsKeepCalls: "Don't stop calling and stop texting me",
   QuitNow: "QUIT NOW",
   EndPlease: "END PLEASE",
+  StopTextsAnymore: "I don't want texts anymore",
+  SpanishCourtesyStop: "por favor basta",
 };
 
 const otherMessages: Record<OtherWording, string> = {
@@ -16,6 +18,10 @@ const otherMessages: Record<OtherWording, string> = {
   AppNamedInClause: "Don't stop calling and unsubscribe from friends.help",
   ReportedUnsubscribe: "Don't stop calling and I can tell them to unsubscribe",
   CancelPlease: "cancel please",
+  TextsAboutOneCategory: "I don't want any texts about jobs",
+  TextsUntilAugust: "I don't want any messages until August",
+  SpanishCancelPlease: "cancelar por favor",
+  SpanishBajaNow: "baja ya",
 };
 
 await withSignedTurnFixture(async ({ service, createMember, sendTurn }) => {

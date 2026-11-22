@@ -13,11 +13,12 @@ The [signed inbox spec](../signedInbox.md) generates claim, replay, completion, 
 The [shared-line consent journey](../sharedLineConsentJourney.md)
 exercises STOP and START through the signed HTTP entry point, checks the
 gateway's returned consent update, and reads the effective consent on
-both apps from their stored ledgers. The [carrier consent
-rules](../carrierConsent.md) define when the parser maps courtesy
-keywords and independent opt-out clauses to Stop. The journey supplies
-both accepted and rejected text to that parser. The whole-flow model
-starts with the reader's result and keeps its existing transitions.
+both apps from their stored ledgers. The [profile leave
+journey](../savedProfileJourney.md) exercises spoken app domains
+and checks the app-scoped consent update. The [carrier consent
+rules](../carrierConsent.md) define when the reader maps a whole
+command or a direct refusal to Stop and a spoken app name to Leave.
+The whole-flow model starts with that reader's result.
 
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
