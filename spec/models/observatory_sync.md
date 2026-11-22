@@ -12,6 +12,10 @@ Imported from `quint/observatory_sync.qnt` at `30d950e`. See [model index](READM
 
 The browser calls [Observatory snapshot and live updates](../observatorySync.md) for the current load, delta versions, and feed sequence. Reveal, filters, and other separate console state remain in this standalone model. The [member consent view](../observatoryMemberConsent.md) supplies the current simulated consent and count in a snapshot or delta.
 
+The simulated world releases controlled replies and drains its old step
+before sending a reset for its replacement. Commands waiting for the previous
+world cannot mutate the replacement.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=20 max-samples=20000

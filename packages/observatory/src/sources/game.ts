@@ -1,3 +1,4 @@
+import { gameResetControlsAllowed } from "../../../core/src/generated/gameReset.ts";
 import { setTimeout as waitForMs } from "node:timers/promises";
 // Game mode: a live simulated world (packages/sim) with engine-v1, made steppable and playable.
 // The player can play the Network (propose intros), play a member (take over a persona), play the
@@ -93,6 +94,7 @@ export class GameSource implements DataSource {
   private communities = new Map<MemberId, string>();
   private listeners = new Listeners<ObsDelta>();
   private advancing: Promise<void> | null = null;
+  private draining = false;
   private timers: ReturnType<typeof setInterval>[] = [];
   private start = DEFAULT_START;
   private sparksUsed = new Map<number, number>();
@@ -245,13 +247,17 @@ export class GameSource implements DataSource {
     this.refreshGame();
     this.timers.push(setInterval(() => this.loop(), this.opts.tickMs));
     this.timers.push(setInterval(() => this.push(), this.opts.pushMs));
+    this.draining = false;
   }
 
   async dispose() {
+    this.draining = true;
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     this.store.clock.playing = false;
+    const advancing = this.advancing;
     await this.takeover?.releaseAll();
+    await advancing?.catch(() => {});
   }
 
   private onRecord(r: RunRecord) {
@@ -631,9 +637,13 @@ export class GameSource implements DataSource {
 
   // ------------------------------------------------------------------ controls
   async control(cmd: ControlCommand, actor?: string): Promise<ControlResult> {
-    const c = this.store.clock;
+    const world = this.world;
+    const draining = (): ControlResult => ({ ok: false, error: "The simulated world is resetting", code: "simulator_resetting" });
     try {
+      if (!gameResetControlsAllowed(this.draining, true)) return draining();
       if (WAITS_FOR_WORLD.has(cmd.type)) await this.idle();
+      if (!gameResetControlsAllowed(this.draining, this.world === world)) return draining();
+      const c = this.store.clock;
       switch (cmd.type) {
         case "play": if (this.over()) return { ok: false, error: "game over: reset to play again" }; c.playing = true; break;
         case "pause": c.playing = false; break;
@@ -759,7 +769,7 @@ export class GameSource implements DataSource {
         case "refresh": break;
         default: return { ok: false, error: `${cmd.type} is not available in game mode` };
       }
-      this.push();
+      if (cmd.type === "reset" || gameResetControlsAllowed(this.draining, this.world === world)) this.push();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: String((e as Error)?.message ?? e) };
