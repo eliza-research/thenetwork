@@ -7,7 +7,7 @@
 // Inputs are profile.ts fields only, so nothing here can see a sealed attribute or a proxy.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits, standingCeiling } from "../../../../core/src/generated/matchLane.ts";
-import { standingFromEvidence, standingUncertainty } from "../../../../core/src/generated/memberStanding.ts";
+import { standingFromEvidence, standingUncertaintyFor } from "../../../../core/src/generated/memberStanding.ts";
 import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { memberReason } from "../../filters.ts";
 import type { EntityStanding, EntityTags, MatchEntity, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
@@ -106,17 +106,12 @@ function standing(w: World, e: MatchEntity): EntityStanding {
   if (e.lane === "Cofounder") return networkVectors.standing(w, e);
   const p = profileOf(w, e.memberId)!;
   const level = [{ points: levelPoints(p.seniority!), reviewed: true }];
-  // spec/memberStanding.md, "A member with no reviewed facts gets the widest uncertainty".
-  // A seat's level is part of a staff-verified posting (an unverified seat has no membership): one
-  // reviewed fact. A candidate's reviewed facts are the level itself when a trusted source gave it,
-  // and each demonstrated or interview-verified skill at or above it. One fact per facet, as in the
-  // network pack: a trusted facet that carries the level and a skill is one reviewed fact.
-  const reviewed = p.kind === "job" ? new Set([p.seniorityFacetId]) : new Set([
+  const reviewed = p.kind === "job" ? new Set<string>() : new Set([
     p.seniorityReviewedIn,
     ...[...p.skills.values()].filter(s => s.level >= p.seniority!).map(s => s.reviewedIn),
   ].filter(id => id !== undefined));
   const evidenceIds = [...new Set([p.seniorityFacetId, ...reviewed])].filter(id => id !== undefined);
-  return { standing: standingFromEvidence(level), uncertainty: standingUncertainty(reviewed.size), evidenceIds };
+  return { standing: standingFromEvidence(level), uncertainty: standingUncertaintyFor(reviewed.size, p.kind === "job"), evidenceIds };
 }
 
 const clampValue = (v: number) => Math.max(0, Math.min(pairValueScale, v));

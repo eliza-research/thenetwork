@@ -32,6 +32,7 @@ import { auditCompanies, type AuditFlag } from "./audit.ts";
 import { PeonOracle, n01, u01 } from "./oracle.ts";
 import { generatePeonPopulation, type Candidate, type Job, type PeonGenOptions, type PeonPopulation } from "./persona.ts";
 import { PEON_WORLD_START, buildPeonSnapshot, proposalShell, type PeonNetworkState, type PeonSnapshot } from "./snapshot.ts";
+import type { PeonMarket } from "./yardstick.ts";
 
 /** Roles a candidate is shown per week: peon's attention budget (domain research B4: about 3). */
 export const CAND_CAP = 3;
@@ -75,6 +76,7 @@ export interface PeonMatcherContext {
   week: number; snapshot: PeonSnapshot; rng: Rng; seed: number;
   /** Candidates the matcher assessed (scored for at least one job after its hard filters): the audit's applicant pool. */
   assessed: Set<MemberId>;
+  markets: PeonMarket[];
 }
 export interface PeonMatcher {
   name: string;
@@ -117,6 +119,7 @@ export interface PeonWorld {
 }
 export interface PeonRunResult {
   world: PeonWorld; flows: Flow[]; hires: Hire[]; audits: AuditFlag[][]; matcher: string; heldCompanies: Set<string>; assessed: Set<MemberId>;
+  markets: PeonMarket[];
   /** Recruiter hours spent reading applications and interviewing (iteration 2; 0 under v1). */
   recruiterHours: number;
   /** Jobs closed without a peon hire: at the deadline, or filled through another channel. */
@@ -186,6 +189,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
   const introduced = new Set<string>();
   const heldCompanies = new Set<string>();
   const assessed = new Set<MemberId>();
+  const markets: PeonMarket[] = [];
   const seatsOf = new Map<string, MemberId[]>();
   for (const j of world.pop.jobs) { if (!seatsOf.has(j.company)) seatsOf.set(j.company, []); seatsOf.get(j.company)!.push(j.id); }
   const held = (id: MemberId) => state.safetyHolds.some(h => h.memberId === id);
@@ -207,7 +211,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       else if (week > j.postedWeek && u01(seed, "extfill", j.id, week) < TM.externalFill) { state.openings.set(j.id, 0); closed.external++; }
     }
     const snapshot = buildPeonSnapshot(world.pop, state);
-    const intros = await matcher.propose({ week, snapshot, rng: new Rng(hash32(seed, "matcher", week)), seed, assessed });
+    const intros = await matcher.propose({ week, snapshot, rng: new Rng(hash32(seed, "matcher", week)), seed, assessed, markets });
     const probes = new Map<MemberId, number>();
     // ---- 1. candidate-first probes -------------------------------------------------------------
     intros.forEach((it, i) => {
@@ -390,5 +394,5 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       if (matcher.audit === "hold") for (const fl of flags) holdCompany(fl.company, `audit: ${fl.reason}`);
     }
   }
-  return { world, flows, hires, audits, matcher: matcher.name, heldCompanies, assessed, recruiterHours, closed };
+  return { world, flows, hires, audits, matcher: matcher.name, heldCompanies, assessed, markets, recruiterHours, closed };
 }

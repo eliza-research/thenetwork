@@ -135,6 +135,19 @@ export function lawUncertaintyShrinks(reviewedCount: number): boolean {
   return standingUncertainty(exact_memberStanding(reviewedCount + 1)) <= standingUncertainty(reviewedCount);
 }
 
+/** Story: Treat a new member with wide uncertainty / A standing that staff reviewed as a property of the offer has the floor uncertainty (spec/memberStanding.md) */
+//@ pure
+export function standingUncertaintyFor(reviewedCount: number, reviewedProperty: boolean): number {
+  return reviewedProperty ? standingUncertaintyFloor : standingUncertainty(reviewedCount);
+}
+
+/** Story: Treat a new member with wide uncertainty / A standing that staff reviewed as a property of the offer has the floor uncertainty (spec/memberStanding.md) */
+//@ pure
+export function lawReviewedPropertyHasFloorUncertainty(reviewedCount: number, reviewedProperty: boolean): boolean {
+  //@ ensures \result === true
+  return standingUncertaintyFor(reviewedCount, true) === standingUncertaintyFloor && standingUncertaintyFor(reviewedCount, true) <= standingUncertaintyFor(reviewedCount, reviewedProperty);
+}
+
 /** Story: Move standing slowly / Standing moves toward its target by at most five points a week (spec/memberStanding.md) */
 //@ pure
 export function nextStanding(standing: number, target: number): number {
