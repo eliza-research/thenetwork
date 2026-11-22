@@ -31,7 +31,7 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
+  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine, seatFills,
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
@@ -76,7 +76,7 @@ import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
-import { bookedNeedsSyntheticAcceptance, bookedOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
+import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
@@ -7259,11 +7259,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     const open = this.openOpps().filter(o => o.seat && o.stage !== "scheduled");
     if (!open.length) return;
     const snap = this.snapshotCached();
+    const interactions = this.seatView({ ...snap, interactions: this.interactions }).interactions;
+    const filled = seatFills({ interactions: interactions?.filter(record => bookedRecordOccupies(record.outcome)) });
     for (const seatId of new Set(open.map(o => o.seat!.id))) {
       const active = snap.intents.some(i => i.memberId === seatId && i.status === "active");
       const posted = active ? Number(snap.facets.find(f => f.id === `${seatId}:openings`)?.tags.find(t => t.startsWith("peon:openings:"))?.slice("peon:openings:".length) ?? 0) : 0;
-      const filled = active ? new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && bookedOccupies(o.meetingAt !== undefined, o.stage === "closed")).map(o => o.participants.find(p => p !== o.seat!.manager))).size : 0;
-      if (closeUnbookedItems(!active, posted, filled)) this.endSeat(seatId, active ? "posting filled" : "posting closed");
+      if (closeUnbookedItems(!active, posted, filled.get(seatId)?.size ?? 0)) {
+        this.endSeat(seatId, active ? "posting filled" : "posting closed");
+      }
     }
   }
 

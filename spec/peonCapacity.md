@@ -8,7 +8,7 @@ The [matching engine model](models/matching_engine.md) follows job postings and 
 
 ### Only live or successful introductions occupy an opening
 
-The engine includes pending, accepted, and completed interactions and current open opportunities. Declined, expired, cancelled, and no-show interactions do not add occupancy. A candidate with several records on one posting occupies one opening there. Each posting has its own ledger. A booked opportunity counts for the service while it has a meeting and remains open. A booked row adds a synthetic acceptance to the engine view until the row has recorded feedback.
+The engine includes pending, accepted, and completed interactions and current open opportunities. Declined, expired, cancelled, and no-show interactions do not add occupancy. A candidate with several records on one posting occupies one opening there. Each posting has its own ledger. The service uses the accepted and completed records from the same projection to decide whether another introduction can stay in review. A meeting that has not closed adds a synthetic acceptance until it has recorded feedback. A recorded no-show without a completion frees the opening for a replacement that still needs staff review.
 
 ```quint
 type LedgerPhase = Collecting | Published
@@ -16,8 +16,11 @@ type SeatLedger = { phase: LedgerPhase, occupied: Set[str] }
 
 pure val initial: SeatLedger = { phase: Collecting, occupied: Set() }
 
+pure def bookedRecordOccupies(disposition: str): bool =
+  disposition == "accepted" or disposition == "completed"
+
 pure def interactionOccupies(disposition: str): bool =
-  disposition == "pending" or disposition == "accepted" or disposition == "completed"
+  disposition == "pending" or bookedRecordOccupies(disposition)
 
 pure def bookedOccupies(hasMeeting: bool, closed: bool): bool = hasMeeting and not(closed)
 
@@ -33,6 +36,12 @@ pure def seatRecordOccupies(openOpportunity: bool, disposition: str): bool =
 pure def lawOpenOpportunityOccupies(disposition: str): bool = seatRecordOccupies(true, disposition)
 pure def lawEndedInteractionFreesOpening(openOpportunity: bool): bool =
   seatRecordOccupies(openOpportunity, "declined") == openOpportunity
+
+pure def lawMissedInterviewDoesNotFillOpening(openOpportunity: bool): bool =
+  not(bookedRecordOccupies("no_show")) and (seatRecordOccupies(openOpportunity, "no_show") == openOpportunity)
+
+pure def lawPendingReviewDoesNotFillOpening(openOpportunity: bool): bool =
+  not(bookedRecordOccupies("pending")) and seatRecordOccupies(openOpportunity, "pending")
 
 pure def canObserveCandidate(l: SeatLedger, candidate: str, occupies: bool): bool =
   l.phase == Collecting and occupies and not(l.occupied.contains(candidate))
