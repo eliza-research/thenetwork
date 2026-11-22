@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -562,6 +562,8 @@ interface Opp {
   reschedule?: RescheduleDraft;
   fixedVenue?: Venue;
   venueId?: string; venue?: string; venueArea?: string; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
+  /** A booked venue outside the Network's default meeting zone. */
+  meetingTimeZone?: string;
   tags: string[]; replacements: number; runId?: string;
   /** Built by the daily retry of a standing request: the requester hears about it only after approval. */
   retry?: boolean;
@@ -3644,6 +3646,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       : fixedVenue ? { venue: fixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutes(neighborhood(a), neighborhood(fixedVenue.neighborhood)))) }
       : meetingSpot(areas, o.category, o.tags);
     o.venueId = spot.venue.id; o.venue = spot.venue.name; o.venueArea = spot.venue.neighborhood;
+    if (packVenue && "timeZone" in packVenue) o.meetingTimeZone = packVenue.timeZone;
     o.meetingAt = t.at;
     this.ctx.log("venue", { oppId: o.id, venueId: spot.venue.id, venue: spot.venue.name, lat: spot.venue.lat, lng: spot.venue.lng, meetingAt: o.meetingAt, worstMinutes: spot.worst, time: t.how });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++;
@@ -3889,6 +3892,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
   }
 
+  private bookedMeeting(o: Opp): InteractionRecord["bookedMeeting"] {
+    if (o.meetingAt === undefined) return null;
+    return { at: o.meetingAt, timeZone: o.meetingTimeZone ?? (o.plan ? CITY_TZ[o.plan.city] : NY) };
+  }
+
+  private restoreSlopMeeting(record: InteractionRecord): InteractionRecord {
+    if (record.bookedMeeting !== undefined || record.outcome !== "completed") return record;
+    const marker = record.id.lastIndexOf(":fb:");
+    if (marker < 0) return record;
+    const opportunity = this.opps.get(record.id.slice(0, marker));
+    return { ...record, bookedMeeting: opportunity ? this.bookedMeeting(opportunity) : null };
+  }
+
   private onFeedback(m: MemberState, o: Opp, body: string, f: ReturnType<typeof feedbackOf>, attendanceOpen: boolean) {
     o.feedbackFrom.add(m.id);
     // The world turns this into its "feedback" run record (flags only: the text is not kept).
@@ -3910,7 +3926,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.helpFeedback(m, o, f);
       if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
       else m.completedSinceNoShow++;
-      this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
+      this.interactions.push({
+        id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants],
+        at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
+        ...(this.app.id === "slop" && !f.selfNoShow ? { bookedMeeting: this.bookedMeeting(o) } : {}),
+      });
     }
     const repeatConsent = !o.plan && !o.seat && o.participants.length === 2 && recordsRepeatConsent(
       deliveredInvitee(o.status.get(m.id) === "yes", o.bookedAt?.[m.id] !== undefined),
@@ -7279,7 +7299,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.requests.length = 0; this.requests.push(...st.requests);
     this.queued = st.queued; this.deferred = st.deferred;
     this.declinedIds = new Set(st.declinedIds); this.blocks = new Set(st.blocks); this.avoid = new Set(st.avoid); this.declined = new Map(st.declined);
-    this.feedback = st.feedback; this.interactions = st.interactions;
+    this.feedback = st.feedback;
+    this.interactions = this.app.id === "slop" ? st.interactions.map(record => this.restoreSlopMeeting(record)) : st.interactions;
     this.vouchedSkills = new Map(st.vouchedSkills.map(([k, v]) => [k, new Set(v)]));
     this.invitedIds.clear(); for (const id of st.invitedIds) this.invitedIds.add(id);
     this.trust.importState(st.trust);

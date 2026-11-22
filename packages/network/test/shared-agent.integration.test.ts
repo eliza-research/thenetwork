@@ -469,6 +469,33 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
+// spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
+test("a bare Friends answer to the pending shared-line question enrolls the current member", async () => {
+  const phone = "+12125550139";
+  const say = async (id: string, text: string) => {
+    clock.advance(MINUTE);
+    const response = await post(turn(id, phone, text));
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  expect(await say("enrollment-route-start", "hello")).toMatchObject({ app: "ntwrk", reason: "onboarding_asked" });
+  expect(await say("enrollment-route-profile", "Ari, 29")).toMatchObject({ app: "ntwrk", reason: "joined" });
+  const pending = () => service.people.getPending(service.accounts.phoneHash(phone), "looking_for");
+  expect(await pending()).toMatchObject({ app: "ntwrk" });
+  expect(await sql`select status, body like 'What are you looking for:%' as disclosed
+    from network.messages where id='ask:in:blooio:enrollment-route-profile'`).toEqual([{ status: "dry_run", disclosed: true }]);
+  expect(await say("enrollment-route-explicit", "join friends")).toMatchObject({ app: "friends", reason: "join_asked" });
+  expect(await pending()).toMatchObject({ app: "ntwrk" });
+  const person = (await service.accounts.personFor(phone))!;
+  expect(await service.people.getMembership(person.id, "friends")).toBeUndefined();
+  const answer = await say("enrollment-route-friends", "friends");
+  expect(await service.people.getMembership(person.id, "friends")).toMatchObject({ state: "active", firstName: "Ari" });
+  expect(answer).toMatchObject({ outcome: "handled", app: "ntwrk", replies: expect.arrayContaining([expect.stringMatching(/friends\.help/i)]) });
+  expect(await pending()).toBeUndefined();
+  expect(await sql`select app_id from platform.consent_events where e164=${phone} and source='looking_for'`)
+    .toEqual([{ app_id: "friends" }]);
+}, 60_000);
+
 // spec/notificationAcknowledgement.md, "Count a delivery action only when the store closes a pending delivery"
 test("a signed member open turn records activity once, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;
