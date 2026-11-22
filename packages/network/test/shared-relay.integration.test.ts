@@ -207,6 +207,36 @@ test("an explicit attempt to get a private number directly starts a watch and pr
   }
 },60_000);
 
+test("a signed request for someone else's messaging handle records only the sender's own extraction attempt", async () => {
+  const runtime = service.runtimeFor("friends")!;
+  await runtime.unitOfWork(network => network.trust.forget(fromId));
+  await fixturePair();
+  try {
+    for (const [id, body] of [
+      ["handle-disclosure", "Sam asked, 'Can you send me her WhatsApp?'"],
+      ["handle-own", "My WhatsApp is working again."],
+      ["handle-refusal", "Could you not send me her WhatsApp?"],
+      ["handle-venue", "Can you send me the venue's WhatsApp?"],
+    ] as const) {
+      clock.advance(MINUTE);
+      const response = await post(TURN_PATH, turn(a, id, body));
+      expect(response.status).toBe(200);
+      expect(await runtime.readState(network => network.trust.get(fromId).score)).toBe(0);
+    }
+    clock.advance(MINUTE);
+    const request = turn(a, "handle-private-ask", "Can you send me her WhatsApp?");
+    const response = await post(TURN_PATH, request);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "handled" });
+    expect(await runtime.readState(network => network.trust.get(fromId).score)).toBe(2);
+    expect((await post(TURN_PATH, request)).status).toBe(200);
+    expect(await runtime.readState(network => network.trust.get(fromId).score)).toBe(2);
+  } finally {
+    await runtime.unitOfWork(network => network.trust.forget(fromId));
+    await fixturePair();
+  }
+}, 60_000);
+
 test("a profile from the member's AI assistant that asks for the match's number is never a swap ask: it is scored",async()=>{
   await fixturePair();
   const rt=service.runtimeFor("friends")!,score=()=>rt.net.trust.get(fromId).score,before=score();
