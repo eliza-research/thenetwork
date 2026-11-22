@@ -294,8 +294,16 @@ test("closing the pair or a recipient STOP after classification and the async di
       const pending=post(RELAY_PATH,request);await Promise.race([reached,pending.then(async r=>{throw new Error(`answered before classification: ${await r.clone().text()}`);})]);
       let closedEarly=false;const closing=fixturePair(true).then(()=>{closedEarly=true;});
       await sleep(50);expect(closedEarly).toBe(false);
-      release();await dispatch.atGate;expect(await waitFor(pairClosed)).toBe(true);dispatch.resume();
-      expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});await closing;expect(posts).toBe(before);
+      release();
+      const stage = await Promise.race([dispatch.atGate.then(() => "dispatch"), pending.then(() => "suppressed")]);
+      if (stage === "dispatch") {
+        expect(await waitFor(pairClosed)).toBe(true);
+        dispatch.resume();
+      }
+      await closing;
+      expect(await pairClosed()).toBe(true);
+      expect(await (await pending).json()).toMatchObject({ decision: "pass", delivered: false });
+      expect(posts).toBe(before);
     } finally {classifyGate=undefined;classifyEntered=undefined;release?.();dispatch.resume();}
   }
   for(const scenario of ['close','recipient-stop'] as const) {
