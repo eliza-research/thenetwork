@@ -18,6 +18,8 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 
 [Danger disclosures during a check-in](../safetyCase.md#direct-current-danger-text-gets-immediate-guidance-first) use the [receipt of the exact current feedback prompt](../meetingSettlement.md#a-feedback-reply-needs-receipt-of-its-exact-prompt). The model receives the receipt check and the attributed counterpart as inputs. Unattributed disclosures and disclosures without the exact receipt receive guidance without changing attendance or creating a report. The ordinary member report uses its separate transition.
 
+The shared-line clarification action treats the offered target as the exact displayed-name match. Its live memberships represent verified current app owners. It can route the reply to the app that asked when only one current offer matches. Explicit app routing and several matching offers leave that other app's report untouched. The runtime rechecks the pending question and target while applying the report.
+
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
 // Safety and trust (docs/research/2026-11-07-state-machines.md section 6.9). Machines: person-safety-carryover
@@ -104,7 +106,7 @@ module safety_trust {
   // A staff lift reads the decision identifiers, then commits the durable and runtime changes together.
   type Lift = { m: Mid, scope: str, expectedLocal: int, expectedGlobal: int, stage: str }
   type Src = { msgs: int, reporters: Set[Mid], staff: bool, other: int }
-  type Who = { asked: bool, at: int, verb: str, kind: str, target: str }
+  type Who = { asked: bool, at: int, verb: str, kind: str, target: str, offered: bool }
   type State = {
     now: int,
     gen: (str, str) -> int,
@@ -186,7 +188,7 @@ module safety_trust {
 
   pure val NO_TRUST: Trust = { rec: false, score: 0, level: "ok", reportsFrom: Set(), lastDecay: -1, strangers: Set(), blocksMade: List() }
   pure val NO_SRC: Src = { msgs: 0, reporters: Set(), staff: false, other: 0 }
-  pure val NO_WHO: Who = { asked: false, at: 0, verb: "", kind: "", target: "" }
+  pure val NO_WHO: Who = { asked: false, at: 0, verb: "", kind: "", target: "", offered: false }
   pure val NO_LIFT: Lift = { m: { app: "", p: "", g: -1 }, scope: "", expectedLocal: -1, expectedGlobal: -1, stage: "none" }
   pure val FREE_OPP: Opp = {
     app: "", kind: "", parts: Set(), going: Set(), told: Set(), stage: "free", meetingAt: -1, meetHour: 19,
@@ -691,7 +693,9 @@ module safety_trust {
     all {
       r != t, s.live.get(rm), inboundOk(s, r),
       mine.size() <= 1 or best < 0 or metAtOn(s0, app, r, t) == best,
-      if (ambiguous) s' = { ...s0, pendingWho: s0.pendingWho.set(rm, { asked: true, at: s0.now, verb: verb, kind: kind, target: t }), lastAction: "reportAsk" }
+      if (ambiguous) s' = { ...s0, pendingWho: s0.pendingWho.set(rm, {
+        asked: true, at: s0.now, verb: verb, kind: kind, target: t, offered: s0.live.get(tm) and counterpart(s0, rm, tm),
+      }), lastAction: "reportAsk" }
       else if (not(s0.live.get(tm))) s' = { ...s0, wanted: w, lastAction: "reportUnresolved" }
       else s' = { ...blockAndReport(s0, rm, if (verb == "report") kind else "none", tm, "message", true, t), wanted: w, lastAction: "report" },
     }
@@ -714,17 +718,24 @@ module safety_trust {
     }
   }
 
-  // The answer to "Who do you mean?" ("Sam R.") classifies as "ack", so route() sends it to the app with the
-  // newest unanswered item or the last writer, which can be another app of the member (W3-220). There it is
-  // plain chat; the asking app's pendingSafety lapses after a day and the report is never filed.
-  action answerWhoElsewhere(m: Mid, app: str): bool = {
+  pure def currentWhoOffer(st: State, m: Mid, name: str): bool = {
+    val p = st.pendingWho.get(m)
+    val target = midOf(st, m.app, name)
+    st.live.get(m) and p.asked and p.offered and st.now - p.at <= 1 and p.target == name
+      and st.live.get(target) and counterpart(st, m, target)
+  }
+
+  // The shared route sees one exact name. The same active offer must still be usable under the app lock.
+  // An explicit app has its own existing local answer path, modeled by answerWho.
+  action answerWhoShared(m: Mid, ordinaryApp: str, explicit: bool): bool = {
     val p = s.pendingWho.get(m)
-    val other = midOf(s, app, m.p)
-    val meantMet = APPS.exists(a => usedOpps(s).exists(o => o.app == a and metPair(o, midOf(s, a, m.p), midOf(s, a, p.target))))
+    val other = midOf(s, ordinaryApp, m.p)
+    val matches = liveMidsOf(s, m.p).filter(member => currentWhoOffer(s, member, p.target))
     all {
-      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1, app != m.app, s.live.get(other),
-      s' = { ...s, wanted: if (p.verb == "report" and meantMet) s.wanted.union(Set((m.p, p.target))) else s.wanted,
-             lastAction: "answerWhoElsewhere" },
+      p.asked, s.live.get(m), inboundOk(s, m.p), ordinaryApp != m.app, s.live.get(other),
+      if (not(explicit) and matches.size() == 1)
+        answerWho(matches.fold(NOBODY, (_, member) => member))
+      else s' = { ...s, lastAction: "whoSharedPreserved" },
     }
   }
 
@@ -1018,7 +1029,7 @@ module safety_trust {
       disclose(k, app, a, meant, kind, flag),
       report(a, app, b, verb, kind, flag),
       answerWho(m),
-      answerWhoElsewhere(m, app),
+      answerWhoShared(m, app, flag),
       abuse(m, risk),
       staffHoldBy(m, scope, onlyRep),
       staffHoldApply(m),
@@ -1621,15 +1632,40 @@ module safety_trust {
       .expect(s.lastAction == "dangerGuidanceOnly" and everyMetReportFiled and matchable(s, BEN_S)
               and s.reports == Set() and s.opps.get("o1").feedbackFrom == Set())
 
-  // W3-220, trigger B: "report Ben" needs "Who do you mean?" on slop; the answer goes to peon; the ask lapses.
-  run w3_220WhoAnswerRoutedElsewhereTest =
+  // W3-220: another app would receive a reply by the ordinary route, but only Slop asked for this name.
+  run sharedWhoKeepsTheOriginatingAppTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
-      .then(answerWhoElsewhere(ANA_S, "peon"))
-      .then(tick(6))
-      .expect(not(everyMetReportFiled) and s.reports == Set())
-      .then(answerWho(ANA_S).fail())
+      .then(answerWhoShared(ANA_S, "peon", false))
+      .expect(everyMetReportFiled and s.reports.exists(r => r.subject == BEN_S and r.met)
+              and not(s.reports.exists(r => r.subject == BEN_P)) and not(s.pendingWho.get(ANA_S).asked))
+
+  run sharedWhoDoesNotGuessBetweenAppsTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(bookDate("o2", "peon", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(report("ana", "peon", "ben", "report", "harassment", true))
+      .then(answerWhoShared(ANA_S, "peon", false))
+      .expect(s.reports == Set() and s.pendingWho.get(ANA_S).asked and s.pendingWho.get(ANA_P).asked)
+
+  run sharedWhoDoesNotOverrideAnExplicitAppOrUseExpiredOffersTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(answerWhoShared(ANA_S, "peon", true))
+      .expect(s.reports == Set() and s.pendingWho.get(ANA_S).asked)
+      .then(tick(2))
+      .then(answerWhoShared(ANA_S, "peon", false))
+      .expect(s.reports == Set() and everyMetReportFiled)
+
+  run sharedWhoDoesNotUseANameThatWasNeverOfferedTest =
+    init
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(answerWhoShared(ANA_S, "peon", false))
+      .expect(s.reports == Set() and everyMetReportFiled and not(s.pendingWho.get(ANA_S).offered))
 
   // W3-221: ana’s urgent report commits after leave consent. Forget keeps the exact report restriction.
   run w3_221LeaveRaceTest =
