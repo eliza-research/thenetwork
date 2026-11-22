@@ -129,6 +129,19 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     l.push(f);
     facetsBy.set(id, l);
   }
+  const visitsByMember = new Map<MemberId, Set<City>>();
+  const visitAt = now + 2 * DAY;
+  for (const row of input.presence) {
+    const trip = temporaryPresenceWindow(row);
+    if (!trip || !presenceWindowContains(trip, visitAt)) continue;
+    const id = C(row.memberId);
+    let cities = visitsByMember.get(id);
+    if (!cities) {
+      cities = new Set();
+      visitsByMember.set(id, cities);
+    }
+    cities.add(row.city);
+  }
   const hist = histories(input, C);
   // Questions asked >= 7 days ago and never answered (recentAsks; reason slop_<field>).
   const silent = new Map<MemberId, string[]>();
@@ -181,11 +194,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
     const is = one("romance:is:") as Gender | undefined;
     const seeks = [...new Set(has("romance:seeks:"))].sort() as Gender[];
-    const visiting = [...new Set(input.presence.flatMap(p => {
-      if (C(p.memberId) !== m.id || p.city === m.homeCity) return [];
-      const trip = temporaryPresenceWindow(p);
-      return trip && presenceWindowContains(trip, now + 2 * DAY) ? [p.city] : [];
-    }))].sort();
+    const visiting = [...(visitsByMember.get(m.id) ?? [])].filter(city => city !== m.homeCity).sort();
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,

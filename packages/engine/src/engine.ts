@@ -92,10 +92,12 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const pack = deps.pack ?? networkPack;
   const w = new World(input, cfg, embed, pack);
   let t = lap("index", t0);
+  const inputHash = hashInput(input);
+  const configFingerprint = configHash(cfg);
 
   const runLog: MatchingRunLog = {
-    runId: sha256(`${hashInput(input)}|${configHash(cfg)}|${cfg.seed}`).slice(0, 16),
-    seed: cfg.seed, configHash: configHash(cfg), inputHash: hashInput(input), now: w.now,
+    runId: sha256(`${inputHash}|${configFingerprint}|${cfg.seed}`).slice(0, 16),
+    seed: cfg.seed, configHash: configFingerprint, inputHash, now: w.now,
     engineVersion: ENGINE_VERSION, embedModel: deps.embedModel ?? (deps.embed ? "custom" : "local-hash-v1"),
     judgeModel: deps.llm && cfg.judge.enabled ? (deps.judgeModel ?? process.env.RECOMMENDER_MODEL ?? process.env.DEFAULT_LLM_MODEL ?? "gpt-6-luna") : undefined,
     funnel: {

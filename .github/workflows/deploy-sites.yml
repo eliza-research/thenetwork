@@ -77,7 +77,7 @@ env:
   WRANGLER_VERSION: "4.136.3"
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -93,20 +93,6 @@ jobs:
         run: |
           pnpm exec tsc --noEmit -p sites/tsconfig.json
           pnpm --filter @thenetwork/site run typecheck
-
-  build:
-    needs: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
-      - run: pnpm install --frozen-lockfile
       - name: Production build (refuses draft legal text and unfilled placeholders)
         run: pnpm run sites:build
         env:

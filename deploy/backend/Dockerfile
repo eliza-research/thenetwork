@@ -8,16 +8,17 @@ ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a38
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
-# Only what the processes run: the workspaces, the lockfile and the deploy entry (Dockerfile.dockerignore keeps the rest out).
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN npm install --global corepack@0.35.0 \
+    && corepack pnpm fetch --prod --ignore-scripts
+# Only what the processes run: the workspaces and the deploy entry (Dockerfile.dockerignore keeps the rest out).
+COPY tsconfig.json ./
 COPY packages ./packages
 COPY deploy ./deploy
 COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
 # The fitted relay Clef weights (RELAY_CLEF_WEIGHTS_PATH=evals/relay/clef-relay-weights.json); the corpora stay out.
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
-# Link the workspaces and install their pinned runtime dependencies. No lifecycle scripts run.
-RUN npm install --global corepack@0.35.0 \
-    && corepack pnpm install --frozen-lockfile --prod --ignore-scripts
+RUN corepack pnpm install --offline --frozen-lockfile --prod --ignore-scripts
 # Build the CSS used in connector responses and in the staff console.
 RUN node packages/design-system/build.ts build \
     && node --import tsx packages/mcp/src/pages/build-css.ts \

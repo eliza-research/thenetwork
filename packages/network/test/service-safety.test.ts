@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -323,6 +325,102 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await other.people.findPhone(proposed)).toBeUndefined();
     expect(await other.people.isBanned(other.accounts.phoneHash(proposed))).toBe(false);
   });
+
+  test("a shared signed safety clarification returns to its exact pending report", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const secret = "synthetic-safety-clarification-turn-secret";
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret } });
+    await s.start();
+    const ari = newPhone(), ben = newPhone(), peonContact = newPhone();
+    for (const [phone, name] of [[ari, "Ari, 30"], [ben, "Ben, 32"]] as const) {
+      expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+      expect(await text(s, clock, phone, name)).toBe("joined");
+    }
+    expect(await text(s, clock, ari, "peon")).toBe("join_asked");
+    expect(await text(s, clock, ari, "Ari, 30")).toBe("joined");
+    expect(await text(s, clock, peonContact, "peon")).toBe("join_asked");
+    expect(await text(s, clock, peonContact, "Ben, 31")).toBe("joined");
+    const slopAri = (await memberOf("slop", ari))!.id;
+    const slopBen = (await memberOf("slop", ben))!.id;
+    const peonAri = (await memberOf("peon", ari))!.id;
+    const peonBen = (await memberOf("peon", peonContact))!.id;
+    const recordMeeting = (app: "slop" | "peon", pair: string[]) => s.runtimeFor(app)!.unitOfWork(net => {
+      const state = net.exportState(), now = clock.now();
+      state.opps.push({
+        id: `${app}.clarification-meeting.${pair[1]}`, origin: "engine", kind: "intro", category: app === "slop" ? "romance" : "professional",
+        objective: "coffee", detail: "coffee", stage: "done", participants: pair, alternates: [],
+        primed: [], status: pair.map(id => [id, "yes"]), explanations: {}, bookedTold: pair,
+        createdAt: now - 24 * HOUR, deadline: now - 3 * HOUR, meetingAt: now - 4 * HOUR,
+        score: 0.8, generator: "fixture", components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0,
+          timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
+        exploration: false, sameDay: false, contacted: pair, reminded: [], feedbackFrom: [], tags: [], replacements: 0,
+      });
+      net.importState(state);
+    });
+    await recordMeeting("slop", [slopAri, slopBen]);
+    await recordMeeting("peon", [peonAri, peonBen]);
+    const signed = async (messageId: string, text: string, app?: AppId, receivedAt = clock.now()) => {
+      const input: TurnRequest = { channel: "blooio", transport: "imessage", from: ari, to: null, messageId,
+        text, receivedAt, ...(app ? { app } : {}) };
+      const body = JSON.stringify(input);
+      const headers = await svcSign(secret, { method: "POST", path: TURN_PATH, id: messageId, body, nowS: Math.floor(clock.now() / 1000) });
+      const response = await s.fetch(new Request("http://localhost" + TURN_PATH, { method: "POST", body, headers }));
+      expect(response.status).toBe(200);
+      return await response.json() as TurnResponse;
+    };
+    const askedAt = clock.now();
+    const ask = await signed("pending-safety-ask", "Report him, he harassed me.", "slop");
+    expect(ask).toMatchObject({ outcome: "handled", app: "slop", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)] });
+    let probeNo = 0;
+    const competingPeonItem = async () => {
+      clock.advance(MINUTE);
+      await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
+        values ('peon', ${"competing-peon-probe-" + ++probeNo}, ${peonAri}, 'outbound', 'imessage', 'A Peon opportunity is ready.',
+          'dry_run', 'peon.competing-opportunity', true, false, ${new Date(clock.now())})`;
+      expect((await s.memberApps(ari)).find(row => row.app === "peon")?.lastItem).toBe(clock.now());
+      clock.advance(MINUTE);
+    };
+    const reports = async (app: "slop" | "peon") => (await s.runtimeFor(app)!.pg.load())?.reports;
+    await competingPeonItem();
+    expect(await signed("unrelated-reply", "Thanks")).toMatchObject({ app: "peon" });
+    expect(await signed("forced-peon-reply", "Ben", "peon")).toMatchObject({ app: "peon" });
+    await competingPeonItem();
+    expect(await signed("earlier-signed-reply", "Ben", undefined, askedAt - MINUTE)).toMatchObject({ app: "peon" });
+    expect(await reports("slop")).toEqual([]);
+
+    clock.advance(MINUTE);
+    expect(await signed("pending-peon-report", "Report him, he harassed me.", "peon")).toMatchObject({
+      outcome: "handled", app: "peon", replies: [expect.stringMatching(/^Who do you mean: Ben\?/)],
+    });
+    await competingPeonItem();
+    expect(await signed("ambiguous-app-reply", "Ben")).toMatchObject({ outcome: "handled", replies: [] });
+    expect(await reports("slop")).toEqual([]);
+    expect(await reports("peon")).toEqual([]);
+    expect(await signed("drop-peon-report", "Never mind", "peon")).toMatchObject({ app: "peon" });
+
+    await competingPeonItem();
+    const answer = await signed("pending-safety-answer", "I mean Ben.");
+    expect(answer).toMatchObject({ outcome: "handled", app: "slop", memberId: slopAri });
+    expect(await signed("pending-safety-answer", "I mean Ben.")).toEqual(answer);
+    expect(await reports("slop")).toMatchObject([
+      { reporterId: slopAri, subjectId: slopBen, met: true, kind: "harassment", status: "open" },
+    ]);
+
+    const mary = newPhone();
+    const web = site(s, clock, otp);
+    await web.login("slop", mary);
+    expect((await web.join("slop", 32, "Mary\tJane")).status).toBe(200);
+    const slopMary = (await memberOf("slop", mary))!.id;
+    await recordMeeting("slop", [slopAri, slopMary]);
+    expect(await signed("pending-multiword-name-ask", "Report her, she harassed me.", "slop")).toMatchObject({
+      app: "slop", replies: [expect.stringMatching(/^Who do you mean: Mary\s+Jane\?/)],
+    });
+    await competingPeonItem();
+    expect(await signed("pending-multiword-name-answer", "Mary Jane")).toMatchObject({ outcome: "handled", app: "slop" });
+    expect(await reports("slop")).toHaveLength(2);
+    expect(await reports("slop")).toEqual(expect.arrayContaining([expect.objectContaining({ subjectId: slopMary })]));
+  }, T);
 
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {
     await fresh();

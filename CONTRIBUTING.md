@@ -40,9 +40,10 @@ needs approval. Link the specific story or rule when you propose a change.
   [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
   Run `pnpm run spec:sync` to publish the generated modules. Commit the
-  source spec and the published modules together. Generation and snapshot
-  comparison reuse Quint runs under `.spec-cache/snapshots/` when their
-  effective inputs match. Both commands compile the current VibeLang shells.
+  source spec and the published modules together. Ordinary generation and
+  checks reuse formal tool actions under `.spec-cache/formal/` when their
+  effective inputs match. Generation and snapshot comparison both compile
+  the current VibeLang shells.
 - Fully implement and integrate the approved behavior in the
   [top-level stories](spec/product/stories.md), executable rules, and
   [whole-flow models](spec/models/README.md). Follow them exactly.
