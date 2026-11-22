@@ -2,7 +2,7 @@
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
 import type { Category, Member, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
-import { initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
+import { candidateBackfillAllowed, initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
 import { laneSidesCompatible, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { publicEventMemberAllowsMatch } from "../../core/src/generated/publicEventCatalog.ts";
 import type { EngineConfig } from "./config.ts";
@@ -326,9 +326,10 @@ function laneReason(w: World, c: Candidate): FilterReason | null {
  */
 function keptAlternates(w: World, c: Candidate): MemberId[] {
   const lane = c.lane;
-  if (!lane || c.participants.length < 2) return [...c.alternates];
+  const available = c.alternates.filter(id => candidateBackfillAllowed(w.get(id) !== undefined, w.holds.has(w.canonical(id))));
+  if (!lane || c.participants.length < 2) return available;
   const kept: MatchProfile[] = [];
-  for (const id of c.alternates) {
+  for (const id of available) {
     const alternate = laneProfile(w, c, id, lane);
     if (!alternate || !alternateFits(w, c, lane, alternate)) continue;
     if (kept.some(other => laneSidesCompatible(lane, alternate.side, other.side) && w.match.value(alternate, other) < 0)) continue;
