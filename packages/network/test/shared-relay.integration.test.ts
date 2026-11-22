@@ -473,6 +473,7 @@ test("a signed relay self-age closes the match and lowers the person's age acros
     ["other", "tell them my 15 year old will be with me"],
     ["quote", "tell them I heard her say, \"I'm 16\""],
     ["school", "tell them homeroom starts soon"],
+    ["eta", "tell them 15m from the bar"],
   ] satisfies [string, string][];
   for (const [suffix, phrase] of controls) {
     clock.advance(11 * MINUTE);
@@ -493,4 +494,5 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
   const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
   expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
+  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: 16 }]);
 }, 60_000);
