@@ -268,3 +268,14 @@
 {"text":"she said “he is 15” while reading a novel","other":null}
 {"text":"if he was sixteen, I would have reported it","other":null}
 {"text":"he's a guardian of a child","other":null}
+{"text":"I am 3 and I am undefeated.","teen":false}
+{"text":"I am five and we won the tournament.","teen":false}
+{"text":"I am 38 and my team won.","teen":false,"age":38}
+{"text":"I am 12 years old and my team won.","teen":true,"age":12}
+{"text":"I am 3 and my record is 3-1.","teen":false}
+{"text":"I just turned 12 and I am undefeated.","teen":true,"age":12}
+{"text":"I just turned twelve and we won the tournament.","teen":true,"age":12}
+{"text":"I'm 12 and a half and I am undefeated.","teen":true,"age":12}
+{"text":"I am 12 and my team won.","teen":true,"age":12}
+{"text":"If I just turned 12 and we won, I would be happy.","teen":false}
+{"text":"She said \"I just turned 12 and we won.\"","teen":false}

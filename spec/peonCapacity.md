@@ -114,3 +114,30 @@ pure def lawRemainingNeverNegative(posted: int, occupied: int): bool = remaining
 pure def lawSlateRespectsRemaining(planned: int, remaining: int): bool =
   remaining >= 0 implies capSlate(planned, remaining) <= remaining
 ```
+
+### Trusted postings can use their opening slate
+
+A normal hiring manager's synthetic job seat uses the open budget. The manager's
+member record and each candidate keep their own participation state. Quiet,
+receiving, and paused seats keep their manager's state. The open budget also
+leaves the posting's opening limit and required staff review in force.
+
+Before the company has answered an application, count sent proposals in the
+seven-day budget window across its job seats. Count seats already reserved in
+the current match run. Use the lower of the posting's slate, its share of the
+company cap, and the company's remaining cap. Apply the existing higher cap
+only to a verified urgent posting. When a confirmed company ID is unavailable,
+use the posting owner for that company's budget.
+
+```quint
+pure def normalJobSeatUsesOpenBudget(participation: str): bool = participation == "normal"
+
+pure def peonProbationRemaining(limit: int, sent: int, reserved: int): int =
+  remainingOpenings(limit, sent + reserved)
+
+pure def lawPeonJobSeatKeepsOtherBudgets(participation: str): bool =
+  participation != "normal" implies not(normalJobSeatUsesOpenBudget(participation))
+
+pure def lawPeonProbationCountsPriorAndReserved(limit: int, sent: int, reserved: int): bool =
+  reserved >= 0 and sent + reserved >= limit implies peonProbationRemaining(limit, sent, reserved) == 0
+```

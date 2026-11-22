@@ -11,6 +11,7 @@ import type { EngineInput, EngineProposal } from "../src/types.ts";
 import { World } from "../src/world.ts";
 import { resolveConfig } from "../src/config.ts";
 import { localEmbed } from "../src/embed.ts";
+import { hardGate } from "../src/judgeDeep.ts";
 
 /** Pairs of a proposal's seats (participants and alternates) that its lane pairs and that have no pair value. */
 function unvaluedPairs(w: World, p: EngineProposal): string[] {
@@ -106,4 +107,18 @@ test("a host-required circle counts only hosts eligible for that role", () => {
   expect(composeGroup(world, opts)?.roles["eligible-host"]).toBe("host");
   expect(composeGroup(world, { ...opts, forced: ["eligible-host"], forcedRole: "guest" })).toBeNull();
   expect(composeGroup(world, { ...opts, forced: ["nominal-host"], forcedRole: "host" })).toBeNull();
+});
+
+test("the final judge gate refuses a held alternate or a block among the alternates", async () => {
+  const input = randomWorld({ seed: 1, members: 160, minors: false });
+  const result = await runEngine(input, { seed: 1 });
+  const proposal = result.proposals.find(row => row.alternates.length >= 2)!;
+  expect(proposal).toBeDefined();
+  const [first, second] = proposal.alternates as [MemberId, MemberId];
+  const gate = (override: Partial<EngineInput>) => hardGate(
+    new World({ ...input, ...override }, resolveConfig({ seed: 1 }), localEmbed), proposal,
+  );
+  expect(gate({})).toBeNull();
+  expect(gate({ safetyHolds: [{ memberId: first, from: input.now - DAY }] })).toBe("safety_hold");
+  expect(gate({ edges: [...input.edges, { from: first, to: second, type: "blocked", strength: 1, explicit: true, createdAt: input.now }] })).toBe("blocked");
 });

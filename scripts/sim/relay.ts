@@ -95,13 +95,17 @@ export async function relayBlock(b: Block): Promise<void> {
     }
     for (const t of ["lol I'm 16 tho", "im 17 years old", "I'm still in high school", "not 18 yet but soon",
       "im 12 is that ok", "i am 10 years old", "11 yo", "im 17m", "i'm 16f looking to meet",
-      "hey im 15f btw", "im 16/x from brooklyn", "17m here", "I'm 18 in two weeks"]) {
+      "hey im 15f btw", "im 16/x from brooklyn", "17m here", "I'm 18 in two weeks",
+      "I'm 16.5 years old", "I'm 15.5 y.o. and I live in NYC"]) {
       const r = relayItem(text(t), baseCtx());
       expect([t, r.decision, r.record.ageSignal]).toEqual([t, "block", true]);
     }
     for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school",
       "I'm 17m away from the bar", "im 170m from home", "I'm 5'8", "I'm 3 years into my PhD",
-      "I'm 1 of 3 siblings", "I'm 2 drinks in", 'she said "I am 10 years old"']) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
+      "I'm 1 of 3 siblings", "I'm 2 drinks in", 'she said "I am 10 years old"',
+      "I'm 18.5 years old", "I'm 15.5 miles away", "I'm 15 y.o. in two years",
+      "I'm 15 years old in two years", "My child is 12.5 years old",
+      "My race result is 29.15 years old"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
   });
 
   await b.run("relay: only inside a mutual match between its two participants; blocks, opt-outs and holds win", () => {

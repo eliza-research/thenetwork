@@ -491,6 +491,13 @@ export async function currentAgeEvidenceGate(b: Block): Promise<void> {
       { text: "I'm currently seventeen", age: 17, direct: 17 },
       { text: "I'm now 16", age: 16, direct: 16 },
       { text: "I'm 15 y.o.", age: 15, direct: 15 },
+      { text: "I'm 15 y.o. I live in NYC", age: 15, direct: 15 },
+      { text: "I'm 15 y.o., next month", age: 14 },
+      { text: "I'm 18 y.o. in two years" },
+      { text: "I'm 15 y.o. in 2 years" },
+      { text: "I'm 18 y.o., in three years" },
+      { text: "15 y.o., in two years" },
+      { text: "My age is 12 y.o., in two years" },
       { text: "I'm 18 in high school", age: 18, direct: 18 },
       { text: "I'm still 5 minutes away" },
       { text: "I'm currently 18 in the queue" },
@@ -534,6 +541,54 @@ export async function currentAgeEvidenceGate(b: Block): Promise<void> {
 
 export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean }): Promise<void> {
   await currentAgeEvidenceGate(b);
+
+  // spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
+  await b.run("current half ages are distinct from measures, milestones, and sports records", () => {
+    const rows = [
+      { text: "I'm 12.5 years old", age: 12, explicit: true },
+      { text: "I'm 11 1/2 years old", age: 11, explicit: true },
+      { text: "I'm twelve and one half years old", age: 12, explicit: true },
+      { text: "I'm 12.5 y.o. I live in NYC.", age: 12, explicit: true },
+      { text: "I'm 18.5 years old", age: 18, explicit: true },
+      { text: "I'm 12.5", age: 12 },
+      { text: "I'm 11 1/2", age: 11 },
+      { text: "I'm 5 and a half", age: 5 },
+      { text: "I'm 12 and I like games", age: 12 },
+      { text: "I'm 38 and my team won", age: 38 },
+      { text: "I just turned 12 and I am undefeated", age: 12 },
+      { text: "I'm 12 and a half and I am undefeated", age: 12 },
+      { text: "I am 12 and my team won", age: 12 },
+      { text: "I am 12 and my team record is 12-0" },
+      { text: "I'm 12.5 minutes away" },
+      { text: "I'm 3.5 steps away" },
+      { text: "I'm 10.5 inches tall" },
+      { text: "I'm ten and a half weeks out" },
+      { text: "I'm 5 and a half months sober" },
+      { text: "I'm 3 and I am undefeated" },
+      { text: "I'm 5 and we won" },
+      { text: "I'm 5 and also my team won" },
+      { text: "I'm 3 and 0 this season" },
+      { text: "I'm 12.5 y.o. in two years" },
+      { text: "I'm 12 and a half y.o., next month" },
+      { text: "My child is 12.5 years old" },
+      { text: 'She said "I am 12.5 years old"' },
+    ];
+    for (const { text, age, explicit } of rows) {
+      const network = agesStated(text);
+      const direct = agesStated(text, { directOnly: true });
+      const slop = extractSlopProfile([text]);
+      const declaredMinor = age !== undefined && age < 18;
+      const underAge = age !== undefined && age < 13;
+      expect({
+        text, network: network.age, explicit: network.explicit, direct: direct.age,
+        slop: slop.age?.value, minor: slop.minor, declined: slop.declined,
+      }).toEqual({
+        text, network: age, explicit: explicit ? age : undefined,
+        direct: underAge && !explicit ? undefined : age,
+        slop: age, minor: declaredMinor, declined: underAge && explicit === true,
+      });
+    }
+  });
   await corpusGates(b, async msgs => extractSlopProfile(msgs));
   await llmMergeGate(b);
   await simGates(b, o, async (text, asked, p, market) => extractSlopProfile([{ text, asked }], p, { market: market as "nyc" }));

@@ -401,6 +401,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await judgeCost("after-complete-date-path");
   }, T);
 
+  // spec/datingRadius.md, "A mutual named introduction stays in first-date history"
   test("only two exact named booking receipts preserve a Slop introduction after cancellation and restart", async () => {
     await svc?.close();
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
@@ -414,12 +415,13 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     let s = svc = makeService();
     await s.start();
     const people = [];
-    for (const [e164, firstName] of [[RAE, "Rae"], [SAM, "Sam"]] as const) {
+    // spec/newMatchParticipation.md, "Recheck the member and category before a new contact"
+    for (const [e164, firstName, is, seeks] of [[RAE, "Rae", "woman", "man"], [SAM, "Sam", "man", "woman"]] as const) {
       const result = await s.accounts.join(APPS.slop, { e164, personId: null }, {
         firstName, age: 30, consent: { sms: true, wording: APPS.slop.consent.text },
       });
       if (!result.ok) throw new Error("Fixture could not join");
-      people.push({ id: result.membership.memberId, name: firstName, age: 30, e164 });
+      people.push({ id: result.membership.memberId, name: firstName, age: 30, e164, romance: { is, seeks: [seeks] } });
     }
     const ids = people.map(person => person.id);
     const world = new Mini(people, { app: "slop", plans: false, growth: false, review: "human" });

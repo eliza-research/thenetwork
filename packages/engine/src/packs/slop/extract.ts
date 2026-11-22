@@ -17,7 +17,7 @@
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
 import { slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, halfAgeEvidenceOf, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -162,10 +162,10 @@ const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bi
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
 const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b(?!\\s+(?:the\\s+)?(?:queue|line)\\b)|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
-const FRACTION_AGE_END = `(?=\\s*(?:$|[,!?:)]|${YEARS_OLD}))`;
+const HALF_CLAUSE_END = new RegExp(`^(?:(?=\\s*(?:$|[,!?:)]))|${AGE_AND_CLAUSE})`);
 const LOOSE_END = `(?=\\s+(?:${AGE_LOOSE_TAIL}))`;
 const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}(?:(?:only|just|literally|barely|like|about)\\s+)?`;
-const SELF_AGE = `(?:${SELF_CURRENT_AGE}|\\bi (?:just )?turned\\s+)(\\d{1,2}|${NUM_WORD_RX})\\b`;
+const SELF_AGE = `(?:${SELF_CURRENT_AGE}|${AGE_STATED_BIRTHDAY})(\\d{1,2}|${NUM_WORD_RX})\\b`;
 const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
 const readNumericPhrase = (value: string) => /^\d/.test(value) ? Number(value) : wordNum(value);
@@ -180,15 +180,17 @@ function selfLetterAge(text: string, match: RegExpExecArray): boolean {
   );
 }
 
-const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
-  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
+const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean; reading?: "half" | "conjunction" }[] = [
+  { rx: new RegExp(`${SELF_AGE}(?!')${AGE_HALF}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true, reading: "half" },
+  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!')${AGE_AND_CLAUSE}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true, reading: "conjunction" },
+  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
   { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}${LOOSE_END}`), age: m => {
     const age = readNumericPhrase(m[1] ?? "");
     return canJoin(age) ? age : NaN;
   }, strict: true },
   { rx: new RegExp(`^\\s*(?:(?:hi|hey|hello)[\\s,!]+)?(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },
-  { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
-  { rx: /\b(?:my age is|age\s*[:=-]|age is)\s*(\d{1,2})\b|(?:^|[,.(]\s*)age\s+(\d{1,2})\b/, age: m => Number(m[1] ?? m[2]), strict: true },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})${NOT_UPCOMING_AGE}[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`(?:\\b(?:my age is|age\\s*[:=-]|age is)\\s*|(?:^|[,.(]\\s*)age\\s+)(\\d{1,2})\\b${NOT_UPCOMING_AGE}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => precedingBirthdayAge(readNumericPhrase(m[1] ?? "")), strict: false },
   { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD_RX})\\s+(?:in|on|next|this|soon)\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
@@ -218,11 +220,18 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
       if (r.rx === LETTER_FIRST_AGE && !selfLetterAge(s.text, m)) continue;
       const lead = m[0].length - m[0].trimStart().length;
       if (quoteStillOpen(t.slice(0, s.start + m.index + lead)) || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
-      if (KIN_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
-      const a = r.age(m);
-      if (!Number.isFinite(a) || a < 1 || a > 99) continue;
-      if (!r.strict && a < 10) continue;
-      if (!out.age || a < out.age.value) { out.age = cand(a, s, m, r.strict ? 0.95 : 0.9, { at: m.index + lead, len: m[0].length - lead }); out.strict = r.strict; }
+      const after = s.text.slice(m.index + m[0].length);
+      if (KIN_AFTER.test(after)) continue;
+      const half = r.reading === "half" ? halfAgeEvidenceOf(after, HALF_CLAUSE_END.test(after)) : undefined;
+      if (half === "HalfAgeUnknown") continue;
+      const rawAge = r.age(m);
+      const a = r.reading === "conjunction" ? ageBeforeConjunction(rawAge, m) : rawAge;
+      if (!Number.isFinite(a) || a < 1 || a > 99 || (!r.strict && a < 10)) continue;
+      const strict = r.strict && (r.reading === undefined || half === "HalfAgeExplicit" || canJoin(a));
+      if (!out.age || a < out.age.value || (a === out.age.value && strict && !out.strict)) {
+        out.age = cand(a, s, m, strict ? 0.95 : 0.9, { at: m.index + lead, len: m[0].length - lead });
+        out.strict = strict;
+      }
     }
     for (const r of MINOR_SIGNS) for (const m of all(r.rx, s.text)) {
       out.minor ??= cand(true as const, s, m, 0.9);

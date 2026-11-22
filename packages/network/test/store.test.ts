@@ -229,6 +229,34 @@ test("bounded help re-ranks the small-group pool when a home task needs a second
   });
 }, T);
 
+test("an unavailable acquaintance cannot displace a valid two-helper home plan", async () => {
+  const objective = "Help move a couch from my apartment";
+  const interests = ["volunteering"];
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint", interests, wants: [{ objective, category: "help" }] },
+    { id: "known", name: "Ben Ito", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "helper-a", name: "Cy Moss", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "helper-b", name: "Dee Yu", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+  ]);
+  for (const m of w.members) {
+    if (m.id.startsWith("helper-")) m.prefs.formats = ["small_group"];
+  }
+  for (const f of w.facets.filter(f => f.kind === "skill")) {
+    f.kind = "offer";
+    f.value = f.memberId === "known" ? objective : "Available to carry furniture and boxes";
+  }
+  w.edges.push({ from: "requester", to: "known", type: "knows", explicit: true, strength: 1, createdAt: w.clock.now() });
+  const plan = async () => (await runEngine(w.ctx().snapshot(), {
+    cities: ["nyc"], retrieval: { minSim: 0 }, floors: { fit: 0, mutualBenefit: 0, confidence: 0 },
+    generators: { group_composer: false },
+    thresholds: { byGenerator: { help_request: 0 } },
+  })).proposals.find(p => p.generator === "help_request");
+  expect(await plan()).toMatchObject({ participants: ["requester", "known"], safetyClass: "medium" });
+  w.presence.push({ memberId: "known", city: "sf", type: "temporary", areas: ["Mission"],
+    from: w.clock.now(), to: w.clock.now() + 24 * DAY });
+  expect(await plan()).toMatchObject({ participants: ["requester", "helper-a", "helper-b"], safetyClass: "medium" });
+}, T);
+
 /** A NetworkUnderTest whose ConsentNetwork can be replaced mid-run (a process restart inside a world run). */
 class Restartable implements NetworkUnderTest {
   readonly name = "consent";

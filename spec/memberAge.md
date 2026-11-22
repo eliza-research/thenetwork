@@ -103,14 +103,54 @@ pure def lawConfirmedUnderageCannotRestart(age: int): bool =
 
 ### A near birthday gives an estimate for the present age
 
-The Network and Slop accept a current age qualified by words such as “still” or “currently,” including ages written with “y.o.” If a direct self-age clause names the age of a near birthday, use one year less in onboarding and conversation. Treat the result as an estimate. It can keep someone out of matching but does not confirm an under-13 refusal. The direct-only relay check does not commit an estimate. Quoted, reported, or hypothetical wording does not supply a direct current age.
+The Network and Slop accept a current age qualified by words such as “still” or “currently,” including ages written with “y.o.” If a direct self-age clause names the age of a near birthday, use one year less in onboarding and conversation. Treat the result as an estimate. It can keep someone out of matching but does not confirm an under-13 refusal. The direct-only relay check does not commit an estimate. Keep a following birthday qualifier with an age written as “y.o.” The qualifier stays with the age for a near or a distant birthday. A distant birthday does not give a current age. Quoted, reported, or hypothetical wording does not supply a direct current age.
 
 ```quint
 pure def precedingBirthdayAge(nextAge: int): int =
   nextAge - 1
 
+pure def ageQualifierFollows(nearBirthday: bool, distantBirthday: bool): bool =
+  nearBirthday or distantBirthday
+
+pure def lawDistantBirthdayQualifiesTheAge(nearBirthday: bool): bool =
+  ageQualifierFollows(nearBirthday, true)
+
 pure def lawBeforeAnEighteenthBirthdayIsNotAdult(nextAge: int): bool =
   nextAge <= adultAge implies not(matchableAge(precedingBirthdayAge(nextAge)))
+```
+
+### A half age needs age wording to confirm an under-13 refusal
+
+Use the whole number in a current age stated as a decimal half, a slash half, or “and a half.” When the words “years old” or an accepted equivalent follow the half, the reading is explicit. A standalone half age or one followed by a separate clause can supply an age without confirming an under-13 refusal. A measurement or a future milestone supplies no current age. A small number used as a sports score or record supplies no age. A first-person birthday before a sports clause supplies the stated age. A team result can follow a self-age of 10 or older. For a lower age in a team result clause, require direct birthday or age wording. An under-13 conjunction reading needs explicit age wording before it can confirm a refusal. An attested adult's under-13 contradiction goes to staff and keeps the member's data.
+
+```quint
+type HalfAgeEvidence = HalfAgeUnknown | HalfAgeLoose | HalfAgeExplicit
+
+pure def halfAgeEvidence(writtenAsAge: bool, atClauseEnd: bool, future: bool): HalfAgeEvidence =
+  if (future) HalfAgeUnknown
+  else if (writtenAsAge) HalfAgeExplicit
+  else if (atClauseEnd) HalfAgeLoose
+  else HalfAgeUnknown
+
+pure val minLooseTeamAge: int = 10
+
+pure def ageConjunctionAllowed(age: int, statedBirthday: bool, sportsRecord: bool, teamResult: bool): bool =
+  statedBirthday or age >= minMemberAge or (not(sportsRecord) and (not(teamResult) or age >= minLooseTeamAge))
+
+pure def lawAnUpcomingHalfAgeSuppliesNoCurrentAge(writtenAsAge: bool, atClauseEnd: bool): bool =
+  halfAgeEvidence(writtenAsAge, atClauseEnd, true) == HalfAgeUnknown
+
+pure def lawAHalfAgeNeedsAgeWordsToBeExplicit(atClauseEnd: bool, future: bool): bool =
+  halfAgeEvidence(false, atClauseEnd, future) != HalfAgeExplicit
+
+pure def lawSmallSportsRecordsDoNotSupplyAge(age: int): bool =
+  age < minMemberAge implies not(ageConjunctionAllowed(age, false, true, false))
+
+pure def lawSmallTeamResultsDoNotSupplyAge(age: int): bool =
+  age < minLooseTeamAge implies not(ageConjunctionAllowed(age, false, false, true))
+
+pure def lawStatedBirthdaySurvivesSportsContext(age: int): bool =
+  ageConjunctionAllowed(age, true, true, true)
 ```
 
 ### An older age cannot raise the effective age
