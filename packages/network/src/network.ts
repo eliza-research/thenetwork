@@ -51,7 +51,7 @@ import {
   attendanceBookingReceived, chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, feedbackHistorySeat, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, dayOfReplyAccepted, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
-  meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
+  meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, pairedFeedbackAbsence, restoreAttendance,
   settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement, type AttendanceMark, verifiedMeetingValueAllowed,
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalBookingCurrent, lateArrivalBookingReceiptCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalReportTimeCurrent, lateArrivalText } from "../../core/src/generated/groupLateArrival.ts";
@@ -156,7 +156,7 @@ import { appTagFacet, type AppHooks, type AppTag, type HookOpp } from "./apphook
 import { confirmPosting, postingDraftCurrent } from "../../core/src/generated/postingPolicy.ts";
 import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { hireSeatCurrent, readHireEvidence, type HireSeat } from "./peon-hire-dispatch.ts";
-import { checkInReport, emergencyCheckInReportKind, reportKindOf, statesImmediateDanger, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
+import { checkInReport, directFeedbackAbsence, emergencyCheckInReportKind, reportKindOf, statesImmediateDanger, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind: ReportKind }
 
@@ -3990,7 +3990,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const others = going.filter(id => id !== m.id);
     // The post-meeting answer is the attendance check-in (NC: mutual check-in; the host's check-in list).
     // Plans also ask "would you do it again with this group?" (would_interact_again edges, crews).
-    const otherMissing = f.otherNoShow || NOBODY_CAME.test(body);
+    const counterpart = !o.plan && o.kind !== "group" && others.length === 1 ? this.member(others[0]!) : undefined;
+    const counterpartAbsence = pairedFeedbackAbsence(attendanceOpen, !!counterpart,
+      counterpart ? directFeedbackAbsence(body, [counterpart.first, counterpart.display]) : false);
+    const otherMissing = f.otherNoShow || counterpartAbsence || NOBODY_CAME.test(body);
     const crewId = attendanceOpen && o.plan ? this.planPost(m, o, body, f) : undefined;
     if (attendanceOpen) {
       if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: otherMissing, named: others.filter(x => this.namedIn(body, x)) } };
@@ -4000,7 +4003,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (this.explicitlyConfirmsAttendance(body, others.length === 1)) own.confirmedRoster = true;
         if (this.app.id === "friends" && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
       }
-      this.helpFeedback(m, o, f);
+      if (!counterpartAbsence) this.helpFeedback(m, o, f);
       if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
       else m.completedSinceNoShow++;
       this.interactions.push({

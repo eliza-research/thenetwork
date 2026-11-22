@@ -102,7 +102,10 @@ module safety_trust {
   }
   type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
-  type Inter = { opportunityId: str, parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
+  type Inter = {
+    opportunityId: str, parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int,
+    counterpartAbsence: Set[Mid],
+  }
   // A staff lift reads the decision identifiers, then commits the durable and runtime changes together.
   type Lift = { m: Mid, scope: str, expectedLocal: int, expectedGlobal: int, stage: str }
   type Src = { msgs: int, reporters: Set[Mid], staff: bool, other: int }
@@ -625,12 +628,14 @@ module safety_trust {
   }
 
   // Feedback keeps its receipt day. The dating slot comes from the booked meeting's local day and hour.
-  pure def recordOf(k: str, o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
+  pure def recordOf(k: str, o: Opp, m: Mid, selfNoShow: bool, directAbsence: bool, feedbackAt: int): Inter =
     { opportunityId: k, parts: o.going, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
-      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour) }
+      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour),
+      counterpartAbsence: if (directAbsence and o.kind == "date" and o.going.size() == 2)
+        o.going.exclude(Set(m)) else Set() }
 
-  // The answer to the check-in after a meeting (onFeedback 2636). `intent`: what the member means ("fine",
-  // "report", "selfNoShow"); `reader`: checkInReport's output (an oracle). After SD-067 a happy answer reads
+  // onFeedback records an answer after an exact receipt. The direct counterpart absence intent is an
+  // attendance statement, and reader represents separately recognized safety reports. A happy answer reads
   // as no report: the corpus evals/network/check-in-reports.jsonl (gate in scripts/sim/evals.ts) checks the
   // reader on direct answers, so the model takes `checkInReaderSound` as a named assumption for this path. The
   // separate immediate danger disclosure path requires exact receipt and counterpart attribution.
@@ -648,7 +653,7 @@ module safety_trust {
     // postDateReports on slop and peon (SD-221); never for a plan
     val reportKind = if (o.kind == "date") reader else "none"
     val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-      inters: s0.inters.union(Set(recordOf(k, o, m, intent == "selfNoShow", s0.now))) }
+      inters: s0.inters.union(Set(recordOf(k, o, m, intent == "selfNoShow", intent == "counterpartAbsence", s0.now))) }
     // checkInReported -> blockAndReport for each other (SD-229); the member means the person of the date
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
@@ -1021,7 +1026,7 @@ module safety_trust {
     nondet flag2 = Set(true, false).oneOf()
     nondet verb = Set("block", "report").oneOf()
     nondet kind = REPORT_KINDS.oneOf()
-    nondet intent = Set("fine", "report", "selfNoShow").oneOf()
+    nondet intent = Set("fine", "report", "selfNoShow", "counterpartAbsence").oneOf()
     nondet reader = Set("none", "harassment", "no_show", "minor").oneOf()
     nondet risk = Set(1, 2, 3, 6).oneOf()
     nondet d = Set(1, 6, 13, 14).oneOf()
@@ -1183,6 +1188,11 @@ module safety_trust {
     i.parts.forall(m => s.live.get(m)) and (o.stage != "deleted" implies i.parts == o.going)
   })
 
+  val counterpartAbsenceStaysWithExactPair = s.inters.forall(i =>
+    i.counterpartAbsence != Set() implies
+      (i.outcome == "completed" and i.parts.size() == 2 and i.parts.contains(i.by)
+        and i.counterpartAbsence == i.parts.exclude(Set(i.by))))
+
   // The Slop profile reads completed attendance using the booked meeting time in its local zone.
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
     i.slot == slotFromLocalParts(i.meetingAt % 7, i.hour))
@@ -1232,6 +1242,7 @@ module safety_trust {
     noShowCountsAbsentOnly,
     attendanceCountsOncePerBooking,
     feedbackHistoryUsesActiveRoster,
+    counterpartAbsenceStaysWithExactPair,
     slotFromMeeting,
     everyMetReportFiled,
     relayBlockReachesSafety,
@@ -1566,7 +1577,7 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set(BEN_S)))
-      .then(s' = { ...s, inters: Set(recordOf("o1", s.opps.get("o1"), NOBODY, true, s.now)) })
+      .then(s' = { ...s, inters: Set(recordOf("o1", s.opps.get("o1"), NOBODY, true, false, s.now)) })
       .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
 
   // The trace adds a fourth accepted seat to the usual three-person fixture, then drops it before feedback.
@@ -1593,6 +1604,21 @@ module safety_trust {
         and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
       .then(leave("slop", "ben"))
       .expect(feedbackHistoryUsesActiveRoster and s.inters == Set())
+
+  run directCounterpartAbsenceStaysAttendanceEvidenceTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set(BEN_S)))
+      .then(checkIn("o1", ANA_S, "counterpartAbsence", "none"))
+      .expect(counterpartAbsenceStaysWithExactPair and s.inters.exists(i => i.counterpartAbsence == Set(BEN_S))
+        and s.reports == Set() and s.blocks == Set() and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
+
+  run groupAbsenceCannotNameOneCounterpartTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "counterpartAbsence", "none"))
+      .expect(s.inters.size() == 1 and s.inters.forall(i => i.counterpartAbsence == Set()) and s.reports == Set())
 
   // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =

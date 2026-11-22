@@ -325,6 +325,26 @@ export function lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: number
   return !meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs);
 }
 
+/** Story: Ask for feedback and close attendance once / Use direct counterpart absence during attendance collection (spec/meetingSettlement.md) */
+//@ pure
+export function pairedFeedbackAbsence(attendanceOpen: boolean, uniqueCounterpart: boolean, directStatement: boolean): boolean {
+  return attendanceOpen && uniqueCounterpart && directStatement;
+}
+
+/** Story: Ask for feedback and close attendance once / Use direct counterpart absence during attendance collection (spec/meetingSettlement.md) */
+//@ pure
+export function lawClosedAttendanceRejectsCounterpartAbsence(uniqueCounterpart: boolean, directStatement: boolean): boolean {
+  //@ ensures \result === true
+  return !pairedFeedbackAbsence(false, uniqueCounterpart, directStatement);
+}
+
+/** Story: Ask for feedback and close attendance once / Use direct counterpart absence during attendance collection (spec/meetingSettlement.md) */
+//@ pure
+export function lawCounterpartAbsenceNeedsUniqueCounterpart(attendanceOpen: boolean, directStatement: boolean): boolean {
+  //@ ensures \result === true
+  return !pairedFeedbackAbsence(attendanceOpen, false, directStatement);
+}
+
 /** Story: Ask for feedback and close attendance once / Use the active roster in interaction history (spec/meetingSettlement.md) */
 //@ pure
 export function feedbackHistorySeat(status: string): boolean {

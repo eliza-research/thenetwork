@@ -401,8 +401,15 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await judgeCost("after-complete-date-path");
   }, T);
 
-  test.each(["while answering feedback", "while a later booking awaits a reply"] as const)
-    ("a signed own absence is feedback about the finished date %s", async scenario => {
+  test.each([
+    { scenario: "while answering feedback", answer: "I came, but Rae couldn't make it.", missing: true, report: true },
+    { scenario: "while a later booking awaits a reply", answer: "Rae bailed on me.", missing: true, report: false },
+    { scenario: "with a direct counterpart absence", answer: "He flaked on me.", missing: true, report: false },
+    { scenario: "with nobody at the date", answer: "Nobody showed up.", missing: true, report: false },
+    { scenario: "with an unrelated driver absence", answer: "My driver bailed on me.", missing: false, report: false },
+    { scenario: "with a quoted absence", answer: "'A message: Rae bailed on me.'", missing: false, report: false },
+    { scenario: "with a denied absence", answer: "Rae didn't flake on me.", missing: false, report: false },
+  ])("a signed own absence is feedback about the finished date $scenario", async ({ scenario, answer, missing, report }) => {
     // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
     // spec/meetingSettlement.md, "Classify each attendee from the available reports"
     await svc?.close();
@@ -444,6 +451,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const history = () => rt.unitOfWork(net => slopProfiles(net.engineInput(clock.now())));
     const own = "I did not show up.";
     await signedText(service, clock, secret, RAE, "absence-unreceived", own);
+    await signedText(service, clock, secret, SAM, "counterpart-absence-unreceived", answer);
     expect((await state()).opps.find(opp => opp.id === id)?.post).toBeUndefined();
     expect((await state()).reports).toEqual([]);
 
@@ -477,10 +485,13 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await signedText(service, clock, secret, RAE, "absence-next-cancellation", "I can't make it anymore.");
     expect((await state()).opps.find(opp => opp.id === future.id)?.stage).toBe("closed");
 
-    await signedText(service, clock, secret, SAM, "absence-other-participant", "I came, but Rae couldn't make it.");
+    await signedText(service, clock, secret, SAM, "absence-other-participant", answer);
     const afterOther = await state();
-    expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: true });
-    expect(afterOther.reports).toMatchObject([{ reporterId: sam, subjectId: rae, kind: "no_show", opportunityId: id, source: "check_in" }]);
+    expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: missing });
+    expect(afterOther.reports).toMatchObject(report
+      ? [{ reporterId: sam, subjectId: rae, kind: "no_show", opportunityId: id, source: "check_in" }]
+      : []);
+    expect(afterOther.blocks).toHaveLength(report ? 1 : 0);
     const afterBothReplies = await history();
     expect(afterBothReplies.get(sam)?.history).toMatchObject({ dates: 1, noShows: 0 });
     expect(afterBothReplies.get(rae)?.history).toMatchObject({ dates: 0, noShows: 1 });
@@ -513,7 +524,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     });
     await service.start();
     const names = ["Rae", "Sam", "Cy"];
-    const phones = [RAE, SAM, "+12125550163"];
+    const phones = [RAE, SAM, "+12125550189"];
     const people = [];
     for (const [index, name] of names.entries()) {
       const result = await service.accounts.join(APPS.slop, { e164: phones[index]!, personId: null }, {

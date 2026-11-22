@@ -227,6 +227,21 @@ pure def lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: int, handledE
   not(meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs))
 ```
 
+### Use direct counterpart absence during attendance collection
+
+In a reply with a receipt for its exact feedback prompt, a direct statement that the sole accepted counterpart flaked, bailed on the participant, or did not show can provide attendance evidence for that booking. Use the known counterpart and direct first-hand phrasing. A quote, denial, or mention of a different person supplies no such evidence. The existing safety report rules apply separately.
+
+```quint
+pure def pairedFeedbackAbsence(attendanceOpen: bool, uniqueCounterpart: bool, directStatement: bool): bool =
+  attendanceOpen and uniqueCounterpart and directStatement
+
+pure def lawClosedAttendanceRejectsCounterpartAbsence(uniqueCounterpart: bool, directStatement: bool): bool =
+  not(pairedFeedbackAbsence(false, uniqueCounterpart, directStatement))
+
+pure def lawCounterpartAbsenceNeedsUniqueCounterpart(attendanceOpen: bool, directStatement: bool): bool =
+  not(pairedFeedbackAbsence(attendanceOpen, false, directStatement))
+```
+
 ### Use the active roster in interaction history
 
 The history of a completed booking lists the members who still held accepted seats when the Network recorded feedback. It keeps each member's own check-in outcome, including a self-reported absence. Keep the original planned roster in the opportunity. For an older group feedback row, use the saved opportunity and its accepted seats only when the saved feedback author and opportunity match.
