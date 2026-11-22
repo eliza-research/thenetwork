@@ -65,6 +65,10 @@ pure def lawWithdrawnRelayRecordsCannotDispatch(passed: bool, rejected: bool): b
 
 ### A blocking reason takes precedence over a hold
 
+The shared threat reader keeps a choice of times or activities outside the
+threat reason. A terminal “or else” or an explicit harmful consequence
+still goes to the existing blocking decision.
+
 A blocking reason blocks delivery. Other reasons hold the item. A relay verdict is pass only when the checks record no reason.
 
 ```quint

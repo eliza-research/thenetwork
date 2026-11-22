@@ -74,6 +74,17 @@ export async function relayBlock(b: Block): Promise<void> {
   b.gate("relay requests: 0 hedged, negated or question requests read as a contact share or photo send", falseConsent.length === 0, falseConsent.map(r => r.text).join(" | "));
 
   // ---- scenarios ------------------------------------------------------------------------------------
+  await b.run("relay: alternatives pass while terminal or explicit threats block", () => {
+    for (const body of ["Thursday works, or else Saturday", "I can do coffee or else we'll meet Thursday", "Tacos or else ramen is fine"]) {
+      expect([body, relayItem(text(body), baseCtx()).decision]).toEqual([body, "pass"]);
+    }
+    for (const body of ["Answer me or else.", "Reply or else you'll regret it"]) {
+      const result = relayItem(text(body), baseCtx());
+      expect(result).toMatchObject({ decision: "block", rendered: "" });
+      expect(result.reasons).toContain("harass_severe:threat");
+    }
+  });
+
   await b.run("relay: never to or from a minor or an unknown age; a minor's self-disclosure blocks and flags the age", () => {
     for (const age of [13, 16, 17, undefined, Number.NaN, -1, 400]) {
       for (const side of ["sender", "recipient"] as const) {

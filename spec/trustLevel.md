@@ -32,6 +32,13 @@ pure def lawExplicitContactBypassTriggersWatch(explicitBypass: bool): bool =
   levelForScore(contactExtractionRisk(explicitBypass), false) == (if (explicitBypass) Watch else Ok)
 ```
 
+### A choice of alternatives does not supply a threat signal
+
+The inbound and relay readers share the threat phrase rule. A terminal
+“or else” can supply a threat signal. When the phrase introduces a
+choice, it supplies no threat signal unless the continuation states a
+harmful consequence.
+
 ### A hold stays in place until staff lift it
 
 Score updates and decay cannot release a hold. Staff release a hold through the separate review path.
