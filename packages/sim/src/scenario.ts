@@ -237,9 +237,21 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         return ok(n === 0, `${n} inbound messages after day ${e.day}`);
       }
       case "no_messages_after_stop": {
-        const stop = msgs.find(x => x.direction === "inbound" && x.memberId === e.persona && x.keyword === "STOP");
-        if (!stop) return ok(false, "persona never sent STOP");
-        const after = msgs.filter(x => x.direction === "outbound" && !x.system && x.memberId === e.persona && x.ts > stop.ts && x.status === "delivered").length;
+        let stopped = false;
+        let sawStop = false;
+        let after = 0;
+        for (const r of recs) {
+          if (r.type === "opt_out" && r.memberId === e.persona) {
+            sawStop = true;
+            stopped = true;
+          } else if (r.type === "opt_in" && r.memberId === e.persona) {
+            stopped = false;
+          } else if (stopped && r.type === "message" && r.msg.memberId === e.persona
+            && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered") {
+            after++;
+          }
+        }
+        if (!sawStop) return ok(false, "persona never sent STOP");
         return ok(after === 0, `${after} messages delivered after STOP`);
       }
       case "canary_not_leaked": {
