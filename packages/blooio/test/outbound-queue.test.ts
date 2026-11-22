@@ -128,6 +128,21 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.map(call => call.idempotencyKey)).toEqual(["tn:quiet-claim-probe"]);
   });
 
+  test("a Los Angeles queue row follows its market's quiet hours without a saved zone", async () => {
+    const local = new SimClock(Date.UTC(2026, 9, 9, 13));
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { clock: local });
+    const id = "quiet-los-angeles";
+    await q.enqueue(a, [{ id, to: "+12125553218", kind: "transactional", text: "Your meeting reminder.", city: "la" }]);
+    await q.drain();
+    expect(calls).toHaveLength(0);
+    expect(await q.statusOf(id)).toBe("deferred_quiet_hours");
+
+    local.set(Date.UTC(2026, 9, 9, 16));
+    await q.drain();
+    expect(calls.map(call => call.idempotencyKey)).toEqual([`tn:${id}`]);
+  });
+
   test("a worker that stopped mid-send: the other worker's next drain recovers the row (no restart needed) and sends it with the same key", async () => {
     const { calls, provider } = recorder();
     const w1 = queue(a, provider, { instance: "worker-1" });
