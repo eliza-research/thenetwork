@@ -173,25 +173,26 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
   const tag = [networkName, ...(engineName ? ["engine", engineName] : [])];
   const msgs = recs.filter((r): r is Extract<RunRecord, { type: "message" }> => r.type === "message").map(r => r.msg);
   const personas = new Map(w.personas.map(persona => [persona.id, { id: persona.id, name: persona.name }]));
-  const rosters = new Map<string, { at: number; participants: readonly MemberId[] }[]>();
+  const rosters = new Map<string, { at: number; participants: readonly MemberId[]; alternates?: readonly MemberId[] }[]>();
   for (const record of recs) {
     if (record.type === "persona") personas.set(record.persona.id, record.persona);
     if (record.type !== "proposal" && record.type !== "meeting_scheduled") continue;
     const id = record.type === "proposal" ? record.proposal.id : record.proposalId;
     const participants = record.type === "proposal" ? record.proposal.participants : record.participants;
+    const alternates = record.type === "proposal" ? record.proposal.alternates : undefined;
     const history = rosters.get(id) ?? [];
-    history.push({ at: record.t, participants });
+    history.push({ at: record.t, participants, alternates });
     rosters.set(id, history);
   }
   const namesIn = simulatedNameMatcher(personas.values());
-  const concerns = (message: LoggedMessage, id: MemberId, useRoster: boolean): boolean => {
+  const concerns = (message: LoggedMessage, id: MemberId, scope: "participants" | "includingAlternates" | "none"): boolean => {
     const meta = message.meta as SimMeta | undefined;
     if (meta?.relayFrom === id) return true;
-    if (useRoster) {
+    if (scope !== "none") {
       const roster = [meta?.participants, meta?.probe?.participants].find(Array.isArray);
       const key = meta?.proposalId ?? meta?.probe?.key ?? meta?.plan?.planId ?? meta?.booked?.proposalId;
-      const recorded = roster ?? (key ? rosters.get(key)?.findLast(entry => entry.at <= message.ts)?.participants : undefined);
-      if (recorded?.includes(id)) return true;
+      const recorded = key && roster === undefined ? rosters.get(key)?.findLast(entry => entry.at <= message.ts) : undefined;
+      if ((roster ?? recorded?.participants)?.includes(id) || (scope === "includingAlternates" && recorded?.alternates?.includes(id))) return true;
     }
     return message.memberId !== id && namesIn(message.body).includes(id);
   };
@@ -264,8 +265,8 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
           if (x.direction !== "outbound" || x.system || x.ts < block.t) return false;
           // A block can still send the neutral cancellation for a booking. The roster alone does
           // not disclose the other member in this message.
-          const useRoster = x.meta?.type !== "cancellation";
-          return (x.memberId === a && concerns(x, b, useRoster)) || (x.memberId === b && concerns(x, a, useRoster));
+          const scope = x.meta?.type === "cancellation" ? "none" : "participants";
+          return (x.memberId === a && concerns(x, b, scope)) || (x.memberId === b && concerns(x, a, scope));
         }).length;
         return ok(together + contacts === 0, `after the block: ${together} proposals together, ${contacts} messages involving the other`);
       }
@@ -273,7 +274,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         const props = recs.filter(r => r.type === "proposal" && r.source !== "scenario"
           && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona)).length;
         const meetings = recs.filter(r => r.type === "meeting_scheduled" && r.participants.includes(e.persona)).length;
-        const msgsAbout = msgs.filter(x => x.direction === "outbound" && !x.system && concerns(x, e.persona, true)).length;
+        const msgsAbout = msgs.filter(x => x.direction === "outbound" && !x.system && concerns(x, e.persona, "includingAlternates")).length;
         return ok(props + meetings + msgsAbout === 0, `${props} proposals, ${meetings} meetings, ${msgsAbout} messages involving ${e.persona}`);
       }
       case "received": {

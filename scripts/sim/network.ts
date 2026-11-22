@@ -176,7 +176,7 @@ export async function scenarioContactEvidenceGates(b: Block): Promise<void> {
     const network = new MessageFixtureNetwork({ seed, randomIntros: false });
     const sim = new World({ ...scenarioWorldOptions(scenario, { network: () => network }), failureRate: 0 });
     await sim.begin();
-    await sim.advanceTo(sim.start + DAY + 22 * HOUR);
+    await sim.advanceTo(sim.clock.now() + DAY + 22 * HOUR);
     return { network, sim };
   };
   const { network, sim } = await startFixture();
@@ -188,6 +188,17 @@ export async function scenarioContactEvidenceGates(b: Block): Promise<void> {
   const metadata = send("Would you like to meet for coffee?", { probe: { key: "exact-minor", category: "social", participants: ["recipient", "minor"] } });
   const recordedRelay = send("Thanks for checking.", { type: "relay", relayFrom: "blocked" });
   const neutralCancel = send("That plan is off.", { type: "cancellation", participants: ["recipient", "blocked"] });
+  network.channelContext.recordProposal({
+    id: "scenario-alternates", kind: "intro", participants: ["recipient", "other"], alternates: ["minor", "blocked"],
+    city: "sf", objective: "coffee", category: "social", score: 1, exploration: false,
+    components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 1 },
+    explanations: {}, generator: "scenario", createdAt: sim.clock.now(),
+    window: { start: sim.clock.now(), end: sim.end },
+  }, "scenario");
+  const linkedProposal = send("Would you like to meet for coffee tomorrow?", { proposalId: "scenario-alternates" });
+  const explicitRoster = send("Would you like to meet for coffee on Tuesday?", {
+    proposalId: "scenario-alternates", participants: ["recipient", "other"],
+  });
   await sim.advanceTo(sim.end);
   const world = await sim.complete();
   const grade = (id: string) => evaluateExpectations(scenario, { ...world,
@@ -204,6 +215,9 @@ export async function scenarioContactEvidenceGates(b: Block): Promise<void> {
     expect([grade(longerName.id), grade(blockedName.id), grade(recordedRelay.id), grade(neutralCancel.id)]).toEqual([
       ["pass", "pass"], ["pass", "fail"], ["pass", "fail"], ["pass", "pass"],
     ]);
+  });
+  await b.run("scenario grading preserves minor alternates in a referenced proposal", () => {
+    expect([grade(linkedProposal.id), grade(explicitRoster.id)]).toEqual([["fail", "pass"], ["pass", "pass"]]);
   });
   await b.run("simulator personas use unique display initials and preserve a recorded roster", async () => {
     const observed = [];
