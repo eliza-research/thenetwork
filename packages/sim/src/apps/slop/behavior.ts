@@ -1,9 +1,6 @@
-// Persona behaviour for the slop harness: how a simulated member answers a probe and its time
-// options, decides on the booked-plan reveal, shows up, gives feedback, asks the agent for dates,
-// and how adversaries act (scam scripts, harassment, catfishing, ghosting). Every draw is seeded by
-// (world seed, flow key, member), so a run is replayable. Probabilities come from the oracle.
 import type { MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
+import { Coins } from "../../coins.ts";
 import { ORACLE_PARAMS, type DateOutcome, type HarmKind, type ProbeContext, type SlopOracle } from "./oracle.ts";
 
 export interface ProbeAnswer {
@@ -26,6 +23,7 @@ export const REPORT_RATE: Record<HarmKind, number> = {
 export const PAUSE_AFTER_SECOND = 0.5;
 
 export class SlopBehavior {
+  readonly coins = new Coins();
   constructor(readonly oracle: SlopOracle, readonly seed: number | string) {}
   private r(...k: (string | number)[]) { return new Rng(hash32(this.seed, "behave", ...k)); }
 
@@ -43,7 +41,8 @@ export class SlopBehavior {
 
   /** Answer an anonymous probe with 2-3 time options. */
   answerProbe(id: MemberId, flowKey: string, c: ProbeContext, options: readonly number[]): ProbeAnswer {
-    const p = this.oracle.p(id), r = this.r("probe", flowKey, id);
+    const coin = this.coins.key(`probe:w${c.week}:${id}`, `${flowKey}|${id}`);
+    const p = this.oracle.p(id), r = this.r("probe", coin, id);
     const yesProb = this.oracle.probeYesProb(id, c);
     const latencyMin = Math.round(r.logNormal(p.hidden.latencyMedianMin, 1));
     if (!r.bool(p.hidden.replyProb)) return { replied: false, yes: false, yesProb, picks: [], latencyMin };
@@ -59,8 +58,8 @@ export class SlopBehavior {
    * if you can't make it."). Silence = in. `statedOk`: the other person is inside this member's
    * stated filters; a matcher that guessed wrong gets a back-out with p = 0.9.
    */
-  backsOut(a: MemberId, b: MemberId, flowKey: string, statedOk: boolean, photoNoiseSd?: number): boolean {
-    const r = this.r("reveal", flowKey, a);
+  backsOut(a: MemberId, b: MemberId, coin: string, statedOk: boolean, photoNoiseSd?: number): boolean {
+    const r = this.r("reveal", coin, a);
     if (!statedOk) return r.bool(0.9);
     // Photo already seen in the probe: only the part of the impression the photo did not show is
     // still a surprise at the reveal (1 - rho^2 of it, rho = corr(photo impression, attraction)).
@@ -69,16 +68,16 @@ export class SlopBehavior {
   }
 
   /** The relay classifier sees an adversary's scripted message (scam or hostile) and flags it. */
-  relayDetects(offender: MemberId, flowKey: string, recall: number): boolean {
-    return this.r("relay", flowKey, offender).bool(recall);
+  relayDetects(offender: MemberId, coin: string, recall: number): boolean {
+    return this.r("relay", coin, offender).bool(recall);
   }
   /** False positive of the relay classifier on an honest member's messages in one revealed flow. */
-  relayFalsePositive(id: MemberId, flowKey: string, rate: number): boolean {
-    return this.r("relay-fp", flowKey, id).bool(rate);
+  relayFalsePositive(id: MemberId, coin: string, rate: number): boolean {
+    return this.r("relay-fp", coin, id).bool(rate);
   }
   /** The victim answers the post-date check-in (p = reply probability) and reports the harm (p). */
-  checkinReports(victim: MemberId, flowKey: string, kind: string, p: number): boolean {
-    const r = this.r("checkin", flowKey, victim, kind);
+  checkinReports(victim: MemberId, coin: string, kind: string, p: number): boolean {
+    const r = this.r("checkin", coin, victim, kind);
     return r.bool(this.oracle.p(victim).hidden.replyProb) && r.bool(p);
   }
   /** A member asked "would you consider people up to 25 mi?" agrees (when they answer). */
@@ -87,13 +86,13 @@ export class SlopBehavior {
   }
 
   /** Shows up to the booked date. `free`: really free at that slot. */
-  attends(id: MemberId, flowKey: string, free: boolean): boolean {
-    return this.r("show", flowKey, id).bool(this.oracle.showProb(this.oracle.p(id), free));
+  attends(id: MemberId, coin: string, free: boolean): boolean {
+    return this.r("show", coin, id).bool(this.oracle.showProb(this.oracle.p(id), free));
   }
 
   /** Post-date feedback ("how was it? want to see them again?"). Ghosters do not answer. */
-  feedback(id: MemberId, flowKey: string, o: DateOutcome, side: "a" | "b"): Feedback {
-    const p = this.oracle.p(id), r = this.r("feedback", flowKey, id);
+  feedback(id: MemberId, coin: string, o: DateOutcome, side: "a" | "b"): Feedback {
+    const p = this.oracle.p(id), r = this.r("feedback", coin, id);
     const e = side === "a" ? o.ea : o.eb, want = side === "a" ? o.wantsSecondA : o.wantsSecondB;
     const replied = r.bool(p.hidden.replyProb * 0.9);
     const truthful = r.bool(p.hidden.honesty);
@@ -103,11 +102,11 @@ export class SlopBehavior {
   }
 
   /** Second date: both want it, then logistics. */
-  secondDate(flowKey: string, o: DateOutcome): boolean {
-    return o.bothWantSecond && this.r("second", flowKey).bool(ORACLE_PARAMS.secondLogistics);
+  secondDate(coin: string, o: DateOutcome): boolean {
+    return o.bothWantSecond && this.r("second", coin).bool(ORACLE_PARAMS.secondLogistics);
   }
   /** After a second date the pair may start seeing each other and pause. */
-  pausesAfterSecond(id: MemberId, flowKey: string): boolean { return this.r("pause", flowKey, id).bool(PAUSE_AFTER_SECOND); }
+  pausesAfterSecond(id: MemberId, coin: string): boolean { return this.r("pause", coin, id).bool(PAUSE_AFTER_SECOND); }
 
   /**
    * Adversary scripts at a stage. Reveal: a scammer moves the chat off-platform and asks for money
@@ -115,11 +114,11 @@ export class SlopBehavior {
    * itself. Date: a catfish does not match their photos, a not-single member's partner situation
    * comes out. Ghosting is modelled by replyProb and flakiness, not here.
    */
-  harms(a: MemberId, b: MemberId, flowKey: string, stage: "reveal" | "date"): HarmEvent[] {
+  harms(a: MemberId, b: MemberId, coin: string, stage: "reveal" | "date"): HarmEvent[] {
     const out: HarmEvent[] = [];
     for (const h of this.oracle.harms(a, b)) {
       if (h.when !== stage) continue;
-      const r = this.r("harm", flowKey, h.kind, h.victim);
+      const r = this.r("harm", coin, h.kind, h.victim);
       if (!r.bool(h.prob)) continue;
       out.push({ kind: h.kind, victim: h.victim, offender: h.offender, reported: r.bool(REPORT_RATE[h.kind]) });
     }

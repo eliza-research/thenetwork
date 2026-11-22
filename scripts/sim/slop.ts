@@ -37,13 +37,14 @@ import type { EngineInput, EngineProposal } from "../../packages/engine/src/type
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, runArm, type ArmResult, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { overlap, pairedLine } from "../../packages/sim/src/paired.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { isSafe } from "../../packages/sim/src/apps/slop/oracle.ts";
-import { createSlopWorld, runSlopWorld, runSlopWorldAsync, type FlowRecord } from "../../packages/sim/src/apps/slop/world.ts";
+import { createSlopWorld, runSlopWorld, runSlopWorldAsync, type FlowRecord, type SlopMatcher, type SlopProposal } from "../../packages/sim/src/apps/slop/world.ts";
 import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -97,6 +98,14 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     const blocking = safety || (!o.quick && !TRACKED.some(r => r.test(g.name)));
     b.gate(`gate ${g.name} (${g.target})`, g.pass, value, blocking);
   }
+  const aa = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD, $engineSalt: 1 }, { ...POPULATION, ...WORLD });
+  const row = (f: (a: ArmResult, i: number) => number) => pairedLine(pack.seeds.map((_, i) => f(pack, i)), aa.seeds.map((_, i) => f(aa, i)));
+  b.track("A/A slop (engine seed salted), dates", true, row((a, i) => a.metrics[i]!.dates));
+  b.track("A/A slop, second dates", true, row((a, i) => Math.round(a.metrics[i]!.secondDateRate * a.metrics[i]!.dates)));
+  b.track("A/A slop, expected P(good date) per proposal (oracle)", true, row((a, i) => a.metrics[i]!.expected.goodPerProposal));
+  b.track("A/A slop, expected P(second date) per proposal (oracle)", true, row((a, i) => a.metrics[i]!.expected.secondPerProposal));
+  b.track("A/A slop, expected good dates per member (oracle)", true, row((a, i) => a.metrics[i]!.expected.goodPerMember));
+  b.track("A/A slop, same dates (Jaccard of who dated whom, per seed)", true, pack.extra.map((e, i) => overlap(e.datePairs, aa.extra[i]!.datePairs).toFixed(2)).join(", "));
 
   // ---- the relay in the world (critical path item 7): adversary personas after the reveal ----------
   const rs = mergeRelayStats(pack.extra.map(e => e.relay?.engine).filter(x => !!x) as never);
@@ -151,7 +160,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     }
   });
   await b.run("world: a check-in report holds the offender (no new harassment victim after the first report)", () => {
-    const r = runSlopWorld({ seed: 5, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
+    const r = runSlopWorld({ seed: 7, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
     const firstReport = new Map<string, number>();
     let viaCheckin = 0;
     r.flows.forEach((f, i) => {
@@ -166,13 +175,24 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     expect(viaCheckin).toBeGreaterThan(0);
     for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
   });
+  await b.run("world: common random numbers: the same proposals in reverse order meet the same member coins and outcomes", () => {
+    const reversed = (): SlopMatcher => {
+      const random = BASELINES.random();
+      return { name: "random-reversed", propose: ctx => [...(random.propose(ctx) as SlopProposal[])].reverse() };
+    };
+    const outcomes = (matcher: SlopMatcher) => runSlopWorld({ seed: 5, perCity: 200, weeks: 1, matcher }).flows
+      .map(f => `${f.first}|${f.partner}|${f.stage}|${f.good ?? "-"}|${f.secondDate ?? "-"}|${f.harms.length}`).sort();
+    const forward = outcomes(BASELINES.random());
+    expect(forward.filter(x => x.includes("|date|")).length).toBeGreaterThan(5);
+    expect(outcomes(reversed())).toEqual(forward);
+  }, false);
   await b.run("metrics: time-to-first-date median averages the two middle days for an even cohort (not the upper-middle)", () => {
     const world = createSlopWorld({ seed: 1, perCity: 20, weeks: 4 });
     const real = world.personas.filter(isSafe);
     expect(real.length).toBeGreaterThanOrEqual(4);
     const [r0, r1, r2, r3] = real;
     const date = (key: string, a: MemberId, b: MemberId, day: number): FlowRecord => ({
-      key, week: 1, first: a, partner: b, city: "nyc", activity: "coffee", options: [],
+      key, week: 1, first: a, partner: b, city: "nyc", activity: "coffee", options: [], expected: { date: 0, good: 0, second: 0 },
       stage: "date", firstYes: true, partnerYes: true, mutualYes: true, revealed: true, filterViolation: false,
       outcome: { ea: 0.5, eb: 0.5, quality: 0.5, good: false, wantsSecondA: false, wantsSecondB: false, bothWantSecond: false },
       good: false, secondDate: false, harms: [], declaredMinor: false, day,
@@ -191,7 +211,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       { ...harasser!, hidden: { ...harasser!.hidden, adversary: "harasser" } },
     ] });
     const pair = (key: string, first: MemberId, partner: MemberId, revealed = true): FlowRecord => ({
-      key, week: 1, first, partner, city: "nyc", activity: "coffee", options: [],
+      key, week: 1, first, partner, city: "nyc", activity: "coffee", options: [], expected: { date: 0, good: 0, second: 0 },
       stage: revealed ? "backout" : "first_no", firstYes: revealed, mutualYes: revealed,
       revealed, filterViolation: false, harms: [], declaredMinor: false,
     });

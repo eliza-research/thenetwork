@@ -23,7 +23,7 @@ export function friendFactory(o: FriendFactoryOptions = {}) {
     if (!r.bool(o.joinRate ?? 0.7)) return undefined;
     const [p] = generatePersonas({
       n: 1, seed: hash32("friend-persona", seed, inviter.id, seq), cityWeights: { nyc: 1, sf: 0 }, adversarialRate: 0, minorShare: 0,
-      joinSpreadDays: 1, idPrefix: `nyc-g${seq}-`, richness: { minimal: 0.5, light: 0.5 },
+      joinSpreadDays: 1, idPrefix: `nyc-g${hash32("friend-id", inviter.id, seq).toString(36)}-`, richness: { minimal: 0.5, light: 0.5 },
     });
     if (!p) return undefined;
     const last = p.name.split(" ").slice(1).join(" ").replace(/-\d+$/, "");

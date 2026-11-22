@@ -7,6 +7,7 @@
 import { writePath } from "../../../../core/src/runtime/files.ts";
 import { slopScammerContactCounts, slopScammerMedianReachTwice } from "../../../../core/src/generated/slopAssignment.ts";
 import type { MemberId } from "@thenetwork/core";
+import { saltSeed } from "../../paired.ts";
 import { BASELINES } from "./baselines.ts";
 import { slopEngineMatcher } from "./enginePack.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
@@ -47,6 +48,7 @@ export interface Extra {
    * adversary or a minor), and its sum (expected second dates).
    */
   softSecondRate: number; softSecondDates: number;
+  datePairs: string[];
 }
 
 const WEEKS_PER_MONTH = 4.345;
@@ -112,6 +114,7 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
     softSecondRate: nd ? soft / nd : 0, softSecondDates: soft,
+    datePairs: res.flows.filter(f => f.stage === "date").map(f => [f.first, f.partner].sort().join("|")).sort(),
     scammerMedianReach: slopScammerMedianReachTwice(reachCounts) / 2,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
@@ -146,13 +149,13 @@ export function worldOptions(w: WorldSpec = {}): { verification?: VerificationMo
  */
 export async function runArm(arm: string, seeds: number[], weeks: number, perCity: number, options?: Record<string, unknown>, world: WorldSpec = {}): Promise<ArmResult> {
   const out: ArmResult = { arm, seeds, metrics: [], extra: [] };
-  const { $world, $baseline, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string };
+  const { $world, $baseline, $engineSalt, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string; $engineSalt?: number };
   const wo = worldOptions({ ...world, ...($world ?? {}) });
   const base = $baseline ?? (arm in BASELINES && !options ? arm : undefined);
   for (const seed of seeds) {
     const res = base
       ? runSlopWorld({ seed, perCity, weeks, matcher: BASELINES[base as keyof typeof BASELINES] as never, ...wo })
-      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed }), ...wo });
+      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed: saltSeed(seed, $engineSalt ?? 0) }), ...wo });
     const m = slopMetrics(res);
     out.metrics.push(m);
     out.extra.push(extraOf(res, m));

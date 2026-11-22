@@ -227,15 +227,5 @@ function verification(r: Rng, h: FriendsHidden, claimedAge: number): FriendsStat
 }
 
 export const hoodOf = (id: string) => byId.get(id)!;
-/**
- * Uniform [0, 1) from any key parts. hash32 (FNV-1a) alone barely moves its high bits when only the
- * last part changes by one character (week 3 vs week 4), so draws keyed that way are correlated; the
- * murmur3 finalizer fixes the avalanche.
- */
-export function h01(...parts: (string | number)[]): number {
-  let h = hash32(...parts);
-  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
-}
 /** Real members: true adults who are not adversaries (per-member metrics use these). */
 export const isReal = (p: FriendsPersona) => !p.hidden.isMinor && !p.hidden.adversary;

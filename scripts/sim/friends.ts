@@ -26,8 +26,10 @@ import { PLAN_VENUES } from "../../packages/network/src/plans.ts";
 import { runFriendsWorld, slotOfCrew, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
+import { idsSalted, overlap, pairedLine } from "../../packages/sim/src/paired.ts";
 
 export const FRIENDS_PINNED = { seeds: [5, 6, 7, 8], weeks: 8, n: 400 };
+const meetupKeys = (meetups: readonly MeetupRecord[]) => meetups.map(m => `${m.activity}:${[...m.attendees].sort().join(",")}`).sort();
 const SAFETY = new Set(["minors", "known_adversary"]);
 
 /** A friends world after `weeks` weeks of friendsPack meetups: the snapshot the engine would read next. */
@@ -110,9 +112,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const placed = wk.plans.filter(p => p.venueId);
       if (!placed.length) throw new Error(`seed ${seed} produced no new table with an open venue`);
       expect(placed.some(p => p.options.length > 1)).toBe(true);
-      // These generated members attended a group and share climbing. Their stated windows
-      // include a closed Saturday evening between an open Tuesday evening and Sunday morning.
-      const pair = seed === 101 ? ["f0057", "f0159"] : seed === 102 ? ["f0060", "f0102"] : undefined;
+      const pair = seed === 101 ? ["f0157", "f0159"] : seed === 102 ? ["f0072", "f0147"] : undefined;
       if (pair) {
         const windows = (["tue_eve", "sat_eve", "sun_am"] as const).map(name => {
           const start = slotTime(s.week, SLOTS.indexOf(name));
@@ -380,13 +380,14 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
   // PR #450: repeat and crew invitations read the latest enjoyment from earlier weeks, in meetup time order.
   let priorChecks = 0, priorErrors = 0, memoryChecks = 0, memoryErrors = 0;
+  const met: string[][] = [];
   for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
     const decisions: { id: MemberId; week: number; enjoy: number | undefined; crew: boolean }[] = [];
     const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: w => {
       // Observe the real oracle without changing its answers, draws or matcher proposals.
       const answer = w.oracle.answer.bind(w.oracle), crewOptIn = w.oracle.crewOptIn.bind(w.oracle);
       w.oracle.answer = (id, key, c) => {
-        if (!/:(plan|partner)$/.test(key)) decisions.push({ id, week: c.week, enjoy: c.prevEnjoy, crew: false });
+        if (!/^probe:w\d+:(plan|partner):/.test(key)) decisions.push({ id, week: c.week, enjoy: c.prevEnjoy, crew: false });
         return answer(id, key, c);
       };
       w.oracle.crewOptIn = (id, key, enjoyed) => {
@@ -414,6 +415,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
       if (result.world.lastEnjoy.get(id) !== latest.get(id)) memoryErrors++;
     }
     all[arm].push(friendsMetrics(result));
+    if (arm === "pack") met.push(meetupKeys(result.meetups));
   }
   b.gate("harness: invitations use the latest prior-week enjoyment", priorChecks > 0 && memoryChecks > 0 && priorErrors + memoryErrors === 0,
     `${priorErrors}/${priorChecks} wrong invitation inputs; ${memoryErrors}/${memoryChecks} wrong final memories`);
@@ -421,6 +423,20 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);
   b.gate("pack: 0 declared-minor proposals", all.pack.every(m => m.safety.declaredMinorProposals === 0));
+
+  const aa: FriendsMetrics[] = [], aaMet: string[][] = [];
+  for (const seed of spec.seeds) {
+    const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: idsSalted(friendsPackMatcher(), 1) });
+    aa.push(friendsMetrics(result));
+    aaMet.push(meetupKeys(result.meetups));
+  }
+  const row = (f: (m: FriendsMetrics) => number) => pairedLine(all.pack.map(f), aa.map(f));
+  b.track("A/A pack (member ids salted), meetups held", true, row(m => m.meetups));
+  b.track("A/A pack, V14", true, row(m => m.v14));
+  b.track("A/A pack, repeat rate", true, row(m => m.repeatRate));
+  b.track("A/A pack, expected P(held and good) per proposal (oracle)", true, row(m => m.expected.perProposal));
+  b.track("A/A pack, expected good meetups per member (oracle)", true, row(m => m.expected.perMember));
+  b.track("A/A pack, same meetups (Jaccard of who met whom, per seed)", true, met.map((m, i) => overlap(m, aaMet[i]!).toFixed(2)).join(", "));
 
   await b.run("harness: deterministic; no arm contacts a declared minor; tables of at most 6, at most 2 meetups a member a week", () => {
     const runs = [...(["random", "greedy", "oracle"] as const).map(n => runFriendsWorld({ seed: 2, n: 200, weeks: 3, matcher: BASELINES[n] })), runFriendsWorld({ seed: 2, n: 200, weeks: 3, matcher: friendsPackMatcher() })];

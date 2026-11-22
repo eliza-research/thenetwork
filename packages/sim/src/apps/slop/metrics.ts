@@ -38,6 +38,7 @@ export interface SlopMetrics {
     harms: Partial<Record<HarmKind, number>>; harmsReported: number;
   };
   timeToFirstDate: { medianDays: number | null; shareWithDate: number };
+  expected: { goodPerProposal: number; secondPerProposal: number; goodPerMember: number };
   fairness: { byGroup: Record<string, GroupMetrics>; byGender: Record<string, GroupMetrics>; minMaxDateRatio: number };
 }
 
@@ -128,6 +129,11 @@ export function slopMetrics(res: SlopRunResult): SlopMetrics {
     },
     safety,
     timeToFirstDate: { medianDays: median(days), shareWithDate: div(days.length, real.length) },
+    expected: {
+      goodPerProposal: div(flows.reduce((s, f) => s + f.expected.good, 0), flows.length),
+      secondPerProposal: div(flows.reduce((s, f) => s + f.expected.second, 0), flows.length),
+      goodPerMember: div(2 * flows.reduce((s, f) => s + f.expected.good, 0), real.length),
+    },
     fairness: { byGroup, byGender, minMaxDateRatio: rates.length ? div(Math.min(...rates), Math.max(...rates)) : 0 },
   };
 }

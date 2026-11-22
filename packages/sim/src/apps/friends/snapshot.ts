@@ -26,7 +26,8 @@ import { fromLocal } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { SLOT_TIME } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { verifyTag } from "@thenetwork/engine/src/packs/friends/info.ts";
-import { SLOTS, h01, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
+import { h01 } from "../../coins.ts";
+import { SLOTS, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
 
 export const NYC_TZ = "America/New_York";
 /** Monday 2026-10-12 (local): week 0 of every friends run. */

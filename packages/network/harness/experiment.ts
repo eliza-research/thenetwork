@@ -70,6 +70,7 @@ export interface ArmResult {
   fairness?: { population: number; zeroProposalShare: number; zeroMeetingShare: number; meetingGini: number; top10Share: number };
   /** Personas spoke in paraphrases (ParaphraseAgent), not the taxonomy's own sentences. */
   paraphrase?: boolean;
+  expected: { perProposal: number; perMember: number };
 }
 
 
@@ -176,6 +177,7 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     precision: r3(compatible / Math.max(1, props.length)), unsafe, adversarialInProposals: adversarialIn,
     proactivePerMemberWeek: r3(proactive / Math.max(1, joined) / (days / 7)), optOuts, newMembersJoined: newJoined,
     judge: { invariants: 0, byRule: {}, canaryLeaks: 0, minorContacts: 0 }, scorecard: { worthwhile: 0, optIn: null, completion: 0, firstOutcome14d: 0 },
+    expected: { perProposal: 0, perMember: 0 },
   };
   const jm = computeMetrics(records, consent ? { requireReview: true } : {});
   res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts, examples: jm.invariants.examples };
@@ -194,6 +196,10 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   for (const p of props) for (const id of p.proposal.participants) propCount.set(id, (propCount.get(id) ?? 0) + 1);
   for (const o of outcomes) { const showed = Object.entries(o.attendance).filter(([, a]) => a.showed); if (showed.length >= 2) for (const [id] of showed) meetCount.set(id, (meetCount.get(id) ?? 0) + 1); }
   res.fairness = fairnessOf(honest, propCount, meetCount);
+  const ev = props.map(p => ({ n: p.proposal.participants.length, v: p.oracle.compatible ? Object.values(p.oracle.participants).reduce((x, o) => x * o.acceptProb * o.showProb, 1) : 0 }));
+  const evSum = ev.reduce((s, x) => s + x.v, 0);
+  const r4 = (x: number) => Math.round(x * 10_000) / 10_000;
+  res.expected = { perProposal: r4(evSum / Math.max(1, ev.length)), perMember: r4(ev.reduce((s, x) => s + x.v * x.n, 0) / Math.max(1, honest.length)) };
   if (consent) {
     // Precision over every probed opportunity (matching-e2e-7), judged by the same oracle.
     const probed = [...consent.opps.values()].filter(o => o.contacted.size > 0 && !o.plan);

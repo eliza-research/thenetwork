@@ -5,6 +5,7 @@
 import { DAY, type City, type MemberId, type OpportunityKind } from "@thenetwork/core";
 import type { Category } from "@thenetwork/core";
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
+import { Coins, signature } from "./coins.ts";
 import { desireById } from "./taxonomy.ts";
 import { withLiveDesires, type Persona } from "./persona.ts";
 import { inHourWindow, localParts } from "./time.ts";
@@ -73,6 +74,7 @@ export interface OracleOptions {
 
 export class Oracle {
   private byId: Map<MemberId, Persona>;
+  readonly coins = new Coins();
   constructor(personas: Persona[], private seed: number | string, private worldStart: number, readonly options: OracleOptions = {}) {
     this.byId = new Map(personas.map(p => [p.id, p]));
   }
@@ -231,11 +233,10 @@ export class Oracle {
     return { verdict: { proposalId: prop.id, participants: out, compatible, unsafe, quality: round3(quality), minEnjoyment: round3(minEnjoyment), flags: [...flags] }, perceived: perceivedBy };
   }
 
-  /** Seed for one persona's draw on a proposal: per proposal id, or (stableDecisions) per people, category and week. */
   private decisionKey(kind: string, prop: OracleProposal, who: MemberId, category: Category | undefined, at: number): number {
-    if (!this.options.stableDecisions) return hash32(this.seed, kind, prop.id, who);
     const week = Math.floor((at - this.worldStart) / (7 * DAY));
-    return hash32(this.seed, kind, [...prop.participants].sort().join(","), category ?? "-", week, who);
+    const meaning = `${kind}|${signature(prop.participants)}|${category ?? "-"}|w${week}|${who}`;
+    return hash32(this.seed, this.options.stableDecisions ? meaning : this.coins.key(meaning, prop.id));
   }
 
   /** Show-up multiplier from travel and the meeting time (OracleOptions.logistics). */
@@ -297,7 +298,9 @@ export class Oracle {
       const want = sigmoid((this.categoryWant(p, q.category, q.at) - 0.45) * 8);
       yesProb = clamp01(cap * fatigue * want * (this.presentIn(p, q.city, q.at) ? 1 : 0.1));
     }
-    const yes = new Rng(hash32(this.seed, "probe", q.key, personaId)).next() < yesProb;
+    const week = Math.floor((q.at - this.worldStart) / (7 * DAY));
+    const coin = this.coins.key(`probe|${personaId}|${q.category}|${q.kind ?? "-"}|w${week}`, `${q.key}|${personaId}`);
+    const yes = new Rng(hash32(this.seed, coin)).next() < yesProb;
     return { yesProb: round3(yesProb), yes };
   }
 
