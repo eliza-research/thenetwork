@@ -128,6 +128,11 @@ Each arm took 3-8 seconds for 21 days on a laptop on 2026-10-07, and up to about
 
 Use a positive whole number for weekly app rounds and judge samples. The general world can use a positive fractional day count. Accelerated speed must be positive and finite. A population count can be zero. Explicit population shares must be finite numbers between zero and one.
 
+Use a finite number for each seed. An app simulation accepts one seed or
+an ascending range in steps of one. Friends also accepts a comma-separated
+list. Signs and exponent signs are part of the number. One command can
+report up to 10,000 seeds.
+
 The JSON also reports the plan counters (plans proposed, probes, yes, booked, crews) and the plan safety checks (names before booking, minors in plans, reveals before quorum, the most plan and intro invites per member in 7 days). Checked on 2026-10-08: `--only consent --days 1 --seed 1 --capital` and `--plans off --sim-plans on` both ran with 0 canary leaks and 0 minor contacts.
 
 The metrics are defined in the results doc, section 2. Every arm also reports `judge` (invariant violations by rule, canary leaks, minor contacts, from `computeMetrics`) and `scorecard` (PRD 28.2 proxies: worthwhile interruptions, opt-in, completion, first good meeting within 14 days). The Observatory lab can call `experiment.ts` directly. On a booked plan, the everyone-yes and accept rates count each member's own decision (silence is a yes). Latest numbers: [results/SUMMARY.md](results/SUMMARY.md) ("ConsentNetwork send defaults", before and after the send path) and [results/2026-10-07-network-consent.md](results/2026-10-07-network-consent.md) section 12 (all three arms on the current code).

@@ -8,7 +8,7 @@
 // Models (founder decision 2026-10-05): persona agents and LLM persona bios use defaultLLM()
 // (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, default Surplus gpt-6-luna); judging uses judgeLLM()
 // (JUDGE_PROVIDER / JUDGE_MODEL, default Surplus gpt-6-luna).
-import { requirePositiveSimulationValue, requireSimulationCount, requireSimulationShare, simulationNumber } from "./input.ts";
+import { requirePositiveSimulationValue, requireSimulationCount, requireSimulationShare, simulationNumber, simulationSeed } from "./input.ts";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { defaultLLM, judgeLLM } from "@thenetwork/core";
@@ -82,7 +82,7 @@ if (a.help) {
   process.exit(0);
 }
 
-const seed = Number(a.seed);
+const seed = simulationSeed(a.seed);
 const mode = a.mode as RunMode;
 if (!["discrete", "accelerated", "realtime"].includes(mode)) throw new Error(`bad --mode ${mode}`);
 

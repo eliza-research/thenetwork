@@ -5,6 +5,7 @@
 // Arms: random, greedy, oracle (the world's baselines) and slop (the pack with its defaults); every
 // --variant adds a slop arm with those pack options (ablations / tuning).
 import { writePath } from "../../../../core/src/runtime/files.ts";
+import { simulationSeeds } from "../../input.ts";
 import { slopScammerContactCounts, slopScammerMedianReachTwice } from "../../../../core/src/generated/slopAssignment.ts";
 import type { MemberId } from "@thenetwork/core";
 import { BASELINES } from "./baselines.ts";
@@ -352,8 +353,7 @@ if (import.meta.main) {
   const argv = process.argv;
   const arg = (k: string, d?: string) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1]! : d; };
   const all = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? [argv[i + 1]!] : []));
-  const [s0, s1] = arg("seeds", "1-4")!.split("-").map(Number);
-  const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
+  const seeds = simulationSeeds(arg("seeds", "1-4"));
   const weeks = Number(arg("weeks", "4")), perCity = Number(arg("per-city", "300"));
   const arms = arg("arms", "random,greedy,oracle,slop")!.split(",").filter(Boolean);
   const presets = argv.flatMap((token, i) => token === "--preset" ? [argv[i + 1] ?? ""]

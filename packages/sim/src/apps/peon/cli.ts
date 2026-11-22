@@ -1,6 +1,6 @@
 // Run peon.biz arms over seeds and print the tables in docs/results/2026-10-08-peon-pack.md. No LLM calls.
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/peon/cli.ts --seeds 1-4 [--arms keyword,pack,...] [--per-city 400] [--jobs 80] [--weeks 8] [--json out.json] [--impact]
-import { simulationNumber } from "../../input.ts";
+import { simulationNumber, simulationSeeds } from "../../input.ts";
 import { writePath } from "../../../../core/src/runtime/files.ts";
 import { ARMS } from "./arms.ts";
 import { historicalGates, officialGates, type GateResult } from "./gates.ts";
@@ -9,8 +9,7 @@ import { REALISM_V1, REALISM_V2, runPeonWorld } from "./world.ts";
 
 async function main() {
   const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
-  const [s0, s1] = arg("seeds", "1-4")!.split("-").map(Number);
-  const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
+  const seeds = simulationSeeds(arg("seeds", "1-4"));
   const perCity = simulationNumber(arg("per-city", "400")), jobsPerCity = simulationNumber(arg("jobs", "80")), weeks = Number(arg("weeks", "8"));
   const arms = arg("arms", "keyword,keyword3,greedy,oracle,pack")!.split(",");
   const unknown = arms.filter(name => !Object.hasOwn(ARMS, name));

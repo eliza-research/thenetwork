@@ -27,6 +27,7 @@ import { PolicyPersonaAgent, PRIMED_MODEL, StubNetwork, World, type NetworkUnder
 import { loadPersonas } from "../../../scripts/synthetic/load.ts";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
 import { createEngine } from "../../sim/src/engineAdapter.ts";
+import { simulationSeed } from "../../sim/src/input.ts";
 import { friendFactory } from "./growth.ts";
 import { ConsentNetwork, type NetworkOptions } from "../src/network.ts";
 import { capitalWiring } from "../src/capital.ts";
@@ -275,6 +276,7 @@ if (import.meta.main) {
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
     paraphrase: { type: "boolean", default: false },
   } });
+  const seed = simulationSeed(a.seed);
   const selected = a.only === undefined ? EXPERIMENT_ARMS : a.only.split(",");
   const knownArm = (name: string): name is ExperimentArm => EXPERIMENT_ARMS.some(arm => arm === name);
   if (!selected.every(knownArm)) {
@@ -289,7 +291,7 @@ if (import.meta.main) {
     const t0 = performance.now();
     const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}) };
     const r = await runArm(arm, {
-      days: Number(a.days), seed: Number(a.seed), liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
+      days: Number(a.days), seed, liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
       ...(a["sim-plans"] ? { simPlans: a["sim-plans"] === "on" } : {}),
     });
     out.push(r);

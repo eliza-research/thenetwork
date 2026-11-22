@@ -1,7 +1,7 @@
 // Run friends.help arms over seeds and print the comparison table (docs/results/2026-10-08-friends-pack.md).
 // No LLM calls.
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
-import { simulationNumber } from "../../input.ts";
+import { simulationNumber, simulationSeeds } from "../../input.ts";
 import { writePath } from "../../../../core/src/runtime/files.ts";
 import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
@@ -10,8 +10,7 @@ import { runFriendsWorld } from "./world.ts";
 
 async function main() {
   const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
-  const parseSeeds = (s: string) => s.split(",").flatMap(r => { const [a, b] = r.split("-").map(Number); return Array.from({ length: (b ?? a!) - a! + 1 }, (_, i) => a! + i); });
-  const seeds = parseSeeds(arg("seeds", "1-4")!);
+  const seeds = simulationSeeds(arg("seeds", "1-4"), true);
   const n = simulationNumber(arg("n", "400")), weeks = Number(arg("weeks", "8")), planCap = Number(arg("plan-cap", "1"));
 
   const packOverride = arg("pack");

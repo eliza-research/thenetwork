@@ -29,6 +29,29 @@ test.each(["", "consent,unknown", "consent,"])("the experiment refuses the compl
   });
 }, 100_000);
 
+test.each([
+  ["packages/sim/src/cli.ts", "--seed=NaN", "--mode=discrete", "--personas=0", "--no-log", "--json"],
+  ["packages/network/harness/experiment.ts", "--seed=Infinity", "--only=push_baseline"],
+])("the CLI %s rejects a malformed seed before emitting evidence", async (entry, ...args) => {
+  await expect(cli(entry, ["--days", "1", ...args])).rejects.toMatchObject({
+    code: 1, stderr: expect.stringContaining("--seed must be a finite number"), stdout: "",
+  });
+}, 100_000);
+
+test.each([
+  ["friends/cli.ts", "-3--1,1e-3", "-3,-2,-1,0.001", ["--only", "random", "--n", "8"], "1,,2"],
+  ["peon/cli.ts", "1e-3", "0.001", ["--arms", "keyword", "--per-city", "8", "--jobs", "2"], "1-2-3"],
+  ["slop/cli.ts", "-3--1", "-3,-2,-1", ["--only", "random", "--per-city", "8"], "3-1"],
+  ["slop/packEval.ts", "1-2", "1,2", ["--arms", "random", "--per-city", "8"], "0-10000"],
+] as const)("the app CLI %s emits exactly the selected seeds and refuses a malformed list", async (entry, input, seeds, settings, invalid) => {
+  const script = `packages/sim/src/apps/${entry}`;
+  const report = await cli(script, ["--weeks", "1", ...settings, "--seeds", input]);
+  expect(report.stdout).toContain(`seeds ${seeds}`);
+  await expect(cli(script, ["--weeks", "1", ...settings, "--seeds", invalid])).rejects.toMatchObject({
+    code: 1, stderr: expect.stringContaining("--seeds"), stdout: "",
+  });
+}, 180_000);
+
 test("the native population generators reject malformed counts and preserve explicit zero", () => {
   for (const count of [NaN, -1, 2.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
     expect(() => generateFriendsPersonas({ seed: 7, n: count })).toThrow(/non-negative safe integer/);
