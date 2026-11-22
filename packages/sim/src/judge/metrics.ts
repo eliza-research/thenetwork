@@ -603,7 +603,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   // ---------------- meetings & value
   const scheduled = new Set(records.flatMap(r => (r.type === "meeting_scheduled" ? [r.meetingId] : []))).size;
   const outcomes = records.filter(r => r.type === "outcome") as Extract<RunRecord, { type: "outcome" }>[];
-  let slots = 0, showed = 0, notice = 0, held = 0, enjoySum = 0, enjoyN = 0;
+  let slots = 0, showed = 0, notice = 0, cancelledByNetwork = 0, held = 0, enjoySum = 0, enjoyN = 0;
   const firstValue = new Map<MemberId, number>();
   for (const o of outcomes) {
     const att = Object.entries(o.attendance);
@@ -612,7 +612,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     for (const [id, a] of att) {
       slots++;
       if (a.showed) showed++;
-      if (a.cancelledWithNotice) notice++;
+      else if (a.cancelledWithNotice) notice++;
+      else if (a.cancelledByNetwork) cancelledByNetwork++;
       if (a.showed && shows.length >= 2) {
         enjoySum += a.enjoyment; enjoyN++;
         if (a.enjoyment >= valueT && !firstValue.has(id)) firstValue.set(id, o.at);
@@ -653,8 +654,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       shareWithNothing: r3(safeDiv(members.filter(id => !firstValue.has(id)).length, members.length)), optOuts: optOutAt.size,
     },
     meetings: {
-      scheduled, held, slots, showRate: r3(safeDiv(showed, slots)), noShowRate: r3(safeDiv(slots - showed - notice, slots)),
-      cancelWithNoticeRate: r3(safeDiv(notice, slots)), flakeRate: r3(safeDiv(slots - showed, slots)), meanEnjoyment: r3(safeDiv(enjoySum, enjoyN)),
+      scheduled, held, slots, showRate: r3(safeDiv(showed, slots)), noShowRate: r3(safeDiv(slots - showed - notice - cancelledByNetwork, slots)),
+      cancelWithNoticeRate: r3(safeDiv(notice, slots)), flakeRate: r3(safeDiv(slots - showed - cancelledByNetwork, slots)), meanEnjoyment: r3(safeDiv(enjoySum, enjoyN)),
     },
     fairness: { top10Share: r3(topShare(counts)), gini: r3(gini(counts)), zeroProposalShare: r3(safeDiv(counts.filter(c => c === 0).length, counts.length)) },
     privacy: { canaryLeaks: leaks.length, leaks: leaks.slice(0, 20), selfEcho, logCanaries },

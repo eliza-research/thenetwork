@@ -7,6 +7,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
+import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
 import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
@@ -115,7 +116,8 @@ export class World {
   private unanswered = new Map<MemberId, number>();
   private proposals = new Map<string, Proposal>();
   private meetings = new Map<string, MeetingReport & { id: string }>();
-  private notices = new Set<string>(); // `${proposalId}|${memberId}` flake notices given
+  private notices = new Set<string>(); // `${meetingId}|${memberId}` notices received from participants
+  private cancelledDeliveries = new Set<string>(); // `${meetingId}|${memberId}` terminal notices received
   private namesIn: ReturnType<typeof simulatedNameMatcher>;
   private meetingSeq = 0;
   private spawnSeq = 0;
@@ -148,8 +150,9 @@ export class World {
     this.records.push(full);
     this.opts.onRecord?.(full);
   }
-  private logMessage(m: SimMessage) {
-    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any } });
+  private logMessage(m: SimMessage, bookingNoticeMeetingId?: string) {
+    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any },
+      ...(bookingNoticeMeetingId ? { bookingNoticeMeetingId } : {}) });
   }
 
   // ------------------------------------------------------------------ network context
@@ -159,7 +162,7 @@ export class World {
       send: (memberId, body, o = {}) => {
         const m = this.channel.send(memberId, body, o);
         // A duplicate is not delivered again, but the attempt is logged so judges and audits see it (judge-evals-M4).
-        if (m.status !== "duplicate") this.logMessage(m);
+        if (m.status !== "duplicate") this.logMessage(m, this.recordNetworkCancellation(m));
         else this.rec({ type: "network_log", kind: "duplicate_send", detail: { memberId, messageId: m.id, idempotencyKey: o.idempotencyKey, body } });
         if (o.meta?.proactive && m.status === "delivered") this.unanswered.set(memberId, (this.unanswered.get(memberId) ?? 0) + 1);
         return m;
@@ -220,6 +223,21 @@ export class World {
     return id;
   }
 
+  private upcomingBooking(proposalId: string, memberId: MemberId, now: number, at?: number) {
+    return [...this.meetings.values()].findLast(meeting => meeting.proposalId === proposalId && meeting.at > now
+      && (at === undefined || meeting.at === at) && meeting.participants.includes(memberId));
+  }
+
+  private recordNetworkCancellation(msg: SimMessage): string | undefined {
+    const proposalId = msg.meta?.proposalId;
+    if (msg.status !== "delivered" || msg.meta?.type !== "cancellation" || !proposalId
+      || msg.idempotencyKey !== `${bookedCancellationPrefix}${proposalId}:${msg.memberId}`) return;
+    const meeting = this.upcomingBooking(proposalId, msg.memberId, msg.ts, msg.meta.meetingAt);
+    if (!meeting) return;
+    this.cancelledDeliveries.add(`${meeting.id}|${msg.memberId}`);
+    return meeting.id;
+  }
+
   // ------------------------------------------------------------------ persona context
   private personaCtx(p: Persona, salt: string | number): PersonaContext {
     return {
@@ -233,12 +251,16 @@ export class World {
   }
 
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
-  private personaSend(p: Persona, text: string, reaction?: Reaction): SimMessage | undefined {
+  private personaSend(p: Persona, text: string, reaction?: Reaction, noticeMeetingId?: string): SimMessage | undefined {
     const mem = this.memories.get(p.id)!;
     if (mem.optedOut && (reaction !== undefined || detectKeyword(text) !== "START")) return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
     const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
-    this.logMessage(m);
+    const meeting = noticeMeetingId ? this.meetings.get(noticeMeetingId) : undefined;
+    const noticeReceived = !reaction && !m.keyword && m.status === "delivered"
+      && meeting && m.ts < meeting.at && meeting.participants.includes(p.id);
+    if (noticeReceived) this.notices.add(`${meeting.id}|${p.id}`);
+    this.logMessage(m, noticeReceived ? meeting.id : undefined);
     this.unanswered.set(p.id, 0);
     if (m.keyword === "STOP") { mem.optedOut = true; this.optedOut.add(p.id); this.rec({ type: "opt_out", memberId: p.id }); }
     if (m.keyword === "START" && this.optedOut.delete(p.id)) {
@@ -300,7 +322,9 @@ export class World {
 
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
-    s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
+    s.on<{ personaId: MemberId; text: string; reaction?: Reaction; noticeMeetingId?: string }>("persona_send", ev => {
+      this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction, ev.data.noticeMeetingId);
+    });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
@@ -403,12 +427,14 @@ export class World {
     const reply = await this.agent.respond(pctx, msg);
     this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent, decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs });
     if (reply.worthwhile !== undefined) this.rec({ type: "judgment", memberId: p.id, messageId: msg.id, worthwhile: reply.worthwhile, source: this.agent.mode });
-    // A flake notice, or "can't make it" to a booked or scheduled time (timeAware), cancels with notice.
-    if ((reply.intent === "flake_notice" || reply.intent === "booked_cancel") && reply.proposalId) this.notices.add(`${reply.proposalId}|${p.id}`);
     // Messages the persona sends on its own after this one (plans: "WEEKLY" to the check-in offer).
     for (const f of reply.followUps ?? []) this.scheduler.after(f.delayMs, "persona_send", { personaId: p.id, text: f.text });
     if (reply.action === "reply" && reply.text) {
-      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
+      const preferredStart = msg.meta?.booked?.at ?? msg.meta?.meetingAt;
+      const notice = (reply.intent === "flake_notice" || reply.intent === "booked_cancel") && reply.proposalId
+        ? this.upcomingBooking(reply.proposalId, p.id, msg.ts, preferredStart) : undefined;
+      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text,
+        ...(reply.reaction ? { reaction: reply.reaction } : {}), ...(notice ? { noticeMeetingId: notice.id } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
           const other = this.personas.get(b);
@@ -445,15 +471,14 @@ export class World {
     const mem = this.memories.get(personaId);
     if (!m || !p || !mem || mem.optedOut) return;
     const pr = mem.proposals[m.proposalId];
-    const key = `${m.proposalId}|${personaId}`;
+    const key = `${m.id}|${personaId}`;
     // Time-aware: a participant booked at a time that clashes with its week drops out (and says so more often).
     const clash = this.clashes(m, p);
-    if (this.notices.has(key) || (!clash && (!pr || pr.plannedShow))) return;
+    if (this.notices.has(key) || this.cancelledDeliveries.has(key) || (!clash && (!pr || pr.plannedShow))) return;
     const r = this.rng.fork("flake", meetingId, personaId);
     if (mem.forceFlake === "notice" || (!mem.forceFlake && r.bool(clash ? 0.8 : 0.45))) {
-      this.notices.add(key);
       const text = templateText(this.personaCtx(p, `flake${meetingId}`), { intent: "flake_notice", messageType: "reminder", decision: "none", delayMs: 0 });
-      this.personaSend(p, text);
+      this.personaSend(p, text, undefined, m.id);
     }
     if (mem.forceFlake) mem.forceFlake = undefined; // one-shot
   }
@@ -467,14 +492,16 @@ export class World {
     const m = this.meetings.get(meetingId);
     if (!m) return;
     const prop = this.proposals.get(m.proposalId);
-    const attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> = {};
+    const attendance: Extract<RunRecord, { type: "outcome" }>["attendance"] = {};
     const showed: MemberId[] = [];
     for (const id of m.participants) {
       const mem = this.memories.get(id)!;
       const pr = mem.proposals[m.proposalId];
-      const notice = this.notices.has(`${m.proposalId}|${id}`);
-      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
-      attendance[id] = { showed: s, cancelledWithNotice: notice, enjoyment: 0 };
+      const key = `${m.id}|${id}`;
+      const notice = this.notices.has(key);
+      const cancelledByNetwork = this.cancelledDeliveries.has(key);
+      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !cancelledByNetwork && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
+      attendance[id] = { showed: s, cancelledWithNotice: notice, ...(cancelledByNetwork ? { cancelledByNetwork: true } : {}), enjoyment: 0 };
       if (s) showed.push(id);
     }
     const plan = this.opts.plans ? this.planOf(m, prop) : undefined;

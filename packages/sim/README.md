@@ -127,6 +127,8 @@ Scenario expectations are checked against the final run log and metrics, not aga
 
 Contact checks read the message's participant or relay metadata and the recorded opportunity roster. The no-contact check also looks at alternates on a referenced proposal when the message has no explicit roster. Text can identify a simulator persona by a full name, a first name with a surname initial, or a first name. The name form must belong to one persona and match whole Unicode words. A neutral cancellation after a block can carry the old booking reference.
 
+The run log marks a notice against its exact booking only after the channel delivers it before the meeting starts. Attendance keeps a participant’s notice separate from a received cancellation of the whole meeting. A participant who receives that cancellation does not count as a no-show.
+
 ### Oracle gap
 
 The oracle gap compares the engine's proposals with a selector that has the full hidden information:

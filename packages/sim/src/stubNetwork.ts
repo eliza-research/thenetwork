@@ -7,6 +7,7 @@
 // under 18 to anyone (no random intros, and any proposal involving one is refused at dispatch);
 // minors get single-player value only: onboarding plus concierge answers and public suggestions.
 import { DAY, HOUR, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot } from "@thenetwork/core";
+import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 // Engine availability helpers (pure; their import chain does not reach the simulator, so no cycle).
 import { availabilityProb, candidateSlots, standingFromFacets, type AvailabilityEvidence, type TimeSlot } from "../../engine/src/attention.ts";
 import { parseYesNo } from "./agent/policy.ts";
@@ -317,7 +318,8 @@ export class StubNetwork implements NetworkUnderTest {
       this.send(this.member(id), keep
         ? `Quick update: ${m.first} can't make it today, sorry about the change. The rest of you are still on.`
         : `Quick update: ${m.first} can't make it today, so I'm calling this one off. Sorry about that, I'll look for another time.`,
-        { type: "cancellation", proposalId: opp.p.id });
+        { type: "cancellation", proposalId: opp.p.id, meetingAt: opp.meetingAt },
+        keep ? undefined : `${bookedCancellationPrefix}${opp.p.id}:${id}`);
     }
     if (!keep) opp.stage = "cancelled";
   }
@@ -457,14 +459,15 @@ export class StubNetwork implements NetworkUnderTest {
     return m;
   }
 
-  private send(m: MemberState, body: string, meta: SimMeta) {
+  private send(m: MemberState, body: string, meta: SimMeta, deliveryKey?: string) {
     // Never repeat an acknowledgement: the same info/concierge text to the same member within
     // 10 minutes (e.g. two quick messages both answered "Thanks, noted...") is sent once.
     const now = this.ctx.clock.now();
     const last = this.lastSent.get(m.id);
     if ((meta.type === "info" || meta.type === "concierge") && last && last.body === body && now - last.at < ACK_DEDUP_MS) return;
     this.lastSent.set(m.id, { body, at: now });
-    return this.ctx.send(m.id, body, { meta, idempotencyKey: `${m.id}:${++this.seq}` });
+    const next = ++this.seq;
+    return this.ctx.send(m.id, body, { meta, idempotencyKey: deliveryKey ?? `${m.id}:${next}` });
   }
 }
 
