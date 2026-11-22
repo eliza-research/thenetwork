@@ -33,7 +33,7 @@ import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } fr
 import { staffRevealMayDisclose } from "../../core/src/generated/consoleMemberView.ts";
 import { monthlyGatheringConsoleAllowed } from "../../core/src/generated/monthlyGathering.ts";
 import { readCappedText } from "../../platform/src/body.ts";
-import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
+import { Lab, LAB_LIMITS, LabQueueFullError, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
@@ -845,11 +845,17 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (body?.app !== undefined && body.app !== app) return json({ ok: false, error: `the run's app (${body.app}) is not the request's app (${app})`, code: "app_mismatch" }, 400);
           const v = validateLab({ ...body, app });
           if (typeof v === "string") return json({ ok: false, error: v }, 400);
-          if (lab.queued + v.seeds.length > LAB_LIMITS.maxQueued) return json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
+          const queueFull = () => json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
+          if (!lab.canQueue(v.seeds.length)) return queueFull();
           const no = await record(u, app, { action: "lab_run", targetType: "run", ok: true, detail: { arms: v.arms, seeds: v.seeds, days: v.days, app: v.app } });
           if (no) return no;
-          const run = await lab.start(v, u.id);
-          return json({ ok: true, run });
+          try {
+            const run = await lab.start(v, u.id);
+            return json({ ok: true, run });
+          } catch (error) {
+            if (error instanceof LabQueueFullError) return queueFull();
+            throw error;
+          }
         }, LAB_ROLES),
       },
       // ------------------------------------------------------------ cross-app person view (plan 5, 2.4)

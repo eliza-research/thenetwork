@@ -3,6 +3,7 @@
 // minor contacts). Each seed is one child process of packages/network/harness/experiment.ts (the
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
+import { labHasQueueCapacity } from "../../core/src/generated/labQueue.ts";
 import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { labAcceptsWork, labRunInterrupted } from "../../core/src/generated/consolePanels.ts";
 import { randomUUID } from "node:crypto";
@@ -15,6 +16,12 @@ import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent"];
 /** maxQueued: seeds that may wait at once (a full queue answers 429; audit observatory-14). */
 export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
+
+export class LabQueueFullError extends Error {
+  constructor() {
+    super(`The lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
+  }
+}
 
 /**
  * The child's environment: what Node needs to run, nothing else. API keys, database URLs and tokens
@@ -135,7 +142,7 @@ export class Lab {
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
     if (!labAcceptsWork(this.stopping)) throw new Error("the simulation lab has stopped");
-    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
+    if (!this.canQueue(req.seeds.length)) throw new LabQueueFullError();
     const now = Date.now();
     // spec/consolePanels.md, "A lab run starts only in the simulated world with a valid request"
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${randomUUID()}`;
@@ -152,6 +159,10 @@ export class Lab {
 
   /** Children running now. */
   get running() { return this.active; }
+  canQueue(seedCount: number): boolean {
+    return labHasQueueCapacity(this.queue.length, seedCount, LAB_LIMITS.maxQueued);
+  }
+
   /** Seeds waiting for a child. */
   get queued() { return this.queue.length; }
 
