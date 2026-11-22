@@ -25,7 +25,7 @@
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
 import { pendingSwapWithdrawn } from "../../core/src/generated/relayDecision.ts";
-import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
+import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
@@ -370,9 +370,11 @@ export class RelayDesk {
       : h.kind === "text" && h.text ? { id: h.itemId, kind: "text", from: h.from, to: h.to, at: h.at, text: h.text } : undefined;
     if (!match || !item) { decided(); return { ok: true, delivered: false }; }
     // Rate limits are judged at the original time (the item's own attempt is excluded by the engine).
-    const again = relayItem(item, this.context(item, match, o, h.at));
+    const context = this.context(item, match, o, h.at);
+    const again = relayItem(item, context);
     const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
-    const rendered = again.decision === "pass" ? again.rendered : again.decision === "hold" && item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : "";
+    const canOverride = staffMayReleaseHeldText(VERDICT[again.decision], item.kind === "text", context.sender.held, context.recipient.held);
+    const rendered = again.decision === "pass" ? again.rendered : canOverride ? RELAY_WORDING.text(first, item.text!) : "";
     const released = decided();
     if (!rendered) return { ok: true, delivered: false };
     const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };

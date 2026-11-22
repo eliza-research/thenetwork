@@ -4116,7 +4116,13 @@ export class NetworkService implements RuntimeHost {
               return {ok:true as const,delivered:false}; // Queue handoff is not a provider delivery receipt.
             });
           }
-        } else r = await rt.unitOfWork(n => release ? n.releaseRelay(itemId, user.id) : n.rejectRelay(itemId, user.id));
+        } else r = await rt.unitOfWork(async n => {
+          if (!release) return n.rejectRelay(itemId, user.id);
+          const held = n.relayHeld().find(item => item.itemId === itemId);
+          if (!held) return { ok: false as const, reason: "not_held" };
+          const canonical = await rt.relayParties([held.from, held.to]);
+          return n.releaseRelay(itemId, user.id, { canonical });
+        });
         } catch(error) {
           if(selected)await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:false,app:rt.app.id,reason:note,detail:{phase:"result",delivered:false,refused:"photo_queue_or_review_failed"}});
           throw error;

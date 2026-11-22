@@ -549,11 +549,12 @@ module relay {
   }
 
   // ------------------------------------------------------------------------------------------ staff
-  // RelayDesk.release (relay.ts:402-421), a unit of work (service.ts:2777).
+  // RelayDesk.release reads both current canonical parties in the staff unit of work.
+  // A text content hold can be overridden. A current party hold still prevents delivery.
   action staffRelease(iid: str, refuse: bool): bool = {
     val h = desk.held.get(iid)
     val decided = desk.with("held", desk.held.set(iid, h.with("status", "released").with("hasText", false)))
-    val canGo = h.kind == "text" and h.hasText and not(partiesBlock(w, h.src, h.dst))
+    val canGo = h.kind == "text" and h.hasText and not(partiesBlock(w, h.src, h.dst)) and not(partiesHold(w, h.src, h.dst))
     val s = { key: iid, iid: iid, src: h.src, dst: h.dst, number: false, ask: false, at: w.now }
     val o = deliver(w, decided, queue, s, refuse)
     val rec = { kind: h.kind, src: h.src, dst: h.dst, decision: "pass", contactShared: false, ageSignal: false, staff: "released",
@@ -1111,6 +1112,12 @@ module relay {
       .then(queueFail("a1"))
       .then(staffRelease("b1", false))
       .expect(not(releaseReadsDelivered) and safety)
+
+  run staffCannotReleaseAfterPartyHoldTest =
+    init
+      .then(claim("a1", "text")).then(commitText("a1", "hold", false)).then(answer("a1"))
+      .then(safetyHold("B")).then(staffRelease("a1", false))
+      .expect(not(queue.rows.keys().contains("a1")) and not(desk.held.get("a1").hasText) and safety)
 
   // SD-133 (fixed): a held item that waits past the SLA raises the alert at the next SLA check.
   run heldSlaAlertTest =

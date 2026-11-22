@@ -410,6 +410,19 @@ async function deskGates(b: Block): Promise<void> {
     expect(d.release("s2", "staff:1")).toEqual({ ok: false, reason: "not_held" });
   });
 
+  await b.run("relay desk: staff release cannot override a safety hold on either adult", async () => {
+    for (const id of ["a", "b"]) {
+      const host = fakeHost(), desk = new RelayDesk(host);
+      const request = { itemId: `held-${id}`, from: "a", kind: "text" as const, text: "add me on telegram, it's easier" };
+      expect((await desk.request(request)).decision).toBe("held");
+      host.members.get(id)!.held = true;
+      expect(desk.release(request.itemId, "staff:1")).toEqual({ ok: true, delivered: false });
+      expect(host.sent).toEqual([]);
+      expect(desk.held()).toEqual([]);
+      expect(JSON.stringify(desk.exportState())).not.toContain(request.text);
+    }
+  });
+
   await b.run("relay desk: a number is shared only after both members asked; each gets the other's, once", async () => {
     const h = fakeHost(), d = new RelayDesk(h);
     const first = await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
