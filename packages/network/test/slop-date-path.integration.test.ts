@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { slopProfiles } from "../../engine/src/packs/slop/profile.ts";
+import { localEmbed, SLOP_ENGINE_DEFAULTS, slopPack, slopProfiles, World } from "@thenetwork/engine";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
@@ -75,12 +75,13 @@ async function run(s: NetworkService, clock: SimClock, ms: number, step = 30 * M
   for (let t = 0; t < ms; t += step) { clock.advance(Math.min(step, ms - t)); await s.tick(); }
 }
 
-test("Slop availability follows the booked time in the meeting's zone", async () => {
+test("Slop availability and pacing follow the booked time in the meeting's zone", async () => {
   const cases = [
-    { meetingAt: Date.UTC(2026, 9, 13, 0), timeZone: undefined, slot: 0, lat: 40.7, lng: -74 },
-    { meetingAt: Date.UTC(2026, 9, 11, 22), timeZone: "America/Los_Angeles", slot: 7, lat: 34.05, lng: -118.25 },
+    { meetingAt: Date.UTC(2026, 9, 13, 0), timeZone: undefined, slot: 0, lat: 40.7, lng: -74, liked: "rae" },
+    { meetingAt: Date.UTC(2026, 9, 11, 22), timeZone: "America/Los_Angeles", slot: 7, lat: 34.05, lng: -118.25, liked: "sam" },
   ];
-  for (const { meetingAt, timeZone, slot, lat, lng } of cases) {
+  const pacing = slopPack.eligibility.memberRules.find(rule => rule.id === "recently_matched")!;
+  for (const { meetingAt, timeZone, slot, lat, lng, liked } of cases) {
     const ids = ["rae", "sam"];
     const world = new Mini([
       { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
@@ -98,7 +99,8 @@ test("Slop availability follows the booked time in the meeting's zone", async ()
     const feedbackAt = Date.UTC(2026, 9, 13, 16);
     world.clock.set(feedbackAt);
     await world.net.tick(feedbackAt);
-    await world.say("rae", "We both came. It was great.");
+    const feedback = (id: string) => id === liked ? "We both came. It was great. I would meet again." : "We both came.";
+    await world.say("rae", feedback("rae"));
     const state = world.net.exportState();
     const interaction = state.interactions.find(item => item.id === `${opportunityId}:fb:rae`)!;
     expect(interaction).toMatchObject({ at: feedbackAt, outcome: "completed" });
@@ -109,7 +111,74 @@ test("Slop availability follows the booked time in the meeting's zone", async ()
     delete interaction.bookedMeeting;
     world.net.importState(state);
     expect(history()?.attendedSlots).toEqual([slot]);
+
+    world.clock.advance(HOUR);
+    await world.say("sam", feedback("sam"));
+    expect(world.net.exportState().feedback).toMatchObject([
+      { from: "rae", at: feedbackAt, wouldMeetAgain: liked === "rae" },
+      { from: "sam", at: feedbackAt + HOUR, wouldMeetAgain: liked === "sam" },
+    ]);
+    const gate = (id: string, at: number) => {
+      const view = new World(world.net.engineInput(at), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+      return pacing.check(view, id, view.get(id)!, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false });
+    };
+    const tenDaysAfterBooking = meetingAt + 10 * DAY;
+    expect(gate(liked, tenDaysAfterBooking - 1)).toBe("recently_matched");
+    expect(gate(ids.find(id => id !== liked)!, tenDaysAfterBooking - 1)).toBeNull();
+    expect(gate(liked, tenDaysAfterBooking)).toBeNull();
   }
+});
+
+test("Slop pacing uses feedback about the latest completed date", async () => {
+  const firstMeetingAt = Date.UTC(2026, 9, 11, 22);
+  const latestMeetingAt = Date.UTC(2026, 9, 14, 23);
+  const world = new Mini([
+    { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
+    { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
+    { id: "cy", name: "Cy", age: 30, romance: { is: "man", seeks: ["woman"] } },
+  ], { app: "slop", plans: false, growth: false, hooks: {
+    timeOptions: opportunity => {
+      const start = opportunity.participants.includes("cy") ? latestMeetingAt : firstMeetingAt;
+      return [{ start, end: start + HOUR }];
+    },
+  } });
+  world.clock.set(Date.UTC(2026, 9, 9, 15));
+  await world.onboard("rae", "sam", "cy");
+  const book = async (counterpart: string) => {
+    const pair = ["rae", counterpart];
+    const id = world.propose(pair, { category: "romance", objective: "a coffee date" });
+    await world.answerProbes(pair, () => "Yes, the first time works.");
+    return id;
+  };
+  const tickAt = async (at: number) => {
+    world.clock.set(at);
+    await world.net.tick(at);
+  };
+  const first = await book("sam");
+  await tickAt(firstMeetingAt + 16 * HOUR);
+  await world.say("sam", "We both came.");
+  await world.say("rae", "Thanks.");
+  const latest = await book("cy");
+  expect(world.meetings).toMatchObject([{ at: firstMeetingAt }, { at: latestMeetingAt }]);
+
+  // Rae answers the old prompt after the second date has started, before its check-in is due.
+  await tickAt(latestMeetingAt + HOUR);
+  await world.say("rae", "We both came. It was great. I would meet again.");
+  await tickAt(latestMeetingAt + 15 * HOUR);
+  await world.say("cy", "We both came.");
+  const evidence = world.net.engineInput(world.clock.now());
+  expect(evidence.feedback).toContainEqual(expect.objectContaining({ from: "rae", about: "sam", opportunityId: first, wouldMeetAgain: true }));
+  expect(evidence.feedback).toContainEqual(expect.objectContaining({ from: "cy", about: "rae", opportunityId: latest }));
+  expect(slopProfiles(evidence).get("rae")?.history).toMatchObject({ lastDateAt: latestMeetingAt, lastDateLiked: undefined });
+  const earlyAnswer = evidence.feedback!.find(reply => reply.from === "rae")!;
+  const likedDateWith = (reply: typeof earlyAnswer) => slopProfiles({ ...evidence, feedback: [reply] }).get("rae")?.history.lastDateLiked;
+  expect(likedDateWith({ ...earlyAnswer, about: "cy" })).toBeUndefined();
+  expect(likedDateWith({ ...earlyAnswer, opportunityId: undefined })).toBeUndefined();
+  expect(likedDateWith({ ...earlyAnswer, opportunityId: undefined, about: "cy" })).toBe(true);
+
+  world.clock.advance(HOUR);
+  await world.say("rae", "We both came. I would meet again.");
+  expect(slopProfiles(world.net.engineInput(world.clock.now())).get("rae")?.history.lastDateLiked).toBe(true);
 });
 
 describe.skipIf(!pgAvailable)("slop.date: join to report after the date (NetworkService, Postgres)", () => {

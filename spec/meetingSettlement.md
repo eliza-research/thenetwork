@@ -242,6 +242,30 @@ pure def lawWeekdayMeetingSlotNeedsEvening(localWeekday: int, localHour: int): b
   (localWeekday < 5 and localHour < 17) implies completedMeetingSlot(localWeekday, localHour) == -1
 ```
 
+### A liked date paces new proposals from its booked start
+
+Slop measures its existing post-date pause from the start of the completed date the member liked. A later feedback timestamp does not move that start. The pause ends at the configured age of the booking, ten days by default. An older engine record without a separate booking time keeps its recorded event time.
+
+```quint
+pure def completedDatePacingAt(knownBooking: bool, bookedAt: int, feedbackAt: int): int =
+  if (knownBooking) bookedAt else feedbackAt
+
+pure def lawKnownDatePacingUsesBooking(bookedAt: int, feedbackAt: int): bool =
+  completedDatePacingAt(true, bookedAt, feedbackAt) == bookedAt
+```
+
+### Pacing feedback follows its own date
+
+Slop reads the member's feedback about their latest completed date when it applies the proposal pause. When the feedback carries an opportunity ID, require the exact opportunity. For older feedback that has no opportunity ID, use the counterpart. The feedback must be at or after the booked start. Feedback about other dates remains part of the member's private feedback history.
+
+```quint
+pure def completedDateFeedbackMatches(feedbackAt: int, meetingAt: int, hasOpportunity: bool, sameOpportunity: bool, isCounterpart: bool): bool =
+  feedbackAt >= meetingAt and (if (hasOpportunity) sameOpportunity else isCounterpart)
+
+pure def lawFeedbackForAnotherDateCannotPace(feedbackAt: int, meetingAt: int, isCounterpart: bool): bool =
+  not(completedDateFeedbackMatches(feedbackAt, meetingAt, true, false, isCounterpart))
+```
+
 ### Classify each attendee from the available reports
 
 Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.

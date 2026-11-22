@@ -338,6 +338,32 @@ export function lawWeekdayMeetingSlotNeedsEvening(localWeekday: number, localHou
   return !(localWeekday < 5 && localHour < 17) || completedMeetingSlot(localWeekday, localHour) === -1;
 }
 
+/** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
+//@ pure
+export function completedDatePacingAt(knownBooking: boolean, bookedAt: number, feedbackAt: number): number {
+  return knownBooking ? bookedAt : feedbackAt;
+}
+
+/** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
+//@ pure
+export function lawKnownDatePacingUsesBooking(bookedAt: number, feedbackAt: number): boolean {
+  //@ ensures \result === true
+  return completedDatePacingAt(true, bookedAt, feedbackAt) === bookedAt;
+}
+
+/** Story: Ask for feedback and close attendance once / Pacing feedback follows its own date (spec/meetingSettlement.md) */
+//@ pure
+export function completedDateFeedbackMatches(feedbackAt: number, meetingAt: number, hasOpportunity: boolean, sameOpportunity: boolean, isCounterpart: boolean): boolean {
+  return feedbackAt >= meetingAt && (hasOpportunity ? sameOpportunity : isCounterpart);
+}
+
+/** Story: Ask for feedback and close attendance once / Pacing feedback follows its own date (spec/meetingSettlement.md) */
+//@ pure
+export function lawFeedbackForAnotherDateCannotPace(feedbackAt: number, meetingAt: number, isCounterpart: boolean): boolean {
+  //@ ensures \result === true
+  return !completedDateFeedbackMatches(feedbackAt, meetingAt, true, false, isCounterpart);
+}
+
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): boolean {

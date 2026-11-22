@@ -20,7 +20,7 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
-import { completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
+import { completedDateFeedbackMatches, completedDatePacingAt, completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
@@ -259,10 +259,19 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
   }
   const negFrom = new Map<MemberId, Set<MemberId>>();
-  const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
-  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
-    const k = C(id), cur = lastDate.get(k);
-    if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
+  const lastDate = new Map<MemberId, { opportunityId: string; at: number; participants: MemberId[]; liked?: boolean }>();
+  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) {
+    const at = completedDatePacingAt(r.bookedMeeting != null, r.bookedMeeting?.at ?? 0, r.at);
+    // ConsentNetwork adds the feedback author to the opportunity ID. Direct engine histories use the ID itself.
+    const marker = r.id.lastIndexOf(":fb:");
+    const opportunityId = marker < 0 ? r.id : r.id.slice(0, marker);
+    const participants = r.participants.map(C);
+    for (const id of participants) {
+      const cur = lastDate.get(id);
+      if (!cur || at > cur.at || (at === cur.at && opportunityId < cur.opportunityId)) {
+        lastDate.set(id, { opportunityId, at, participants });
+      }
+    }
   }
   // Order-independent: feedback in (time, id) order, so "the last word on the last date" is stable under shuffles.
   const fbs = [...(input.feedback ?? [])].sort((x, y) => (x.at - y.at) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
@@ -273,7 +282,10 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     h(from).rated.push({ about, v });
     if (f.sentiment === "negative") { const set = negFrom.get(about) ?? new Set(); set.add(from); negFrom.set(about, set); }
     const ld = lastDate.get(from);
-    if (ld && f.at >= ld.at) ld.liked = f.wouldMeetAgain === true;
+    if (ld && completedDateFeedbackMatches(f.at, ld.at, f.opportunityId !== undefined, f.opportunityId === ld.opportunityId,
+      from !== about && ld.participants.includes(about))) {
+      ld.liked = f.wouldMeetAgain === true;
+    }
   }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }
