@@ -9,7 +9,8 @@ class AlertStoreFailure extends TaggedError("AlertStoreFailure") {
     }
     ;
 }
-function prepareAlerts(alerts, stored, now, repeatMs) {
+function prepareAlerts(alerts, stored, options) {
+    const { now, repeatMs, sourceReadable } = options;
     const states = new Map(stored.map(state => [state.key, state]));
     const notices = [];
     const firing = [];
@@ -34,7 +35,7 @@ function prepareAlerts(alerts, stored, now, repeatMs) {
         }
     }
     for (const state of states.values()) {
-        const decision = chooseMissingPlan(state.open, seen.has(state.key), state.lastSentAt !== undefined);
+        const decision = chooseMissingPlan(state.open, seen.has(state.key), state.lastSentAt !== undefined, sourceReadable(state.key));
         if (decision === "CloseQuietly")
             state.open = false;
         else if (decision === "SendResolution") {
@@ -47,11 +48,11 @@ function prepareAlerts(alerts, stored, now, repeatMs) {
 /** Run inside the adapter's existing exclusive store transaction. */
 export function dispatchOperationsAlerts(alerts, tx, options) {
     return runPromise(Effect.gen(function* () {
-        const { now, repeatMs, maxPostsPerHour } = options;
+        const { now, maxPostsPerHour } = options;
         const history = yield* tryPromise({
             try: () => tx.load(), catch: cause => new AlertStoreFailure({ message: "Could not load alert episodes", cause }),
         });
-        const { episodes, notices, firing, resolved } = prepareAlerts(alerts, history, now, repeatMs);
+        const { episodes, notices, firing, resolved } = prepareAlerts(alerts, history, options);
         let postsLastHour = yield* tryPromise({
             try: () => tx.postsSince(now - alertPostWindowMs), catch: cause => new AlertStoreFailure({ message: "Could not count recent alert posts", cause }),
         });

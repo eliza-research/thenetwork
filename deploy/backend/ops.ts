@@ -269,12 +269,27 @@ export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } f
 
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
+interface UnreadAlertSources {
+  networks: ReadonlySet<string>;
+  line: boolean;
+  cost: boolean;
+}
+
+/** Use the persisted key's source. Read warnings themselves describe current collector status. */
+function alertSourceReadable(key: string, unread: UnreadAlertSources): boolean {
+  if (key === "line_safety" || key.startsWith("leak_review:")) return !unread.line;
+  if (key.startsWith("budget:")) return !unread.cost;
+  if (key.startsWith("ops_read:")) return true;
+  const separator = key.indexOf(":");
+  return separator === -1 || !unread.networks.has(key.slice(separator + 1));
+}
+
 /** The snapshot as alerts. Pure: the same snapshot gives the same alerts. */
 export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
   const out: Alert[] = [];
   for (const n of m.networks) {
     const id = n.network;
-    if (n.error) { out.push({ key: `ops_read:${id}`, level: "warn", count: 1, text: `Could not read ${id} for monitoring: ${n.error}` }); continue; }
+    if (n.error !== undefined) { out.push({ key: `ops_read:${id}`, level: "warn", count: 1, text: `Could not read ${id} for monitoring: ${n.error}` }); continue; }
     if (n.lastTickAgoMs === null ? (m.uptimeMs ?? Infinity) > c.tickLateMs : n.lastTickAgoMs > c.tickLateMs) {
       out.push({ key: `tick_late:${id}`, level: "bad", count: n.lastTickAgoMs === null ? 0 : Math.round(n.lastTickAgoMs / MIN), text: n.lastTickAgoMs === null ? `${id}: no tick stored yet` : `${id}: last tick ${mins(n.lastTickAgoMs)} ago (expected every minute)` });
     }
@@ -380,9 +395,10 @@ export class AlertDispatcher {
   }) {}
 
   /** One round: compare the current alerts with the stored ones, post what is new, worse, due again or resolved. Undefined: another replica runs it. */
-  dispatch(current: Alert[]): Promise<DispatchResult | undefined> {
+  dispatch(current: Alert[], unread?: UnreadAlertSources): Promise<DispatchResult | undefined> {
     return this.o.store.exclusive(tx => dispatchOperationsAlerts(current, tx, {
       now: this.o.now(), repeatMs: this.o.repeatMs, maxPostsPerHour: this.o.maxPostsPerHour,
+      sourceReadable: key => !unread || alertSourceReadable(key, unread),
       post: notices => this.o.post(this.body(notices)),
     }));
   }
@@ -477,7 +493,11 @@ export function createOps(d: OpsDeps) {
       lastRound = now;
       const m = await collect(true);
       const alerts = evaluate(m, c);
-      const r = await dispatcher.dispatch(alerts);
+      const r = await dispatcher.dispatch(alerts, {
+        networks: new Set(m.networks.filter(n => n.error !== undefined).map(n => n.network)),
+        line: !!m.line && "error" in m.line,
+        cost: "error" in m.cost,
+      });
       const report = roundReport(!!r?.notices.length, !!r?.posted, !!r?.ok, !!r?.held, !!c.heartbeatUrl);
       if (r) {
         lastAlerts = { open: r.open, postsLastHour: r.postsLastHour };

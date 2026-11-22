@@ -19,8 +19,14 @@ export function chooseFiringPlan(e) {
 }
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
 //@ pure
-export function chooseMissingPlan(episodeOpen, seenThisRound, postedBefore) {
-    return !episodeOpen || seenThisRound ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+export function chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, sourceReadable) {
+    return !episodeOpen || seenThisRound || !sourceReadable ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+}
+/** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawUnreadSourceKeepsEpisode(episodeOpen, seenThisRound, postedBefore) {
+    //@ ensures \result === true
+    return chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, false) === "KeepEpisode";
 }
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 //@ pure

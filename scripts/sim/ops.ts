@@ -24,7 +24,7 @@ import type { PhotoRater } from "../../packages/platform/src/photos.ts";
 import { createBackend, jsonLogger, loadConfig, type ServiceLike } from "../../deploy/backend/backend.ts";
 import {
   AlertDispatcher, collectNetwork, createOps, evaluate, lineMetrics, MemoryAlertStore, opsConfigFromEnv, PgAlertStore, runtimeProbe,
-  type Alert, type NetworkMetrics, type NetworkProbe, type OpsMetrics,
+  type Alert, type LineMetrics, type NetworkMetrics, type NetworkProbe, type OpsMetrics,
 } from "../../deploy/backend/ops.ts";
 import { Block, expect } from "./gate.ts";
 
@@ -436,6 +436,60 @@ export async function opsBlock(b: Block): Promise<void> {
         await sql`delete from platform.line_safety`;
         await sql`update platform.outbound set status = 'dropped' where status = 'parked_leak_review'`;
         expect(evaluate({ networks: [], cost: noCost, line: await lineMetrics(sql) }, CFG)).toEqual([]);
+      } finally { await sql.close(); }
+    }, pgBlocking);
+
+    // spec/opsAlertDispatch.md, "An absent alert resolves after a successful notice"
+    await b.run("alerts on Postgres: unread sources retain their episodes while healthy sources resolve", async () => {
+      const sql = new SQL({ url: srcUrl, max: 2 });
+      const store = new PgAlertStore(sql);
+      let now = T0;
+      let round: "firing" | "unread" | "healthy" = "firing";
+      const probe = (app: "ntwrk" | "peon"): NetworkProbe => ({
+        id: `${app}:nyc`, app,
+        health: async () => {
+          if (round === "unread" && app === "ntwrk") throw new Error("network unavailable");
+          const tick = round === "firing" ? now - 20 * MIN : now;
+          return { lastTick: { stored: tick, savedAt: tick }, backlog: healthy(`${app}:nyc`, app).backlog };
+        },
+        since: async () => ({ statuses: {}, events: [], reports: [], sms: { today: 0, yesterday: 0 } }),
+      });
+      const ops = createOps({
+        config: { ...CFG, budgets: { daily: 10, byApp: {} } },
+        probes: () => [probe("ntwrk"), probe("peon")], store, now: () => now, log: jsonLogger(() => {}),
+        line: async (): Promise<LineMetrics> => {
+          if (round === "unread") throw new Error("line unavailable");
+          return round === "firing" ? { restricted: [{ action: "review", since: now }], leakReview: { ntwrk: 1 } }
+            : { restricted: [], leakReview: {} };
+        },
+        cost: { accrue: async () => [], totals: async () => {
+          if (round === "unread") throw new Error("ledger unavailable");
+          return round === "firing" ? { ntwrk: 10 } : {};
+        } },
+      });
+      const retained = ["budget:total", "leak_review:ntwrk", "line_safety", "tick_late:ntwrk:nyc"];
+      const warnings = ["cost_read", "line_read", "ops_read:ntwrk:nyc"];
+      const unsent = "review_sla:ntwrk:nyc";
+      try {
+        const firing = await ops.tick();
+        expect(firing?.notices.filter(n => n.state === "firing").map(n => n.key).sort())
+          .toEqual([...retained, "tick_late:peon:nyc"]);
+        await store.exclusive(tx => tx.save([{ key: unsent, level: "warn", count: 1, text: "Unsent fixture", open: true, firstAt: now, lastAt: now }]));
+
+        round = "unread";
+        now += MIN;
+        const outage = await ops.tick();
+        expect(outage?.notices.filter(n => n.state === "resolved").map(n => n.key)).toEqual(["tick_late:peon:nyc"]);
+        expect(outage?.open.map(n => n.key).sort()).toEqual([...retained, ...warnings, unsent].sort());
+
+        round = "healthy";
+        now += MIN;
+        const recovered = await ops.tick();
+        expect(recovered?.notices.map(n => [n.key, n.state]).sort())
+          .toEqual([...retained, ...warnings].sort().map(key => [key, "resolved"]));
+        expect(recovered?.open).toEqual([]);
+        now += MIN;
+        expect((await ops.tick())?.notices).toEqual([]);
       } finally { await sql.close(); }
     }, pgBlocking);
 

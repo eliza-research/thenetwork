@@ -54,6 +54,8 @@ interface DispatchOptions {
     repeatMs: number;
     maxPostsPerHour: number;
     /** @throws {never} */
+    sourceReadable(key: string): boolean;
+    /** @throws {never} */
     post(notices: Notice[]): Promise<boolean>;
 }
 /**

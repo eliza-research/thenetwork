@@ -40,8 +40,15 @@ export function chooseFiringPlan(e: FiringEvidence): FiringPlan {
 
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
 //@ pure
-export function chooseMissingPlan(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean): MissingPlan {
-  return !episodeOpen || seenThisRound ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+export function chooseMissingPlan(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean, sourceReadable: boolean): MissingPlan {
+  return !episodeOpen || seenThisRound || !sourceReadable ? "KeepEpisode" : (postedBefore ? "SendResolution" : "CloseQuietly");
+}
+
+/** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawUnreadSourceKeepsEpisode(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean): boolean {
+  //@ ensures \result === true
+  return chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, false) === "KeepEpisode";
 }
 
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */

@@ -11,7 +11,9 @@ export function inv(current) { return M.inv(current); }
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) @throws {never} */
 export function chooseFiringPlan(e) { return M.chooseFiringPlan(e); }
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) @throws {never} */
-export function chooseMissingPlan(episodeOpen, seenThisRound, postedBefore) { return M.chooseMissingPlan(episodeOpen, seenThisRound, postedBefore); }
+export function chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, sourceReadable) { return M.chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, sourceReadable); }
+/** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) @throws {never} */
+export function lawUnreadSourceKeepsEpisode(episodeOpen, seenThisRound, postedBefore) { return M.lawUnreadSourceKeepsEpisode(episodeOpen, seenThisRound, postedBefore); }
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export function canPrepareDispatch(s) { return M.canPrepareDispatch(s); }
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
