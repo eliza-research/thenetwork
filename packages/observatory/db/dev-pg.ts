@@ -8,7 +8,9 @@ import { findExecutable, spawnProcess } from "../../core/src/runtime/process.ts"
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { migrate } from "./migrate.ts";
+import { DEV_PG_PORT, migrate } from "./migrate.ts";
+
+export { DEV_PG_PORT };
 
 const REPO = resolve(import.meta.dirname, "../../..");
 // CONTRIBUTING.md section 4 copies .env.example, whose optional values are empty lines
@@ -17,7 +19,6 @@ const REPO = resolve(import.meta.dirname, "../../..");
 // ENOENT; Number("") is port 0, which the server refuses). deploy/backup/lib.ts already picks its
 // PG_BIN_DIR the same way (filter(Boolean)).
 export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR?.trim() || join(REPO, "runs", "pg");
-export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT?.trim() || 54339);
 const DEV_PG_USER = process.env.USER?.trim() || "postgres";
 const DEV_PG_SERVER = `postgres://${encodeURIComponent(DEV_PG_USER)}@localhost:${DEV_PG_PORT}`;
 export const DEV_PG_URL = `${DEV_PG_SERVER}/network`;
