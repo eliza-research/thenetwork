@@ -92,7 +92,10 @@ export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
   return (await loadPersonas(dir)).filter(p => p.homeCity === "nyc");
 }
 
-export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
+const EXPERIMENT_ARMS = ["push_baseline", "push_v2", "consent"] as const;
+type ExperimentArm = typeof EXPERIMENT_ARMS[number];
+
+export async function runArm(arm: ExperimentArm, o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
   const personas = await nycPersonas();
   const manifest = await fileAt(`${DATA_DIR}/manifest.json`).json();
   const start = manifest.snapshotNow as number;
@@ -272,12 +275,17 @@ if (import.meta.main) {
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
     paraphrase: { type: "boolean", default: false },
   } });
+  const selected = a.only === undefined ? EXPERIMENT_ARMS : a.only.split(",");
+  const knownArm = (name: string): name is ExperimentArm => EXPERIMENT_ARMS.some(arm => arm === name);
+  if (!selected.every(knownArm)) {
+    console.error(`unknown experiment arm: ${selected.filter(name => !knownArm(name)).map(name => name || "<empty>").join(", ")}; known: ${EXPERIMENT_ARMS.join(", ")}`);
+    process.exit(2);
+  }
   if (a["primed-met"]) PRIMED_MODEL.met = Number(a["primed-met"]);
   if (a["primed-partial"]) PRIMED_MODEL.partial = Number(a["primed-partial"]);
   if (a["primed-identity"]) PRIMED_MODEL.identity = Number(a["primed-identity"]);
-  const arms = (a.only ? a.only.split(",") : ["push_baseline", "push_v2", "consent"]) as ("push_baseline" | "push_v2" | "consent")[];
   const out: ArmResult[] = [];
-  for (const arm of arms) {
+  for (const arm of selected) {
     const t0 = performance.now();
     const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}) };
     const r = await runArm(arm, {
