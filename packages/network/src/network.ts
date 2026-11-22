@@ -130,9 +130,10 @@ import {
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { bookingWithdrawalAcknowledgmentAllowed } from "../../core/src/generated/replyDuplication.ts";
+import { recommendationLocation } from "../../core/src/generated/plansLocation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -2980,6 +2981,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private onPlans(m: MemberState, c: Classified) {
+    const place = publicPlanLocation(c.text ?? "");
+    const location = recommendationLocation(place.area !== undefined, place.mentioned);
+    if (location === "AskForArea") {
+      this.ctx.log("plans_unknown_place", { memberId: m.id });
+      this.send(m, plansPlaceQuestion, { type: "question", proactive: false }, "reply");
+      return;
+    }
     const now = this.now();
     this.counters.plansAnswered++;
     const req: Request = { id: this.sid(`rq${++this.reqSeq}`), memberId: m.id, at: now, kind: "plans", category: "events", tags: c.tags, outcome: "answered" };
@@ -2987,9 +2995,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("request", { requestId: req.id, memberId: m.id, kind: "plans", category: "events" });
     const known = this.knownProfiles().get(m.id);
     const tags = [...c.tags, ...(known ? [...known.interests] : [])].slice(0, 4);
-    const named = NEIGHBORHOODS.find(n => c.text?.includes(n.name))?.name;
     // New ideas on a repeat ask: venues suggested in the last week are left out (nothing new: no list).
-    const venues = nearbyVenues(named ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
+    const venues = nearbyVenues(place.area ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
     // The "see if anyone else is up" offer only where it can be kept: never to a minor, a member who
     // cannot be matched, or while matching is off (judge minor_contact: a minor offered a connection).
     const offer = !m.minor && this.eligible(m.id) && this.opts.matchingEnabled;

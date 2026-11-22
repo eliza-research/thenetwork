@@ -17,7 +17,7 @@ import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCa
 import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearning.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { NEIGHBORHOODS } from "./geo.ts";
+import { NEIGHBORHOODS, VENUES } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
@@ -512,6 +512,44 @@ const AREA_ALIASES: [RegExp, string][] = [
   [/\bmidtown\b/, "Midtown"], [/\btribeca\b/, "Tribeca"], [/\bchinatown\b/, "Chinatown"],
 ];
 const AREA_NAMES = new Set(NEIGHBORHOODS.map(n => n.name));
+const locationText = (text: string) => normText(text).replace(/[.\p{Pd}]/gu, " ").replace(/\s+/g, " ").trim();
+const locationNames = [
+  ...VENUES.flatMap(venue => [venue.name, venue.name.split(/,| \(| at /)[0]!].map(name => [locationText(name), venue.neighborhood] as const)),
+  ...NEIGHBORHOODS.map(area => [locationText(area.name), area.name] as const),
+].sort(([a], [b]) => b.length - a.length);
+const unspecifiedPlanPlace = /^(?:(?:a|one|two|three|four|few|couple|several|\d+)\s|(?:person|general|particular|advance|mind|the|my|our|your|their|town|nyc|new york(?: city)?|this|next|today|tomorrow|tonight|noon|midnight|morning|afternoon|evening|weekend|january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)/;
+const vaguePlanArea = /^(?:the\s+)?(?:brooklyn|queens|manhattan|bronx|staten island|new jersey|jersey city|hoboken|forest hills)\b/;
+export const plansPlaceQuestion = "Which NYC neighborhood should I use? Ask again with the neighborhood name.";
+
+/** Read one direct public recommendation location without copying a raw place into a reply. */
+export function publicPlanLocation(text: string, exact = false): { area?: string; mentioned: boolean } {
+  let mentioned = false;
+  for (const cue of text.matchAll(/\b(?:in|near|around|at|by)\s+/gi)) {
+    const before = normText(text.slice(0, cue.index));
+    if (quoteStillOpen(before) || /\b(?:not|never|instead of|except|away from)\s*$/.test(before)) continue;
+    const original = text.slice(cue.index + cue[0].length).trim();
+    const phrase = locationText(original);
+    const withoutArticle = phrase.replace(/^the\s+/, "");
+    const candidates = phrase === withoutArticle ? [phrase] : [phrase, withoutArticle];
+    for (const [name, area] of locationNames) {
+      if (candidates.some(value => exact ? value === name : value.startsWith(name) && /^(?:$|[\s,?!:;)])/.test(value.slice(name.length)))) {
+        return { area, mentioned: true };
+      }
+    }
+    for (const [pattern, area] of AREA_ALIASES) {
+      if (AREA_NAMES.has(area) && candidates.some(value => {
+        const match = pattern.exec(value);
+        return match?.index === 0 && (!exact || match[0] === value);
+      })) return { area, mentioned: true };
+    }
+    if (exact && (!/^[\p{L}]+(?:[ '’.-][\p{L}]+){0,5}$/u.test(original)
+      || /\b(?:i|you|my|your|we|they|he|she|am|are|and|but|or|with|when|unless|if|stop|years?)\b/i.test(original))) continue;
+    if (!withoutArticle || unspecifiedPlanPlace.test(withoutArticle)) continue;
+    if (vaguePlanArea.test(phrase) || /^(?:the\s+)?\p{Lu}[\p{L}'’-]+/u.test(original)
+      || /\b(?:heights|station|park|garden|museum|library|district|square)\b/.test(withoutArticle)) mentioned = true;
+  }
+  return { mentioned };
+}
 /** Words that say where the sender is based ("I live in", "based in", "I'm around"). */
 const HOME_CTX = /\b(i live|i'?m living|living in|live in|based (in|out of)|i'?m (in|around|near|over in|up in|out in|down in|by)|im (in|around|near)|i'?m from|my (place|apartment|apt|neighborhood|hood) is|home is|i stay in|my area is|i'?m mostly (in|around)|around .* most of the week)\b/;
 /** Where a neighborhood is not home: "used to live in", "work in the", "moved from". Each can take "the". */

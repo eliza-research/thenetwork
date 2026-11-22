@@ -288,7 +288,8 @@ test("signed solo concierge offers current public listings without recruiting an
       allAges, event("111", "Public art tour", "Arts"), event("112", "Garden history tour", "History"), event("113", "Public chess group", "Chess"),
       event("114", "Evening music 21+", "Music | All ages"), event("115", "Early garden tour", "Nature | All ages", "09", "10"),
       listing("116", "Weekday walk", "Nature | All ages", "2026-10-12T14:00:00", "2026-10-12T15:00:00"),
-    ]))).toEqual({ published: true, events: 7 });
+      listing("117", "Chelsea garden sketching", "Arts | All ages", "2026-10-10T14:00:00", "2026-10-10T15:00:00", "Chelsea Market", "40.7479,-74.0014"),
+    ]))).toEqual({ published: true, events: 8 });
 
     const before = escaped;
     const request = (id: string, phone: string) => turn(id, phone, "Anything fun this weekend?", "friends");
@@ -310,8 +311,23 @@ test("signed solo concierge offers current public listings without recruiting an
     const teenResponse = await post(request("all-ages-solo-events", teen));
     expect(teenResponse.status).toBe(200);
     const teenAnswer = (await teenResponse.json()).replies[0];
-    expect(teenAnswer.split("\n")).toHaveLength(1);
+    expect(teenAnswer.split("\n")).toHaveLength(2);
     expect(teenAnswer).toContain("Nature sketch walk");
+    const named = turn("area-solo-events", adult, "Anything fun near chelsea market this weekend?", "friends");
+    const namedResponse = await post(named);
+    expect(namedResponse.status).toBe(200);
+    const namedAnswer = await namedResponse.json();
+    expect(namedAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(namedAnswer.replies[0].split("\n")).toHaveLength(1);
+    expect(namedAnswer.replies[0]).toContain("Chelsea garden sketching");
+    expect(await (await post(named)).json()).toEqual(namedAnswer);
+    const clarification = turn("unknown-solo-events", adult, "Find events near Moon Harbor this weekend?", "friends");
+    const unknownResponse = await post(clarification);
+    expect(unknownResponse.status).toBe(200);
+    const unknown = await unknownResponse.json();
+    expect(unknown).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(unknown.replies[0]).toContain("Which NYC neighborhood should I use?");
+    expect(unknown.replies[0]).not.toContain("Moon Harbor");
     expect(await sql`select id from network.requests where app_id='friends'`).toHaveLength(0);
     expect(await sql`select id from network.opportunities where app_id='friends'`).toHaveLength(0);
 
@@ -322,6 +338,9 @@ test("signed solo concierge offers current public listings without recruiting an
     expect(await previous.json()).toEqual({ error: "turn_concierge_changed", retryable: false });
     const empty = await post(request("no-current-solo-events", adult));
     expect((await empty.json()).replies[0]).toContain("couldn't find any current NYC Parks listings");
+    const compound = await post(turn("compound-solo-events", teen, "Anything fun near Chelsea Market but I'm 16.", "friends"));
+    expect(compound.status).toBe(200);
+    expect((await compound.json()).reason).not.toBe("solo_events");
     expect(escaped).toBe(before);
   } finally {
     await server.stop(true);
