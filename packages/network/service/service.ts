@@ -2111,7 +2111,7 @@ export class NetworkService implements RuntimeHost {
         type: surveyAnswer ? "interruption_feedback" : null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
       if (reportReply) {
-        if (!signedDirect || reportReply.memberId !== memberId || !rt.signedMemberTurn(memberId, rowId)) return "ignored";
+        if (!signedDirect || reportReply.app !== rt.app.id || reportReply.memberId !== memberId || !rt.signedMemberTurn(memberId, rowId)) return "ignored";
         const person = await this.accounts.personFor(signedDirect.from);
         if (person?.id !== reportReply.personId || await this.accounts.banned(signedDirect.from, person)) return "ignored";
         const membership = await this.people.getMembership(person.id, rt.app.id);

@@ -328,7 +328,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await fresh();
     const clock = new SimClock(START);
     const secret = "synthetic-safety-clarification-turn-secret";
-    const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret } });
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret } });
     await s.start();
     const ari = newPhone(), ben = newPhone(), peonContact = newPhone();
     for (const [phone, name] of [[ari, "Ari, 30"], [ben, "Ben, 32"]] as const) {
@@ -346,7 +346,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const recordMeeting = (app: "slop" | "peon", pair: string[]) => s.runtimeFor(app)!.unitOfWork(net => {
       const state = net.exportState(), now = clock.now();
       state.opps.push({
-        id: app + ".clarification-meeting", origin: "engine", kind: "intro", category: app === "slop" ? "romance" : "professional",
+        id: `${app}.clarification-meeting.${pair[1]}`, origin: "engine", kind: "intro", category: app === "slop" ? "romance" : "professional",
         objective: "coffee", detail: "coffee", stage: "done", participants: pair, alternates: [],
         primed: [], status: pair.map(id => [id, "yes"]), explanations: {}, bookedTold: pair,
         createdAt: now - 24 * HOUR, deadline: now - 3 * HOUR, meetingAt: now - 4 * HOUR,
@@ -404,6 +404,20 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await reports("slop")).toMatchObject([
       { reporterId: slopAri, subjectId: slopBen, met: true, kind: "harassment", status: "open" },
     ]);
+
+    const mary = newPhone();
+    const web = site(s, clock, otp);
+    await web.login("slop", mary);
+    expect((await web.join("slop", 32, "Mary\tJane")).status).toBe(200);
+    const slopMary = (await memberOf("slop", mary))!.id;
+    await recordMeeting("slop", [slopAri, slopMary]);
+    expect(await signed("pending-multiword-name-ask", "Report her, she harassed me.", "slop")).toMatchObject({
+      app: "slop", replies: [expect.stringMatching(/^Who do you mean: Mary\s+Jane\?/)],
+    });
+    await competingPeonItem();
+    expect(await signed("pending-multiword-name-answer", "Mary Jane")).toMatchObject({ outcome: "handled", app: "slop" });
+    expect(await reports("slop")).toHaveLength(2);
+    expect(await reports("slop")).toEqual(expect.arrayContaining([expect.objectContaining({ subjectId: slopMary })]));
   }, T);
 
   test("report -> hold on every app -> ban by phone; the banned phone cannot join any app again; every step is audited", async () => {

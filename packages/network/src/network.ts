@@ -167,7 +167,7 @@ export function pendingReportReplyName(text: string): string | undefined {
   const body = text.trim();
   if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || consentOf(body).answer !== "unclear") return;
   const name = safetyName(body.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
-  return /^\p{L}[\p{L}\p{M}'.-]*(?: \p{L}\p{M}*)?$/u.test(name) ? name : undefined;
+  return name || undefined;
 }
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
