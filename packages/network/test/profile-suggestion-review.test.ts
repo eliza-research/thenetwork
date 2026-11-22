@@ -71,16 +71,17 @@ describe("store-backed review boundary", () => {
     const updated = { ...batch, revision: 3, suggestions: [{ ...batch.suggestions[0]!, scope: "matchable" as const }] };
     const decide = vi.fn(async () => ({ kind: "preview" as const, batch: updated }));
     const store = { getPendingBatch: async () => batch, decide };
-    expect(await reviewSuggestionMessage(store, owner, batch.id, "accept batch-one.2 1 matching", now)).toEqual({ kind: "preview", batch: updated });
-    expect(decide).toHaveBeenCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "accept", suggestionId: "interest-one", scope: "matchable" }] }, now);
+    const claim = { turnId: "msg:blooio:review-turn", requestSha256: "a".repeat(64) };
+    expect(await reviewSuggestionMessage(store, owner, batch.id, "accept batch-one.2 1 matching", now, claim)).toEqual({ kind: "preview", batch: updated });
+    expect(decide).toHaveBeenCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "accept", suggestionId: "interest-one", scope: "matchable" }] }, now, claim);
     expect(parseSuggestionReview("accept batch-one.2 1 matching", updated, owner, now)).toBeNull();
   });
   test("edits and rejection retain the store's atomic decision contract", async () => {
     const decide = vi.fn(async () => ({ kind: "denied" as const }));
     const store = { getPendingBatch: async () => batch, decide };
     expect(await reviewSuggestionMessage(store, owner, batch.id, "edit batch-one.2 1: indoor climbing", now)).toEqual({ kind: "denied" });
-    expect(decide).toHaveBeenLastCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "accept", suggestionId: "interest-one", editedValue: "indoor climbing" }] }, now);
+    expect(decide).toHaveBeenLastCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "accept", suggestionId: "interest-one", editedValue: "indoor climbing" }] }, now, undefined);
     await reviewSuggestionMessage(store, owner, batch.id, "reject batch-one.2 1", now);
-    expect(decide).toHaveBeenLastCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "reject", suggestionId: "interest-one" }] }, now);
+    expect(decide).toHaveBeenLastCalledWith(owner, { batchId: batch.id, revision: 2, decisions: [{ action: "reject", suggestionId: "interest-one" }] }, now, undefined);
   });
 });

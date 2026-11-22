@@ -156,10 +156,10 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select count(*)::int as n from network.events where actor_id = 'u' or object_id = 'u' or payload::text like '%"u"%'`)[0].n).toBe(0);
     expect((await sql`select count(*)::int as n from network.events where payload->>'oppId' = 'o2'`)[0].n).toBe(1);
     expect(s.net.isDeclined("u")).toBe(true);
-    // Their phone is gone too: a later text is from a stranger. The age stays on the phone's age floor,
-    // so a join that now says 25 is refused (NET-35).
-    expect(await say(s, clock, "u", "hello?")).toBe("join_asked");
+    expect(await say(s, clock, "u", "hello?")).toBe("under_age");
     expect(await say(s, clock, "u", "Uma, 25")).toBe("under_age");
+    expect((await sql`select account_status from network.members where id = 'u'`)[0].account_status).toBe("removed");
+    expect((await sql`select count(*)::int as n from network.members where id <> 'u' and account_status = 'active'`)[0].n).toBe(PEOPLE.length - 1);
   }, T);
 
   test("staff API: roles, the matching switch, review through the API after a restart, then the next tick contacts the members", async () => {

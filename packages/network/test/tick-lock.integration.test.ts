@@ -94,4 +94,28 @@ describe.skipIf(!pgAvailable)("the tick's engine run holds no lock", () => {
     expect(w.to("a", stopMark).filter(s => s.meta.type === "probe" || s.meta.proactive)).toEqual([]);
     expect(w.to("b", stopMark).filter(s => s.meta.type === "probe")).toEqual([]);
   }, 180_000);
+
+  test("runTick runs the capture unit and the commit unit each in its own scope, and both scopes start before the tick is saved", async () => {
+    const ids = PEOPLE.map(p => p.id);
+    const w = new Mini(PEOPLE, { review: "auto", maxNewPerDay: 20, plans: false, growth: false, selective: false });
+    await w.onboard(...ids);
+    const store = new PgStore(url, "ntwrk:nyc");
+    stores.push(store);
+    await store.migrate();
+    await store.save(w.net.exportState());
+
+    w.clock.advance(HOUR);
+    const now = w.clock.now();
+    const entries: (number | undefined)[] = [];
+    const ran = await runTick(w.net, store, now, async unit => {
+      entries.push((await store.load())!.lastTick);
+      return unit();
+    });
+
+    expect(ran).toBe(true);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).not.toBe(now);
+    expect(entries[1]).not.toBe(now);
+    expect((await store.load())!.lastTick).toBe(now);
+  }, 180_000);
 });

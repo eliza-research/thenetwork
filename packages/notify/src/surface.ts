@@ -3,6 +3,7 @@
 // a web page whether an app is installed, so we never guess silently: a surface whose links went
 // unused twice in a row drops out until the member uses it again.
 
+import { updateDeliveryFor, type Channel as UpdateChannel } from "../../core/src/generated/agentEntry.ts";
 import { deliverySurfaceScore, maxIgnoredStreak, surfaceHasClearLead, surfaceIsUsable, surfaceRecentMs } from "../../core/src/generated/notificationDelivery.ts";
 import { isAssistant, type Assistant, type Channel, type Surface } from "./types.ts";
 
@@ -45,22 +46,24 @@ export function score(s: SurfaceSignal, now: number): number {
 
 const usable = (s: SurfaceSignal) => surfaceIsUsable(s.active, s.ignoredStreak);
 
+const UPDATE_CHANNEL = { imessage: "IMessage", sms: "Sms", telegram: "Telegram" } as const satisfies Record<Channel, UpdateChannel>;
+
 export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], now: number): Delivery {
   const bySurface = new Map(signals.map(s => [s.surface, s]));
   const assistants = signals.filter(s => isAssistant(s.surface) && usable(s)).map(s => s.surface as Assistant);
-  const toAssistant = (a: Assistant, reason: string): Delivery =>
-    prefs.channel === "imessage" ? { mode: "deeplink", assistant: a, reason } : { mode: "button_page", assistants: [a, ...assistants.filter(x => x !== a)], reason };
+  const deliver = (reason: string, assistant?: Assistant): Delivery => {
+    const mode = updateDeliveryFor(UPDATE_CHANNEL[prefs.channel], assistant !== undefined);
+    if (mode === "InThread" || assistant === undefined) return { mode: "thread", reason };
+    return mode === "AssistantLink" ? { mode: "deeplink", assistant, reason }
+      : { mode: "button_page", assistants: [assistant, ...assistants.filter(x => x !== assistant)], reason };
+  };
 
   const explicit = prefs.explicit;
   if (explicit !== undefined) {
-    if (!isAssistant(explicit)) return { mode: "thread", reason: "explicit_thread" };
+    if (!isAssistant(explicit)) return deliver("explicit_thread");
     const sig = bySurface.get(explicit);
-    if (sig?.active) {
-      // An explicit choice is honoured even after ignored links, but a dead link twice in a row falls back to the thread.
-      if (sig.ignoredStreak >= MAX_IGNORED_STREAK) return { mode: "thread", reason: "explicit_link_unused" };
-      return toAssistant(explicit, "explicit");
-    }
-    return { mode: "thread", reason: "explicit_not_connected" };
+    if (!sig?.active) return deliver("explicit_not_connected");
+    return sig.ignoredStreak >= MAX_IGNORED_STREAK ? deliver("explicit_link_unused") : deliver("explicit", explicit);
   }
 
   const channelSig = bySurface.get(prefs.channel);
@@ -69,8 +72,7 @@ export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], n
     .map(a => ({ a, s: score(bySurface.get(a)!, now) }))
     .sort((x, y) => y.s - x.s || x.a.localeCompare(y.a));
   const top = ranked[0];
-  if (!top) return { mode: "thread", reason: "no_assistant" };
+  if (!top) return deliver("no_assistant");
   const runnerUp = Math.max(ranked[1]?.s ?? -Infinity, channelScore);
-  if (surfaceHasClearLead(top.s, runnerUp)) return toAssistant(top.a, "score");
-  return { mode: "thread", reason: "no_clear_leader" };
+  return surfaceHasClearLead(top.s, runnerUp) ? deliver("score", top.a) : deliver("no_clear_leader");
 }

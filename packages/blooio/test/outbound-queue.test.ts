@@ -457,14 +457,17 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect([c.status, c.ended_at === null, c.to_address, c.body, c.sent_at === null]).toEqual(["accepted", false, null, null, false]);
   });
 
-  test("SD-100: a gateway reply whose turn receipt never comes, or comes as unknown, ends failed_unknown after the receipt deadline", async () => {
+  test("SD-100: a gateway reply whose turn receipt never comes, or comes as unknown, ends failed_unknown after the receipt deadline, and a late accepted receipt still records it as sent", async () => {
     const now = new SimClock(Date.UTC(2026, 9, 14, 16));
     const { calls, provider } = recorder();
     const alerts: string[] = [];
     const q = queue(a, provider, { clock: now, onAlert: (id, alert) => { alerts.push(`${id}:${alert}`); } });
     const to = "+12125558100";
+    const answeredTo = "+12125558101";
     const reply = (id: string) => ({ id, memberId: "sd100-member", to, kind: "reply" as const, text: "Here is the plan for Saturday." });
-    await a.begin(tx => q.recordCollected(tx, [reply("sd100-collected"), reply("sd100-unknown")]));
+    const collectedAt = now.now();
+    await a.begin(tx => q.recordCollected(tx, [reply("sd100-collected"), reply("sd100-unknown"),
+      { ...reply("sd100-answered"), memberId: "sd100-answered-member", to: answeredTo }]));
     await a.begin(tx => q.collectedReceipt(tx, ["sd100-unknown"], "unknown", now.now()));
     now.advance(5 * 60 * 60_000);
     await q.drain();
@@ -479,8 +482,21 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
       ["sd100-unknown", "failed_unknown", true, "Here is the plan for Saturday."],
     ]);
     expect(alerts).toEqual(expect.arrayContaining(["sd100-collected:gateway_receipt_expired", "sd100-unknown:gateway_receipt_expired"]));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-unknown"], "unknown", now.now()));
+    expect(await q.statusOf("sd100-unknown")).toBe("failed_unknown");
     await a.begin(tx => q.collectedReceipt(tx, ["sd100-collected"], "accepted", now.now()));
-    expect(await q.statusOf("sd100-collected")).toBe("failed_unknown");
+    const [late] = await a`select status, sent_at, ended_at from platform.outbound where id = 'sd100-collected'`;
+    expect([late.status, late.sent_at?.getTime(), late.ended_at !== null]).toEqual(["sent", collectedAt, true]);
+    const [conversation] = await a`select unanswered from platform.line_conversations where line = ${q.line} and address = ${to}`;
+    expect(conversation?.unanswered).toBe(1);
+    expect(await q.statusOf("sd100-answered")).toBe("failed_unknown");
+    await q.inbound(answeredTo);
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-answered"], "accepted", now.now()));
+    const [answered] = await a`select status, sent_at from platform.outbound where id = 'sd100-answered'`;
+    expect([answered.status, answered.sent_at?.getTime()]).toEqual(["sent", collectedAt]);
+    const [answeredConversation] = await a`select unanswered, last_outbound_at from platform.line_conversations
+      where line = ${q.line} and address = ${answeredTo}`;
+    expect([answeredConversation?.unanswered, answeredConversation?.last_outbound_at?.getTime()]).toEqual([0, collectedAt]);
     expect(calls).toEqual([]);
   });
 });

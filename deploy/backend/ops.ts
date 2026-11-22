@@ -1,25 +1,6 @@
-// Monitoring, alerts and cost checks for the shared backend (docs/deploy.md section 7; mvp-plan items 11 and 12).
-//
-//   collect()      one snapshot per network: the last stored tick, the review and send queues, the
-//                  sends of the last 24 h by outcome, review SLA misses, safety events (reports, minor
-//                  signals after contact, holds, bans, agent safety signals waiting for staff, bias
-//                  monitor alerts of the last 24 h); the shared line (Blooio safety actions on it, texts
-//                  parked for leak review per app); the signed gateway turns without a confirmed result
-//                  (turn-watch.ts); and today's cost per app against the budgets.
-//                  Counts and network ids only: never a member id, a phone number or a text.
-//   evaluate()     the snapshot as alerts (key, level, count, text).
-//   AlertDispatcher  dedupe and a rate limit, with its state in network.ops_alerts (a restart or a
-//                  second replica does not send again): an alert is posted when it starts, when it gets
-//                  worse (warn to bad, or more safety events), every ALERT_REPEAT_MS while it lasts, and
-//                  once when it ends. All alerts of one round go in one POST; at most ALERT_MAX_PER_HOUR
-//                  posts an hour. Without ALERT_WEBHOOK_URL the alerts are log lines ("alert").
-//   createOps()    the runner the backend calls in its tick (backend.ts) and for GET /ops/metrics.
-//
-// The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
-// `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import {
-  cachedOpsMetricsFresh, opsRoundDue, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
+  cachedOpsMetricsFresh, catalogScanOverdue, opsRoundDue, roundReport, turnWatchAlertKey, turnWatchLeads, turnWatchLevel, turnWatchRaises, type TurnWatchCondition,
 } from "../../packages/core/src/generated/opsAlertDispatch.ts";
 import {
   dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
@@ -32,39 +13,25 @@ import type { TurnWatchMetrics } from "../../packages/network/service/turn-watch
 export { turnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
-/** The start of the UTC day of a time (the cost ledger's day). */
 export const utcDayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
 type Env = Record<string, string | undefined>;
-
-// ------------------------------------------------------------------ config
 
 export interface OpsConfig {
   env: string;
   build: string;
-  /** Generic JSON POST target (a Slack incoming webhook works). Undefined: alerts are log lines only. */
   webhookUrl?: string;
   webhookFormat: "json" | "slack";
-  /** A dead man's switch (for example a Better Stack or healthchecks.io heartbeat URL): GET after each good round. */
   heartbeatUrl?: string;
-  /** Bearer token for GET /ops/metrics. Undefined: the route answers 404. */
   metricsToken?: string;
-  /** No network tick stored for this long is an alert (default 15 min). */
   tickLateMs: number;
-  /** Send failures in 24 h: alert at this share of attempted sends ... */
   sendFailureRate: number;
-  /** ... and at least this many failures. */
   sendFailureMin: number;
-  /** Messages waiting for delivery at once. */
   outboundBacklog: number;
-  /** Review items waiting at once. */
   reviewBacklog: number;
-  /** An alert that lasts is posted again after this long. */
   repeatMs: number;
   maxPostsPerHour: number;
-  /** How often the ops round runs inside the backend tick (default 60 s). */
   everyMs: number;
   budgets: CostBudgets;
-  /** Budget share for a warning (default 0.8; 1.0 or more is bad). */
   budgetWarnShare: number;
 }
 
@@ -105,40 +72,21 @@ export function opsConfigFromEnv(e: Env, base: { env: string; build: string; dep
   };
 }
 
-// ------------------------------------------------------------------ metrics
-
 export interface NetworkMetrics {
   network: string;
   app: string;
-  /** Since the last tick any instance stored for this network (null: never). */
   lastTickAgoMs: number | null;
   backlog: { review: number; reviewOverdue: number; deferred: number; outboundWaiting: number };
-  /** Outbound messages of the last 24 h by outcome. attempted = handed to the provider (sent, delivered, failed...). */
   sends24h: { attempted: number; failed: number; refused: number; dryRun: number; smsFallback: number };
-  /** Review items that expired unsent in the last 24 h (the SLA was missed). */
   reviewExpired24h: number;
   safety24h: { reports: number; urgentReports: number; minorAfterContact: number; holds: number; bans: number };
-  /** Outbound messages stored as fell_back (sent by SMS) on this UTC day and the day before. */
   smsByDay: { today: number; yesterday: number };
-  /** Agent safety_concern signals (POST /internal/signals) waiting for a person in GET /signals: the safety alert. */
   safetySignalsWaiting?: number;
-  /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
   biasAlerts24h?: number;
-  /**
-   * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): engine proposals a person
-   * decided (approve or reject; the simulated reviewer left out) and those approved without an edit.
-   */
   precision7d?: { decided: number; clean: number };
-  /** The network could not be read (the rest of the row is zeros). */
   error?: string;
 }
 
-/**
- * The shared line, outside any one network (platform tables): Blooio safety actions in force on a line
- * (platform.line_safety: new and agent texts wait while one is set; compliance texts still go) and
- * texts parked for leak review per app (they wait for a person: GET /queue/leak-review). Actions,
- * times and counts only: never the line's number, an address or a text.
- */
 export interface LineMetrics {
   restricted: { action: string; since: number }[];
   leakReview: Record<string, number>;
@@ -151,40 +99,37 @@ export async function lineMetrics(sql: SQL): Promise<LineMetrics> {
   return { restricted, leakReview: Object.fromEntries(leak.map(r => [r.app_id, r.n])) };
 }
 
+export interface CatalogMetrics { lastScanAgeMs: number | null }
+
+export async function catalogMetrics(sql: SQL, now: number): Promise<CatalogMetrics> {
+  const [row] = await sql<{ checked_at: Date | null }[]>`select max(checked_at) as checked_at from network.public_event_imports`;
+  return { lastScanAgeMs: row?.checked_at ? now - new Date(row.checked_at).getTime() : null };
+}
+
 export interface OpsMetrics {
   ok: true;
   at: number;
   env: string;
   build: string;
-  /** Since this process's ops runner started (a network with no stored tick is late only after tickLateMs of uptime). */
   uptimeMs: number;
   networks: NetworkMetrics[];
-  /** The shared line (lineMetrics); absent when the runner has no line reader. */
   line?: LineMetrics | { error: string };
-  /** The signed gateway turns and queued deliveries without a confirmed result (turnWatchMetrics); absent without a reader. */
   turns?: TurnWatchMetrics | { error: string };
+  catalog?: CatalogMetrics | { error: string };
   cost: { day: string; totalUsd: number; byApp: Partial<Record<CostApp, number>>; budgets: BudgetLine[] } | { error: string };
   alerts?: { open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number };
 }
 
-/** What one network's probe answers (production: a NetworkRuntime and its SQL; the simulation: a fake). */
 export interface NetworkProbe {
   id: string;
   app: string;
   health(): Promise<{ lastTick: { stored: number | null; savedAt: number | null }; backlog: NetworkMetrics["backlog"] }>;
-  /**
-   * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
-   * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
-   */
   since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
 }
 
-/** Below this many person decisions in 7 days the precision is not alerted on (too few to read). */
 export const PRECISION_MIN_DECIDED = 20;
-/** The precision gate (PRD 32.8): reviewer approval without edits at least 80%. */
 export const PRECISION_TARGET = 0.8;
 
-/** Final outcomes of a send that reached (or tried to reach) the provider. */
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
 const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"]);
@@ -231,7 +176,6 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
   }
 }
 
-/** The probe of one service runtime: its health() and three app-scoped reads (row-level security: one app per transaction). */
 export function runtimeProbe(rt: {
   id: string; app: { id: string };
   health(): Promise<{ lastTick: { stored: number | null; savedAt: number | null }; backlog: NetworkMetrics["backlog"] }>;
@@ -246,18 +190,13 @@ export function runtimeProbe(rt: {
         where app_id = ${rt.app.id} and direction = 'outbound' and ts > ${at} group by status` as { status: string; n: number }[]).map(r => [r.status, r.n]));
       const events = (await tx`select type, payload->>'action' as action, count(*)::int as n from network.events
         where app_id = ${rt.app.id} and at > ${at} and type in ('review_expired', 'minor_after_contact', 'safety_action') group by 1, 2`) as { type: string; action: string | null; n: number }[];
-      // Reports live in the stored state (ids and a kind only); `at` is epoch ms.
       const reports = (await tx`select r->>'kind' as kind from network.network_state s, jsonb_array_elements(coalesce(s.state->'reports', '[]'::jsonb)) r
         where s.id = ${rt.id} and (r->>'at')::float8 > ${t}`) as { kind: string }[];
       const [sms] = (await tx`select count(*) filter (where ts >= ${new Date(dayStart)})::int as today, count(*) filter (where ts < ${new Date(dayStart)})::int as yesterday
         from network.messages where app_id = ${rt.app.id} and direction = 'outbound' and status = 'fell_back' and ts >= ${new Date(dayStart - DAY)}`) as { today: number; yesterday: number }[];
-      // Counts only: a signal's evidence and a report's groups never leave the database here.
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
       const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
-      // Shadow precision: person decisions of the last 7 days on engine proposals, the console scorecard's
-      // cohort (an edit before approving is not "without edits"). Member requests and staff-composed
-      // proposals do not measure the engine's precision.
       const [prec] = (await tx`select count(*)::int as decided,
           count(*) filter (where r.decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(r.edits) = 'array' then r.edits end), 0) = 0)::int as clean
         from network.review_items r join network.opportunities o on o.app_id = r.app_id and o.id = r.opportunity_id
@@ -269,16 +208,12 @@ export function runtimeProbe(rt: {
   };
 }
 
-// ------------------------------------------------------------------ alerts
-
 export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } from "../../packages/core/src/vibe/opsAlertShell.js";
 
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
-/** The snapshot as alerts. Pure: the same snapshot gives the same alerts. */
-export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"]; turns?: OpsMetrics["turns"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
+export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"]; turns?: OpsMetrics["turns"]; catalog?: OpsMetrics["catalog"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
   const out: Alert[] = [];
-  // spec/opsAlertDispatch.md, "Each condition is one alert, and a possible STOP makes it bad and first"
   const leading: Alert[] = [];
   if (m.turns && "error" in m.turns) out.push({ key: "turn_read", level: "warn", count: 1, text: `Could not read the shared-line turns: ${m.turns.error}` });
   else for (const t of m.turns?.conditions ?? []) {
@@ -323,6 +258,12 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
       if (n > 0) out.push({ key: `leak_review:${app}`, level: "warn", count: n, bump: true, text: `${app}: ${n} text(s) held for leak review wait for a person (console: held texts, or GET /queue/leak-review)` });
     }
   }
+  if (m.catalog && "error" in m.catalog) out.push({ key: "catalog_read", level: "warn", count: 1, text: `Could not read the public event catalog: ${m.catalog.error}` });
+  else if (m.catalog && catalogScanOverdue(m.catalog.lastScanAgeMs !== null, m.catalog.lastScanAgeMs ?? 0, m.uptimeMs ?? 0)) {
+    const age = m.catalog.lastScanAgeMs;
+    out.push({ key: "catalog_stale", level: "warn", count: age === null ? 0 : Math.floor(age / HOUR),
+      text: age === null ? "The public event catalog has no successful scan since this process started a day ago: check the public_events tick lines" : `The public event catalog last refreshed ${Math.floor(age / HOUR)} h ago (expected every day): check the public_events tick lines` });
+  }
   if ("error" in m.cost) out.push({ key: "cost_read", level: "warn", count: 1, text: `Could not read the cost ledger: ${m.cost.error}` });
   else for (const b of m.cost.budgets) {
     if (b.share < c.budgetWarnShare) continue;
@@ -337,10 +278,7 @@ const TURN_WATCH_TEXT: Record<TurnWatchCondition, (overdue: number, compliance: 
   DeliveryUnknown: (n, c) => `${n} queued delivery(ies) have an unknown acceptance and wait for a receipt lookup (${c} compliance)`,
 };
 
-// ------------------------------------------------------------------ the dispatcher
-
 export interface AlertStore {
-  /** Run `fn` while no other replica runs it; undefined when another one holds the lock. */
   exclusive<T>(fn: (tx: AlertTx) => Promise<T>): Promise<T | undefined>;
 }
 
@@ -357,7 +295,6 @@ export class MemoryAlertStore implements AlertStore {
   }
 }
 
-/** network.ops_alerts and network.ops_alert_posts (migration 0020), under a transaction-level advisory lock. */
 export class PgAlertStore implements AlertStore {
   constructor(private sql: SQL) {}
   async exclusive<T>(fn: (tx: AlertTx) => Promise<T>): Promise<T | undefined> {
@@ -389,7 +326,6 @@ export class PgAlertStore implements AlertStore {
 export class AlertDispatcher {
   constructor(private o: {
     store: AlertStore;
-    /** Deliver one body; true when the target took it (2xx). */
     post: (body: Record<string, unknown>) => Promise<boolean>;
     now: () => number;
     repeatMs: number;
@@ -399,7 +335,6 @@ export class AlertDispatcher {
     build: string;
   }) {}
 
-  /** One round: compare the current alerts with the stored ones, post what is new, worse, due again or resolved. Undefined: another replica runs it. */
   dispatch(current: Alert[]): Promise<DispatchResult | undefined> {
     return this.o.store.exclusive(tx => dispatchOperationsAlerts(current, tx, {
       now: this.o.now(), repeatMs: this.o.repeatMs, maxPostsPerHour: this.o.maxPostsPerHour,
@@ -416,7 +351,6 @@ export class AlertDispatcher {
   }
 }
 
-/** A JSON POST with a 5 s timeout: true on 2xx. The URL is never logged (it is a secret for Slack). */
 export function webhookPoster(url: string, fetchFn: typeof fetch = fetch): (body: Record<string, unknown>) => Promise<boolean> {
   return async body => {
     const r = await fetchFn(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(5_000) });
@@ -425,29 +359,23 @@ export function webhookPoster(url: string, fetchFn: typeof fetch = fetch): (body
   };
 }
 
-// ------------------------------------------------------------------ the runner
-
 export interface OpsDeps {
   config: OpsConfig;
   probes: () => NetworkProbe[];
-  /** The shared line's state (lineMetrics on the platform tables). Without it there are no line alerts. */
   line?: () => Promise<LineMetrics>;
-  /** The signed gateway turns (turnWatchMetrics on the platform tables). Without it there are no turn alerts. */
   turns?: (now: number) => Promise<TurnWatchMetrics>;
+  catalog?: (now: number) => Promise<CatalogMetrics>;
   cost?: Pick<CostLedger, "totals" | "accrue">;
   store: AlertStore;
   now: () => number;
   log: { info(msg: string, f?: Record<string, unknown>): void; warn(msg: string, f?: Record<string, unknown>): void; error(msg: string, f?: Record<string, unknown>): void };
-  /** Overrides the webhook (the simulation passes a fake; no real call). */
   post?: (body: Record<string, unknown>) => Promise<boolean>;
-  /** The heartbeat GET (default fetch with a 5 s timeout). */
   ping?: (url: string) => Promise<boolean>;
 }
 
 export function createOps(d: OpsDeps) {
   const c = d.config;
   const post = d.post ?? (c.webhookUrl ? webhookPoster(c.webhookUrl) : async (body: Record<string, unknown>) => {
-    // No webhook: one log line per notice, so the host's log alerts can pick them up.
     for (const a of (body.alerts as Notice[] | undefined) ?? []) d.log.warn("alert", { key: a.key, level: a.level, count: a.count, state: a.state, detail: a.text });
     return true;
   });
@@ -458,21 +386,19 @@ export function createOps(d: OpsDeps) {
   let lastRound = -Infinity;
   let lastAlerts: OpsMetrics["alerts"];
 
-  /** One snapshot. `accrue`: write the daily accruals first (the ops round does; GET /ops/metrics only reads). */
   async function collect(accrue: boolean): Promise<OpsMetrics> {
     const now = d.now();
     const networks = await Promise.all(d.probes().map(p => collectNetwork(p, now)));
     const line: OpsMetrics["line"] = d.line ? await d.line().catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
     const turns: OpsMetrics["turns"] = d.turns ? await d.turns(now).catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
+    const catalog: OpsMetrics["catalog"] = d.catalog ? await d.catalog(now).catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
     let cost: OpsMetrics["cost"];
     try {
       const day = dayOf(now);
       if (d.cost && accrue) {
-        // Today's and yesterday's rows (yesterday's SMS count is final once its day has ended).
         for (const [k, at] of [["today", now], ["yesterday", utcDayStart(now) - 1]] as const) {
           const fallbacks: Partial<Record<AppId, number>> = {};
           for (const n of networks) fallbacks[n.app as AppId] = (fallbacks[n.app as AppId] ?? 0) + n.smsByDay[k];
-          // The line accrues for today only: a first boot does not charge the day before.
           await d.cost.accrue(dayOf(at), fallbacks, k === "today");
         }
       }
@@ -480,7 +406,7 @@ export function createOps(d: OpsDeps) {
       const totalUsd = Math.round(Object.values(byApp).reduce((s, x) => s + (x ?? 0), 0) * 10_000) / 10_000;
       cost = { day, totalUsd, byApp, budgets: budgetLines(byApp, c.budgets) };
     } catch (e) { cost = { error: (e as Error).message.slice(0, 200) }; }
-    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), ...(turns ? { turns } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
+    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), ...(turns ? { turns } : {}), ...(catalog ? { catalog } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
     last = { at: now, metrics: m };
     return m;
   }
@@ -488,12 +414,10 @@ export function createOps(d: OpsDeps) {
   return {
     config: c,
     dispatcher,
-    /** The snapshot for GET /ops/metrics: at most one collection every 15 s. */
     async metrics(): Promise<OpsMetrics> {
       if (last && cachedOpsMetricsFresh(d.now() - last.at)) return last.metrics;
       return collect(false);
     },
-    /** One round (called from the backend tick; runs at most every OPS_EVERY_MS): collect, alert, heartbeat. */
     async tick(): Promise<DispatchResult | undefined> {
       const now = d.now();
       if (!opsRoundDue(now - lastRound, c.everyMs)) return undefined;

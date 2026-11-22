@@ -10,6 +10,8 @@ Check per-item consent and withdrawal, relay decisions, age restrictions, and er
 
 Production calls the generated [relay verdict and consent window](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Phone swaps and durable queue acceptance remain separate.
 
+The text outcome `minorClef` is a hold for a classifier `minor_signal` flag. The engine keeps the age signal of the rules only, so the relay desk (`RelayDesk.apply`) reads a `clef:minor_signal`, `llm:minor_signal` or severe `minor_signal` reason as the age signal too: the held item keeps no text and the sender gets the minors policy. Changed: before this, a minor signal that only the classifier found kept the text and left the sender matchable, and the model disagreed with the code.
+
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -29,8 +31,8 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 //
 // Machines in this model:
 //   relay-item            packages/network/src/relay.ts (RelayDesk.request, apply, deliver, release, reject, forget)
-//   relay-swap            packages/network/src/relay.ts:298-362 (swap, cancelSwaps)
-//   relay-match-view      packages/network/src/network.ts:5374-5379 (relayMatchOf), modelled as `matchOpen`
+//   relay-swap            packages/network/src/relay.ts (RelayDesk.swap, cancelSwaps)
+//   relay-match-view      packages/network/src/network.ts (relayMatchOf), modelled as `matchOpen`
 //
 // Outside the bounds: the model has one match. A member with two or more live matches must name one by an
 // active item of the open context, or the desk decides nothing, keeps no unnamed item and asks the member to
@@ -38,8 +40,11 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 // match when the member has more than one live match", audit SHA38). Offered summaries are distinct
 // (spec/sharedContext.md "Active item summaries are distinct"). shared-relay.integration.test.ts covers both.
 // Also outside: a selected photo held for safety review (platform.photo_relay_items 'pending') is not a desk item.
-// It expires at PHOTO_RELAY_TTL (15 minutes, shorter than any review SLA, so no SLA alert can come first) and
-// its sender gets no expiry notice. That is a separate finding for the photo relay owner (spec/models/photo_relay_item.md).
+// It expires at PHOTO_RELAY_TTL (15 minutes, fixed by the wire contract), its sender gets at most one expiry notice (the send rules can refuse it) and
+// the expiry counts as a missed review (spec/photoRelayReview.md, spec/models/photo_relay_item.md expirePending).
+// Also outside: the 0-point relay_block event in the sender's safety case after a block for severe words
+// (spec/relayDecision.md, "A block for the sender's severe words reaches the sender's safety case"). It changes no
+// relay state; shared-relay.integration.test.ts covers it.
 //   photo-relay-item      packages/platform/src/photo-relay.ts (select, review, revoke, claimForAction, issueDelivery, delivery)
 //   action-receipt        packages/network/service/relay-endpoint.ts:175-263
 //   relay-classifier-hook packages/engine/src/relay.ts:411-434 (relayItemAsync), an oracle
@@ -254,7 +259,6 @@ module relay {
     else if (partiesHold(x, src, dst)) { decision: "hold", row: true, ageSignal: false, minorRead: false }
     else if (tc == "rate") { decision: "hold", row: false, ageSignal: false, minorRead: false }
     else if (tc == "hold") { decision: "hold", row: true, ageSignal: false, minorRead: false }
-    // Clef minor_signal: a hold with flag clef:minor_signal that also sets ageSignal (engine relay.ts:431-433, SD-064).
     else if (tc == "minorClef") { decision: "hold", row: true, ageSignal: true, minorRead: true }
     else { decision: "pass", row: false, ageSignal: false, minorRead: false }
 
@@ -336,13 +340,20 @@ module relay {
       not(w.erased.get(src)),
       if (not(w.matchOpen)) all {
         // matchFor finds no live match: refused, nothing logged (relay.ts request).
-        desk' = desk, queue' = queue, g' = g,
+        desk' = desk, queue' = queue, g' = g, w' = w,
       } else {
-        val a = apply(w, d0, queue, readGhost(w, d0, g, src, dst), k, "text", src, dst, textDecision(w, src, dst, tc), false, refuse)
-        all { desk' = a.d, queue' = persist(a.d, a.q), g' = a.gh }
+        val dec = textDecision(w, src, dst, tc)
+        val a = apply(w, d0, queue, readGhost(w, d0, g, src, dst), k, "text", src, dst, dec, false, refuse)
+        all {
+          desk' = a.d, queue' = persist(a.d, a.q), g' = a.gh,
+          // spec/relayDecision.md, "A relay text that says the sender is under 18 starts the minors policy": RelayDesk.apply
+          // calls the host's minorSignal, which marks the sender and closes the sender's open opportunities (dropMember).
+          // `minor` stands for the code's minor signal here; a sender already marked gets no second step.
+          w' = if (dec.ageSignal and not(w.minor.get(src))) w.with("minor", w.minor.set(src, true)).with("matchOpen", false) else w,
+        }
       },
       ep' = committed(ep, k),
-      w' = w, photo' = photo,
+      photo' = photo,
     }
   }
 
@@ -872,6 +883,10 @@ module relay {
   val expiredStaysUnsent = desk.held.keys().forall(i =>
     desk.held.get(i).status == "expired" implies (not(desk.held.get(i).hasText) and not(queue.rows.keys().contains(i))))
 
+  // spec/relayDecision.md, "A relay text that says the sender is under 18 starts the minors policy": every item
+  // that carried an age signal left its sender marked as a minor (audit ST-D2).
+  val ageSignalStartsMinorsPolicy = desk.verdict.keys().forall(i => desk.verdict.get(i).ageSignal implies w.minor.get(desk.verdict.get(i).src))
+
   val safety = and {
     numberMovesOnlyIfBothConsented,
     withdrawnNotSent,
@@ -890,6 +905,7 @@ module relay {
     recordReviewMatches,
     heldSlaAlerted,
     expiredStaysUnsent,
+    ageSignalStartsMinorsPolicy,
   }
 
   // ---- Properties outside `safety` (checked one by one; see the findings file).
@@ -982,7 +998,7 @@ module relay {
     init
       .then(claim("a1", "text")).then(commitText("a1", "minorClef", false)).then(answer("a1"))
       .expect(desk.held.get("a1").status == "held" and not(desk.held.get("a1").hasText) and desk.log.get("a1").ageSignal
-        and minorTextNeverKept)
+        and minorTextNeverKept and w.minor.get("A") and not(w.matchOpen) and ageSignalStartsMinorsPolicy)
 
   // A closed match before admission: the queued row never goes (shared-relay.integration.test.ts:174-212).
   run closeBeforeAdmissionTest =

@@ -19,10 +19,10 @@ pure def signupDraftRequestAllowed(appId: str, appProvided: bool, matchesHost: b
 
 ### A live connection prepares one draft under the age guard
 
-The connector must have a grant and storage. The recorded-age check must be available. Changed: the age check used to run inside a phone lock with a cleanup hook that the platform no longer has; it now reads the lowest recorded age of the phone, and the join checks the stated age again. Proceed when the lowest recorded age of the phone allows the app, the grant still belongs to the phone's current owner, and the person is not joined or is invited. A successful insert prepares the draft. The ten-minute deadline is capped at the grant's expiry.
+The connector must have a grant and storage. The recorded-age check must be available. Changed: the age check used to run inside a phone lock with a cleanup hook that the platform no longer has; it now reads the lowest recorded age of the phone, and the join checks the stated age again. Proceed when the lowest recorded age of the phone allows the app, the grant still belongs to the phone's current owner, and the person is not joined or is invited. After a successful insert, read the lowest recorded age again. The draft is prepared only when the app still allows that age; otherwise delete the phone's drafts of the app and refuse. Changed again (audit MCP-age-guard): the check and the insert were separate steps, so an age that the platform recorded between them left a draft that no check refused; the read after the insert sees every age recorded before it. An age recorded after that read leaves the row until the Finish signup read deletes it or its deadline passes. The ten-minute deadline is capped at the grant's expiry.
 
 ```quint
-type DraftPreparationPhase = ReadConnection | CheckAge | CheckOwner | CheckMembership | WriteDraft |
+type DraftPreparationPhase = ReadConnection | CheckAge | CheckOwner | CheckMembership | WriteDraft | RecheckAge |
   Prepared | GrantRefused | UseJoinForm | AgeRefused | ExistingProfile | WriteRefused
 type DraftPreparation = { phase: DraftPreparationPhase }
 
@@ -52,12 +52,16 @@ pure def observeMembership(s: DraftPreparation, status: str): DraftPreparation =
 
 pure def canObserveWrite(s: DraftPreparation): bool = s.phase == WriteDraft
 pure def observeWrite(s: DraftPreparation, saved: bool): DraftPreparation =
-  { phase: if (saved) Prepared else WriteRefused }
+  { phase: if (saved) RecheckAge else WriteRefused }
+
+pure def canObserveAgeAfterWrite(s: DraftPreparation): bool = s.phase == RecheckAge
+pure def observeAgeAfterWrite(s: DraftPreparation, allowed: bool): DraftPreparation =
+  { phase: if (allowed) Prepared else AgeRefused }
 
 pure val statusValues = Set("not_joined", "invited", "active", "stopped")
 
-pure def stepPreparedRequiresWrite(before: DraftPreparation, after: DraftPreparation): bool =
-  (before.phase != Prepared and after.phase == Prepared) implies before.phase == WriteDraft
+pure def stepPreparedRequiresAgeAfterWrite(before: DraftPreparation, after: DraftPreparation): bool =
+  (before.phase != Prepared and after.phase == Prepared) implies before.phase == RecheckAge
 
 pure def sometimesPrepared(s: DraftPreparation): bool = s.phase == Prepared
 ```
@@ -68,7 +72,7 @@ pure def sometimesPrepared(s: DraftPreparation): bool = s.phase == Prepared
 
 ### The Finish signup step reads the draft only for a person who can still join
 
-Changed: a same-origin `/oauth/signup-draft` route used to read the draft for a Join page that no site has, so nothing read it (audit MCP16 and SIG46); the Finish signup step of the connection page now reads it, and the rules of that browser route are gone. When the person opens Finish signup on a live connection request with a verified phone, the server decides from the request's membership status, the lowest recorded age of the phone and the ban of the number. A banned number reads no draft, and its draft is deleted. A person who is not joined or invited, whose lowest recorded age the app allows, reads the draft. A lowest recorded age that the app does not allow deletes the draft. Any other membership reads no draft and keeps the row.
+Changed: a same-origin `/oauth/signup-draft` route used to read the draft for a Join page that no site has, so nothing read it (audit MCP16 and SIG46); the Finish signup step of the connection page now reads it, and the rules of that browser route are gone. The shared signup view does not show the draft fields yet, so no reply, skill or page may say that the page shows them until it does. When the person opens Finish signup on a live connection request with a verified phone, the server decides from the request's membership status, the lowest recorded age of the phone and the ban of the number. A banned number reads no draft, and its draft is deleted. A person who is not joined or invited, whose lowest recorded age the app allows, reads the draft. A lowest recorded age that the app does not allow deletes the draft. Any other membership reads no draft and keeps the row. The server reads the draft only after the browser session matches the request. A refused session reads no draft; when the number is banned, the refusal deletes the number's draft of the app, because a ban also ends the session. Changed (audit MCP-draft-before-session): the read and its deletion ran before the session check, so a post without a matching session could make the server read or delete a draft.
 
 ```quint
 type DraftClaimRoute = RefuseClaim | ReadDraft | DiscardDraft
@@ -84,6 +88,15 @@ pure def lawBannedNumberNeverReadsDraft(status: str, ageAllowed: bool): bool =
 pure def lawDraftReadNeedsJoinableAge(status: str, ageAllowed: bool, banned: bool): bool =
   signupDraftClaimRoute(status, ageAllowed, banned) == ReadDraft implies
     (ageAllowed and not(banned) and signupMembershipCanDraft(status))
+
+pure def signupDraftRefusedRoute(banned: bool): DraftClaimRoute =
+  if (banned) DiscardDraft else RefuseClaim
+
+pure def lawRefusedSessionReadsNoDraft(banned: bool): bool =
+  signupDraftRefusedRoute(banned) != ReadDraft
+
+pure def lawRefusedBannedSessionDeletesDraft(banned: bool): bool =
+  banned implies signupDraftRefusedRoute(banned) == DiscardDraft
 ```
 
 ### A draft is read only by the phone, app and person that saved it
@@ -103,7 +116,7 @@ pure def signupDraftExpired(expiresAt: int, asOf: int): bool = expiresAt <= asOf
 
 ### The signup result settles the draft
 
-New: the Finish signup result now decides what happens to the draft, because the draft must not outlive its use (audit MCP16 and SIG46). A completed join uses the draft and deletes it. A join that the app refuses for the stated age deletes it; the platform records that lower age, and the lowest stated age counts from then on. A refusal for review, a ban or a changed account deletes it. A refusal that the person can correct on the form (an invitation, the text message terms or a missing field) keeps it until its deadline. Erasing the account, a number change and the deadline also delete it.
+New: the Finish signup result now decides what happens to the draft, because the draft must not outlive its use (audit MCP16 and SIG46). A completed join uses the draft and deletes it. A join that the app refuses for the stated age deletes it; the platform records that lower age, and the lowest stated age counts from then on. A refusal for review, a ban or a changed account deletes it. A refusal that the person can correct on the form (an invitation, the text message terms or a missing field) keeps it until its deadline. Erasing the account, a number change and the deadline also delete it. A staff ban of a person or a number deletes the drafts of every banned number in every app at once. Changed (audit MCP-draft-ban): a ban used to leave the draft until Finish signup opened or the deadline passed, so the number of a banned person kept stored profile fields after the ban. Changed (review of MCP-draft-ban): the deletion ran before the memberships were restricted, so a connector store error stopped the ban before the restriction; the deletion now runs after every membership is restricted and before the ban is recorded as complete, so a failure still leaves the ban pending for a staff retry.
 
 ```quint
 type DraftSettlement = DeleteDraft | KeepDraft

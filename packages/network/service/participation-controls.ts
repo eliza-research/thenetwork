@@ -30,7 +30,6 @@ function hourOf(text: string): number | undefined {
   if (meridiem) return Number(meridiem[1]) % 12 + (meridiem[2] === "pm" ? 12 : 0);
 }
 
-/** Recognize explicit own-app commands without turning profile prose into a setting. */
 export function participationCommand(text: string): ParticipationCommand | undefined {
   const line = text.normalize("NFKC").trim().toLowerCase().replace(/[.!]$/, "").replace(/\s+/g, " ").replace(/^please /, "");
   const mode = /^(pause|resume) (?:my )?(?:matching|introductions|matches)$/.exec(line);
@@ -50,7 +49,6 @@ export function participationCommand(text: string): ParticipationCommand | undef
 
 const displayHour = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
 
-/** Check ownership and apply an explicit command in the same transaction as its signed reply. */
 export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts, "activeMembership" | "lowestAge">,
   owner: MemberCommandOwner, command: ParticipationCommand, appCategories: readonly string[], now: number): Promise<string | undefined> {
   const binding = await memberCommandOwner(tx, accounts, owner);

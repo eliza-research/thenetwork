@@ -1,9 +1,3 @@
-// The consent ledger per app (platform plan 4.3; PRD 40.3; founder decision 7). One line serves every
-// app, and carriers see one sender, so STOP stops every app (an event with app = null): on the shared
-// line, on the site's stop button, and as STOP ALL. Only an app's own line with
-// PLATFORM_STOP_SCOPE=app stops that app alone. "leave <app>" (and the site's leave button) leaves one
-// app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
-// a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
 import { appMayText } from "../../core/src/generated/carrierConsent.ts";
 import { foldKeywordText as fold, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";

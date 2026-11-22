@@ -92,7 +92,6 @@ test("V2 withdrawal removes pending intake only and keeps accepted facts regardl
   }finally{await f.close();}
 });
 
-// spec/profileSuggestionSource.md, "Cleanup uses current owner authority and any required stored withdrawal turn"
 test("V2 withdrawal compares Cloud times only, so a later Network turn time or batch time neither refuses it nor hides a batch",async()=>{
   const skewed=await seed(false,false,now,cutoffAt-500);const reconnected=await seed(false,false,cutoffAt-1500,cutoffAt+500);
   const f=await fixture();try {

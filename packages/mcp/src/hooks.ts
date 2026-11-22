@@ -1,7 +1,3 @@
-// What the MCP server needs from the platform, and an adapter that builds it from
-// packages/platform (the same OTP service, sessions and people store as the sites' /api/*).
-// The human signs in with the platform phone code on our page; the client and the agent never
-// send or see a phone number or a code.
 import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
 import { canJoinApp, canMatchInApp, lowestAge, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
@@ -9,17 +5,13 @@ import { connectorMembershipStatus, type MemberStatus } from "../../core/src/gen
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { Grant } from "./store.ts";
 
-/** A membership state as the person's own agent may see it. No age, no member id, nothing about others. */
 export type PublicStatus = "not_joined" | "invited" | "onboarding" | "active" | "stopped" | "on_hold";
 
 export interface SignedIn {
   e164: string;
   personId: string | null;
-  /** Server-held session hash for signing a confirmation that only this session can submit. */
   browserBinding?: string;
-  /** Server-held binding of this authenticated session's immediate predecessor. */
   rotatedFromBrowserBinding?: string;
-  /** A rotated site session: send this Set-Cookie with the page so the person stays signed in. */
   setCookie?: string;
 }
 
@@ -30,10 +22,8 @@ export interface BrowserSignup {
 
 type BrowserSignupResult = { ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError };
 
-/** The assistant behind an OAuth client, by its redirect hosts (handler.ts assistantOf). */
 export type AssistantKind = "chatgpt" | "claude" | "grok" | "web";
 
-/** One update for the person's assistant: a member-safe line from the inbox (packages/notify). */
 export interface PublicUpdate { summary: string; at: string; kind: string }
 
 export interface SavedProfileFields {
@@ -46,57 +36,28 @@ export interface SavedProfileFields {
 
 export interface PlatformHooks {
   cloudAuthorityRequired?(app: McpAppId): boolean;
-  /** Only an OAuth-owner-generated live request ID, never a caller redirect URL. */
   beginCloudOAuth?(app: McpAppId, requestId: string): Promise<{url:string;setCookie:string}|undefined>;
   cloudGrantAuthority?(app: McpAppId, req: Request, resource: string): Promise<CloudGrantAuthority | "unavailable" | undefined>;
   validateCloudGrant?(grant: Grant): Promise<"valid" | "invalid" | "unavailable">;
-  /** E.164 for a typed number, or undefined (the platform accepts +1 only). */
   normalizePhone(input: unknown): string | undefined;
-  /** Send a code. The same answer whether or not the number is known. */
   startOtp(app: McpAppId, e164: string, ip: string): Promise<{ ok: true } | { ok: false; error: "rate_limited" | "unavailable" }>;
   verifyOtp(app: McpAppId, e164: string, code: string, ip: string): Promise<boolean>;
-  /** After a verified code: the person of the number, or "held" when staff must look at the number first. */
   login(e164: string): Promise<{ personId: string | null } | "held">;
-  /** The person of a number now, or null (no person, deleted, or on hold). */
   personFor(e164: string): Promise<string | null>;
-  /**
-   * The platform's keyed hash of a number (PLATFORM_HASH_KEY). OAuth rows keep only this, never the
-   * number, so a reader of the oauth schema cannot tell whose number uses which app.
-   */
   phoneKey(e164: string): string;
-  /** The person whose number has this keyed hash now, or null (no person, deleted, or on hold). */
   personForKey(phoneKey: string): Promise<string | null>;
-  /** Resolve a grant's canonical phone binding without collapsing a held number into an unowned one. */
   grantOwner(phoneKey: string): Promise<{ personId: string | null; held: boolean }>;
-  /** True when the grant's phone or person is banned now. Read at every use of a connector credential. */
   grantIsBanned(phoneKey: string, personId: string | null): Promise<boolean>;
   signupAgeAllowed?(phoneKey: string, app: McpAppId): Promise<boolean>;
-  /** The person's own state in one app. */
   status(personId: string, app: McpAppId, phoneKey: string): Promise<PublicStatus>;
-  /** Fields the active member saved in this app. The connector applies its output gate before disclosure. */
   readProfile?(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
-  /** Current adult Slop member and phone owner, with no safety hold or ban. Never enrolls anyone. */
   customChatGptSlopEligible?(personId: string, phoneKey: string): Promise<boolean>;
-  /**
-   * The profile the person gave their assistant, delivered to their own member on this app as if they
-   * had texted it (the Network reads it with the same rules). Undefined: the platform does not take profiles.
-   */
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped">;
-  /** Scope the private retry receipt to this exact authorized grant and approved profile. */
   profileSubmissionFingerprint?(app: McpAppId, grantId: string, text: string): string;
-  /**
-   * The person's own unseen updates in this app from the single inbox. A returned update is marked seen
-   * on every surface; one whose summary fails `passesLeakGate` is not returned and stays unseen.
-   * Undefined: the platform has no inbox (get_updates answers "not available").
-   */
   updates?(personId: string, app: McpAppId, assistant: AssistantKind, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<PublicUpdate[]>;
-  /** An assistant was connected (consent granted) or disconnected (grant revoked) for a person. */
   assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
-  /** The person already signed in on this site (the site's session cookie), if any. */
   session?(app: McpAppId, req: Request): Promise<SignedIn | "unavailable" | undefined>;
-  /** Start a site session after a verified code, so the person is signed in on the site too. Returns a Set-Cookie value. */
   createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
-  /** The server's current eligibility and wording for this same-app verified browser. */
   signupEnrollment?(app: McpAppId, who: SignedIn): Promise<BrowserSignup | undefined>;
   joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string): Promise<BrowserSignupResult>;
 }
@@ -105,7 +66,6 @@ const PUBLIC_STATUS: Record<MemberStatus, PublicStatus> = {
   NotJoined: "not_joined", Invited: "invited", Onboarding: "onboarding", Active: "active", Stopped: "stopped", OnHold: "on_hold",
 };
 
-/** Only the coarse status reaches the person's agent. */
 export function publicStatus(state: MembershipState | undefined, review: string | null | undefined, optedOut = false): PublicStatus {
   return PUBLIC_STATUS[connectorMembershipStatus(state ?? "", !!review, optedOut)];
 }
@@ -120,19 +80,12 @@ export interface PlatformParts {
   otp: OtpService;
   accounts: Accounts;
   sessions?: SessionService;
-  /** The platform app for an MCP app id (undefined: the platform does not serve it, so sign-in is refused). */
   app(id: McpAppId): AppInfo | undefined;
-  /** The site session cookie name for an app (the sites' /api/* uses sid_<app> in dev and __Host-sid elsewhere). */
   cookieName?(id: McpAppId): string;
-  /** Seconds. Default 30 days (the platform session time). */
   sessionMaxAge?: number;
-  /** Add "; Secure" to the site cookie (default true). */
   secureCookie?: boolean;
-  /** The service's profile intake (NetworkService.submitProfile). Without it, submit_profile answers "not available". */
   submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member">;
-  /** The single inbox (NetworkService.updatesFor). Without it, get_updates answers "not available". */
   updates?: PlatformHooks["updates"];
-  /** Surface signals for the inbox (NetworkService.assistantLinked). */
   assistantLinked?: PlatformHooks["assistantLinked"];
 }
 
@@ -144,10 +97,6 @@ function cookieValue(header: string | null, name: string): string | undefined {
   return undefined;
 }
 
-/**
- * PlatformHooks from the platform parts. With createPublicApi: platformHooks({ store, otp: api.otp,
- * accounts: api.accounts, sessions: api.sessions, app: id => apps[id] }).
- */
 export function platformHooks(p: PlatformParts): PlatformHooks {
   const cookieName = p.cookieName ?? (() => "__Host-sid");
   const siteCookie = (id: McpAppId, token: string) =>
@@ -206,7 +155,6 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     ...(p.submitProfile ? {
       profileSubmissionFingerprint: (app: McpAppId, grantId: string, text: string) => p.accounts.profileSubmissionFingerprint(app, grantId, text),
       submitProfile: async (personId: string, id: McpAppId, key: string, text: string) => {
-        // The grant holds only the keyed hash: the number is found here, and only for that same person.
         const who = await p.accounts.byPhoneHash(key);
         if (!who || who.person.id !== personId) return "not_member";
         if (resolveConsent(await p.store.lastConsent(who.e164, id)) === "opted_out") return "stopped";
@@ -244,7 +192,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const app = p.app(id);
       if (!app || app.joinMode === "waitlist") return { ok: false, error: "invalid" };
       const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
-      return p.accounts.join(app, who, input, undefined, invitation, view);
+      return p.accounts.join(app, { e164: who.e164, personId: who.personId, session: who.browserBinding }, input, undefined, invitation, view);
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

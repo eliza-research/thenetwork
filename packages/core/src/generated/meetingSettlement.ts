@@ -14,9 +14,9 @@ export interface MeetingSettlement { phase: SettlementPhase }
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export type MeetingFeedbackClaim = "SendMeetingFeedback" | "WaitForMeetingBookingReceipt" | "RefuseMeetingFeedback";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
@@ -120,6 +120,25 @@ export function bookingNoticeReceived(receiptStatus: string, sentAt: number, che
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 //@ pure
+export function bookingNoticeReceiptMayArrive(receiptStatus: string, gatewayReply: boolean): boolean {
+  return receiptStatus === "collected" || receiptStatus === "send_unknown" || receiptStatus === "sending" || receiptStatus === "unknown_acceptance" || (receiptStatus === "failed_unknown" && gatewayReply);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function bookingNoticePending(receiptStatus: string, gatewayReply: boolean): boolean {
+  return receiptStatus === "pending" || receiptStatus === "retry_scheduled" || receiptStatus === "deferred_quiet_hours" || receiptStatus === "held_awaiting_reply" || receiptStatus === "parked_leak_review" || bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawExpiredGatewayNoticeMayGetReceipt(receiptStatus: string): boolean {
+  //@ ensures \result === true
+  return !(receiptStatus === "failed_unknown") || bookingNoticeReceiptMayArrive(receiptStatus, true);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
 export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boolean, noticePending: boolean): ReminderClaim {
   return !bookingCurrent ? "RefuseReminder" : (noticeAccepted ? "SendReminder" : (noticePending ? "WaitForBookingNotice" : "RefuseReminder"));
 }
@@ -129,6 +148,27 @@ export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boo
 export function lawFutureBookingReceiptIsNotEvidence(receiptStatus: string, sentAt: number, checkedAt: number): boolean {
   //@ ensures \result === true
   return !(sentAt > checkedAt) || !bookingNoticeReceived(receiptStatus, sentAt, checkedAt);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawExpiredProviderNoticeGetsNoReceipt(receiptStatus: string): boolean {
+  //@ ensures \result === true
+  return !(receiptStatus === "failed_unknown") || !bookingNoticePending(receiptStatus, false);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawArrivingReceiptIsPending(receiptStatus: string, gatewayReply: boolean): boolean {
+  //@ ensures \result === true
+  return !bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply) || bookingNoticePending(receiptStatus, gatewayReply);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawReceivedNoticeIsNotPending(receiptStatus: string, gatewayReply: boolean): boolean {
+  //@ ensures \result === true
+  return !bookingNoticeReceived(receiptStatus, 0, 0) || !bookingNoticePending(receiptStatus, gatewayReply);
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
@@ -143,12 +183,6 @@ export function lawReminderClaimNeedsNotice(bookingCurrent: boolean, noticePendi
 export function lawReminderCannotWaitOnExpiredBooking(noticeAccepted: boolean, noticePending: boolean): boolean {
   //@ ensures \result === true
   return queuedReminderClaim(false, noticeAccepted, noticePending) === "RefuseReminder";
-}
-
-/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
-//@ pure
-export function bookingNoticeReceiptMayArrive(receiptStatus: string): boolean {
-  return receiptStatus === "collected" || receiptStatus === "send_unknown" || receiptStatus === "sending" || receiptStatus === "unknown_acceptance";
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
@@ -339,17 +373,17 @@ export function attendanceBookingReceived(accepted: boolean, exactReceipt: boole
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
-export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
-  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
-  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
-  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
+export function lawAttendanceNeedsExactBookingReceipt(accepted: boolean, receiptAt: number, settledAt: number): boolean {
+  //@ ensures \result === true
+  return !attendanceBookingReceived(accepted, false, receiptAt, settledAt);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
-export function lawAttendanceNeedsExactBookingReceipt(accepted: boolean, receiptAt: number, settledAt: number): boolean {
-  //@ ensures \result === true
-  return !attendanceBookingReceived(accepted, false, receiptAt, settledAt);
+export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
+  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
+  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
+  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
 }
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */

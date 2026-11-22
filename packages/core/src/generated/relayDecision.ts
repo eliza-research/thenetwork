@@ -35,6 +35,67 @@ export function lawARelayPassHasNoReason(hasBlock: boolean, hasReason: boolean):
   return !(relayVerdict(hasBlock, hasReason) === "Pass") || (!hasBlock && !hasReason);
 }
 
+/** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
+//@ pure
+export function relayStartsMinorPolicy(ageSignal: boolean, senderMarkedMinor: boolean): boolean {
+  return ageSignal && !senderMarkedMinor;
+}
+
+/** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
+//@ pure
+export function lawAnUnmarkedSenderStartsTheMinorsPolicyExactlyOnAnAgeSignal(ageSignal: boolean): boolean {
+  //@ ensures \result === true
+  return relayStartsMinorPolicy(ageSignal, false) === ageSignal;
+}
+
+/** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
+//@ pure
+export function lawAMarkedSenderGetsNoSecondMinorsPolicy(ageSignal: boolean): boolean {
+  //@ ensures \result === true
+  return !relayStartsMinorPolicy(ageSignal, true);
+}
+
+/** Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy (spec/relayDecision.md) */
+//@ pure
+export function lawNoAgeSignalStartsNoMinorsPolicy(senderMarkedMinor: boolean): boolean {
+  //@ ensures \result === true
+  return !relayStartsMinorPolicy(false, senderMarkedMinor);
+}
+
+/** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
+//@ pure
+export function relaySevereBlockCaseEvent(verdict: RelayVerdict, severeReason: boolean): boolean {
+  return verdict === "Block" && severeReason;
+}
+
+/** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
+//@ pure
+export function lawABlockWritesACaseEventExactlyForASevereReason(severeReason: boolean): boolean {
+  //@ ensures \result === true
+  return relaySevereBlockCaseEvent("Block", severeReason) === severeReason;
+}
+
+/** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
+//@ pure
+export function lawAPassWritesNoCaseEvent(severeReason: boolean): boolean {
+  //@ ensures \result === true
+  return !relaySevereBlockCaseEvent("Pass", severeReason);
+}
+
+/** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
+//@ pure
+export function lawNoSevereReasonWritesNoCaseEvent(verdict: RelayVerdict): boolean {
+  //@ ensures \result === true
+  return !relaySevereBlockCaseEvent(verdict, false);
+}
+
+/** Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case (spec/relayDecision.md) */
+//@ pure
+export function lawAHeldItemWritesNoCaseEvent(severeReason: boolean): boolean {
+  //@ ensures \result === true
+  return !relaySevereBlockCaseEvent("Hold", severeReason);
+}
+
 /** Story: Relay only to the match I named / A relay names its match when the member has more than one live match (spec/relayDecision.md) */
 //@ pure
 export function relayTarget(liveMatches: number, named: boolean, namedLive: boolean): RelayTargetChoice {
@@ -90,9 +151,16 @@ export function lawNegativeFeedbackEndsTheThread(mutual: boolean, bothSaidYes: b
 
 /** Story: End the thread after a bad meeting / Negative feedback after a meeting ends the relay thread (spec/relayDecision.md) */
 //@ pure
-export function lawAnOpenThreadIsMutualWithBothYes(mutual: boolean, bothSaidYes: boolean, negativeFeedback: boolean): boolean {
+export function lawNoThreadWithoutMutualYes(bothSaidYes: boolean, negativeFeedback: boolean): boolean {
   //@ ensures \result === true
-  return !relayThreadOpen(mutual, bothSaidYes, negativeFeedback) || (mutual && bothSaidYes);
+  return !relayThreadOpen(false, bothSaidYes, negativeFeedback) && !relayThreadOpen(true, false, negativeFeedback);
+}
+
+/** Story: End the thread after a bad meeting / Negative feedback after a meeting ends the relay thread (spec/relayDecision.md) */
+//@ pure
+export function lawEndedOnlyThreadHasNoRelayTarget(mutual: boolean, bothSaidYes: boolean, named: boolean): boolean {
+  //@ ensures \result === true
+  return relayTarget(relayThreadOpen(mutual, bothSaidYes, true) ? 1 : 0, named, relayThreadOpen(mutual, bothSaidYes, true)) === (named ? "RelayNamedNotLive" : "RelayToNoMatch");
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

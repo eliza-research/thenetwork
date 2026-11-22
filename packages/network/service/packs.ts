@@ -18,7 +18,7 @@
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
 // (the stored switch starts off; the launch-scope decision in matching-scope.ts only allows the switch). Minors
 // never enter a pack's input (ConsentNetwork.packInput). Nothing here reads hidden truth.
-import { DAY, HOUR, type MemberId } from "@thenetwork/core";
+import { canBeMatched, DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput,
@@ -30,8 +30,6 @@ import {
 } from "@thenetwork/engine/src/packs/slop/index.ts";
 import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
 import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
-import { slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
-import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
 import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/slop/rules.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppOnboarding, HookOpp, HookVenue } from "../src/apphooks.ts";
@@ -39,14 +37,6 @@ import { mustMarks, seatJob, SEAT_COPY } from "../src/jobs.ts";
 import { km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
 import { nextAt } from "../src/outreach.ts";
 import type { AppId } from "../../platform/src/apps.ts";
-
-/**
- * Photo in the probe (founder decision 2026-10-08): off. The upload consent says no other member sees
- * a photo, so no member can consent to showing one to a proposed match until Legal approves a new
- * consent version. Until then no subject has `photoConsent` and `probePhotoRefs` returns nothing; the
- * attach itself (an opaque id the platform resolves) also waits for the Cloud deliver path to carry media.
- */
-export const SLOP_PROBE_PHOTOS = false;
 
 /** What one app's network gets: its pack, the engine config the pack was tuned with, plans config and hooks. */
 export interface AppWiring {
@@ -70,8 +60,7 @@ export function appWiring(app: AppId): AppWiring {
       const pack = makeSlopPack({ verification: { required: false } });
       return {
         pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options), plans: false,
-        // Dating only, and only for adults: a member under 18 never opts in to romance (core invariant 1).
-        prefs: age => ({ categoriesOptIn: age >= 18 ? ["romance"] : [], romanceOptIn: age >= 18 }),
+        prefs: age => ({ categoriesOptIn: canBeMatched(age) ? ["romance"] : [], romanceOptIn: canBeMatched(age) }),
       };
     }
     case "peon":
@@ -241,14 +230,10 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       const other = o.participants.find(x => x !== id)!;
       const age = input.members.find(m => m.id === other)?.age;
       const P = slopProfiles(input);
-      // At most one fact, and only one the other person allowed us to share.
       const fact = P.get(other)?.shareableInterests.find(t => P.get(id)?.interests.includes(t)) ?? P.get(other)?.shareableInterests[0];
       const activity = ACTIVITY_PHRASE[p?.activity ?? "coffee"] ?? "coffee";
-      const about = [age !== undefined && age >= 18 ? `in their ${ageBand(age)}` : undefined, p ? distancePhrase(p.distance) : undefined].filter(Boolean).join(", ");
-      const text = slopProbeText({ when: ctx.times ?? ctx.when, times: !!ctx.times }, activity, fact?.replace(/_/g, " "), about || undefined);
-      // The engine's rule decides whether a photo may go (adults both sides, photo consent, not held, opaque ids, at most one).
-      const photos = probePhotoRefs({ age, photoConsent: SLOP_PROBE_PHOTOS, photoIds: [] }, { age: input.members.find(m => m.id === id)?.age });
-      return slopProbeMessage({ text }, photos).text;
+      const about = [age !== undefined && canBeMatched(age) ? `in their ${ageBand(age)}` : undefined, p ? distancePhrase(p.distance) : undefined].filter(Boolean).join(", ");
+      return slopProbeText({ when: ctx.times ?? ctx.when, times: !!ctx.times }, activity, fact?.replace(/_/g, " "), about || undefined);
     },
     venue(o, input) {
       const inp = input();
@@ -303,5 +288,6 @@ export function peonHooks(): AppHooks {
       const seat = seatOf(o);
       return seat ? SEAT_COPY.checkIn({ title: seat.title ?? "the role", must: [] }, others) : undefined;
     },
+    postDateReports: true,
   };
 }

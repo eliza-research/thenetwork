@@ -2,6 +2,7 @@ import { staffStepAdmitted, type StaffStep } from "../../core/src/generated/staf
 import { readCappedText } from "../../platform/src/body.ts";
 import type { AppId } from "./apps.ts";
 import { globalRolesFor, rolesFor } from "./staff.ts";
+import { isTimeout, serviceTimeout } from "./sources/service.ts";
 import type { AuditEntry, Mode, StaffUser } from "./types.ts";
 
 type Method = "GET" | "POST";
@@ -18,7 +19,7 @@ interface ConsoleStep {
   query?: readonly string[];
 }
 
-const ID = /^[^\s/]{1,600}$/;
+const ID = /^(?!\.{1,2}$)[^\s/]{1,600}$/;
 
 export const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "ReadPostings", method: "GET", console: "/api/staff/postings", service: () => "/postings", action: "step_read_postings", query: ["managerId"] },
@@ -37,6 +38,8 @@ export const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "OpenPrivacyRequest", method: "POST", console: "/api/staff/privacy/requests", service: () => "/privacy/requests", action: "step_open_privacy_request" },
   { step: "ConfirmPrivacyRequest", method: "POST", console: "/api/staff/privacy/requests/:id/confirm", service: id => `/privacy/requests/${id}/confirm`, action: "step_confirm_privacy_request", target: "case" },
   { step: "ReplayPrivacy", method: "POST", console: "/api/staff/privacy/replay", service: () => "/privacy/replay", action: "step_replay_privacy" },
+  { step: "ResolveInboundTurn", method: "POST", console: "/api/staff/inbound/resolve", service: () => "/inbound/resolve", action: "step_resolve_inbound_turn" },
+  { step: "ReadTurnWatch", method: "GET", console: "/api/staff/turn-watch", service: () => "/ops/turns", action: "step_read_turn_watch" },
 ];
 
 const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
@@ -54,9 +57,13 @@ const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
   [/^\/privacy\/requests$/, "OpenPrivacyRequest", "OpenPrivacyRequest"],
   [/^\/privacy\/requests\/[^/]+\/confirm$/, "ConfirmPrivacyRequest", "ConfirmPrivacyRequest"],
   [/^\/privacy\/replay$/, "ReplayPrivacy", "ReplayPrivacy"],
+  [/^\/inbound\/resolve$/, "ResolveInboundTurn", "ResolveInboundTurn"],
+  [/^\/ops\/turns$/, "ReadTurnWatch", "ReadTurnWatch"],
   [/^\/(?:staff\/)?relay\/held$/, "ReadHeldRelay", "ReadHeldRelay"],
   [/^\/(?:staff\/)?relay\/[^/]+\/photo$/, "ReadHeldRelay", "ReadHeldRelay"],
   [/^\/(?:staff\/)?relay\/[^/]+\/(?:release|reject)$/, "DecideHeldRelay", "DecideHeldRelay"],
+  [/^\/review\/[^/]+$/, "DecideReviewItem", "DecideReviewItem"],
+  [/^\/safety\/(?:hold|ban|dismiss|lift|close|clear-minor)$/, "DecideSafetyCase", "DecideSafetyCase"],
 ];
 
 export function serviceStaffStep(method: string, path: string): StaffStep | undefined {
@@ -65,6 +72,7 @@ export function serviceStaffStep(method: string, path: string): StaffStep | unde
 }
 
 export interface StaffStepAnswer { status: number; json: Record<string, unknown> }
+export type StaffStepForward = (actor: string, method: Method, path: string, body: Record<string, unknown> | undefined) => Promise<StaffStepAnswer>;
 
 export interface StaffStepDeps {
   identified: (handler: (req: Routed, user: StaffUser) => Promise<Response>) => (req: Routed) => Promise<Response>;
@@ -72,7 +80,7 @@ export interface StaffStepDeps {
   mode: () => Mode;
   modeRefusal: (req: Request) => Response | undefined;
   record: (u: StaffUser, app: AppId, e: Omit<AuditEntry, "at" | "actor" | "roles" | "mode" | "app">) => Promise<Response | undefined>;
-  forward: (app: AppId, actor: string, method: Method, path: string, body: Record<string, unknown> | undefined) => Promise<StaffStepAnswer | undefined>;
+  forwarder: (app: AppId) => Promise<StaffStepForward | undefined>;
   json: (data: unknown, status?: number) => Response;
 }
 
@@ -121,14 +129,23 @@ function handler(d: StaffStepDeps, s: ConsoleStep) {
     const target = s.target && id !== undefined ? { targetType: s.target, targetId: id } : {};
     const reason = reasonOf(body);
     const write = s.method === "POST";
+    let forward: StaffStepForward | undefined;
+    try { forward = await d.forwarder(app); } catch (e) {
+      return d.json({ ok: false, error: `the Network service did not answer: ${(e as Error).message}`, code: "service_unavailable" }, 503);
+    }
+    if (!forward) return d.json({ ok: false, error: "staff steps go through the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN", code: "read_only" }, 503);
     const refused = await d.record(user, app, { action: s.action, ...target, ok: true, ...(reason ? { reason } : {}), ...(write ? { detail: { phase: "requested" } } : {}) });
     if (refused) return refused;
-    let answer: StaffStepAnswer | undefined;
-    try { answer = await d.forward(app, user.id, s.method, path, body); } catch (e) {
+    let answer: StaffStepAnswer;
+    try { answer = await forward(user.id, s.method, path, body); } catch (e) {
+      if (isTimeout(e)) {
+        const timeout = serviceTimeout();
+        if (write) await d.record(user, app, { action: s.action, ...target, ok: false, detail: { phase: "result", code: timeout.code, outcome: "unknown" } });
+        return d.json(timeout, 504);
+      }
       if (write) await d.record(user, app, { action: s.action, ...target, ok: false, detail: { phase: "result", code: "service_unavailable" } });
       return d.json({ ok: false, error: `the Network service did not answer: ${(e as Error).message}`, code: "service_unavailable" }, 503);
     }
-    if (!answer) return d.json({ ok: false, error: "staff steps go through the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN", code: "read_only" }, 503);
     const ok = answer.status >= 200 && answer.status < 300 && answer.json.ok !== false;
     if (write) await d.record(user, app, { action: s.action, ...target, ok, detail: { phase: "result", status: answer.status } });
     if (answer.status === 401) return d.json({ ok: false, error: "the Network service refused the console's token", code: "service_auth" }, 502);

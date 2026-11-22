@@ -25,8 +25,6 @@ const RSVP = new RegExp(`^RSVP GATHERING (${RSVP_REFERENCE}) ([1-9][0-9]{0,8}) Y
 const WITHDRAW = new RegExp(`^WITHDRAW GATHERING (${RSVP_REFERENCE}) ([1-9][0-9]{0,8})[.!]?$`, "i");
 const UUID = new RegExp(`^${ID}$`, "i");
 const REFERENCE_LETTERS = "abcdefghijklmnop";
-
-/** Spell the public event ID without phone-shaped digits in automated outreach. */
 export function gatheringRsvpReference(id: string): string {
   return id.replace(/-/g, "").replace(/[0-9a-f]/g, hex => REFERENCE_LETTERS[Number.parseInt(hex, 16)]!);
 }
@@ -37,8 +35,6 @@ function gatheringIdFromReference(reference: string): string {
   const hex = lower.replace(/[a-p]/g, letter => REFERENCE_LETTERS.indexOf(letter).toString(16));
   return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
 }
-
-/** Decode the same event reference accepted by RSVP and post-event commands. */
 export function gatheringRsvpKey(reference: string, revision: string): GatheringRsvpKey | undefined {
   if (RSVP_KEY.test(reference) && /^[1-9][0-9]{0,8}$/.test(revision)) return { id: gatheringIdFromReference(reference), revision: Number(revision) };
 }
@@ -88,8 +84,6 @@ async function eligible(accounts: RsvpAccounts, owner: MemberCommandOwner, city:
   const age = lowestAge(member.age, await accounts.lowestAge(owner.e164, binding.person));
   return gatheringRsvpAttendanceAllowed(true, canBeMatched(age), member.home_city === city, effectiveParticipation(member, now).state !== "paused");
 }
-
-/** Recheck a potential attendee against the same canonical scope used for RSVP and roster reads. */
 export async function currentGatheringMember(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner, city: string, now: number): Promise<boolean> {
   if (owner.app.id !== "ntwrk" || city !== "nyc") return false;
   const membership = await ownerMembership(tx, accounts, owner, false);
@@ -122,8 +116,6 @@ const RECEIPT: Record<Choice, string> = {
   grouping: "Your gathering RSVP includes grouping suggestions.",
   withdrawn: "Your gathering RSVP is withdrawn.",
 };
-
-/** Called only inside the current signed direct member turn's transaction. */
 export async function saveGatheringRsvp(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner,
   command: GatheringRsvpCommand, turn: RsvpTurn, now: number): Promise<string | undefined> {
   const current = await currentRsvpContext(tx, accounts, owner, command, turn, now, true);
@@ -144,8 +136,6 @@ export async function saveGatheringRsvp(tx: SQL, accounts: RsvpAccounts, owner: 
       response_id=excluded.response_id,responded_at=excluded.responded_at`;
   return RECEIPT[command.choice];
 }
-
-/** A retry may return only the still-current acknowledgement for that exact turn. */
 export async function gatheringRsvpReplyCurrent(tx: SQL, accounts: RsvpAccounts, owner: MemberCommandOwner,
   command: GatheringRsvpCommand, turn: RsvpTurn, now: number): Promise<boolean> {
   const current = await currentRsvpContext(tx, accounts, owner, command, turn, now, false);
@@ -153,8 +143,6 @@ export async function gatheringRsvpReplyCurrent(tx: SQL, accounts: RsvpAccounts,
 }
 
 export interface GatheringRosterMember { memberId: string; grouping: boolean }
-
-/** Internal staff read; the caller must already be authorized for this gathering's operations. */
 export async function gatheringRsvpRoster(tx: SQL, accounts: RsvpAccounts, app: AppInfo,
   key: GatheringRsvpKey, now: number, lockGroupingMembers = false): Promise<GatheringRosterMember[] | undefined> {
   const rows = await gathering(tx, app, key, false);
@@ -189,8 +177,6 @@ export async function gatheringRsvpRoster(tx: SQL, accounts: RsvpAccounts, app: 
 export interface GatheringPriorityEvidence {
   memberId: string; eligible: boolean; newcomer: boolean; isolated: boolean; pendingSecondEncounter: boolean;
 }
-
-/** Order the engine's current app-local candidates for the staff invitation decision. */
 export function rankGatheringInvitees(candidates: readonly GatheringPriorityEvidence[]): string[] {
   return candidates.map(candidate => ({ memberId: candidate.memberId, score: gatheringInvitationPriority(candidate.eligible, candidate.newcomer,
     candidate.isolated, candidate.pendingSecondEncounter) }))

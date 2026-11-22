@@ -358,17 +358,14 @@ async function clefGates(b: Block): Promise<void> {
   }
 }
 
-// ------------------------------------------------------------------------------------------- desk
-// The platform's relay desk (packages/network/src/relay.ts) on the engine policy: what members and staff
-// see on the live path (POST /internal/relay, the staff held queue), against a fake Network host.
-interface FakeHost extends RelayHost { sent: { to: string; body: string; key: string; contact?: string }[]; members: Map<string, RelayMember>; t: number; match: RelayMatch }
+interface FakeHost extends RelayHost { sent: { to: string; body: string; key: string; contact?: string }[]; members: Map<string, RelayMember>; t: number; match: RelayMatch; minorSignals: string[]; severeBlocks: string[] }
 function fakeHost(over: { ratesPhotos?: boolean; members?: Partial<Record<"a" | "b", Partial<RelayMember>>> } = {}): FakeHost {
   const members = new Map<string, RelayMember>([
-    ["a", { id: "a", firstName: "Sam", age: 29, optedOut: false, held: false, ...over.members?.a }],
-    ["b", { id: "b", firstName: "Riley", age: 31, optedOut: false, held: false, ...over.members?.b }],
+    ["a", { id: "a", firstName: "Sam", age: 29, optedOut: false, held: false, markedMinor: false, ...over.members?.a }],
+    ["b", { id: "b", firstName: "Riley", age: 31, optedOut: false, held: false, markedMinor: false, ...over.members?.b }],
   ]);
   const h: FakeHost = {
-    app: "slop", ratesPhotos: over.ratesPhotos ?? true, reviewWindowMs: 12 * 3_600_000, t: NOW, sent: [], members,
+    app: "slop", ratesPhotos: over.ratesPhotos ?? true, reviewWindowMs: 12 * 3_600_000, t: NOW, sent: [], members, minorSignals: [], severeBlocks: [],
     match: { id: "op1", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual", negativeFeedback: false, at: NOW - 86_400_000 },
     now: () => h.t,
     member: id => members.get(id),
@@ -376,6 +373,8 @@ function fakeHost(over: { ratesPhotos?: boolean; members?: Partial<Record<"a" | 
     blocked: () => false,
     privateFacts: () => ({ forbidden: [{ text: "Halcyon Biotech", owner: "b" }], canaries: [] }),
     send: (to, body, o) => { h.sent.push({ to, body, key: o.key, ...(o.contact ? { contact: o.contact } : {}) }); return "sent"; },
+    minorSignal: id => { h.minorSignals.push(id); const m = members.get(id); if (m) members.set(id, { ...m, markedMinor: true }); },
+    severeBlock: id => { h.severeBlocks.push(id); },
   };
   return h;
 }
@@ -503,9 +502,35 @@ async function deskGates(b: Block): Promise<void> {
     expect(said.decision).toBe("refused");
     expect(d2.held()).toEqual([]);
     expect(d2.records()[0]!.ageSignal).toBe(true);
+    expect(h2.minorSignals).toEqual(["a"]);
+    expect(h2.severeBlocks).toEqual([]);
     const off = await d2.request({ itemId: "p2", from: "a", kind: "photo", photoIds: ["ph_abcdefgh"] }, { photos: { ids: ["ph_abcdefgh"], showConsent: false } });
     expect(off).toMatchObject({ decision: "refused", reason: "I can't send photos to a match yet." });
     expect(h2.sent).toEqual([]);
+  });
+
+  await b.run("relay desk: a minor signal that only the classifier finds starts the minors policy and keeps no text", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    const hook = async () => ({ flags: ["minor_signal"], source: "clef" as const });
+    const r = await d.request({ itemId: "m1", from: "a", kind: "text", text: "see you saturday, cant wait" }, { hook });
+    expect(r.decision).toBe("held");
+    expect(h.sent).toEqual([]);
+    expect(h.minorSignals).toEqual(["a"]);
+    expect(d.held().map(x => [x.itemId, x.text])).toEqual([["m1", undefined]]);
+    expect(d.records().at(-1)).toMatchObject({ ageSignal: true });
+    expect(d.records().at(-1)!.reasons).toContain("clef:minor_signal");
+    await d.request({ itemId: "m2", from: "a", kind: "text", text: "see you sunday then" }, { hook });
+    expect(h.minorSignals).toEqual(["a"]);
+  });
+
+  await b.run("relay desk: a block for the sender's severe words reaches the sender's safety case; a hold does not", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    expect((await d.request({ itemId: "v1", from: "a", kind: "text", text: "can you venmo me 200 for the tickets? my card got frozen" })).decision).toBe("held");
+    expect(h.severeBlocks).toEqual([]);
+    expect((await d.request({ itemId: "v2", from: "a", kind: "text", text: "answer me or else, watch your back" })).decision).toBe("refused");
+    expect(h.severeBlocks).toEqual(["a"]);
+    expect(h.minorSignals).toEqual([]);
+    expect(h.sent).toEqual([]);
   });
 
   await b.run("relay desk: appearance and rating talk never passes on an app that rates photos", async () => {

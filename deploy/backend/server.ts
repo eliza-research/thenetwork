@@ -1,19 +1,9 @@
 #!/usr/bin/env -S node --import=tsx
 import { serveHttp } from "../../packages/core/src/runtime/http.ts";
-// The shared backend's entry point (docs/deploy.md; `pnpm run start:backend`).
-//   node --import tsx --env-file-if-exists=.env deploy/backend/server.ts [--port N] [--dry-run]
-//
-// 1. Checks the environment (backend.ts loadConfig; a deployed environment without its secrets stops here).
-// 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
-// 3. Starts every network in platform.networks, the public port (PORT) and the private staff port (STAFF_PORT).
-// 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
-// Queued sends are dry-run unless NETWORK_CHANNEL=blooio or eliza_cloud, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1,
-// and each app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval). Replies to signed turns
-// are sent by the Eliza gateway and no backend flag gates them. The "live sends" log line prints the table.
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, liveSendTable, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
+import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, liveSendTable, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem, type PhotoRelayConfig } from "./backend.ts";
+import type { PhotoRelayPolicy } from "../../packages/platform/src/photo-relay.ts";
 
-// Structured, redacted logs from the first line: the rest is imported after console is captured.
 const log = jsonLogger(undefined, { svc: "backend" });
 captureConsole(log);
 const { RealClock } = await import("../../packages/core/src/clock.ts");
@@ -25,14 +15,18 @@ const { CloudChannelAdapter } = await import("../../packages/network/service/clo
 const { BlooioAdapter, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
-const { createOps, lineMetrics, PgAlertStore, runtimeProbe, turnWatchMetrics } = await import("./ops.ts");
+const { catalogMetrics, createOps, lineMetrics, PgAlertStore, runtimeProbe, turnWatchMetrics } = await import("./ops.ts");
 const { createPublicEventRefresh } = await import("./public-events.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
 const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
 
+function photoRelayPolicy(config: PhotoRelayConfig): PhotoRelayPolicy {
+  const reviewers = new Set(config.reviewers);
+  return { version: config.version, notice: config.notice, authorizeReviewer: async reviewerId => reviewers.has(reviewerId) };
+}
+
 async function main() {
   const c = loadConfig(process.env, process.argv);
-  // Keyed leak labels in staging and production (core-6); loadConfig refused to start without the key.
   if (c.leakLabelKey) setLeakLabelKey(c.leakLabelKey);
   log.info("starting", { env: c.env, build: c.build, host: c.host, port: c.port, staffPort: c.staff?.port ?? null, channel: c.channel, migrateOnBoot: c.migrateOnBoot });
   for (const w of c.warnings) log.warn(w);
@@ -41,22 +35,16 @@ async function main() {
     const r = await migrate(c.migrationUrl, { lockTimeout: "60s", log: s => log.info(s) });
     log.info("migrations", { applied: r.applied.length, skipped: r.skipped.length });
   }
-  // A new database says environment 'dev' (migration 0003) and the service refuses to start under any
-  // other PLATFORM_ENV. PLATFORM_DB_ENVIRONMENT_INIT=1, set once on the first deploy (docs/deploy.md),
-  // moves it from 'dev' to PLATFORM_ENV. It never changes a database that already says staging or production.
   if (c.deployed && process.env.PLATFORM_DB_ENVIRONMENT_INIT === "1") {
     const sql = new SQL({ url: c.migrationUrl, max: 1 });
     try {
       const r = await sql`update platform.settings set value = ${c.env} where key = 'environment' and value = 'dev' returning value`;
       log.info("database environment", { set: r.length ? c.env : "unchanged" });
-      // The service login (docs/deploy.md 2.1): created once, from NETWORK_DATABASE_URL, so nobody types
-      // its password into a console. An existing role is never changed.
       const made = await ensureServiceLogin(q => sql.unsafe(q), c.databaseUrl);
       log.info("service login", { role: made.role, created: made.created });
     } finally { await sql.close(); }
   }
 
-  // Deployed: RLS and the grants must apply to the service login (never a superuser, BYPASSRLS or owner).
   if (c.deployed) {
     const sql = new SQL({ url: c.databaseUrl, max: 1 });
     try {
@@ -66,22 +54,18 @@ async function main() {
   }
 
   const clock = new RealClock();
-  // The slop.date photo rater (AGENTS.md decisions 12 and 13): on by default (CLEF_RATINGS=off turns it
-  // off) when the Workers AI token and account id are set; the placeholder Clef weights unless
-  // CLEF_WEIGHTS_PATH names fitted weights (version and provenance). The status and the weights version
-  // are logged here. Off: photos still work.
   const raterEnv = await photoRaterFromEnv(process.env, { log: s => log.warn(s) });
   const photoRater = raterEnv.rater;
   const raterLog = { status: raterEnv.status, rater: photoRater?.id ?? "off", weights: raterEnv.weights ?? null, detail: raterEnv.detail ?? null };
   if (raterEnv.status === "refused_weights") log.error("photo rater", raterLog); else log.info("photo rater", raterLog);
   const svc = await NetworkService.fromDatabase({
     photoRater,
+    ...(c.photoRelay ? { photoRelayPolicy: photoRelayPolicy(c.photoRelay), photoDeliveryOrigin: c.photoRelay.deliveryOrigin } : {}),
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
     webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
     auditUrl: process.env.NETWORK_SERVICE_AUDIT_DATABASE_URL,
     network: { seed: Number(process.env.NETWORK_SEED ?? 1) },
-    // The backend decides the app and the client IP before the public API sees the request (backend.ts normalizeEdge).
     publicApi: { hostMap: c.hostMap, ipOf, trustForwardedHost: false },
     log: s => log.info(s),
     adapter: c.channel === "eliza_cloud" ? (_net,rt)=>new CloudChannelAdapter({clock,from:resolveSenderLine(),app:rt.app.id,city:rt.city,env:process.env,
@@ -90,22 +74,14 @@ async function main() {
       return new BlooioAdapter({ net, provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, memberOf: rt.memberOf, from, app: rt.app.id, city: rt.city });
     } : undefined,
   });
-  // The MCP server and its OAuth server on the service's own platform parts (packages/mcp). The oauth
-  // schema is applied here. Off (404 mcp_not_enabled) without TURNSTILE_SITE_KEY outside dev. It comes
-  // before start: the start runs the privacy replay of a restore, whose erasures and leaves need the
-  // connector forget hooks that this registers (spec/databaseRestore.md, "Story: Carry privacy changes
-  // made after the backup into the restored database").
   const mcp = await createServiceMcp(svc, { databaseUrl: c.databaseUrl, proxySecret: c.proxySecret, log: s => log.info(s), migrate: !c.deployed });
   log.info("mcp", { enabled: !!mcp });
-  // loadConfig required the Turnstile keys and the database, so a deployed MCP server is on; refuse rather than serve a dead signup path.
+  log.info("photo relay", { enabled: !!c.photoRelay, version: c.photoRelay?.version ?? null, reviewers: c.photoRelay?.reviewers.length ?? 0 });
   if (c.deployed && !mcp) throw new Error("refusing to start: the MCP server is off, so the agent signup connector would answer 404");
   await svc.start();
-  // A member's own number change (packages/platform accounts.ts, PRD F25): each network reads the new
-  // address at once, so nothing queued later goes to the old number.
   svc.publicApi.accounts.onPhoneChanged(async () => {
     for (const rt of svc.runtimes.values()) await rt.identities().catch(e => log.warn("identities refresh failed", { network: rt.id, error: (e as Error).message }));
   });
-  // The live-send table (docs/deploy.md section 6): queued sends per app, and replies to signed turns, which the gateway sends.
   const liveSends = liveSendTable(process.env, c.channel, liveSendAllowed);
   log.info("live sends", { inbound: c.blooioWebhook ? "backend webhook" : "eliza gateway", table: liveSends.map(r => `${r.app}: queued ${r.queued}, turn replies ${r.turnReplies}`) });
   for (const rt of svc.runtimes.values()) {
@@ -113,15 +89,12 @@ async function main() {
     log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
   }
 
-
   const pool = new SQL({ url: c.databaseUrl, max: 1, idleTimeout: 30, connection: { application_name: "network-backend-health" } });
-  // Monitoring and alerts (ops.ts; docs/deploy.md section 7): its own small pool, so a slow webhook never holds a service connection.
   const opsPool = new SQL({ url: c.databaseUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-ops" } });
-  // The public event catalog refresh (spec/publicEventCatalog.md): the ingest login, one connection for the lease and one for the scan.
   const eventsPool = c.publicEventsUrl ? new SQL({ url: c.publicEventsUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-public-events" } }) : undefined;
   const refreshEvents = eventsPool && createPublicEventRefresh({ sql: eventsPool, clock });
   const ops = createOps({
-    config: c.ops, probes: () => [...svc.runtimes.values()].map(runtimeProbe), line: () => lineMetrics(opsPool), turns: now => turnWatchMetrics(opsPool, now), cost: svc.cost,
+    config: c.ops, probes: () => [...svc.runtimes.values()].map(runtimeProbe), line: () => lineMetrics(opsPool), turns: now => turnWatchMetrics(opsPool, now), catalog: now => catalogMetrics(opsPool, now), cost: svc.cost,
     store: new PgAlertStore(opsPool), now: () => clock.now(), log,
   });
   log.info("ops", { alerts: c.ops.webhookUrl ? "webhook" : "log", heartbeat: !!c.ops.heartbeatUrl, metrics: !!c.ops.metricsToken, budgetDailyUsd: c.ops.budgets.daily ?? null });
@@ -134,7 +107,6 @@ async function main() {
   });
 
   const servers: { stop(force?: boolean): unknown }[] = [];
-  // Bodies past 9 MB (a photo is at most 8 MB) are refused before they are read (the default is 128 MB).
   const pub = await serveHttp({ hostname: c.host, port: c.port, maxRequestBodySize: MAX_PUBLIC_BODY_BYTES, fetch: (req, server) => backend.publicFetch(req, server) });
   servers.push(pub);
   log.info("listening", { port: "public", url: `http://${c.host}:${pub.port}` });

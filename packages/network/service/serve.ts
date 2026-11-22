@@ -127,6 +127,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);
   });
   svc.onEraseAccount(personId => mcp.forgetPerson(personId));
+  svc.onBan(phoneHashes => mcp.discardSignupDrafts(phoneHashes));
   return mcp;
 }
 
@@ -154,25 +155,31 @@ export async function serveService(svc: NetworkService, o: { host: string; port:
   return { server, api, stop: () => { server.stop(); api.stop(); } };
 }
 
-/** Every network ticks once a minute on its own: a slow network never holds back another one. */
 export function startTicks(svc: NetworkService, log: (s: string) => void = console.log) {
   const busy = new Set<string>();
-  const loop = async () => {
-    // Inbound messages a crash or an error left waiting go first, in order per sender.
-    await svc.inboxTick();
-    await Promise.all([...svc.runtimes.values()].map(async rt => {
-      if (busy.has(rt.id)) return;
-      busy.add(rt.id);
-      try { if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`); }
-      catch (e) { log(`${rt.id}: tick failed: ${(e as Error).message}`); }
-      finally { busy.delete(rt.id); }
-    }));
-    await svc.purge();
-    try { await svc.notifyTick(); } catch (e) { log(`notify: tick failed: ${(e as Error).message}`); }
+  const worker = async (key: string, work: () => Promise<unknown>) => {
+    if (busy.has(key)) return;
+    busy.add(key);
+    try { await work(); }
+    catch (e) { log(`${key}: tick failed: ${(e as Error).message}`); }
+    finally { busy.delete(key); }
   };
-  let running: Promise<void> = loop();
-  const first = running;
-  const timer = setInterval(() => { running = loop(); }, TICK_MS);
-  // stop() waits for the tick in flight, so a shutdown commits and delivers before the pool closes.
-  return { first, stop: async () => { clearInterval(timer); await running.catch(() => {}); } };
+  const inboxThenNetworks = async () => {
+    await worker("inbox", () => svc.inboxTick());
+    await Promise.all([...svc.runtimes.values()].map(rt => worker(rt.id, async () => {
+      if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
+    })));
+  };
+  const inFlight = new Set<Promise<void>>();
+  const round = () => {
+    const done = Promise.all([
+      inboxThenNetworks(), worker("retention", () => svc.purge()), worker("notify", () => svc.notifyTick()),
+    ]).then(() => undefined);
+    inFlight.add(done);
+    void done.finally(() => inFlight.delete(done));
+    return done;
+  };
+  const first = round();
+  const timer = setInterval(round, TICK_MS);
+  return { first, stop: async () => { clearInterval(timer); await Promise.allSettled([...inFlight]); } };
 }

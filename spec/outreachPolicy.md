@@ -12,13 +12,43 @@ The Network uses one default limit per person across apps. The send path takes a
 pure val personDailyCap: int = 3
 ```
 
+### An initial invitation fits the member's participation state budget
+
+Each participation state has a budget of initial invitations: at most a limit of invitations inside a rolling window of days. An invitation that was sent less than the window before now counts against the budget. When the count reaches the limit, the send path refuses the next proactive invitation, and the eligibility path does not offer the member for a new opportunity. A plan invitation uses its own lane and is outside this budget. Changed (audit routing-r16-5): the send path and the eligibility path computed this decision by hand after the generated recipient verdict; they now call these generated predicates.
+
+```quint
+pure val inviteBudgetDayMs: int = 86400000
+
+pure def initialInviteInBudgetWindow(sentAt: int, now: int, budgetWindowDays: int): bool =
+  now - sentAt < budgetWindowDays * inviteBudgetDayMs
+
+pure def initialInviteBudgetSpent(sentInBudgetWindow: int, budgetLimit: int): bool =
+  sentInBudgetWindow >= budgetLimit
+
+pure val sentInBudgetWindowValues = Set(0, 1, 2, 3, 4, 5)
+pure val budgetLimitValues = Set(0, 1, 2, 4)
+pure val budgetWindowDaysValues = Set(0, 1, 7, 30)
+
+pure def lawZeroBudgetIsAlwaysSpent(sentInBudgetWindow: int): bool =
+  sentInBudgetWindow >= 0 implies initialInviteBudgetSpent(sentInBudgetWindow, 0)
+
+pure def lawBudgetBelowLimitIsOpen(sentInBudgetWindow: int, budgetLimit: int): bool =
+  sentInBudgetWindow < budgetLimit implies not(initialInviteBudgetSpent(sentInBudgetWindow, budgetLimit))
+
+pure def lawInvitationAtWindowEdgeLeavesTheWindow(sentAt: int, budgetWindowDays: int): bool =
+  not(initialInviteInBudgetWindow(sentAt, sentAt + budgetWindowDays * inviteBudgetDayMs, budgetWindowDays))
+
+pure def lawInvitationJustSentCounts(sentAt: int, budgetWindowDays: int): bool =
+  budgetWindowDays > 0 implies initialInviteInBudgetWindow(sentAt, sentAt, budgetWindowDays)
+```
+
 ## Story: Pause new offers after two unanswered invitations
 
 > As a member, I want the agent to stop inviting me when I leave two invitations unanswered.
 
 ### Count a sent invitation at terminal expiry or after 72 hours
 
-Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current message from the member's thread clears their unanswered entries, resets the thread counters, and updates the last engagement time. An assistant's profile submission can teach the profile or complete interview intake. It leaves the outreach pause, unanswered entries, thread counters, and response windows in place. A stored entry from before delivery tracking uses its original recorded time.
+Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current message from the member's thread clears their unanswered entries, resets the thread counters, and updates the last engagement time. An assistant's profile submission can teach the profile or complete interview intake. It leaves the outreach pause, unanswered entries, thread counters, and response windows in place. The source test is the one inbound source predicate of the [job posting policy](postingPolicy.md), "Only the member's own text in the thread issues a command". Changed (audit POST-inbound-source): this module had its own copy of that predicate, and the inbound path called both copies on the same source; the copy is deleted. A stored entry from before delivery tracking uses its original recorded time.
 
 ```quint
 pure val unansweredInviteWaitMs: int = 72 * 3600000
@@ -45,13 +75,13 @@ pure def lawTooFewInvitationsDoNotPause(count: int): bool =
 pure def unansweredInviteCountAfterInbound(count: int, inbound: bool): int =
   if (inbound) 0 else count
 
-pure def outreachEngagementSource(source: str): bool = source == "thread"
+import postingPolicy as Posting from "./postingPolicy"
 
 pure def lawInboundMessageEndsThePause(count: int): bool =
-  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, outreachEngagementSource("thread"))))
+  not(unansweredInvitePause(unansweredInviteCountAfterInbound(count, Posting::inboundMayCommand("thread"))))
 
 pure def lawAssistantProfileKeepsUnanswered(count: int): bool =
-  unansweredInviteCountAfterInbound(count, outreachEngagementSource("mcp")) == count
+  unansweredInviteCountAfterInbound(count, Posting::inboundMayCommand("mcp")) == count
 ```
 
 ### Re-engagement requires current evidence of silence

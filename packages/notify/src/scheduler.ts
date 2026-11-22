@@ -228,9 +228,8 @@ export class Notifier {
         record: final => this.store.recordDelivery({
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
           target: final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel,
-          countsTowardCap: final.countsTowardCap, sentAt: now, weeklyCap: this.cfg.weeklyCap,
-          assistantLink: final.assistantLink,
-        }),
+          countsTowardCap: final.countsTowardCap, sentAt: now, assistantLink: final.assistantLink,
+        }, this.cfg.weeklyCap),
         enqueue: async final => sink.enqueue({
           idempotencyKey: final.deliveryId, channel: final.channel, to: final.to, text: final.text,
           kind: final.countsTowardCap ? "proactive" : "transactional",

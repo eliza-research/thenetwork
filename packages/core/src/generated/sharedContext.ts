@@ -198,8 +198,35 @@ export function lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: number, sameNam
 
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
 //@ pure
+export function unavailableReplySent(numberAdmitted: boolean, underJoinAge: boolean): boolean {
+  return numberAdmitted && !underJoinAge;
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
 export function openTurnAnswer(contextAvailable: boolean): OpenTurnAnswer {
   return contextAvailable ? "AnswerOpen" : "AnswerUnavailable";
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
+export function lawRefusedNumberStaysSilent(underJoinAge: boolean): boolean {
+  //@ ensures \result === true
+  return !unavailableReplySent(false, underJoinAge);
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
+export function lawUnderJoinAgeStaysSilent(numberAdmitted: boolean): boolean {
+  //@ ensures \result === true
+  return !unavailableReplySent(numberAdmitted, true);
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
+export function lawAdmittedNumberGetsTheFixedReply(numberAdmitted: boolean): boolean {
+  //@ ensures \result === true
+  return !numberAdmitted || unavailableReplySent(numberAdmitted, false);
 }
 
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */

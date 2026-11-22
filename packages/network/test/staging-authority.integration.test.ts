@@ -15,9 +15,7 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
  globalThis.fetch=(async(input:any,init?:RequestInit)=>{if(String(input)==='https://challenges.cloudflare.com/turnstile/v0/siteverify'){mcpBotChecks++;return Response.json({success:true,hostname:verifiedHostname})}return originalFetch(input,init)}) as typeof fetch;
  const st=await startStack(); let server:HttpServer|undefined; let mcp:Awaited<ReturnType<typeof createServiceMcp>>;
  const env={PLATFORM_ENV:'staging', NODE_ENV:'production', STAGING_SITE_ORIGINS:JSON.stringify({slop:origin}),PLATFORM_HASH_KEY:'stage-hash-key-'.repeat(3),PLATFORM_SESSION_SECRET:'dev-only-platform-session-secret',PLATFORM_PROXY_SECRET:secret,TURNSTILE_SITE_KEY:'stage-key',TURNSTILE_SECRET_KEY:'fixture-secret',LEAK_LABEL_KEY:'labels'.repeat(8),DATABASE_URL:st.url,MIGRATE_ON_BOOT:'0',OTP_PROVIDER:'twilio',TWILIO_ACCOUNT_SID:'fixture',TWILIO_AUTH_TOKEN:'fixture',TWILIO_VERIFY_SERVICE_SID:'fixture'};
- // The boot check needs the agent signup configuration (spec/bootPolicy.md, "A deployed service lets each agent signup skill finish").
- // The API below keeps env: it tests Turnstile on the staged slop origin with the fixture OTP provider.
- const bootEnv={...env,OTP_PROVIDER:'blooio',BLOOIO_API_KEY:'fixture',BLOOIO_FROM:'+12125550142',PLATFORM_PHONE_OTP_ONLY_APPS:'ntwrk,slop,friends'};
+ const bootEnv={...env,NETWORK_PUBLIC_EVENTS_DATABASE_URL:st.url,SERVICE_TURN_SECRET:'stage-turn-secret-'.repeat(3),NETWORK_SERVICE_TOKENS:`admin@*:${'stage-staff-token-'.repeat(3)}`,OTP_PROVIDER:'blooio',BLOOIO_API_KEY:'fixture',BLOOIO_FROM:'+12125550142',PLATFORM_PHONE_OTP_ONLY_APPS:'ntwrk,slop,friends'};
  const config=loadConfig(bootEnv);
  try{
   const phone=newPhone(); await webJoin(st,'slop',phone,{age:30});

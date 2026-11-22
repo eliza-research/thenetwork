@@ -26,13 +26,9 @@ async function eventContact(tx: SQL, row: QueueRow, runtimeId: string, lock: boo
     ${lock ? tx`for share of saved` : tx``}`;
   return contact;
 }
-
-/** Take the state and catalog fences before the queue locks the recipient. */
 export async function lockPublicEventContact(tx: SQL, row: QueueRow, runtimeId: string): Promise<void> {
   if (await eventContact(tx, row, runtimeId, true)) await lockPublicEventCatalog(tx);
 }
-
-/** A provider claim needs the exact current reviewed listing and eligible active participants. */
 export async function publicEventContactAdmission(tx: SQL, row: QueueRow, runtimeId: string, city: string, now: number): Promise<RecipientCheck> {
   const contact = await eventContact(tx, row, runtimeId, false);
   if (!contact) return { ok: true };

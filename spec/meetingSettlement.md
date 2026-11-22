@@ -58,15 +58,38 @@ pure def lawDayBeforeReminderDoesNotRepeat(accepted: bool, bookingDelivered: boo
 
 ### Claim a reminder only after the member received the current booking notice
 
-The reminder claim requires a positive provider or signed gateway receipt for this member's booking notice. A rescheduled meeting requires the notice for its current revision. A pending notice puts the reminder back in the queue with the same key while the window remains open. Refuse a reminder when the notice is absent or refused, the booking or seat is no longer current, or the window closes.
+The reminder claim requires a positive provider or signed gateway receipt for this member's booking notice. A rescheduled meeting requires the notice for its current revision. A pending notice puts the reminder back in the queue with the same key while the window remains open. A notice is pending while it waits in the queue, waits for leak review, or was handed off and its receipt can still arrive. A receipt can still arrive for a notice that is sending, whose provider acceptance is unknown, or that a signed turn gave to the gateway. A gateway reply whose acceptance passed the receipt deadline (failed unknown) can still get a late turn receipt. A provider send whose acceptance passed the deadline cannot, because the queue does not look it up again. Refuse a reminder when the notice is absent or refused, the booking or seat is no longer current, or the window closes. Changed 2026-11-22: the reminder claim computed part of the pending decision in the service, and every failed unknown notice counted as one whose receipt can arrive, also a provider send that nothing looks up again, so the claims retried until their cutoff for no reason.
 
 ```quint
 type ReminderClaim = SendReminder | WaitForBookingNotice | RefuseReminder
 pure val bookingNoticeRetryMs = 5 * 60000
 
+pure val receiptStatusValues = Set("pending", "parked_leak_review", "collected", "unknown_acceptance", "failed_unknown", "accepted", "refused_gateway")
+
 pure def bookingNoticeReceived(receiptStatus: str, sentAt: int, checkedAt: int): bool =
   (receiptStatus == "accepted" or receiptStatus == "sent" or receiptStatus == "delivered" or receiptStatus == "read")
     and 0 <= sentAt and sentAt <= checkedAt
+
+pure def bookingNoticeReceiptMayArrive(receiptStatus: str, gatewayReply: bool): bool =
+  receiptStatus == "collected" or receiptStatus == "send_unknown" or receiptStatus == "sending" or receiptStatus == "unknown_acceptance"
+    or (receiptStatus == "failed_unknown" and gatewayReply)
+
+pure def bookingNoticePending(receiptStatus: str, gatewayReply: bool): bool =
+  receiptStatus == "pending" or receiptStatus == "retry_scheduled" or receiptStatus == "deferred_quiet_hours"
+    or receiptStatus == "held_awaiting_reply" or receiptStatus == "parked_leak_review"
+    or bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply)
+
+pure def lawExpiredProviderNoticeGetsNoReceipt(receiptStatus: str): bool =
+  receiptStatus == "failed_unknown" implies not(bookingNoticePending(receiptStatus, false))
+
+pure def lawExpiredGatewayNoticeMayGetReceipt(receiptStatus: str): bool =
+  receiptStatus == "failed_unknown" implies bookingNoticeReceiptMayArrive(receiptStatus, true)
+
+pure def lawArrivingReceiptIsPending(receiptStatus: str, gatewayReply: bool): bool =
+  bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply) implies bookingNoticePending(receiptStatus, gatewayReply)
+
+pure def lawReceivedNoticeIsNotPending(receiptStatus: str, gatewayReply: bool): bool =
+  bookingNoticeReceived(receiptStatus, 0, 0) implies not(bookingNoticePending(receiptStatus, gatewayReply))
 
 pure def queuedReminderClaim(bookingCurrent: bool, noticeAccepted: bool, noticePending: bool): ReminderClaim =
   if (not(bookingCurrent)) RefuseReminder
@@ -86,13 +109,10 @@ pure def lawFutureBookingReceiptIsNotEvidence(receiptStatus: str, sentAt: int, c
 
 ### Claim a cancellation only for a member who received booking details
 
-A recorded booking notice can be waiting in the queue. Require positive provider or signed gateway receipt for the same app, opportunity and member before sending a terminal cancellation. Receipt of the original booking or any committed updated schedule qualifies, since the participant may still expect to meet. An invitation, an offer to move the meeting, or a notice that never left the queue is insufficient. If the booking notice was already handed off and its receipt can still arrive, retry the same cancellation before the start. Keep the content neutral.
+A recorded booking notice can be waiting in the queue. Require positive provider or signed gateway receipt for the same app, opportunity and member before sending a terminal cancellation. Receipt of the original booking or any committed updated schedule qualifies, since the participant may still expect to meet. An invitation, an offer to move the meeting, or a notice that never left the queue is insufficient. If the booking notice was already handed off and its receipt can still arrive, retry the same cancellation before the start. A gateway reply whose acceptance passed the receipt deadline (failed unknown) can still get a late turn receipt, so it counts as a receipt that can arrive; a provider send past the same deadline does not. Keep the content neutral. Changed 2026-11-22: a booking notice in a signed turn ended failed unknown six hours after the turn, and the reminder, cancellation and feedback claims then refused for good, also after a late accepted receipt showed that the member got the booking.
 
 ```quint
 type BookedCancellationClaim = SendCancellation | WaitForCancellationReceipt | RefuseCancellation
-
-pure def bookingNoticeReceiptMayArrive(receiptStatus: str): bool =
-  receiptStatus == "collected" or receiptStatus == "send_unknown" or receiptStatus == "sending" or receiptStatus == "unknown_acceptance"
 
 pure def queuedBookingCancellationClaim(cancellationCurrent: bool, noticeAccepted: bool, receiptMayArrive: bool): BookedCancellationClaim =
   if (not(cancellationCurrent)) RefuseCancellation

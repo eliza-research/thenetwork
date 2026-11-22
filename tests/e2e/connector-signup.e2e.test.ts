@@ -1,19 +1,13 @@
-// End to end: the connector's "Finish signup" on the OAuth authorization page, through the built sites,
-// the production router, the shared backend, the MCP server and Postgres (harness.ts). The browser holds
-// the cookies and types the phone and the code; the assistant only registers, exchanges the code and
-// calls tools. Then every tool on every app and surface: each link it returns must be a served route.
-//   pnpm test:e2e
-// spec/oauthBrowserAuthorization.md, "Optional signup stays inside the verified authorization request"
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
+import { newMemberInvitation, storeMemberInvitation } from "../../packages/platform/src/invite-links.ts";
 import { Browser, connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, VERIFIER, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
-/** A hosted assistant's redirect: registrations from one address use the assistant limit. */
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
 const DOMAINS: Record<AppId, string> = { ntwrk: "ntwrk.party", slop: "slop.date", peon: "peon.biz", friends: "friends.help" };
 
@@ -22,7 +16,6 @@ let sql: SQL;
 
 const hidden = (html: string, name: string) => new RegExp(`name="${name}" value="([^"]+)"`).exec(html)?.[1];
 
-/** One connector connection as the assistant and the person's browser make it, step by step. */
 async function authorize(app: AppId, b: Browser) {
   const reg = await st.site(app, "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [CLAUDE], token_endpoint_auth_method: "none" } });
   expect(reg.status).toBe(201);
@@ -55,7 +48,6 @@ async function finishSignup(app: AppId, b: Browser, rid: string, fields: Record<
   return { res, html: await res.text(), form };
 }
 
-/** Allow on the consent page, then the assistant's code exchange. */
 async function allow(app: AppId, b: Browser, c: { client: string; resource: string; rid: string }, html: string) {
   const approval = hidden(html, "signupApproval");
   const done = await st.site(app, "/oauth/authorize/consent", { browser: b, form: { rid: c.rid, decision: "approve", ...(approval ? { signupApproval: approval } : {}) } });
@@ -75,6 +67,9 @@ const banPhone = (phone: string) => st.svc.people.ban({
   reason: "owned fixture", reportId: null, bannedBy: "fixture", at: st.clock.now(),
 });
 const adult = { firstName: "Ari", age: "29", homeCity: "nyc" };
+const DEV_PLATFORM_HASH_KEY = "dev-only-platform-hash-key";
+const memberIdOf = async (phone: string, app: AppId) => ((await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
+  where m.app_id = ${app} and ph.e164 = ${phone}`)[0] as { id: string } | undefined)?.id;
 const draftRows = async (phone: string, app: AppId) => Number(((await sql`select count(*)::int as n from oauth.signup_drafts
   where phone_key = ${st.svc.publicApi.accounts.phoneHash(phone)} and app_id = ${app}`)[0] as { n: number }).n);
 
@@ -126,11 +121,60 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
 
     expect((await st.staff("/apps/ntwrk/invite", { phone })).status).toBe(200);
     const invited = await authorize("ntwrk", b);
-    expect(invited.html).toContain('action="/oauth/authorize/signup"');
+    expect(invited.html).not.toContain('action="/oauth/authorize/signup"');
+    expect(invited.html).toContain('action="/oauth/authorize/phone"');
+    const reverified = await confirmPhone("ntwrk", b, invited.rid, phone);
+    expect(reverified.html).toContain('action="/oauth/authorize/signup"');
     const joined = await finishSignup("ntwrk", b, invited.rid, adult);
     expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
     const token = await allow("ntwrk", b, invited, joined.html);
     expect(await status("ntwrk", token)).toMatchObject({ app: "ntwrk", status: expect.stringMatching(/^(active|onboarding)$/) });
+  }, T);
+
+  test("ntwrk: a member's invitation link typed at Finish signup joins; an unknown link is refused with nothing stored", async () => {
+    const inviterPhone = newPhone();
+    expect((await st.staff("/apps/ntwrk/invite", { phone: inviterPhone })).status).toBe(200);
+    expect((await webJoin(st, "ntwrk", inviterPhone, { age: 34, firstName: "Ari", homeCity: "nyc" })).res.status).toBe(200);
+    const inviter = await memberIdOf(inviterPhone, "ntwrk");
+    expect(inviter).toEqual(expect.any(String));
+    const issued = newMemberInvitation(DEV_PLATFORM_HASH_KEY, "ntwrk");
+    await storeMemberInvitation(sql, "ntwrk", { tokenHash: issued.tokenHash, inviterMemberId: inviter! }, "friend", st.clock.now());
+    const unknown = newMemberInvitation(DEV_PLATFORM_HASH_KEY, "ntwrk");
+
+    const phone = newPhone(), b = new Browser();
+    const c = await authorize("ntwrk", b);
+    expect((await confirmPhone("ntwrk", b, c.rid, phone)).html).toContain('action="/oauth/authorize/signup"');
+    const refused = await finishSignup("ntwrk", b, c.rid, { ...adult, firstName: "Maya", invitation: `https://ntwrk.party/SKILL.md#invite=${unknown.token}` });
+    expect(refused.res.status).toBe(400);
+    expect(refused.html).toContain("Enter a current invitation for this app.");
+    expect(await personOf(phone)).toBeUndefined();
+    expect(await memberships(phone)).toEqual([]);
+    expect(await sql`select step from oauth.auth_requests where id = ${c.rid}`).toEqual([{ step: "consent" }]);
+    expect(await sql`select redeemed_at from platform.member_invitations where token_hash = ${issued.tokenHash}`).toEqual([{ redeemed_at: null }]);
+
+    const joined = await finishSignup("ntwrk", b, c.rid, { ...adult, firstName: "Maya", invitation: `https://ntwrk.party/SKILL.md#invite=${issued.token}` });
+    expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
+    expect(await memberships(phone)).toEqual(["ntwrk"]);
+    const invitee = await memberIdOf(phone, "ntwrk");
+    expect(await sql`select redeemed_member_id from platform.member_invitations where token_hash = ${issued.tokenHash}`).toEqual([{ redeemed_member_id: invitee }]);
+    expect(await sql`select invited_by from network.members where app_id = 'ntwrk' and id = ${invitee!}`).toEqual([{ invited_by: inviter }]);
+    const token = await allow("ntwrk", b, c, joined.html);
+    expect(await status("ntwrk", token)).toMatchObject({ app: "ntwrk", status: expect.stringMatching(/^(active|onboarding)$/) });
+  }, T);
+
+  test("a Finish signup posted with an outdated text message terms version is refused with nothing stored", async () => {
+    const phone = newPhone(), b = new Browser();
+    const c = await authorize("slop", b);
+    expect((await confirmPhone("slop", b, c.rid, phone)).html).toContain('action="/oauth/authorize/signup"');
+    const stale = await finishSignup("slop", b, c.rid, { ...adult, consentVersion: "outdated-terms-version" });
+    expect(stale.res.status).toBe(400);
+    expect(stale.html).toContain("Review and accept the current text message terms to continue.");
+    expect(await personOf(phone)).toBeUndefined();
+    expect(await memberships(phone)).toEqual([]);
+    expect(await sql`select step from oauth.auth_requests where id = ${c.rid}`).toEqual([{ step: "consent" }]);
+    const current = await finishSignup("slop", b, c.rid, adult);
+    expect(current.res.status, current.html.slice(0, 300)).toBe(200);
+    expect(await memberships(phone)).toEqual(["slop"]);
   }, T);
 
   test("a 15-year-old joins and is never matched; an under-13 person is declined with nothing stored, also on a retry", async () => {
@@ -144,14 +188,49 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     const rt = [...st.svc.runtimes.values()].find(r => r.app.id === "friends")!;
     expect(rt.net.member(member.id as never).minor).toBe(true);
 
+    const adults: string[] = [];
+    for (const [i, firstName] of ["Ana", "Ben", "Cy", "Di"].entries()) {
+      const p = newPhone();
+      adults.push(p);
+      expect((await webJoin(st, "friends", p, { age: 25 + i, firstName, interests: ["climbing", "board games"] })).res.status).toBe(200);
+    }
+    for (const p of [...adults, teen]) {
+      await st.text(p, "I want to find people to go climbing with this weekend, and to play board games.");
+      await st.text(p, "Weekends mostly, I'm around Williamsburg.");
+      await st.text(p, "Small groups are great.");
+    }
+    for (const p of [...adults, teen]) await st.text(p, "Find me someone to go bouldering with in Brooklyn this Saturday afternoon");
+    for (const p of [...adults, teen]) {
+      const [row] = await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'friends' and ph.e164 = ${p}`;
+      for (const check of ["age", "liveness"]) expect((await st.staff(`/apps/friends/members/${(row as { id: string }).id}/verify`, { check, result: "pass", note: "e2e staff check" })).status).toBe(200);
+    }
+    expect((await st.staff("/apps/friends/matching", { on: true })).status).toBe(200);
+    for (let day = 0; day < 3; day++) {
+      for (const r of st.svc.runtimes.values()) await r.tick();
+      st.clock.advance(86_400_000);
+    }
+    const opportunities = await sql<{ parts: string[] }[]>`select array_agg(p.member_id) as parts from network.opportunities o
+      join network.participations p on p.app_id = o.app_id and p.opportunity_id = o.id where o.app_id = 'friends' group by o.id`;
+    expect(opportunities.length).toBeGreaterThan(0);
+    for (const o of opportunities) expect(o.parts).not.toContain(member.id);
+    expect((await sql`select 1 from network.participations where member_id = ${member.id}`).length).toBe(0);
+    expect(rt.net.packInput(st.clock.now()).members.map(m => m.id)).not.toContain(member.id);
+
     const child = newPhone(), cb = new Browser();
     const c = await authorize("friends", cb);
     await confirmPhone("friends", cb, c.rid, child);
-    for (const age of ["12", "25"]) {
-      const declined = await finishSignup("friends", cb, c.rid, { ...adult, firstName: "Mo", age });
-      expect(declined.res.status).toBe(400);
-      expect(declined.html).toContain("You can’t join this app at the age entered.");
-    }
+    const declined = await finishSignup("friends", cb, c.rid, { ...adult, firstName: "Mo", age: "12" });
+    expect(declined.res.status).toBe(400);
+    expect(declined.html).toContain("You can’t join this app at the age entered.");
+    const reopened = await st.site("friends", "/oauth/authorize/signup", { browser: cb, form: { rid: c.rid, decision: "open" } });
+    expect(reopened.status).toBe(400);
+    expect(await reopened.text()).toContain("This page has expired");
+    const retry = await authorize("friends", cb);
+    expect(retry.html).toContain('action="/oauth/authorize/phone"');
+    expect((await confirmPhone("friends", cb, retry.rid, child)).html).toContain('action="/oauth/authorize/signup"');
+    const older = await finishSignup("friends", cb, retry.rid, { ...adult, firstName: "Mo", age: "25" });
+    expect(older.res.status).toBe(400);
+    expect(older.html).toContain("You can’t join this app at the age entered.");
     expect(await personOf(child)).toBeUndefined();
     expect(await memberships(child)).toEqual([]);
   }, T);
@@ -188,7 +267,6 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     expect(await memberships(phone)).toEqual(["peon"]);
   }, T);
 
-  // spec/connectorTools.md, "The member status decides which member tool can act"
   test("a person who allowed access without joining follows check_status back to Finish signup, then joins a second app", async () => {
     const phone = newPhone(), b = new Browser();
     const first = await authorize("friends", b);
@@ -199,14 +277,12 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     expect(notJoined.next_step).toContain("disconnect friends.help in your agent's connector settings, then connect it again");
     expect(notJoined.next_step).toContain("Finish signup");
 
-    // The next step: a new connection in the same browser offers Finish signup at once.
     const again = await authorize("friends", b);
     expect(again.html).toContain('action="/oauth/authorize/signup"');
     const joined = await finishSignup("friends", b, again.rid, adult);
     expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
     const token = await allow("friends", b, again, joined.html);
     expect(await status("friends", token)).toMatchObject({ app: "friends", status: expect.stringMatching(/^(active|onboarding)$/) });
-    // The grant made before the person existed ends at its next use.
     expect((await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, skipped)).res.status).toBe(401);
 
     const person = await personOf(phone);
@@ -216,6 +292,41 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     expect(second.res.status, second.html.slice(0, 300)).toBe(200);
     expect(await personOf(phone)).toBe(person);
     expect(await memberships(phone)).toEqual(["friends", "slop"]);
+  }, T);
+
+  test("spec/agentPhoneHandoff.md: an enrolled request whose stored handoff is refused, missing or not waiting for the grant gets no grant", async () => {
+    const refusedHandoff = { phase: "HandoffRefused", approvedDraft: true, verifiedEnrollment: false, matchingGrant: false };
+    const readyHandoff = { phase: "ReadyForSignupProfile", approvedDraft: true, verifiedEnrollment: true, matchingGrant: true };
+    for (const stored of [refusedHandoff, readyHandoff, null]) {
+      const phone = newPhone(), b = new Browser();
+      const c = await authorize("friends", b);
+      await confirmPhone("friends", b, c.rid, phone);
+      const joined = await finishSignup("friends", b, c.rid, adult);
+      expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
+      expect(await sql`select step, handoff->>'phase' as phase from oauth.auth_requests where id = ${c.rid}`).toEqual([{ step: "enrolled", phase: "AwaitingSignupGrant" }]);
+      await sql`update oauth.auth_requests set handoff = ${stored}::jsonb where id = ${c.rid}`;
+      const refused = await st.site("friends", "/oauth/authorize/consent", { browser: b, form: { rid: c.rid, decision: "approve", signupApproval: hidden(joined.html, "signupApproval")! } });
+      expect(refused.status).toBe(400);
+      expect(await refused.text()).toContain("This page has expired");
+      const person = await personOf(phone);
+      expect(person).toEqual(expect.any(String));
+      expect(await sql`select id from oauth.grants where person_id = ${person!}`).toEqual([]);
+    }
+  }, T);
+
+  test("spec/agentPhoneHandoff.md: a stored handoff that does not parse is a server error and gets no grant", async () => {
+    const phone = newPhone(), b = new Browser();
+    const c = await authorize("friends", b);
+    await confirmPhone("friends", b, c.rid, phone);
+    const joined = await finishSignup("friends", b, c.rid, adult);
+    expect(joined.res.status, joined.html.slice(0, 300)).toBe(200);
+    await sql`update oauth.auth_requests set handoff = ${{ phase: "ReadyForSignupProfile", approvedDraft: true, verifiedEnrollment: true, matchingGrant: false }}::jsonb where id = ${c.rid}`;
+    const failed = await st.site("friends", "/oauth/authorize/consent", { browser: b, form: { rid: c.rid, decision: "approve", signupApproval: hidden(joined.html, "signupApproval")! } });
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: "server_error" });
+    const person = await personOf(phone);
+    expect(person).toEqual(expect.any(String));
+    expect(await sql`select id from oauth.grants where person_id = ${person!}`).toEqual([]);
   }, T);
 
   describe("spec/mcpSignupDraft.md, \"The signup result settles the draft\"", () => {
@@ -266,6 +377,17 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
       expect(await draftRows(phone, "friends")).toBe(0);
     }, T);
 
+    test("a staff ban of a member deletes the number's draft in another app at once", async () => {
+      const phone = newPhone();
+      expect((await webJoin(st, "peon", phone, { age: 30 })).res.status).toBe(200);
+      await saveDraft("friends", phone, new Browser());
+      const member = await memberIdOf(phone, "peon");
+      expect(member).toEqual(expect.any(String));
+      const banned = await st.staff("/apps/peon/safety/ban", { memberId: member!, by: "phone", note: "confirmed by staff" });
+      expect(await banned.json()).toEqual({ ok: true });
+      expect(await draftRows(phone, "friends")).toBe(0);
+    }, T);
+
     test("another person's signup and a signup in a second app leave the draft alone", async () => {
       const phone = newPhone(), b = new Browser();
       await saveDraft("friends", phone, b);
@@ -308,15 +430,23 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
           collect(toolData(await rpc(st, app, path, "tools/call", { name: "app_info", arguments: { app: id } })));
           collect(toolData(await rpc(st, app, path, "tools/call", { name: "start_signup", arguments: { app: id } })));
         }
-        // A connection of a person who has not joined, then of an active member.
-        for (const joined of [false, true]) {
-          // ntwrk has no open web join; its invited member is covered above.
-          if (joined && app === "ntwrk") continue;
+        for (const state of ["not_joined", "active", "stopped", "on_hold"] as const) {
+          if (state !== "not_joined" && app === "ntwrk") continue;
           const phone = newPhone();
-          if (joined) expect((await webJoin(st, app, phone, { age: 30 })).res.status).toBe(200);
+          if (state !== "not_joined") expect((await webJoin(st, app, phone, { age: 30 })).res.status).toBe(200);
           const c = await connectMcp(st, app, phone, { path, redirect: CLAUDE });
           const token = c.token?.access_token as string;
           expect(token).toBeTruthy();
+          if (state === "stopped") await st.text(phone, "STOP");
+          if (state === "on_hold") {
+            const person = (await st.svc.publicApi.accounts.personFor(phone))!;
+            const membership = (await st.svc.people.getMembership(person.id, app))!;
+            await st.svc.people.putMembership({ ...membership, review: "recycled_number" });
+          }
+          const current = toolData(await rpc(st, app, path, "tools/call", { name: "check_status", arguments: {} }, token)) as { status: string; next_step: string };
+          if (state === "active") expect(current.status).toMatch(/^(active|onboarding)$/);
+          else expect(current.status).toBe(state);
+          expect(current.next_step.length).toBeGreaterThan(0);
           for (const name of tools.map(t => t.name).filter(n => n !== "app_info" && n !== "start_signup")) {
             const args = name === "submit_profile" ? { about: "I like long walks and board games." } : {};
             collect(toolData(await rpc(st, app, path, "tools/call", { name, arguments: args }, token)));

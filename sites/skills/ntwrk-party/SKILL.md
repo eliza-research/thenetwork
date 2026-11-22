@@ -7,7 +7,7 @@ metadata:
   app: ntwrk
   site: https://ntwrk.party
   operator: Eliza Research Corporation
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # The Network
@@ -79,8 +79,8 @@ in another app or start matching.
    person the returned `next_step`: for `not_joined` it is to disconnect the connector, connect
    it again and choose **Finish signup** on the connection page. Before that, for
    `not_joined` or `invited`, you may call `prepare_signup` once with the approved
-   first name and home city: the Finish signup page shows them to the person to check
-   for 10 minutes. It never joins anyone. For a new
+   first name and home city. The server keeps them for 10 minutes. The person
+   still enters their details on the Finish signup page. It never joins anyone. For a new
    signup confirmed in the browser, only `onboarding` or `active` allows the
    approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->

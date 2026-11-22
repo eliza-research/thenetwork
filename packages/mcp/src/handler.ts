@@ -31,12 +31,12 @@ import {
   removalFormMayRevoke, removalListRetry, type RemoveReply,
 } from "../../core/src/generated/connectedAssistants.ts";
 import {
-  configuredHostServes, connectorAddressCeilingMinute, connectorAnonymousPerAddressMinute, connectorLimitKey, connectorRegisterLimit,
+  configuredHostServes, connectorAddressCeilingMinute, connectorAnonymousPerAddressMinute, connectorLimitKey, connectorRegisterBucket,
   connectorRegisterPerAddressHour, connectorAssistantRegisterPerAddressHour, connectorRequestsPerGrantMinute, connectorTokenAddressCeilingMinute,
-  connectorTokenPerGrantMinute, profileDailyCap, profileLimitReached,
+  connectorTokenPerGrantMinute, profileDailyCap, profileLimitReached, type RegisterBucket,
 } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
-import { signupDraftAfterSignup, signupDraftAppEnabled, signupDraftClaimRoute } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftAfterSignup, signupDraftAppEnabled, signupDraftClaimRoute, signupDraftRefusedRoute } from "../../core/src/generated/mcpSignupDraft.ts";
 import { confirmHandoff, grantHandoff, offerHandoff } from "./signup-handoff.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
@@ -125,6 +125,7 @@ export interface McpHandler {
   revokeAllFor(e164: string, app?: McpAppId, o?: { forget?: boolean }): Promise<number>;
   /** Erase the verified person's grants and approvals across phone bindings, in one app or every app. */
   forgetPerson(personId: string, app?: McpAppId): Promise<number>;
+  discardSignupDrafts(phoneKeys: readonly string[]): Promise<void>;
   /** Current local connector authority for opening inbox items from one app in a hosted assistant. */
   assistantUpdateSurfaces(personId: string, app: McpAppId): Promise<AssistantKind[]>;
   /** Map grants under the provider claim lock for the already verified current owner. */
@@ -269,6 +270,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const now = o.now ?? Date.now;
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
+  const registerLimits: Record<RegisterBucket, number> = { AssistantRegisterBucket: lim.registerAssistantPerIpHour, AddressRegisterBucket: lim.registerPerIpHour };
   const log = o.log ?? (s => console.log(s));
   /** Recompute the affected assistant from all of the person's grants after an OAuth change. */
   async function reconcileAssistantSignal(grant: Grant | undefined) {
@@ -449,10 +451,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const b = await readJson(c.req);
     const uris = b?.redirect_uris;
     const valid = Array.isArray(uris) && uris.length >= 1 && uris.length <= 5 && uris.every(redirectUriAllowed);
-    // spec/connectorTools.md, "Request limits count each person's grant, and the client address has only a coarse ceiling"
-    const assistantRedirect = valid && (uris as string[]).every(uri => assistantOf({ redirectUris: [uri], surface: "full" }) !== "web");
-    const registerLimit = connectorRegisterLimit(assistantRedirect) === connectorRegisterPerAddressHour ? lim.registerPerIpHour : lim.registerAssistantPerIpHour;
-    if (await limited(`reg:${assistantRedirect ? "assistant" : "ip"}:${sha256hex(ipBucket(c.ip))}`, registerLimit, 3_600_000)) return tooMany(3600);
+    const bucket = connectorRegisterBucket(valid && (uris as string[]).every(uri => assistantOf({ redirectUris: [uri], surface: "full" }) !== "web"));
+    if (await limited(`reg:${bucket}:${sha256hex(ipBucket(c.ip))}`, registerLimits[bucket], 3_600_000)) return tooMany(3600);
     const bad = (d: string, error = "invalid_client_metadata") => json(400, { error, error_description: d });
     if (!b) return bad("The body must be a JSON object.");
     if (!Array.isArray(uris) || uris.length < 1 || uris.length > 5) return bad("redirect_uris must list 1 to 5 URIs.", "invalid_redirect_uri");
@@ -571,6 +571,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const route = signupDraftClaimRoute(status, ageAllowed, await o.platform.grantIsBanned(key, personId));
     if (route === "DiscardDraft") await store.deleteSignupDrafts(key, app);
     return route === "ReadDraft" ? (await store.claimSignupDraft(key, app, personId, now())) ?? null : null;
+  }
+
+  async function discardBannedSignupDrafts(app: McpAppId, e164: string, personId: string | null): Promise<void> {
+    if (!signupDraftAppEnabled(app)) return;
+    const key = o.platform.phoneKey(e164);
+    if (signupDraftRefusedRoute(await o.platform.grantIsBanned(key, personId)) === "DiscardDraft") await store.deleteSignupDrafts(key, app);
   }
 
   async function settleSignupDraft(app: McpAppId, e164: string, signupResult: string): Promise<void> {
@@ -720,11 +726,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form || !live) return expired();
     const { r, client, flow } = live;
     if (!validBrowserEntry(c, r, client) || !signupClientAllowed(c, r, client) || !o.platform.joinSignup) return expired();
-    const draft = form.get("decision") === "open" && r.e164 !== null && r.step === "consent" ? await signupDraftFor(c.app.id, r.e164, r.personId) : null;
     const who = await readAuthorizationSession(c);
     if (who === "unavailable") return browserUnavailable(c);
     if (!who || !browserSignupOpenAllowed(flow, browserPages[r.step], !!r.e164,
-      who.e164 === r.e164 && who.personId === r.personId, true)) return expired();
+      who.e164 === r.e164 && who.personId === r.personId, true)) {
+      if (r.e164 !== null) await discardBannedSignupDrafts(c.app.id, r.e164, r.personId);
+      return expired();
+    }
+    const draft = form.get("decision") === "open" && r.step === "consent" ? await signupDraftFor(c.app.id, who.e164, who.personId) : null;
     const signupView = signupFormProof(r, "signup");
     const decision = form.get("decision");
     const exactForm = safeEqual(form.get("signupView") ?? "", signupView);
@@ -753,7 +762,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const invitation = signupInvitation(c.app, typedInvitation);
     if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.");
 
-    const pending = { ...r, step: "enrolling" as const };
+    const pending = { ...r, step: "enrolling" as const, handoff: offered };
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
     try {
       const joined = await o.platform.joinSignup(c.app.id, who, input, invitation);
@@ -770,20 +779,19 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const member = joined.membership;
       const owner = await o.platform.login(who.e164);
       const current = await o.platform.status(member.personId, c.app.id, o.platform.phoneKey(who.e164));
-      const confirmed = confirmHandoff(offered, {
-        sameApp: member.app === c.app.id && r.app === c.app.id,
-        ownerVerified: owner !== "held" && owner.personId === member.personId && (r.personId === null || r.personId === member.personId),
-        eligibleEnrollment: member.review === null && browserSignupMemberAllowed(current),
-        requestLive: requestIsLive(now(), r.expiresAt),
+      const sameApp = member.app === c.app.id && r.app === c.app.id;
+      const sameOrNewOwner = r.personId === null || r.personId === member.personId;
+      const currentOwner = owner !== "held" && owner.personId === member.personId;
+      const eligibleEnrollment = member.review === null && browserSignupMemberAllowed(current);
+      const confirmed = confirmHandoff(pending.handoff, {
+        sameApp, ownerVerified: currentOwner && sameOrNewOwner, eligibleEnrollment, requestLive: requestIsLive(now(), r.expiresAt),
       });
-      if (!browserSignupOwnerBindingAllowed(browserPages[pending.step], joined.created, member.app === c.app.id,
-        r.personId === null || r.personId === member.personId, owner !== "held" && owner.personId === member.personId,
-        member.review === null && browserSignupMemberAllowed(current)) || confirmed.phase !== "AwaitingSignupGrant") return expired();
-      const enrolled = { ...r, personId: member.personId, step: "enrolled" as const };
+      if (!browserSignupOwnerBindingAllowed(browserPages[pending.step], joined.created, sameApp, sameOrNewOwner, currentOwner, eligibleEnrollment)
+        || confirmed.phase !== "AwaitingSignupGrant") return expired();
+      const enrolled = { ...r, personId: member.personId, step: "enrolled" as const, handoff: confirmed };
       if (!await store.advanceAuthRequest(pending, enrolled, now)) return expired();
       return verifiedConsentPage(c, enrolled, client, who);
     } catch {
-      // Ambiguous membership completion cannot approve this connection or infer ownership on retry.
       return messagePage(c.app, "Connect again", "We couldn’t confirm signup. Check your membership before starting a new connection.", 503);
     }
   }
@@ -943,13 +951,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           code,
           commit: (approvalAt, confirm) => store.commitConsentGrant(r.id, approvalAt, async approval => {
             if (!samePendingAuthPage(approval, r, now())) return false;
-            if (r.step === "enrolled") {
+            if (approval.step === "enrolled") {
+              if (!approval.handoff) return false;
               const owner = await o.platform.login(r.e164);
               const ownerMatches = r.personId !== null && owner !== "held" && owner.personId === r.personId;
               const memberAllowed = ownerMatches && r.personId !== null && browserSignupMemberAllowed(await o.platform.status(r.personId, c.app.id, grant.phoneKey));
-              const recorded = grantHandoff(grant.app === c.app.id && r.app === c.app.id, ownerMatches,
+              const recorded = grantHandoff(approval.handoff, grant.app === c.app.id && r.app === c.app.id, ownerMatches,
                 memberAllowed && tokenCovers("submit_profile", grant.scopes) && grant.expiresAt > now());
-              if (recorded.phase !== "ReadyForSignupProfile") return false;
+              if (recorded?.phase !== "ReadyForSignupProfile") return false;
             }
             return confirm(approval);
           }, {
@@ -1518,6 +1527,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
       if (ro.forget) await store.forgetPhone(key, e164, app);
       return n;
+    },
+    async discardSignupDrafts(phoneKeys) {
+      for (const key of new Set(phoneKeys)) {
+        for (const id of (Object.keys(apps) as McpAppId[]).filter(signupDraftAppEnabled)) await store.deleteSignupDrafts(key, id);
+      }
     },
     async forgetPerson(personId, app) {
       const removed = await store.forgetPerson(personId, app);

@@ -264,14 +264,16 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(ex.text).not.toContain(friendsMember);
     expect(ex.body.consent.map((e: any) => e.state)).toEqual(["opted_in"]);
 
-    // Share needs both memberships; the grant names only base-profile fields. The answer is the same
-    // whether or not the person uses the other app (it must not list their apps).
-    expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["orientation"] }, slop)).status).toBe(200);
-    const notMember = await call(c, "slop", "POST", "/api/me/share", { fromApp: "peon", fields: ["first_name"] }, slop);
-    expect([notMember.status, notMember.body]).toEqual([200, { ok: true }]);
+    for (const path of ["/api/me/share", "/api/me/share/revoke"]) {
+      expect(await call(c, "slop", "POST", path, { fromApp: "friends", fields: ["interests"] }, slop)).toMatchObject({ status: 404, body: { error: "not_found" } });
+    }
     expect(await store.shareGrants(person!.id)).toEqual([]);
-    expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["first_name", "city"] }, slop)).status).toBe(200);
-    expect((await store.shareGrants(person!.id)).map(g => `${g.fromApp}>${g.toApp}:${g.fields.join(",")}`)).toEqual(["friends>slop:first_name,city"]);
+    const who = { e164: phone, personId: person!.id };
+    expect(await c.api.accounts.share(APPS.slop, who, "friends", ["orientation"])).toBe(false);
+    expect(await c.api.accounts.share(APPS.slop, who, "peon", ["interests"])).toBe(false);
+    expect(await store.shareGrants(person!.id)).toEqual([]);
+    expect(await c.api.accounts.share(APPS.slop, who, "friends", ["interests"])).toBe(true);
+    expect((await store.shareGrants(person!.id)).map(g => `${g.fromApp}>${g.toApp}:${g.fields.join(",")}`)).toEqual(["friends>slop:interests"]);
 
     expect((await call(c, "slop", "POST", "/api/me/delete", { scope: "app" }, slop)).status).toBe(200);
     expect(c.forgotten.length).toBe(1);

@@ -68,7 +68,8 @@ Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.
 //    under a lock of the person, so two overlapping replicas cannot both record a counting digest
 //    [schedulerRespectsCap] (packages/notify/test/wiring.test.ts "SD-150").
 // OPEN (not compared): the Part B ledger actions were not compared with spec/capitalLedger.md or packages/capital
-// on this branch; they are left as they were imported. Only Part A and the capital persistence were compared.
+// on this branch; they are left as they were imported. Only Part A, the capital persistence and (2026-11-22) the
+// credit amounts ATTEND, FEEDBACK, HELP and VOUCH (equal to the default `credit` in config.ts) were compared.
 module notify_capital {
 
   // ================================================================================================
@@ -509,7 +510,7 @@ module notify_capital {
   pure val MEMBERS = Set("a", "b", "c")
   pure val MEMBERS_SORTED = ["a", "b", "c"]
   pure val TMAX = 3
-  // Amounts in tenths of NC (config.ts:67-68): attendance 2, feedback 0.5, help 3, vouch 10.
+  // Amounts in tenths of NC (packages/capital/src/config.ts, the default `credit`): attendance 2, feedback 0.5, help 3, vouch 10.
   pure val ATTEND = 20
   pure val FEEDBACK = 5
   pure val HELP = 30

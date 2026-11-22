@@ -84,12 +84,9 @@ jobs:
       - name: Generate design and connector CSS
         run: pnpm run connector:css
         timeout-minutes: 5
-      - name: Typecheck (packages, deploy, tests, scripts/sim)
-        run: pnpm exec tsc --noEmit -p .
-        timeout-minutes: 5
-      - name: Typecheck (sites, scripts)
-        run: pnpm exec tsc --noEmit -p sites/tsconfig.json
-        timeout-minutes: 5
+      - name: Typecheck (pnpm run typecheck, every TypeScript project)
+        run: pnpm run typecheck
+        timeout-minutes: 10
       - name: Simulations other than matching
         # The simulations: evals corpora, the Network in the NYC world, slop, peon and friends, each
         # with its gates on pinned seeds, and the Postgres blocks on throwaway databases. No LLM.

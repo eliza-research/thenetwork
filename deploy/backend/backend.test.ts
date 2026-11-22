@@ -20,12 +20,16 @@ import {
   BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, liveSendTable, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
 } from "./backend.ts";
+import type { BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
+import { createPublicApi } from "../../packages/platform/src/api.ts";
+import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 
 const SECRET = "s".repeat(40);
 const DEPLOYED = {
   PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: SECRET,
   TURNSTILE_SECRET_KEY: "fake", TURNSTILE_SITE_KEY: "fake-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
   SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/x",
+  PLATFORM_SESSION_SECRET: "e".repeat(40),
 };
 
 describe("config", () => {
@@ -97,6 +101,73 @@ describe("config", () => {
     // Dev keeps its shortcuts: none of these is required there.
     const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
     expect(dev.warnings.join(" ")).toMatch(/NETWORK_SERVICE_TOKENS is not set/);
+  });
+
+  // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
+  test("every refused boot fact stops loadConfig with its own message, in staging and production", () => {
+    const refusals: Record<Exclude<keyof BackendBoot, "deployed">, [Record<string, string | undefined>, RegExp]> = {
+      devConflict: [{ PLATFORM_ENV: "dev", NODE_ENV: "production" }, /a NODE_ENV other than production when PLATFORM_ENV=dev/],
+      databaseMissing: [{ DATABASE_URL: undefined }, /DATABASE_URL \(or NETWORK_DATABASE_URL\)/],
+      turnstileMissing: [{ TURNSTILE_SECRET_KEY: undefined }, /TURNSTILE_SECRET_KEY/],
+      turnstileSiteMissing: [{ TURNSTILE_SITE_KEY: undefined }, /TURNSTILE_SITE_KEY/],
+      proxyMissing: [{ PLATFORM_PROXY_SECRET: undefined }, /PLATFORM_PROXY_SECRET(;|$)/],
+      hashMissing: [{ PLATFORM_HASH_KEY: undefined }, /PLATFORM_HASH_KEY(;|$)/],
+      proxyShort: [{ PLATFORM_PROXY_SECRET: "p".repeat(31) }, /PLATFORM_PROXY_SECRET of at least 32 characters/],
+      hashShort: [{ PLATFORM_HASH_KEY: "h".repeat(31) }, /PLATFORM_HASH_KEY of at least 32 characters/],
+      sessionMissing: [{ PLATFORM_SESSION_SECRET: undefined }, /PLATFORM_SESSION_SECRET(;|$)/],
+      sessionShort: [{ PLATFORM_SESSION_SECRET: "e".repeat(31) }, /PLATFORM_SESSION_SECRET of at least 32 characters/],
+      sessionReused: [{ PLATFORM_SESSION_SECRET: DEPLOYED.PLATFORM_HASH_KEY }, /PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY/],
+      leakKeyShort: [{ LEAK_LABEL_KEY: "l".repeat(31) }, /LEAK_LABEL_KEY of at least 32 bytes/],
+      migrationMissing: [{ MIGRATION_DATABASE_URL: undefined }, /MIGRATION_DATABASE_URL \(or MIGRATE_ON_BOOT=0\)/],
+      sharedLogin: [{ MIGRATION_DATABASE_URL: DEPLOYED.DATABASE_URL }, /different login/],
+      turnSecretShort: [{ SERVICE_TURN_SECRET: "t".repeat(31) }, /SERVICE_TURN_SECRET of at least 32/],
+      staffTokensMissing: [{ NETWORK_SERVICE_TOKENS: undefined }, /NETWORK_SERVICE_TOKENS \(the staff API/],
+      staffTokenShort: [{ NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)},reviewer@slop:${"r".repeat(31)}` }, /every NETWORK_SERVICE_TOKENS token/],
+      publicEventsLoginMissing: [{ NETWORK_PUBLIC_EVENTS_DATABASE_URL: undefined }, /NETWORK_PUBLIC_EVENTS_DATABASE_URL/],
+      turnSecretReused: [{ SERVICE_TURN_SECRET: "a".repeat(40) }, /not also a NETWORK_SERVICE_TOKENS token/],
+      reviewInvalid: [{ NETWORK_REVIEW_MODE: "auto" }, /NETWORK_REVIEW_MODE=human \(got "auto"\)/],
+      devSwitchSet: [{ PLATFORM_DEV_CONSOLE_OTP: "1" }, /unset PLATFORM_DEV_CONSOLE_OTP \(dev only\)/],
+    };
+    for (const environment of ["staging", "production"]) {
+      const ready = { ...DEPLOYED, PLATFORM_ENV: environment };
+      expect(loadConfig(ready).env).toBe(environment);
+      for (const [field, [change, message]] of Object.entries(refusals)) {
+        expect(() => loadConfig({ ...ready, ...change }), `${environment} ${field}`).toThrow(message);
+      }
+    }
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", NETWORK_REVIEW_MODE: "auto", PLATFORM_DEV_CONSOLE_OTP: "1" }).env).toBe("dev");
+    expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "staging" }, hashKey: "h".repeat(40), turnstile: { verify: async () => true },
+      otp: { name: "fixture", send: async () => ({ code: "123456" }) } })).toThrow(/PLATFORM_SESSION_SECRET/);
+    for (const environment of ["staging", "production"]) {
+      expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: environment }, hashKey: "h".repeat(40), sessionSecret: "h".repeat(40),
+        turnstile: { verify: async () => true }, otp: { name: "fixture", send: async () => ({ code: "123456" }) } }), environment).toThrow(/PLATFORM_SESSION_SECRET must differ from PLATFORM_HASH_KEY/);
+    }
+    expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "dev" }, hashKey: "h".repeat(40), sessionSecret: "",
+      otp: { name: "fixture", send: async () => ({ code: "123456" }) } })).not.toThrow();
+  });
+
+  // spec/bootPolicy.md, "The combined backend turns photo relay on only with a complete photo relay setup"
+  test("photo relay is configured from all four variables together, and a partial setup stops the boot", () => {
+    const relay = {
+      NETWORK_PHOTO_RELAY_NOTICE_VERSION: "photo-notice-v1", NETWORK_PHOTO_RELAY_NOTICE: "Send this photo to {{recipient}} after a safety review.",
+      NETWORK_PHOTO_RELAY_REVIEWERS: "token:safety#0123abcd, safety-lead@example.test", NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test",
+    };
+    expect(loadConfig(DEPLOYED).photoRelay).toBeUndefined();
+    expect(loadConfig({ ...DEPLOYED, ...relay }).photoRelay).toEqual({
+      version: "photo-notice-v1", notice: "Send this photo to {{recipient}} after a safety review.",
+      reviewers: ["token:safety#0123abcd", "safety-lead@example.test"], deliveryOrigin: "https://backend.example.test",
+    });
+    for (const k of Object.keys(relay)) expect(() => loadConfig({ ...DEPLOYED, ...relay, [k]: undefined }), k).toThrow(/photo relay needs/);
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_PHOTO_DELIVERY_ORIGIN: relay.NETWORK_PHOTO_DELIVERY_ORIGIN })).toThrow(/photo relay needs/);
+    for (const change of [
+      { NETWORK_PHOTO_RELAY_NOTICE: "Send this photo after a safety review." },
+      { NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test/photos" },
+      { NETWORK_PHOTO_DELIVERY_ORIGIN: "http://backend.example.test" },
+      { NETWORK_PHOTO_DELIVERY_ORIGIN: "http://127.0.0.1:8790" },
+      { NETWORK_PHOTO_RELAY_REVIEWERS: " , " },
+    ]) expect(() => loadConfig({ ...DEPLOYED, ...relay, ...change }), JSON.stringify(change)).toThrow(/photo relay needs/);
+    const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", ...relay, NETWORK_PHOTO_DELIVERY_ORIGIN: "http://127.0.0.1:8790" });
+    expect(dev.photoRelay?.deliveryOrigin).toBe("http://127.0.0.1:8790");
   });
 
   // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
@@ -431,13 +502,32 @@ describe("router to backend (deploy/router.ts, the real Worker code)", () => {
 describe("deployed tick round", () => {
   // spec/platformRetention.md, "Platform rows and inbox payloads have separate cutoffs"
   // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
-  test("redrives inbound work, ticks networks, purges expired data, and then runs notifications", async () => {
+  test("redrives inbound work before the network ticks, and purges expired data and runs notifications in every round", async () => {
     const { svc } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
-    const round = ["inbox", "network:ntwrk:nyc", "retention", "notify"];
     await b.tickAll();
     await b.tickAll();
-    expect(svc.rounds).toEqual([...round, ...round]);
+    const [first, second] = [svc.rounds.slice(0, 4), svc.rounds.slice(4)];
+    for (const round of [first, second]) {
+      expect([...round].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
+      expect(round.indexOf("inbox")).toBeLessThan(round.indexOf("network:ntwrk:nyc"));
+    }
+  });
+
+  // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("a long network tick does not delay retention or notifications in the same round", async () => {
+    const { svc, release } = fakeService();
+    svc.slowTick = true;
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    const first = b.tickAll();
+    await sleep(10);
+    expect([...svc.rounds].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
+    await b.tickAll();
+    expect(svc.rounds.filter(r => r === "notify")).toHaveLength(2);
+    expect(svc.rounds.filter(r => r === "retention")).toHaveLength(2);
+    expect(svc.ticks).toBe(1);
+    release();
+    await first;
   });
 
   // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
@@ -448,8 +538,7 @@ describe("deployed tick round", () => {
       publicEvents: async () => { if (++refreshes === 1) await new Promise<void>(r => { release = r; }); } });
     const first = b.tickAll();
     await sleep(10);
-    // A slow feed holds only its own worker: the network round finished, and a second round skips the busy refresh.
-    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    expect([...svc.rounds].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
     await b.tickAll().then(() => undefined, () => undefined);
     expect(refreshes).toBe(1);
     release();
@@ -465,7 +554,7 @@ describe("deployed tick round", () => {
     svc.purge = async () => { svc.rounds.push("retention"); throw new Error("retention unavailable"); };
     const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true });
     await b.tickAll();
-    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    expect([...svc.rounds].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
     expect(lines.join("\n")).toMatch(/"msg":"inbox tick failed"/);
     expect(lines.join("\n")).toMatch(/"msg":"retention tick failed"/);
   });
@@ -566,6 +655,8 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     const env: Record<string, string> = {
       ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, NETWORK_PUBLIC_EVENTS_DATABASE_URL: eventsUrl, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
       PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
+      NETWORK_PHOTO_RELAY_NOTICE_VERSION: "boot-photo-notice-v1", NETWORK_PHOTO_RELAY_NOTICE: "Send this photo to {{recipient}} after a safety review.",
+      NETWORK_PHOTO_RELAY_REVIEWERS: "token:safety#0123abcd", NETWORK_PHOTO_DELIVERY_ORIGIN: "https://backend.example.test",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
@@ -613,6 +704,7 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     // The live-send table is in the boot log (docs/deploy.md section 6), and the signup connector is on.
     expect(logs).toMatch(/"msg":"live sends".*"inbound":"backend webhook".*"ntwrk: queued dry-run, turn replies sent by the gateway"/);
     expect(logs).toMatch(/"msg":"mcp".*"enabled":true/);
+    expect(logs).toMatch(/"msg":"photo relay".*"enabled":true.*"version":"boot-photo-notice-v1".*"reviewers":1/);
   }, 30_000);
 });
 

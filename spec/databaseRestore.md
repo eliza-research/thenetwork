@@ -1,6 +1,6 @@
 # Restore a database backup
 
-The [imported restore model](models/backup_restore.md) describes target placement and operator cleanup. This module drives the restore command from scratch-target admission through row-count comparison and the privacy replay. The shell supplies filesystem, server identity, Postgres, and command results. [Story F24](product/stories.md#story-f24--export-or-delete-my-data) requires that an erasure propagates through a restore.
+The [imported restore model](models/backup_restore.md) describes target placement and operator cleanup. This module drives the restore command from scratch-target admission through row-count comparison, the privacy replay and the queued texts of the restored database. The shell supplies filesystem, server identity, Postgres, and command results. [Story F24](product/stories.md#story-f24--export-or-delete-my-data) requires that an erasure propagates through a restore.
 
 ## Story: Check a backup by restoring it into a new database
 
@@ -182,4 +182,36 @@ pure def lawOneRunnerPerItem(done: bool): bool = not(replayClaims(done, true))
 pure def lawDoneItemRunsOnce(claimedByOther: bool): bool = not(replayClaims(true, claimedByOther))
 pure def lawSkippedItemStaysOpen(result: ReplayOutcome): bool =
   (result == ReplayTargetHeld or result == ReplayTargetWithoutPhone or result == ReplayRefused) implies not(replayItemDone(result))
+```
+
+## Story: Do not send a text again after a restore
+
+> As a member, I want a restore never to send me again a text that the Network sent or ended after the backup.
+
+### A restored text that is not settled takes the source's outcome, or ends
+
+New rule: the backup holds each queued text in the state it had at backup time, so a text that was sent after the backup still waits in the restored database. A restored text is not settled when the backend can still send it (it waits), when staff can still release it (it is parked for leak review), or when its outcome is in doubt (the gateway collected it, its send is unknown, or it failed with an unknown outcome). With a replay source, each restored text that is not settled takes the status and the send record of the same text in the source. A waiting or parked text that the source no longer has ends as expired. When the operator states that the source database is lost, every waiting or parked text ends as expired, because nothing shows which of them went out. A text in doubt that the source does not show keeps its restored state, because the backend never sends it again and it keeps its person-cap slot. A settled text keeps its restored state. Before this rule a recovery sent again every text that the backup held as pending. Changed (review): parked and in-doubt texts now also take the source's outcome, because before this change a parked text that staff released and sent after the backup was parked again in the restored database, and staff could release it a second time.
+
+```quint
+type RestoredText = KeepRestoredText | TakeSourceText | EndRestoredText
+type RestoredTextStatus = SettledText | WaitingText | ParkedText | InDoubtText
+
+pure def restoredText(status: RestoredTextStatus, sourceRead: bool, sourceHasText: bool): RestoredText =
+  if (status == SettledText) KeepRestoredText
+  else if (sourceRead and sourceHasText) TakeSourceText
+  else if (status == InDoubtText) KeepRestoredText
+  else EndRestoredText
+
+pure def lawWaitingTextNeverStaysAsRestored(sourceRead: bool, sourceHasText: bool): bool =
+  restoredText(WaitingText, sourceRead, sourceHasText) != KeepRestoredText and
+    restoredText(ParkedText, sourceRead, sourceHasText) != KeepRestoredText
+pure def lawLostSourceEndsWaitingText(sourceHasText: bool): bool =
+  restoredText(WaitingText, false, sourceHasText) == EndRestoredText and
+    restoredText(ParkedText, false, sourceHasText) == EndRestoredText
+pure def lawSettledTextKeepsItsState(sourceRead: bool, sourceHasText: bool): bool =
+  restoredText(SettledText, sourceRead, sourceHasText) == KeepRestoredText
+pure def lawSourceOutcomeWins(status: RestoredTextStatus): bool =
+  status != SettledText implies restoredText(status, true, true) == TakeSourceText
+pure def lawInDoubtTextNeverEnds(sourceRead: bool, sourceHasText: bool): bool =
+  restoredText(InDoubtText, sourceRead, sourceHasText) != EndRestoredText
 ```

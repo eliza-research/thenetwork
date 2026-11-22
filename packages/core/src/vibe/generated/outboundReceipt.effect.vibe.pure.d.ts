@@ -55,7 +55,19 @@ export declare function lawFailedAcceptanceRecordsNoSend(phase: ReceiptPhase): b
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
 export declare function lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function gatewayReceiptApplies(replyStatus: string, delivery: string): boolean;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function gatewayReplySendTime(replyStatus: string, collectedAt: number, receivedAt: number): number;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function lawExpiredReplySendsAtCollection(replyStatus: string, collectedAt: number, receivedAt: number): boolean;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function lawReplySendTimeNotAfterReceipt(replyStatus: string, collectedAt: number, receivedAt: number): boolean;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function lawLateUnknownReceiptKeepsExpiredReply(replyStatus: string): boolean;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: string, delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function lawGatewayReplyEndsOnlyPastLimit(pastLimit: boolean): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */

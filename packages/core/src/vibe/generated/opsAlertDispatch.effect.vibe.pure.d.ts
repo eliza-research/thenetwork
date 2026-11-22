@@ -12,6 +12,8 @@ export declare const turnWatchReplyAfterMs: number;
 export declare const turnWatchWindowMs: number;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export declare const initial: AlertDispatch;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export declare const catalogStaleAfterMs: number;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export declare function inv(current: AlertDispatch): boolean;
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) @throws {never} */
@@ -76,6 +78,14 @@ export declare function turnWatchAlertKey(condition: TurnWatchCondition): string
 export declare function lawPossibleStopIsBad(complianceCount: number): boolean;
 /** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
 export declare function lawTurnWatchKeysDiffer(first: TurnWatchCondition, second: TurnWatchCondition): boolean;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export declare function catalogScanOverdue(scanned: boolean, scanAgeMs: number, uptimeMs: number): boolean;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawRecentScanIsQuiet(scanAgeMs: number, uptimeMs: number): boolean;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawMissedDayAndRetryAlerts(uptimeMs: number): boolean;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export declare function lawNewProcessWaitsForFirstScan(scanAgeMs: number): boolean;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: AlertDispatch, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

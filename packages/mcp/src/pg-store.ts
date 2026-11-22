@@ -6,6 +6,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { parseState as parseHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { McpAppId } from "./apps.ts";
 import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraft, type SignupDraftFields, type Token } from "./store.ts";
 
@@ -24,7 +25,20 @@ const request = (r: Row): AuthRequest => ({
   id: r.id, browserHash: r.browser_hash, clientId: r.client_id, app: r.app_id, redirectUri: r.redirect_uri, state: r.state ?? null,
   codeChallenge: r.code_challenge, scopes: arr(r.scopes) as AuthRequest["scopes"], resource: r.resource, e164: r.e164 ?? null,
   personId: r.person_id ?? null, step: r.step, createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!,
+  ...storedHandoff(r.id, r.handoff),
 });
+export class StoredHandoffInvalid extends Error {
+  constructor(readonly requestId: string) {
+    super(`Stored signup handoff of authorization request ${requestId} does not parse`);
+    this.name = "StoredHandoffInvalid";
+  }
+}
+const storedHandoff = (requestId: string, v: unknown): Pick<AuthRequest, "handoff"> => {
+  if (v === null || v === undefined) return {};
+  const handoff = parseHandoff(v);
+  if (!handoff) throw new StoredHandoffInvalid(requestId);
+  return { handoff };
+};
 const grant = (r: Row): Grant => ({
   id: r.id, clientId: r.client_id, app: r.app_id, phoneKey: r.phone_key, personId: r.person_id ?? null, scopes: arr(r.scopes) as Grant["scopes"],
   resource: r.resource, createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!, revokedAt: ms(r.revoked_at), ...(r.cloud_authority ? {cloudAuthority:r.cloud_authority} : {}),
@@ -121,8 +135,8 @@ export class PgOAuthStore implements OAuthStore {
   }
 
   async putAuthRequest(q: AuthRequest) {
-    await this.sql`insert into oauth.auth_requests (id, browser_hash, client_id, app_id, redirect_uri, state, code_challenge, scopes, resource, e164, person_id, step, created_at, expires_at)
-      values (${q.id}, ${q.browserHash}, ${q.clientId}, ${q.app}, ${q.redirectUri}, ${q.state}, ${q.codeChallenge}, ${this.sql.array(q.scopes, "TEXT")}, ${q.resource}, ${q.e164}, ${q.personId}, ${q.step}, ${ts(q.createdAt)}, ${ts(q.expiresAt)})`;
+    await this.sql`insert into oauth.auth_requests (id, browser_hash, client_id, app_id, redirect_uri, state, code_challenge, scopes, resource, e164, person_id, step, handoff, created_at, expires_at)
+      values (${q.id}, ${q.browserHash}, ${q.clientId}, ${q.app}, ${q.redirectUri}, ${q.state}, ${q.codeChallenge}, ${this.sql.array(q.scopes, "TEXT")}, ${q.resource}, ${q.e164}, ${q.personId}, ${q.step}, ${q.handoff ?? null}::jsonb, ${ts(q.createdAt)}, ${ts(q.expiresAt)})`;
   }
   async getAuthRequest(id: string) {
     const [r] = await this.sql`select * from oauth.auth_requests where id = ${id}`;
@@ -138,7 +152,7 @@ export class PgOAuthStore implements OAuthStore {
     return this.sql.begin(async tx => {
       const [pending] = await tx`select * from oauth.auth_requests where id=${previous.id} for update`;
       if (!pending || !samePendingAuthPage(request(pending), previous, now())) return false;
-      await tx`update oauth.auth_requests set e164=${next.e164}, person_id=${next.personId}, step=${next.step} where id=${previous.id}`;
+      await tx`update oauth.auth_requests set e164=${next.e164}, person_id=${next.personId}, step=${next.step}, handoff=${next.handoff ?? null}::jsonb where id=${previous.id}`;
       return true;
     });
   }

@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
-export type DraftPreparationPhase = "ReadConnection" | "CheckAge" | "CheckOwner" | "CheckMembership" | "WriteDraft" | "Prepared" | "GrantRefused" | "UseJoinForm" | "AgeRefused" | "ExistingProfile" | "WriteRefused";
+export type DraftPreparationPhase = "ReadConnection" | "CheckAge" | "CheckOwner" | "CheckMembership" | "WriteDraft" | "RecheckAge" | "Prepared" | "GrantRefused" | "UseJoinForm" | "AgeRefused" | "ExistingProfile" | "WriteRefused";
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 export interface DraftPreparation { phase: DraftPreparationPhase }
 /** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
@@ -16,7 +16,8 @@ export type Event =
   | { type: "observeAge"; allowed: boolean }
   | { type: "observeOwner"; ownerMatches: boolean }
   | { type: "observeMembership"; status: string }
-  | { type: "observeWrite"; saved: boolean };
+  | { type: "observeWrite"; saved: boolean }
+  | { type: "observeAgeAfterWrite"; allowed: boolean };
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 export const signupDraftLifetimeMs: number = 600000;
@@ -62,7 +63,7 @@ export function canObserveConnection(s: DraftPreparation): boolean {
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
 export function observeConnection(s: DraftPreparation, grantReady: boolean, guardReady: boolean): DraftPreparation {
-  //@ ensures (inv(s) && canObserveConnection(s)) ==> stepPreparedRequiresWrite(s, \result)
+  //@ ensures (inv(s) && canObserveConnection(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
   return { phase: !grantReady ? "GrantRefused" : (guardReady ? "CheckAge" : "UseJoinForm") };
 }
 
@@ -75,7 +76,7 @@ export function canObserveAge(s: DraftPreparation): boolean {
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
 export function observeAge(s: DraftPreparation, allowed: boolean): DraftPreparation {
-  //@ ensures (inv(s) && canObserveAge(s)) ==> stepPreparedRequiresWrite(s, \result)
+  //@ ensures (inv(s) && canObserveAge(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
   return { phase: allowed ? "CheckOwner" : "AgeRefused" };
 }
 
@@ -88,7 +89,7 @@ export function canObserveOwner(s: DraftPreparation): boolean {
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
 export function observeOwner(s: DraftPreparation, ownerMatches: boolean): DraftPreparation {
-  //@ ensures (inv(s) && canObserveOwner(s)) ==> stepPreparedRequiresWrite(s, \result)
+  //@ ensures (inv(s) && canObserveOwner(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
   return { phase: ownerMatches ? "CheckMembership" : "GrantRefused" };
 }
 
@@ -101,7 +102,7 @@ export function canObserveMembership(s: DraftPreparation): boolean {
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
 export function observeMembership(s: DraftPreparation, status: string): DraftPreparation {
-  //@ ensures (inv(s) && canObserveMembership(s)) ==> stepPreparedRequiresWrite(s, \result)
+  //@ ensures (inv(s) && canObserveMembership(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
   return { phase: signupMembershipCanDraft(status) ? "WriteDraft" : "ExistingProfile" };
 }
 
@@ -114,14 +115,27 @@ export function canObserveWrite(s: DraftPreparation): boolean {
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
 export function observeWrite(s: DraftPreparation, saved: boolean): DraftPreparation {
-  //@ ensures (inv(s) && canObserveWrite(s)) ==> stepPreparedRequiresWrite(s, \result)
-  return { phase: saved ? "Prepared" : "WriteRefused" };
+  //@ ensures (inv(s) && canObserveWrite(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
+  return { phase: saved ? "RecheckAge" : "WriteRefused" };
 }
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 //@ pure
-export function stepPreparedRequiresWrite(before: DraftPreparation, after: DraftPreparation): boolean {
-  return !(before.phase !== "Prepared" && after.phase === "Prepared") || before.phase === "WriteDraft";
+export function canObserveAgeAfterWrite(s: DraftPreparation): boolean {
+  return s.phase === "RecheckAge";
+}
+
+/** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
+//@ pure
+export function observeAgeAfterWrite(s: DraftPreparation, allowed: boolean): DraftPreparation {
+  //@ ensures (inv(s) && canObserveAgeAfterWrite(s)) ==> stepPreparedRequiresAgeAfterWrite(s, \result)
+  return { phase: allowed ? "Prepared" : "AgeRefused" };
+}
+
+/** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
+//@ pure
+export function stepPreparedRequiresAgeAfterWrite(before: DraftPreparation, after: DraftPreparation): boolean {
+  return !(before.phase !== "Prepared" && after.phase === "Prepared") || before.phase === "RecheckAge";
 }
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
@@ -138,6 +152,12 @@ export function signupDraftClaimRoute(status: string, ageAllowed: boolean, banne
 
 /** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
+export function signupDraftRefusedRoute(banned: boolean): DraftClaimRoute {
+  return banned ? "DiscardDraft" : "RefuseClaim";
+}
+
+/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+//@ pure
 export function lawBannedNumberNeverReadsDraft(status: string, ageAllowed: boolean): boolean {
   //@ ensures \result === true
   return signupDraftClaimRoute(status, ageAllowed, true) === "DiscardDraft";
@@ -148,6 +168,20 @@ export function lawBannedNumberNeverReadsDraft(status: string, ageAllowed: boole
 export function lawDraftReadNeedsJoinableAge(status: string, ageAllowed: boolean, banned: boolean): boolean {
   //@ ensures \result === true
   return !(signupDraftClaimRoute(status, ageAllowed, banned) === "ReadDraft") || (ageAllowed && !banned && signupMembershipCanDraft(status));
+}
+
+/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+//@ pure
+export function lawRefusedSessionReadsNoDraft(banned: boolean): boolean {
+  //@ ensures \result === true
+  return signupDraftRefusedRoute(banned) !== "ReadDraft";
+}
+
+/** Story: Review the draft when I finish signup on the connection page / The Finish signup step reads the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+//@ pure
+export function lawRefusedBannedSessionDeletesDraft(banned: boolean): boolean {
+  //@ ensures \result === true
+  return !banned || signupDraftRefusedRoute(banned) === "DiscardDraft";
 }
 
 /** Story: Review the draft when I finish signup on the connection page / A draft is read only by the phone, app and person that saved it (spec/mcpSignupDraft.md) */
@@ -195,6 +229,7 @@ export function enabled(current: DraftPreparation, event: Event): boolean {
   if (event.type === "observeOwner") return canObserveOwner(current);
   if (event.type === "observeMembership") return canObserveMembership(current);
   if (event.type === "observeWrite") return canObserveWrite(current);
+  if (event.type === "observeAgeAfterWrite") return canObserveAgeAfterWrite(current);
   return false;
 }
 
@@ -208,6 +243,7 @@ export function step(current: DraftPreparation, event: Event): DraftPreparation 
   if (event.type === "observeOwner") return canObserveOwner(current) ? observeOwner(current, event.ownerMatches) : current;
   if (event.type === "observeMembership") return canObserveMembership(current) ? observeMembership(current, event.status) : current;
   if (event.type === "observeWrite") return canObserveWrite(current) ? observeWrite(current, event.saved) : current;
+  if (event.type === "observeAgeAfterWrite") return canObserveAgeAfterWrite(current) ? observeAgeAfterWrite(current, event.allowed) : current;
   return current;
 }
 
@@ -230,6 +266,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "observeOwner" && typeof raw.ownerMatches === "boolean") return { type: "observeOwner", ownerMatches: raw.ownerMatches };
   if (raw.type === "observeMembership" && typeof raw.status === "string") return { type: "observeMembership", status: raw.status };
   if (raw.type === "observeWrite" && typeof raw.saved === "boolean") return { type: "observeWrite", saved: raw.saved };
+  if (raw.type === "observeAgeAfterWrite" && typeof raw.allowed === "boolean") return { type: "observeAgeAfterWrite", allowed: raw.allowed };
   return undefined;
 }
 
@@ -247,7 +284,7 @@ export function parseState(x: unknown): DraftPreparation | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "ReadConnection" || raw.phase === "CheckAge" || raw.phase === "CheckOwner" || raw.phase === "CheckMembership" || raw.phase === "WriteDraft" || raw.phase === "Prepared" || raw.phase === "GrantRefused" || raw.phase === "UseJoinForm" || raw.phase === "AgeRefused" || raw.phase === "ExistingProfile" || raw.phase === "WriteRefused") && Object.keys(raw).length === 1)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "ReadConnection" || raw.phase === "CheckAge" || raw.phase === "CheckOwner" || raw.phase === "CheckMembership" || raw.phase === "WriteDraft" || raw.phase === "RecheckAge" || raw.phase === "Prepared" || raw.phase === "GrantRefused" || raw.phase === "UseJoinForm" || raw.phase === "AgeRefused" || raw.phase === "ExistingProfile" || raw.phase === "WriteRefused") && Object.keys(raw).length === 1)) return undefined;
   const parsed: DraftPreparation = ({ phase: raw.phase });
   return inv(parsed) ? parsed : undefined;
 }

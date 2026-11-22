@@ -40,6 +40,7 @@ do $$ begin
       check (step in ('phone', 'code', 'consent', 'enrolling', 'enrolled'));
   end if;
 end $$;
+alter table oauth.auth_requests add column if not exists handoff jsonb;
 create index if not exists auth_requests_expires on oauth.auth_requests (expires_at);
 create index if not exists auth_requests_by_person on oauth.auth_requests (person_id, app_id) where person_id is not null;
 

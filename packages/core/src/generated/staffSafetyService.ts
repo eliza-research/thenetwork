@@ -51,6 +51,19 @@ export function staffSafetyAuditScope(targets: number): string {
 
 /** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
 //@ pure
+export function staffSafetyActionReach(allAppsAuthority: boolean, linkedPerson: boolean): string {
+  return allAppsAuthority && linkedPerson ? "all" : "app";
+}
+
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
+//@ pure
+export function lawAppStaffReachOneApp(linkedPerson: boolean): boolean {
+  //@ ensures \result === true
+  return staffSafetyActionReach(false, linkedPerson) === "app";
+}
+
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
+//@ pure
 export function lawLocalStaffTargetStaysInScope(requestedRuntime: boolean): boolean {
   //@ ensures \result === true
   return !staffSafetySelectsTarget(false, requestedRuntime) || requestedRuntime;
@@ -359,8 +372,28 @@ export function lawOtherSignalsLeaveParticipation(kind: string, saved: string): 
 
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
 //@ pure
+export function agentSignalEvidenceShown(safetyRole: boolean, ageInDoubt: boolean): boolean {
+  return safetyRole || !ageInDoubt;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
 export function agentSignalDecisionAllowed(safetyRole: boolean, phase: AgentSignalPhase): boolean {
   return safetyRole && phase === "SignalWaiting";
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawReviewerNeverReadsMinorEvidence(ageInDoubt: boolean): boolean {
+  //@ ensures \result === true
+  return !ageInDoubt || !agentSignalEvidenceShown(false, ageInDoubt);
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawAdultEvidenceShownToReviewers(safetyRole: boolean): boolean {
+  //@ ensures \result === true
+  return agentSignalEvidenceShown(safetyRole, false);
 }
 
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */

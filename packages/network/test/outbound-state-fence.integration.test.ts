@@ -97,14 +97,21 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
     expect(await message("sd020-update")).toBe("expired");
 
     const version = async () => String((await sql`select xmin::text as v from network.network_state where id='friends:nyc'`)[0]?.v);
+    const storedOptOut = async () => (await sql`select opted_out from network.members where app_id=${app.id} and id=${first!}`)[0]?.opted_out;
+    const text = (id: string, body: string) => ({ kind: "message" as const, channel: "sim" as const, messageId: id, from: phones[0]!,
+      to: "+12125550480", chatId: phones[0]!, isGroup: false, text: body, mediaUrls: [], transport: "sim" as const, receivedAt: clock.now() });
     await a.adapter.queue.setLineSafety("review");
     await rtA.unitOfWork(() => { rtA.unit.sends.push({ ...update("sd020-copy", 0), oppId: undefined }); });
     expect(await message("sd020-copy")).toBe("retry_scheduled");
+    await a.service.inbound(text("sd020-stop", "STOP"), { app: app.id });
+    expect(await storedOptOut()).toBe(true);
+    expect(rtA.net.exportState().members.find(m => m.id === first)?.optedOut).toBe(true);
     const saved = await version();
-    await rtB.unitOfWork(net => { net.importState(net.exportState()); });
+    clock.advance(60_000);
+    await b.service.inbound(text("sd020-start", "START"), { app: app.id });
+    expect(await storedOptOut()).toBe(false);
     expect(await version()).not.toBe(saved);
-    const copy = rtA.net.exportState();
-    rtA.net.importState({ ...copy, members: copy.members.map(m => m.id === first ? { ...m, optedOut: true } : m) });
+    expect(rtA.net.exportState().members.find(m => m.id === first)?.optedOut).toBe(true);
     await a.adapter.queue.setLineSafety(undefined);
     clock.advance(HOUR);
     await rtA.deliver();

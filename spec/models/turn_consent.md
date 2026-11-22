@@ -46,7 +46,7 @@ Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md
 //     while it ran). Run ids: message m, run k -> m + 10 * k. The gateway waits for the answer of its latest request.
 //   - Readers are oracles. The message kind is chosen when the person sends it: "Stop" is a text that
 //     detectKeyword reads as STOP; "StopLikely" is a text the person means as STOP that the reader does
-//     not read as STOP (SD-032: "STOP!! I said stop"). The routing decision (service.ts:964-1010) is an oracle,
+//     not read as STOP (SD-032: "STOP!! I said stop"). The routing decision (service.ts NetworkService.route) is an oracle,
 //     except START after a global STOP, which goes to the app the STOP named (SD-318 fix).
 //   - Gateway assumptions (upstream code, not in this repository): the gateway retries a retryable answer
 //     and a timed-out request with the same messageId; it stops at a final answer; it copies a handled
@@ -55,7 +55,7 @@ Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md
 //     it sends the collected replies only when the fence lets the app send. It retries one message for hours, never
 //     past the inbox retention of 7 days ("a provider retries for hours, not weeks", inbox.ts purge).
 //   - The Network's reply to a member is an oracle; the Network refuses replies to a member whose
-//     network row is opted out (network.ts:1992, 4221), so the reply depends on the projection, not
+//     network row is opted out (network.ts Network.send through checkRecipient), so the reply depends on the projection, not
 //     on the ledger.
 module turn_consent {
   // ------------------------------------------------------------------ constants
@@ -63,9 +63,9 @@ module turn_consent {
   pure val MSGS: Set[int] = Set(1, 2, 3, 4)
   pure val KINDS: Set[str] = Set("Stop", "StopLikely", "Start", "Help", "Leave", "Join", "Chat")
   pure val TICK_STEPS: Set[int] = Set(1, 5, 21, 2 * DAY + 1, 8 * DAY, 31 * DAY)
-  /** inbox.ts:42 PROCESSING_LEASE_MS = 2 min. */
+  /** spec/signedInbox.md processingLeaseMs = 2 min (inbox.ts Inbox.signed). */
   pure val LEASE: int = 4
-  /** inbox.ts:46 UNRESOLVED_BLOCK_MS = 10 min. */
+  /** spec/signedInbox.md unresolvedBlockMs = 10 min (inbox.ts Inbox.signed). */
   pure val BLOCK: int = 20
   pure val DAY: int = 2880
   /** service.ts stopHint gap: 30 days. */
@@ -309,7 +309,7 @@ module turn_consent {
                   consent: if (ok) { has: true, state: "in", scope: "app", app: target, at: cat } else wk.consent,
                   replies: if (ok) wk.replies.union(Set("reply")) else wk.replies } }
         } else {
-          // The join ask; a stated age is kept in pending_texts (c2). collectGate (service.ts direct) refuses the ask when
+          // The join ask; a stated age is kept in pending_texts (c2). directReplyCollectable (service.ts direct) refuses the ask when
           // the app's ledger reads opted out; the hint goes instead.
           val h = hint(wd, target, t, isBanned)
           val ask = if (isOut(wd.ledger, target)) Set() else Set("reply")
@@ -322,7 +322,7 @@ module turn_consent {
           { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9 } }
         } else {
           // stopHint, then the member's unit of work. The Network answers only a member whose row is not opted out, and
-          // collectGate (runtime.ts writeUnit) refuses its reply when the app's ledger reads opted out.
+          // storedReplyAdmitted (service.ts sharedTurn) refuses the answer with its reply when the app's ledger reads opted out.
           val h = hint(wd, target, t, isBanned)
           val netReply = c1 and not(wd.optOut.get(target)) and not(isOut(wd.ledger, target))
           { wd: h.wd,
@@ -333,7 +333,7 @@ module turn_consent {
       } else if (isBanned) {
         { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9 } }
       } else {
-        // A non-member's text: the join ask (refused by collectGate when the app's ledger reads opted out), then stopHint.
+        // A non-member's text: the join ask (refused by directReplyCollectable when the app's ledger reads opted out), then stopHint.
         val h = hint(wd, target, t, isBanned)
         val ask = if (isOut(wd.ledger, target)) Set() else Set("reply")
         { wd: h.wd, gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(ask).union(if (h.sent) Set("compliance") else Set()) } }
@@ -482,6 +482,11 @@ module turn_consent {
         else { ...NORESP, kind: "err", err: "turn_unresolved", retry: false }
       // sharedTurn replay of an open turn (SD-313 fix): the current context when an open turn is still allowed
       // (sharedContext is taken as available on a replay); turn_context_changed only when it is not.
+      // In the code, service.ts sharedTurn also answers 409 turn_context_changed, final, when the member binding changed
+      // (openReplayAnswer with storedReplyAdmitted). When the number is admitted and the binding is the same member but
+      // sharedContext is unavailable on the replay, the code answers handled with the fixed reply through the collected
+      // leak guard and stores that handled answer (openReplayFixedReply, 2026-11-22). The model does not choose an
+      // unavailable context, so that fixed-reply replay is outside the model.
       val ans2: Resp = if (ans.kind != "open") admitted(w, ans)
         else if (openAllowed(ans.app)) { ...ans, ctx: w.ctx }
         else { ...NORESP, kind: "err", err: "turn_context_changed", retry: false }
@@ -544,7 +549,7 @@ module turn_consent {
   }
 
   /**
-   * service.ts sharedTurn, storedTurnAdmitted: a handled answer (the first one or a replay) that holds a non-compliance
+   * service.ts sharedTurn, storedReplyAdmitted: a handled answer (the first one or a replay) that holds a non-compliance
    * reply goes out only while the number is still admitted (numberAllowed: no hold, no ban, the app's ledger not opted
    * out); otherwise turn_context_changed, final. Banned and held numbers get no such reply in this model, so the ledger
    * decides. The onboarding prompt (an unknown age) is outside the model.
@@ -941,8 +946,8 @@ module turn_consent {
    * noReplyAfterStop. Rule: service.ts stopHint and founder decision 2026-10-11 #22: after STOP only the hint and
    * confirmations go out. A non-compliance reply that a run decided after it had read an opted-out ledger is never
    * delivered past the fence. Signed path only (the legacy path never feeds the fence).
-   * Q-turn_consent-5 is closed in the backend: collectGate (decisions.ts; service.ts direct, runtime.ts writeUnit)
-   * refuses a non-compliance reply when the app's ledger reads opted out, and storedTurnAdmitted (service.ts
+   * Q-turn_consent-5 is closed in the backend: directReplyCollectable (spec/signedInbox.md; service.ts direct)
+   * refuses a non-compliance direct reply when the app's ledger reads opted out, and storedReplyAdmitted (service.ts
    * sharedTurn) refuses a handled answer with such a reply when the ledger reads opted out at answer time. In the
    * model the direct path's read and collect are one step (in the code they are two statements). The fence half of
    * SD-029 and Q-turn_consent-1 (the fence never learns the opt-out) is checked by fenceMatchesLedger.
@@ -1419,8 +1424,8 @@ module turn_consent {
       .expect(gw.get(1).ans.consent.state == "out" and isOut(w.fence, "A") and fenceMatchesLedger and safety)
 
   /**
-   * Q-turn_consent-5 (closed by collectGate): a leave of A runs in the compliance slot beside a chat to A. The leave
-   * commits; the chat of the non-member gets no join ask (collectGate reads the opted-out ledger), only the hint.
+   * Q-turn_consent-5 (closed by directReplyCollectable): a leave of A runs in the compliance slot beside a chat to A. The leave
+   * commits; the chat of the non-member gets no join ask (directReplyCollectable reads the opted-out ledger), only the hint.
    */
   run q5ReplyBeforeFenceTest =
     initWith("active", "none", false, false)

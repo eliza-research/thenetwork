@@ -25,28 +25,6 @@ on:
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
   pull_request:
-    paths:
-      - 'spec/**'
-      - 'packages/core/src/generated/**'
-      - 'packages/core/src/vibe/**'
-      - 'scripts/spec-snapshots.ts'
-      - 'tools/vibestack/**'
-      - 'scripts/vibestack.ts'
-      - 'apps/site/**'
-      - 'sites/**'
-      - 'packages/design-system/**'
-      - 'packages/ui/**'
-      - 'deploy/router.ts'
-      - 'packages/platform/src/**'
-      - 'scripts/sites-dev.ts'
-      - 'test/bombadil.ts'
-      - 'test/fixtures/browserSignup.ts'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.nvmrc'
-      - '.github/workflows/vibespec.yml'
-  # The full check (spec check, proofs, every conformance journey under test/drivers) runs on demand and nightly.
   schedule:
     - cron: '41 3 * * *'
   workflow_dispatch:
@@ -90,7 +68,6 @@ jobs:
       - run: pnpm run spec:explore
 
   full-check:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:

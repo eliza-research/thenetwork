@@ -24,7 +24,7 @@ import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
 import { bookingNoticeRosterCurrent, originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
-import { bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetryMs, dayBeforeReminderEndMs, meetingFeedbackPrefix, meetingFeedbackWindow, queuedBookingCancellationClaim, queuedMeetingFeedbackClaim, queuedReminderClaim, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
+import { bookingNoticePending, bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetryMs, dayBeforeReminderEndMs, meetingFeedbackPrefix, meetingFeedbackWindow, queuedBookingCancellationClaim, queuedMeetingFeedbackClaim, queuedReminderClaim, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
@@ -149,7 +149,7 @@ function terminalNotice(row: QueueRow): TerminalNotice | undefined {
   if (row.kind === "transactional" && row.id === `${bookedCancellationPrefix}${key}`) return "booking";
 }
 
-type BookingReceipt = { status: string; sent_at: Date | null };
+type BookingReceipt = { status: string; sent_at: Date | null; gateway_reply: boolean };
 
 function receivedBookingNotice(receipt: BookingReceipt, now: number): boolean {
   return bookingNoticeReceived(receipt.status, receipt.sent_at?.getTime() ?? -1, now);
@@ -159,7 +159,7 @@ export async function currentBookingReceipt(tx: SQL, app: string, oppId: string,
   revision: number, lane: string | null): Promise<BookingReceipt | undefined> {
   const key = rescheduleUpdateKey(oppId, revision, memberId);
   const changed = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;
-  const notices = await tx<BookingReceipt[]>`select receipt.status,receipt.sent_at from network.messages notice
+  const notices = await tx<BookingReceipt[]>`select receipt.status,receipt.sent_at,notice.inbound_id is not null as gateway_reply from network.messages notice
     join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
     where notice.app_id=${app} and notice.opportunity_id=${oppId} and notice.member_id=${memberId}
       and notice.direction='outbound' and ${revision === 0 ? tx`notice.type='proposal'` : tx`notice.type='scheduling' and notice.id=${changed}`}
@@ -172,7 +172,8 @@ async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, 
   const deliveryPrefix = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:` : "";
   const prefix = `${deliveryPrefix}${rescheduleUpdatePrefix(oppId)}`;
   const suffix = `:${memberId}`;
-  const notices = await tx<(BookingReceipt & { id: string; type: string })[]>`select notice.id,notice.type,receipt.status,receipt.sent_at
+  const notices = await tx<(BookingReceipt & { id: string; type: string })[]>`select notice.id,notice.type,receipt.status,receipt.sent_at,
+    notice.inbound_id is not null as gateway_reply
     from network.messages notice join platform.outbound receipt
       on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
     where notice.app_id=${app} and notice.opportunity_id=${oppId} and notice.member_id=${memberId} and notice.direction='outbound'
@@ -186,7 +187,6 @@ async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, 
   });
 }
 
-/** The exact outbound record and accepted seat authorize a closed outcome notice. */
 async function releaseAdmission(tx: SQL, row: QueueRow, kind: TerminalNotice, runtimeId: string, now: number): Promise<ClaimCheck> {
   const refused = { ok: false, reason: "opportunity_release_changed" } as const;
   if (!row.memberId || !row.oppId) return refused;
@@ -207,7 +207,7 @@ async function releaseAdmission(tx: SQL, row: QueueRow, kind: TerminalNotice, ru
   const current = bookedCancellationAllowed(release.state === "CANCELLED", release.status === "accepted", release.told, start - now);
   const receipts = current ? await cancellationBookingReceipts(tx, row.app, row.oppId, row.memberId, release.revision, release.lane) : [];
   switch (queuedBookingCancellationClaim(current, receipts.some(receipt => receivedBookingNotice(receipt, now)),
-    receipts.some(receipt => bookingNoticeReceiptMayArrive(receipt.status)))) {
+    receipts.some(receipt => bookingNoticeReceiptMayArrive(receipt.status, receipt.gateway_reply)))) {
     case "SendCancellation": return { ok: true };
     case "WaitForCancellationReceipt":
       return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, start) };
@@ -232,10 +232,8 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
   const current = row.id === bookedReminderKey(kind, row.oppId, row.memberId, meeting.revision)
     && bookedReminderWindow(kind, now, start);
   const receipt = current ? await currentBookingReceipt(tx, row.app, row.oppId, row.memberId, meeting.revision, meeting.lane) : undefined;
-  const status = receipt?.status;
-  const accepted = !!receipt && receivedBookingNotice(receipt, now);
-  const pending = status !== undefined && (WAITING.includes(status) || ["collected", "send_unknown", "parked_leak_review"].includes(status));
-  switch (queuedReminderClaim(current, accepted, pending)) {
+  switch (queuedReminderClaim(current, !!receipt && receivedBookingNotice(receipt, now),
+    !!receipt && bookingNoticePending(receipt.status, receipt.gateway_reply))) {
     case "SendReminder": return { ok: true };
     case "WaitForBookingNotice": {
       const cutoff = start - (kind === "day-before-reminder" ? dayBeforeReminderEndMs : 0);
@@ -245,7 +243,6 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
   }
 }
 
-/** spec/meetingSettlement.md, "Send feedback requests during the open attendance period" */
 async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<ClaimCheck> {
   const refused = { ok: false, reason: "meeting_feedback_changed" } as const;
   if (!row.memberId || !row.oppId || row.kind !== "transactional") return refused;
@@ -269,7 +266,7 @@ async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: strin
   const receipt = meeting.open && meeting.accepted && exact && meetingFeedbackWindow(elapsed)
     ? await currentBookingReceipt(tx, row.app, row.oppId, row.memberId, meeting.revision, meeting.lane) : undefined;
   switch (queuedMeetingFeedbackClaim(meeting.open, meeting.accepted, exact, elapsed,
-    !!receipt && receivedBookingNotice(receipt, now), !!receipt && bookingNoticeReceiptMayArrive(receipt.status))) {
+    !!receipt && receivedBookingNotice(receipt, now), !!receipt && bookingNoticeReceiptMayArrive(receipt.status, receipt.gateway_reply))) {
     case "SendMeetingFeedback": return { ok: true };
     case "WaitForMeetingBookingReceipt":
       return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, start + settlementDelayMs) };
@@ -580,15 +577,12 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
   const num = (k: string) => { const v = Number(o.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
   const checks: AppChecks = {
     live: o.live,
-    // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
     stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
       : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed"
         : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
           terminalNotice(row) !== undefined || row.id.startsWith(meetingFeedbackPrefix))),
     optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
     privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX),
-    // A direct text to someone who is not a member of this app (no member on the row, none at the address)
-    // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
     recipient: (row, agentInitiated) => {
       if (row.id.startsWith(lateArrivalDeliveryPrefix)) {
         const notice = parseLateArrivalDeliveryId(row.id);
@@ -601,12 +595,12 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
           ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
           : { ok: false, reason: "reengagement_changed" };
       }
+      if (venueBookingNoticeBase(row.id) && !rt.net.approvedBookingLink(row.oppId, row.memberId as MemberId | undefined, row.text, row.id)) {
+        return { ok: false, reason: "booking_changed" };
+      }
       return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
         : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated });
     },
-    // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
-    // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
-    // Allow only this row's mutually approved number or its exact public booking link.
     leaks: async row => {
       const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
       const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
@@ -620,35 +614,16 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
       return number ? { ...base, allow: [number] }
         : bookingLink ? { ...base, contactAllow: [bookingLink] } : base;
     },
-    // PgStore.save locks the state before erasing members. Dispatch takes the
-    // same order, then the existing admit check revalidates current parties.
     lockAdmission: async (row, tx) => {
-      // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
       await tx`select id from network.network_state where id=${rt.pg.id} for share`;
       if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
       if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
       if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
       if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
       if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
-      if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix)
-        || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix) || row.id.startsWith(meetingFeedbackPrefix)) {
-        await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-      }
-      if (row.id.startsWith(engineQuestionDeliveryPrefix)) {
-        await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
-      }
-      if (row.id.startsWith(friendPlanProbeDeliveryPrefix)) {
-        await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
-      }
-      if (row.id.startsWith(lateArrivalDeliveryPrefix)) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-      if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)
-        || bookedReminderKind(row.id) || terminalNotice(row) === "booking") {
-        await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-      }
       if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
       if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
     },
-    // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
     admit: async (row, tx) => {
       if (row.approvedPhotos?.length && !o.cloud) return { ok: false, reason: "approved_photos_require_cloud" };
       if (row.id.startsWith("ntf_")) {
@@ -706,8 +681,6 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
     capTake: row => rt.capTake(row.id, row.memberId as MemberId),
     capRelease: row => rt.capRelease(row.id),
   };
-  // spec/outboundAdmission.md, "A claim needs the Network state that its checks read"
-  // The stored checks above answer first; a row they admit waits when the runtime's copy is not the stored version.
   const admitStored = checks.admit!;
   checks.admit = async (row, tx) => {
     const decision = await admitStored(row, tx);

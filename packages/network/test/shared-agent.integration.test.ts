@@ -13,9 +13,13 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {CONTEXT_UNAVAILABLE_REPLY, lookingForAsk, NetworkService} from "../service/service.ts";
+import {inboxKeepMs} from "../../core/src/generated/platformRetention.ts";
+import {turnTombstoneKeepMs} from "../../core/src/generated/signedInbox.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
+import { applyBaseProfileGrants } from "../service/base-profile-share.ts";
+import { brandOf, copyFor } from "../src/copy.ts";
 
 const db = `network_signed_turn_${randomUUID().replaceAll("-", "")}`;
 const admin = new SQL({url:`postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/postgres`, max:1});
@@ -511,6 +515,80 @@ test("a member whose context is withheld gets the fixed handled reply, never sil
   expect(body).toMatchObject({outcome: "handled", app: "friends", memberId: member, reason: "context_unavailable", replyKind: "reply",
     replies: [CONTEXT_UNAVAILABLE_REPLY]});
   expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status: "collected", line: "dry-run"}]);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("a replayed open turn whose context became unavailable answers the fixed reply and keeps that answer", async () => {
+  const phone = "+12125550179", before = escaped;
+  const {joined} = await joinFriendsByText(phone, "replay-withheld");
+  const member = joined.memberId as string;
+  const chat = turn("replay-withheld-open", phone, "Tell me something about the weather", "friends");
+  const open = await (await post(chat)).json() as any;
+  expect(open).toMatchObject({outcome: "open", app: "friends", memberId: member});
+  await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
+  const replayed = await post(chat);
+  expect(replayed.status).toBe(200);
+  const body = await replayed.json() as any;
+  expect(body).toEqual({outcome: "handled", replies: [CONTEXT_UNAVAILABLE_REPLY], replyIds: ["sys:msg:blooio:replay-withheld-open:context"], delivery: "collected",
+    replyKind: "reply", accountEligible: true, app: "friends", memberId: member, reason: "context_unavailable"});
+  expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status: "collected", line: "dry-run"}]);
+  expect(await (await post(chat)).json()).toEqual(body);
+  const accepted = await receipt({channel: "blooio", messageId: "replay-withheld-open", replyIds: body.replyIds, providerMessageIds: ["provider-replay-withheld"],
+    historyRecorded: true, outcome: "accepted"});
+  expect(accepted.status).toBe(200);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("an admitted number whose membership no longer binds gets the fixed reply, not a silent handled turn", async () => {
+  const phone = "+12125550178", before = escaped;
+  const {joined} = await joinFriendsByText(phone, "unbound");
+  const member = joined.memberId as string;
+  await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
+  const person = (await service.accounts.personFor(phone))!;
+  await sql`update platform.people set lowest_age=null where id=${person.id}`;
+  await sql`delete from platform.age_floor where phone_hash=${service.accounts.phoneHash(phone)}`;
+  const answer = await post(turn("unbound-open", phone, "Tell me something about the weather", "friends"));
+  expect(answer.status).toBe(200);
+  const body = await answer.json() as any;
+  expect(body).toMatchObject({outcome: "handled", app: "friends", reason: "context_unavailable", replyKind: "reply", accountEligible: false,
+    replies: [CONTEXT_UNAVAILABLE_REPLY], replyIds: ["sys:msg:blooio:unbound-open:context"]});
+  expect(escaped).toBe(before);
+}, 60_000);
+
+// spec/baseProfileShare.md, "UNSHARE revokes every live grant to or from this app"
+test("UNSHARE takes a SHARE back, so a later grant read copies nothing", async () => {
+  const phone = "+12125550193", before = escaped;
+  const slopCopy = copyFor(brandOf(APPS.slop));
+  const {joined} = await joinFriendsByText(phone, "unshare");
+  const friendsMember = joined.memberId as string;
+  await service.runtimeFor("friends")!.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+    values ('friends', ${`${friendsMember}:unshare-climbing`}, ${friendsMember}, 'interest', 'rock climbing', '{}', 'matchable', 'said', 'confirmed', ${new Date(clock.now() - DAY)})`);
+  clock.advance(MINUTE);
+  expect((await post(turn("unshare-slop-start", phone, "slop.date", "slop"))).status).toBe(200);
+  clock.advance(MINUTE);
+  const slopJoin = await (await post(turn("unshare-slop-profile", phone, "Kit, 29", "slop"))).json() as any;
+  expect(slopJoin).toMatchObject({outcome: "handled", app: "slop", reason: "joined"});
+  expect(slopJoin.replies).toContain(slopCopy.linkNotice);
+  const slopMember = slopJoin.memberId as string;
+  clock.advance(MINUTE);
+  const shared = await (await post(turn("unshare-share", phone, "SHARE", "slop"))).json() as any;
+  expect(shared).toMatchObject({outcome: "handled", app: "slop", memberId: slopMember, replies: [slopCopy.shareDone]});
+  const person = (await service.accounts.personFor(phone))!;
+  const slopRuntime = service.runtimeFor("slop")!;
+  const copies = () => slopRuntime.scoped(tx => tx`select value from network.facets where app_id='slop' and member_id=${slopMember} and source='share_grant'`);
+  expect(await copies()).toEqual([{value: "rock climbing"}]);
+  clock.advance(MINUTE);
+  const unshared = await (await post(turn("unshare-unshare", phone, "unshare", "slop"))).json() as any;
+  expect(unshared).toMatchObject({outcome: "handled", app: "slop", memberId: slopMember, reason: "handled", replies: [slopCopy.unshareDone]});
+  expect(await sql`select from_app, to_app, revoked_at is not null as revoked from platform.share_grants where person_id=${person.id}`)
+    .toEqual([{from_app: "friends", to_app: "slop", revoked: true}]);
+  expect(await copies()).toEqual([{value: "rock climbing"}]);
+  await slopRuntime.scoped(tx => tx`delete from network.facets where app_id='slop' and member_id=${slopMember} and source='share_grant'`);
+  const read = await applyBaseProfileGrants({people: service.people, banned: async () => false, runtimeFor: app => service.runtimeFor(app), now: clock.now()},
+    person.id, {app: "slop", memberId: slopMember, runtime: slopRuntime});
+  expect(read).toBe(0);
+  expect(await copies()).toEqual([]);
+  expect(await (await post(turn("unshare-unshare", phone, "unshare", "slop"))).json()).toEqual(unshared);
   expect(escaped).toBe(before);
 }, 60_000);
 
@@ -1099,4 +1177,30 @@ test("explicit saved-profile reads select the app without consuming onboarding o
       ["friends", "slop"].map((app) => service.accounts.store.getMembership(person.id, app as "friends" | "slop")),
     ),
   ).toEqual(membershipBeforeGuards);
+}, 60_000);
+
+test("retention keeps a stuck signed turn until staff resolve it, then removes its tombstone", async () => {
+  const id = "msg:blooio:fault-after-effects";
+  const [before] = await sql`select status,sender_hash from platform.inbound where id=${id}`;
+  expect(before.status).toBe("unresolved");expect(before.sender_hash).not.toBeNull();
+  clock.advance(inboxKeepMs + turnTombstoneKeepMs + DAY);await service.purge();
+  const [kept] = await sql`select status,sender_hash from platform.inbound where id=${id}`;
+  expect(kept?.status).toBe("unresolved");expect(kept?.sender_hash).not.toBeNull();
+  expect(await service.inbox.resolve(id)).toBe(true);
+  await service.purge();
+  expect(await sql`select id from platform.inbound where id=${id}`).toEqual([]);
+}, 60_000);
+
+test("account erasure clears the sender key of a signed turn that staff never resolved", async () => {
+  const phone = "+12125550197";
+  await joinFriendsByText(phone, "erase-stuck");
+  const person = (await service.accounts.personFor(phone))!;
+  const at = new Date(clock.now() - DAY);
+  await sql`insert into platform.inbound (id, received_at, arrived_at, status, request_hash, sender_hash)
+    values ('msg:blooio:erase-stuck', ${at}, ${at}, 'unresolved', 'fixture-erase-hash', ${service.accounts.phoneHash(phone)})`;
+  expect(await service.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
+  expect(await sql`select status, sender_hash, sender, event from platform.inbound where id='msg:blooio:erase-stuck'`)
+    .toEqual([{ status: "unresolved", sender_hash: null, sender: null, event: null }]);
+  await service.purge();
+  expect(await sql`select id from platform.inbound where id='msg:blooio:erase-stuck'`).toEqual([{ id: "msg:blooio:erase-stuck" }]);
 }, 60_000);

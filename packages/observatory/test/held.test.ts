@@ -2,6 +2,7 @@
 // relay items, read from the Network service's staff API and released or rejected through it. A local
 // fake of the service; the console in real mode on a running server. Per app, audited, safety or admin
 // only, never a score, never a minor's text; a queue the service does not have yet is "not available".
+import { setTimeout as sleep } from "node:timers/promises";
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,6 +14,7 @@ import type { AuditEntry, HeldText } from "../src/types.ts";
 const T = 120_000;
 const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
 const TOK = { admin: long("adm-held"), safety: long("saf-held"), reviewer: long("rev-held"), analyst: long("ana-held") };
+const SERVICE_TIMEOUT_MS = 500, SLOW_SERVICE_MS = 2_000;
 const calls: { method: string; path: string; app: string | null; staff: string | null; body?: any }[] = [];
 let fake: HttpServer;
 let obs: ObservatoryServer;
@@ -43,11 +45,12 @@ beforeAll(async () => {
       ] });
       if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/photo$/.test(u.pathname)){
         if(u.pathname.includes("pri_"+"b".repeat(32)))return Response.json({error:"unavailable"},{status:403});
-        const bad=u.pathname.includes("pri_"+"c".repeat(32));
-        return new Response(bad?"<svg/>":Uint8Array.from([255,216,255,218,0,2,1,255,217]),{headers:{"content-type":bad?"image/svg+xml":"image/jpeg","x-network-photo-review-token":`${Date.now()+60_000}.${"a".repeat(64)}`}});
+        const bad=u.pathname.includes("pri_"+"c".repeat(32)),leads=u.pathname.includes("pri_"+"d".repeat(32));
+        return new Response(bad?"<svg/>":Uint8Array.from([255,216,255,218,0,2,1,255,217]),{headers:{"content-type":bad?"image/svg+xml":"image/jpeg","x-network-photo-review-token":`${Date.now()+(leads?10*60_000:60_000)}.${"a".repeat(64)}`}});
       }
       if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/(release|reject)$/.test(u.pathname)&&req.method==="POST")return Response.json({ok:true,delivered:false});
       if (u.pathname === "/staff/relay/rl_1/release" && req.method === "POST") return Response.json({ ok: true, delivered: true });
+      if ((u.pathname === "/safety/hold" || u.pathname === "/invite") && req.method === "POST") { await sleep(SLOW_SERVICE_MS); return Response.json({ ok: true }); }
       return Response.json({ error: "no route" }, { status: 404 });
     },
   });
@@ -55,7 +58,7 @@ beforeAll(async () => {
   obs = await createServer({
     port: 0, development: false, mode: "real", audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") }, peopleUrl: false, staffRolesUrl: false,
     tokens: `admin:${TOK.admin},safety@slop:${TOK.safety},reviewer@slop:${TOK.reviewer},analyst@slop:${TOK.analyst}`,
-    real: { url: undefined, pollMs: 3_600_000, pushMs: 3_600_000, service: { url: fake.url.href, token: long("console-svc") } },
+    real: { url: undefined, pollMs: 3_600_000, pushMs: 3_600_000, service: { url: fake.url.href, token: long("console-svc"), timeoutMs: SERVICE_TIMEOUT_MS } },
   });
 }, T);
 afterAll(async () => {
@@ -68,6 +71,10 @@ describe("held texts in the console", () => {
   test("leak review: safety reads the app's queue (no score, phone masked, a minor's text hidden); other roles cannot", async () => {
     for (const tok of [TOK.reviewer, TOK.analyst]) expect((await as(tok, "/api/held?app=slop&queue=leak")).status).toBe(403);
     expect((await as(TOK.safety, "/api/held?app=peon&queue=leak")).status).toBe(403);
+    const relayCalls = calls.length;
+    const reviewerRelay = await as(TOK.reviewer, "/api/held?app=slop&queue=relay");
+    expect([reviewerRelay.status, (await reviewerRelay.json()).error]).toEqual([403, "forbidden: ReadHeldRelay needs admin or safety for slop"]);
+    expect(calls.length).toBe(relayCalls);
     expect((await as(TOK.safety, "/api/held?app=slop&queue=other")).status).toBe(400);
     const r = await as(TOK.safety, "/api/held?app=slop&queue=leak");
     expect(r.status).toBe(200);
@@ -143,3 +150,35 @@ test("selected photo proxy binds staff/app/item preview before release; denied o
   expect(audited.entries.some(e=>e.action==="read_relay_photo"&&e.reason===headers["x-network-reason"])).toBe(true);
   expect(JSON.stringify(audited)).not.toMatch(/photoReviewToken|https?:.*sig=/);
 },T);
+
+test("a photo preview from a service clock that leads is kept for the console's five minutes, not refused as expired", async () => {
+  const id = "pri_" + "d".repeat(32), headers = { "x-network-reason": "Check this voluntarily selected item" };
+  const loadedAt = Date.now();
+  const preview = await as(TOK.safety, `/api/held/${id}/photo?app=slop`, { headers });
+  expect(preview.status).toBe(200);
+  expect([...new Uint8Array(await preview.arrayBuffer())]).toEqual([255, 216, 255, 218, 0, 2, 1, 255, 217]);
+  const release = await post(TOK.safety, "/api/held?app=slop", { queue: "relay", id, decision: "release", reason: "Selected item consent and safety checked", photoReviewed: true });
+  expect(release.status).toBe(200);
+  const call = calls.filter(c => c.path === `/staff/relay/${id}/release`).at(-1)!;
+  expect(Number(String(call.body.photoReviewToken).split(".")[0])).toBeGreaterThan(loadedAt + 5 * 60_000);
+}, T);
+
+test("a staff action whose service answer times out is reported and audited as an unknown outcome, not as a failure", async () => {
+  const hold = await post(TOK.safety, "/api/safety?app=slop", { action: "hold", memberId: "slop_m1", note: "two reports of threats" });
+  expect(hold.status).toBe(504);
+  expect(await hold.json()).toMatchObject({ ok: false, code: "service_timeout", error: expect.stringContaining("may have run") });
+  const step = await post(TOK.admin, "/api/staff/invite?app=ntwrk", { phone: "+12125550188", note: "founder referral" });
+  expect(step.status).toBe(504);
+  expect(await step.json()).toMatchObject({ ok: false, code: "service_timeout" });
+  const slop = await (await as(TOK.admin, "/api/audit?app=slop")).json() as { entries: AuditEntry[] };
+  expect(slop.entries.filter(e => e.action === "safety_hold").map(e => e.detail)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ phase: "requested" }),
+    expect.objectContaining({ phase: "result", code: "service_timeout", outcome: "unknown" }),
+  ]));
+  const ntwrk = await (await as(TOK.admin, "/api/audit?app=ntwrk")).json() as { entries: AuditEntry[] };
+  expect(ntwrk.entries.filter(e => e.action === "step_invite_member").map(e => e.detail)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ phase: "requested" }),
+    expect.objectContaining({ phase: "result", code: "service_timeout", outcome: "unknown" }),
+  ]));
+  expect(calls.filter(c => c.method === "POST" && (c.path === "/safety/hold" || c.path === "/invite"))).toHaveLength(2);
+}, T);

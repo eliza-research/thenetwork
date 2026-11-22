@@ -69,9 +69,15 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   expect((await signed(RELAY_PATH,"relay-1",JSON.stringify(ok))).status).toBe(400);
   expect((await signed(RELAY_PATH,"other-key",JSON.stringify(ok))).status).toBe(400);
   expect((await post({...ok,messageId:"ari-setup-0"})).status).toBe(403);
-  // The text is the member's own message of that turn, never model wording; an item the turn did not offer is refused.
   expect((await post({...ok,text:"tell Bo something the model invented"})).status).toBe(403);
-  expect((await post({...ok,itemId:"relay-op"})).status).toBe(403);
+  const [offered]=await sql`select response from platform.inbound where id='msg:blooio:relay-1'`;
+  expect(offered.response.context.activeItems).toEqual([{id:"relay-op",kind:"match",summary:"Match with Bo"}]);
+  expect((await post({...ok,itemId:"relay-op-not-offered"})).status).toBe(403);
+  const fixtureOpps=async(edit:(opps:any[])=>any[])=>service.runtimeFor("friends")!.unitOfWork(net=>{const st=net.exportState();st.opps=edit(st.opps as any[]) as any;net.importState(st);});
+  await fixtureOpps(opps=>[...opps,{...opps.find(o=>o.id==="relay-op"),id:"relay-op-2",objective:"a picnic",createdAt:clock.now()}]);
+  expect((await service.runtimeFor("friends")!.readState(n=>n.relayLiveMatches(ari as any).map(x=>x.match.id))).sort()).toEqual(["relay-op","relay-op-2"]);
+  expect((await post({...ok,itemId:"relay-op-2"})).status).toBe(403);
+  await fixtureOpps(opps=>opps.filter(o=>o.id!=="relay-op-2"));
   expect((await post({...ok,allow:["+12125550100"]} as RelaySendRequest)).status).toBe(400);
   expect((await post({...ok,text:"x".repeat(20_000)})).status).toBe(413);
   const unsigned=await fetch(new URL(RELAY_PATH,server.url),{method:"POST",body:JSON.stringify(ok),headers:{"content-type":"application/json"}});expect(unsigned.status).toBe(401);
@@ -173,4 +179,29 @@ test("the thread persists after the date: a text 9 days after the meeting is sti
   expect(await late.json()).toMatchObject({decision:"pass",delivered:false});
   const rows=await sql`select body from network.messages where app_id='friends' and id like 'relay:%' and member_id=${bo} order by ts desc limit 1`;
   expect(rows[0]?.body).toContain("want to go again next weekend");
+},60_000);
+
+test("a relayed text that says the sender is under 18 is blocked and starts the minors policy: the minor signal on the person, a safety case, and the match closed (audit ST-D2)",async()=>{
+  const relayed=async()=>(await sql`select id from network.messages where app_id='friends' and id like 'relay:%'`).length,before=await relayed();
+  const state=async()=>{const [{state:s}]=await sql`select state from network.network_state where id='friends:nyc'`;return typeof s==="string"?JSON.parse(s):s;};
+  const req=await ask("ari","relay-minor","tell Bo I have homeroom on weekday mornings so only weekends work for me");
+  const prior=(await state()).members.find((m:any)=>m.id===ari);
+  expect([!!prior.minor,!!prior.minorSignal]).toEqual([false,false]);
+  expect((await state()).opps.find((o:any)=>o.id==="relay-op").stage).not.toBe("closed");
+  const r=await post(req);
+  expect(r.status).toBe(200);
+  expect(await r.json()).toMatchObject({decision:"block",delivered:false,replayed:false});
+  expect(await relayed()).toBe(before);
+  expect((await sql`select age_signal,decision from network.relay_records where app_id='friends' and from_member=${ari} order by at desc limit 1`)[0]).toMatchObject({age_signal:true,decision:"block"});
+  const st=await state();
+  expect(st.members.find((m:any)=>m.id===ari)).toMatchObject({minor:true,minorSignal:true});
+  const kinds=(id:string)=>st.cases.filter((c:any)=>c.memberId===id).flatMap((c:any)=>c.events.map((e:any)=>e.kind));
+  expect(kinds(ari)).toEqual(expect.arrayContaining(["relay_age_signal","minor_after_contact"]));
+  expect(kinds(ari)).not.toContain("age_review");
+  expect(kinds(bo)).toContain("contact_with_minor");
+  expect(st.opps.find((o:any)=>o.id==="relay-op").stage).toBe("closed");
+  expect(JSON.stringify(st.cases)).not.toContain("homeroom");
+  const [{person_id:person}]=await sql`select person_id::text from network.members where app_id='friends' and id=${ari}`;
+  expect(person).toBeTruthy();
+  expect((await sql`select person_id::text from platform.person_minor_signals where person_id=${person}::uuid`).map((x:any)=>x.person_id)).toEqual([person]);
 },60_000);

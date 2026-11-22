@@ -1,5 +1,6 @@
 // GENERATED from spec/opsAlertDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { publicEventHorizonDays as publicEventCatalog_publicEventHorizonDays, publicEventRefreshMs as publicEventCatalog_publicEventRefreshMs, publicEventRetryMs as publicEventCatalog_publicEventRetryMs, publicEventFreshDays as publicEventCatalog_publicEventFreshDays, publicEventScanMaxBytes as publicEventCatalog_publicEventScanMaxBytes, publicEventScanRowLimit as publicEventCatalog_publicEventScanRowLimit, publicEventScanResponseAllowed as publicEventCatalog_publicEventScanResponseAllowed, publicEventScanComplete as publicEventCatalog_publicEventScanComplete, publicEventPublicationNewer as publicEventCatalog_publicEventPublicationNewer, publicEventCatalogFresh as publicEventCatalog_publicEventCatalogFresh, publicEventDuplicateAllowed as publicEventCatalog_publicEventDuplicateAllowed, publicEventRevisionMatches as publicEventCatalog_publicEventRevisionMatches, publicEventMemberAllowsMatch as publicEventCatalog_publicEventMemberAllowsMatch, publicEventWindowUsable as publicEventCatalog_publicEventWindowUsable, publicEventClaimAllowed as publicEventCatalog_publicEventClaimAllowed, closedPublicEventIsUnsent as publicEventCatalog_closedPublicEventIsUnsent, publicBookedEventLinkAllowed as publicEventCatalog_publicBookedEventLinkAllowed, publicEventRefreshDue as publicEventCatalog_publicEventRefreshDue, lawPartialEventScanCannotPublish as publicEventCatalog_lawPartialEventScanCannotPublish, lawCatalogExpiresAtLimit as publicEventCatalog_lawCatalogExpiresAtLimit, lawConflictingPublicEventRowsCannotPublish as publicEventCatalog_lawConflictingPublicEventRowsCannotPublish, lawEventMinimumAgeAppliesToAdults as publicEventCatalog_lawEventMinimumAgeAppliesToAdults, lawMovedPublicEventCannotAuthorizeClaim as publicEventCatalog_lawMovedPublicEventCannotAuthorizeClaim, lawRefreshDueBeforeCatalogExpires as publicEventCatalog_lawRefreshDueBeforeCatalogExpires, lawRecentAttemptWaits as publicEventCatalog_lawRecentAttemptWaits, publicEventAllowed as publicEventCatalog_publicEventAllowed } from "./publicEventCatalog.ts";
 
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 export interface FiringEvidence { episodeOpen: boolean; postedBefore: boolean; latestLevel: string; sentLevel: string; bumpOnCount: boolean; latestCount: number; sentCount: number; elapsedMs: number; repeatMs: number }
@@ -35,6 +36,8 @@ export const turnWatchReplyAfterMs: number = 900000;
 export const turnWatchWindowMs: number = 86400000;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export const initial: AlertDispatch = { phase: "AwaitingNotices" };
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+export const catalogStaleAfterMs: number = exact_opsAlertDispatch(publicEventCatalog_publicEventRefreshMs + publicEventCatalog_publicEventRetryMs);
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -237,6 +240,33 @@ export function lawTurnWatchKeysDiffer(first: TurnWatchCondition, second: TurnWa
   return !(first !== second) || turnWatchAlertKey(first) !== turnWatchAlertKey(second);
 }
 
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function catalogScanOverdue(scanned: boolean, scanAgeMs: number, uptimeMs: number): boolean {
+  return scanned ? scanAgeMs > catalogStaleAfterMs : uptimeMs > catalogStaleAfterMs;
+}
+
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawRecentScanIsQuiet(scanAgeMs: number, uptimeMs: number): boolean {
+  //@ ensures \result === true
+  return !(scanAgeMs <= catalogStaleAfterMs) || !catalogScanOverdue(true, scanAgeMs, uptimeMs);
+}
+
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawMissedDayAndRetryAlerts(uptimeMs: number): boolean {
+  //@ ensures \result === true
+  return catalogScanOverdue(true, exact_opsAlertDispatch(catalogStaleAfterMs + 1), uptimeMs);
+}
+
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawNewProcessWaitsForFirstScan(scanAgeMs: number): boolean {
+  //@ ensures \result === true
+  return !catalogScanOverdue(false, scanAgeMs, catalogStaleAfterMs);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: AlertDispatch, event: Event): boolean {
@@ -297,4 +327,10 @@ export function parseState(x: unknown): AlertDispatch | undefined {
 export function initialHolds(): AlertDispatch {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_opsAlertDispatch(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

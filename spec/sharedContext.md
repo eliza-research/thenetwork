@@ -124,7 +124,7 @@ pure def lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: int, sameNameAndDay: i
 
 ### A member whose context is unavailable still gets an answer
 
-When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The shared line never stays silent for a member. Added on 2026-11-17 (audit SHA40): before, the turn answered handled with no reply and the gateway called no model.
+When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The fixed reply goes to every admitted number, also when the active membership no longer matches the turn's member or the recorded age is unknown; the reply names nobody and carries no member data. A held, banned, suppressed or opted-out number, and a number with a recorded age under the join age, stays silent. Added on 2026-11-17 (audit SHA40): before, the turn answered handled with no reply and the gateway called no model. Changed on 2026-11-22 (audit sharedLineReplay-r39-3): before, the fixed reply went only to a number with a matching membership and a known age, so an admitted number with no matching binding got a handled turn with no reply.
 
 ```quint
 type OpenTurnAnswer = AnswerOpen | AnswerUnavailable
@@ -134,4 +134,16 @@ pure def openTurnAnswer(contextAvailable: bool): OpenTurnAnswer =
 
 pure def lawUnavailableContextStillAnswers(contextAvailable: bool): bool =
   (openTurnAnswer(contextAvailable) == AnswerUnavailable) == not(contextAvailable)
+
+pure def unavailableReplySent(numberAdmitted: bool, underJoinAge: bool): bool =
+  numberAdmitted and not(underJoinAge)
+
+pure def lawRefusedNumberStaysSilent(underJoinAge: bool): bool =
+  not(unavailableReplySent(false, underJoinAge))
+
+pure def lawUnderJoinAgeStaysSilent(numberAdmitted: bool): bool =
+  not(unavailableReplySent(numberAdmitted, true))
+
+pure def lawAdmittedNumberGetsTheFixedReply(numberAdmitted: bool): bool =
+  numberAdmitted implies unavailableReplySent(numberAdmitted, false)
 ```

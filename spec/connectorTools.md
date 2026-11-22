@@ -299,7 +299,7 @@ pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connecti
 
 ### A Join draft holds only an approved first name and home city, once per grant
 
-On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. The reply asks the person to connect again and choose Finish signup on the connection page, which shows the draft for the person to approve or correct ([signup drafts](mcpSignupDraft.md)). Changed: the reply used to say that the draft does not prefill any flow, because no page read it; the Finish signup step now reads it (audit MCP16 and SIG46).
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. The reply asks the person to connect again, choose Finish signup on the connection page and enter the approved details there ([signup drafts](mcpSignupDraft.md)). Changed: the reply used to say that the draft does not prefill any flow, because no page read it; the Finish signup step now reads it (audit MCP16 and SIG46). Changed again: the reply and the tool description said that the page shows the draft, but the shared signup view has no draft fields, so they now ask the person to enter the details on the page. Changed (review of MCP16): the next step asked the person to check their details and then to enter them again, which disagreed; the next step now asks the person to enter their details on the page, because the page does not show the draft yet.
 
 ```quint
 pure def canCallPrepareSignup(c: Connection): bool =
@@ -397,7 +397,7 @@ pure def lawFailedGateIsNeverShown(stillCurrent: bool, readerMatchable: bool, ab
 
 ### Request limits count each person's grant, and the client address has only a coarse ceiling
 
-Changed: the limits used to count every request by its client address, so all people who use one hosted assistant shared one count and one person's traffic refused another's (audit MCP14). An MCP request with a verified access token counts against its grant. A request without a verified token reaches only public facts and counts against its address bucket; that limit is 600 a minute, because people behind one hosted assistant share the address before they connect. A token request counts against the grant of the code or refresh token that it presents. Every MCP and token request also counts against a coarse address ceiling, which only stops a flood from one address. A client registration counts against its address bucket, with a higher hourly limit when every redirect address belongs to a known assistant host. The browser authorization pages keep their address limit, because the person's own browser sends them.
+Changed: the limits used to count every request by its client address, so all people who use one hosted assistant shared one count and one person's traffic refused another's (audit MCP14). An MCP request with a verified access token counts against its grant. A request without a verified token reaches only public facts and counts against its address bucket; that limit is 600 a minute, because people behind one hosted assistant share the address before they connect. A token request counts against the grant of the code or refresh token that it presents. Every MCP and token request also counts against a coarse address ceiling, which only stops a flood from one address. A client registration counts against one of two registration buckets of its address. A registration whose every redirect address belongs to a known assistant host counts against the assistant bucket, which has the higher hourly limit; any other registration counts against the address bucket. The two buckets count separately, so one address can make both counts in the same hour, and any caller that gives only assistant redirect addresses uses the assistant bucket. Changed (audit mcpSignup-r18-4): the shell chose the bucket itself and this rule named one bucket; the rule now names both buckets and the generated decision chooses the bucket. The generated limits are the default limit of each bucket; the shell counts against the limit configured for the chosen bucket, which is the generated default unless the handler options give another limit. Changed (review of mcpSignup-r18-4): this rule said that the generated decision also chose the limit, but the shell reads the limit from its configured table, so the rule now says what the shell does. The browser authorization pages keep their address limit, because the person's own browser sends them.
 
 ```quint
 type ConnectorLimitKey = AddressLimitKey | GrantLimitKey
@@ -413,8 +413,16 @@ pure val connectorAssistantRegisterPerAddressHour: int = 1000
 pure def connectorLimitKey(grantVerified: bool): ConnectorLimitKey =
   if (grantVerified) GrantLimitKey else AddressLimitKey
 
-pure def connectorRegisterLimit(assistantRedirect: bool): int =
-  if (assistantRedirect) connectorAssistantRegisterPerAddressHour else connectorRegisterPerAddressHour
+type RegisterBucket = AssistantRegisterBucket | AddressRegisterBucket
+
+pure def connectorRegisterBucket(assistantRedirect: bool): RegisterBucket =
+  if (assistantRedirect) AssistantRegisterBucket else AddressRegisterBucket
+
+pure def connectorRegisterLimit(bucket: RegisterBucket): int =
+  if (bucket == AssistantRegisterBucket) connectorAssistantRegisterPerAddressHour else connectorRegisterPerAddressHour
+
+pure def lawAssistantBucketOnlyForAssistantRedirects(assistantRedirect: bool): bool =
+  (connectorRegisterBucket(assistantRedirect) == AssistantRegisterBucket) iff assistantRedirect
 
 pure def lawVerifiedRequestsCountPerGrant(grantVerified: bool): bool =
   (connectorLimitKey(grantVerified) == GrantLimitKey) iff grantVerified
@@ -423,7 +431,7 @@ pure def lawAddressCeilingAboveEachPersonLimit(assistantRedirect: bool): bool =
   connectorAddressCeilingMinute >= connectorRequestsPerGrantMinute and
   connectorAddressCeilingMinute >= connectorAnonymousPerAddressMinute and
   connectorTokenAddressCeilingMinute >= connectorTokenPerGrantMinute and
-  connectorRegisterLimit(assistantRedirect) >= connectorRegisterPerAddressHour
+  connectorRegisterLimit(connectorRegisterBucket(assistantRedirect)) >= connectorRegisterPerAddressHour
 ```
 
 ### A connection can reach every tool result

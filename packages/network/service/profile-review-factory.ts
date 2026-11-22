@@ -26,7 +26,6 @@ export interface ProfileReviewCallbacks {
   profileSuggestionWithdrawalOwner: SuggestionWithdrawalOwnerResolver;
 }
 
-/** Binds source permission to the same database transaction's current canonical owner proof. */
 export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): ProfileReviewCallbacks {
   const identity = cloudProfileReviewOwner(o), post = profileReviewProofTransport(o);
   const transactions = new WeakMap<SQL, TransactionReview>();
@@ -42,7 +41,6 @@ export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): Profile
         || !Number.isSafeInteger(before) || before >= o.routePolicy.admitUntil) return null;
       const result = await post(PROFILE_REVIEW_DISCONNECT_PROOF_PATH, `connection-cleanup:${request.requestNonce}`, { request, requestSha256 });
       if (!result || result.now < before || result.now >= o.routePolicy.admitUntil) return null;
-      // The proof binds the original cleanup body hash, not the callback wrapper hash.
       const proof = parseProfileReviewDisconnectProof(result.value, request, requestSha256, result.now);
       return proof && proof.expiresAt <= o.routePolicy.admitUntil && o.now() >= result.now && o.now() < proof.expiresAt
         && o.now() < o.routePolicy.admitUntil ? proof : null;
@@ -96,7 +94,6 @@ export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): Profile
   };
 }
 
-/** Source-only bootstrap: no flag or incomplete real scope means no automatically granted access. */
 export function profileReviewFromEnv(env: Record<string, string | undefined>, now: () => number, fetchImpl?: typeof fetch): Partial<ProfileReviewCallbacks> {
   const enabled = env.NETWORK_PROFILE_REVIEW_ENABLED;
   if (enabled === undefined || enabled === "0") return {};

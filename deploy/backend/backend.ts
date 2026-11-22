@@ -1,4 +1,4 @@
-import { backendBoot, backendWebhookServed, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
+import { backendBoot, backendBootRefused, backendWebhookServed, databaseLogin, declaredEnvironment, minimumSecretLength, photoRelaySetup, type BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
 import { lineAndStaffFacts, lineAndStaffMessages } from "../../packages/network/service/line-staff-boot.ts";
 import { isBlooioWebhookPath } from "../../packages/network/service/serve.ts";
 import {
@@ -8,30 +8,8 @@ import { checkBackendHealth } from "../../packages/core/src/vibe/backendHealthSh
 import { finishBackendShutdown } from "../../packages/core/src/vibe/backendShutdownShell.js";
 import type { HealthStatus } from "../../packages/core/src/generated/backendHealth.ts";
 import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
-// The shared backend as one deployable process (docs/deploy.md). It wraps the Network service
-// (packages/network/service) for a host that gives the process one public port (Railway):
-//
-//   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
-//                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service); 404 on both
-//                                                 ports with NETWORK_CHANNEL=eliza_cloud, where the Eliza gateway owns the carrier
-//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates, /internal/relay
-//                                                 the Eliza gateway's signed calls (SERVICE_TURN_SECRET, checked by the service; STOP,
-//                                                 START, HELP and leave are answered inside the turn). A body over 256 KiB is refused here.
-//                          /mcp, /oauth/*, /.well-known/oauth-*   the MCP server (packages/mcp, mounted by server.ts; 404 when off)
-//                          /healthz               liveness for the platform health check and the external uptime monitor
-//                                                 (no data, no auth; 503 when the database is down or a network's tick is late)
-//                          /ops/metrics           queues, send outcomes, safety counts and today's cost (OPS_METRICS_TOKEN; 404 without it)
-//   STAFF_PORT (private)   everything the service's staff API answers (/health, /review, /safety/*, ...),
-//                          for the observatory console over the private network. Never on the public port.
-//
-// The site Workers (deploy/router.ts) forward the backend paths with headers signed by the platform's
-// proxy scheme (packages/platform/src/proxy.ts: x-network-proxy-{ip,host,ts,sig}, HMAC-SHA256 with
-// PLATFORM_PROXY_SECRET, 60 s window). This process checks them with that module's verifyProxyHeaders
-// before the public API or the MCP server sees the request: a verified request gets Host = the signed
-// site host (which picks the app) and keeps the signed visitor IP for the rate limits; any other
-// request loses every proxy and forwarding header, so a client can never pick either one.
 import { APPS, appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
-import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
+import { isProduction, requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
@@ -44,7 +22,6 @@ import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFre
 import { CALENDAR_SCHEDULING_MAX_BODY } from "../../packages/core/src/svc/calendar-scheduling.ts";
 
 export { PROXY_HEADERS };
-/** The visitor IP the public API reads (ipOf). Present only on a verified request. */
 export const CLIENT_IP = PROXY_HEADERS.ip;
 export const BUILD_HEADER = "x-network-build";
 const HEALTH_FAILURE = {
@@ -53,7 +30,6 @@ const HEALTH_FAILURE = {
   TickLate: "tick_late",
 } as const satisfies Record<Exclude<HealthStatus, "Ready">, string>;
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
-/** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
 const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
   RELAY_PHOTO_RESOLVE_PATH, PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath,
   ...["preview", "decide", "delete", "collect", "consent-context"].map(action => SUGGESTION_PATH + action)]);
@@ -65,46 +41,81 @@ const internalCap = (path: string) => {
   return path === RELAY_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
 };
 
-// ------------------------------------------------------------------ config
-
 export interface BackendConfig {
   env: PlatformEnv;
   deployed: boolean;
-  /** The service login (NETWORK_DATABASE_URL or DATABASE_URL). Deployed: never a superuser, BYPASSRLS or table owner (checked at boot). */
   databaseUrl: string;
-  /** The migration login (MIGRATION_DATABASE_URL; the owner or a superuser). Locally the same as databaseUrl. */
   migrationUrl: string;
   host: string;
   port: number;
-  /** The staff API listener; undefined when BACKEND_STAFF=off. */
   staff?: { host: string; port: number };
   proxySecret?: string;
-  /** Extra site hosts for previews and staging: BACKEND_EXTRA_HOSTS="pr-1-slop.example.workers.dev=slop,...". */
   hostMap: Record<string, AppId>;
   build: string;
   migrateOnBoot: boolean;
-  /** "dry-run" unless NETWORK_CHANNEL=blooio with BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (each app also needs its own flag). */
   channel: "dry-run" | "blooio" | "eliza_cloud";
-  /** The backend owns the carrier webhook (/webhooks/blooio on both listeners). False with NETWORK_CHANNEL=eliza_cloud: the Eliza gateway owns it. */
   blooioWebhook: boolean;
-  /** The public event catalog's ingest login (NETWORK_PUBLIC_EVENTS_DATABASE_URL): the scheduled refresh runs as it. Required when deployed. */
   publicEventsUrl?: string;
   shutdownGraceMs: number;
   tickMs: number;
-  /** /healthz answers 503 "tick_late" when a network's tick has not finished in this process for this long (TICK_LATE_MS). */
   tickLateMs: number;
-  /** Monitoring, alerts and budgets (ops.ts; docs/deploy.md section 7). */
   ops: OpsConfig;
-  /** Staging and production: the key for the leak guard's labels (LEAK_LABEL_KEY, 32+ bytes). server.ts passes it to setLeakLabelKey. Dev: undefined. */
   leakLabelKey?: string;
+  photoRelay?: PhotoRelayConfig;
   warnings: string[];
 }
 
+export interface PhotoRelayConfig { version: string; notice: string; reviewers: string[]; deliveryOrigin: string }
+
+function exactOrigin(value: string, deployed: boolean): boolean {
+  if (!URL.canParse(value)) return false;
+  const url = new URL(value);
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  return url.origin === value && (url.protocol === "https:" || (!deployed && url.protocol === "http:" && loopback));
+}
+
+function photoRelayConfig(e: Env, deployed: boolean): PhotoRelayConfig | undefined {
+  const version = e.NETWORK_PHOTO_RELAY_NOTICE_VERSION?.trim() ?? "";
+  const notice = e.NETWORK_PHOTO_RELAY_NOTICE?.trim() ?? "";
+  const reviewers = (e.NETWORK_PHOTO_RELAY_REVIEWERS ?? "").split(",").map(r => r.trim()).filter(Boolean);
+  const deliveryOrigin = e.NETWORK_PHOTO_DELIVERY_ORIGIN?.trim() ?? "";
+  const setup = photoRelaySetup(version !== "", notice !== "", notice.includes("{{recipient}}"), reviewers.length > 0,
+    deliveryOrigin !== "", exactOrigin(deliveryOrigin, deployed));
+  switch (setup) {
+    case "PhotoRelayOff": return undefined;
+    case "PhotoRelayOn": return { version, notice, reviewers, deliveryOrigin };
+    case "PhotoRelayIncomplete": throw new Error("photo relay needs NETWORK_PHOTO_RELAY_NOTICE_VERSION, NETWORK_PHOTO_RELAY_NOTICE with {{recipient}}, NETWORK_PHOTO_RELAY_REVIEWERS and an exact https NETWORK_PHOTO_DELIVERY_ORIGIN together, or none of them");
+    default: { const unknownSetup: never = setup; throw new Error(`unknown photo relay setup ${String(unknownSetup)}`); }
+  }
+}
+
 const SECRET_MIN = minimumSecretLength;
-/** The largest request body the public port reads: a photo (8 MB, packages/platform/src/photos.ts) and some room. */
 export const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
-/** Reads and checks the environment. Fails closed: a deployed environment without its secrets does not start. */
+function backendBootMessages(p: BackendBoot, e: Env, otpProblems: string[], devSwitches: string[]): string[] {
+  const out: string[] = [];
+  if (p.devConflict) out.push("a NODE_ENV other than production when PLATFORM_ENV=dev");
+  if (p.databaseMissing) out.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
+  if (p.hashMissing) out.push("PLATFORM_HASH_KEY");
+  else if (p.hashShort) out.push(`PLATFORM_HASH_KEY of at least ${SECRET_MIN} characters`);
+  if (p.sessionMissing) out.push("PLATFORM_SESSION_SECRET");
+  else if (p.sessionShort) out.push(`PLATFORM_SESSION_SECRET of at least ${SECRET_MIN} characters`);
+  if (p.sessionReused) out.push("a PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY");
+  if (p.turnstileMissing) out.push("TURNSTILE_SECRET_KEY");
+  if (p.turnstileSiteMissing) out.push("TURNSTILE_SITE_KEY");
+  out.push(...otpProblems);
+  if (p.proxyMissing) out.push("PLATFORM_PROXY_SECRET");
+  else if (p.proxyShort) out.push(`PLATFORM_PROXY_SECRET of at least ${SECRET_MIN} characters`);
+  if (p.publicEventsLoginMissing) out.push("NETWORK_PUBLIC_EVENTS_DATABASE_URL");
+  if (p.migrationMissing) out.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
+  if (p.sharedLogin) out.push("a MIGRATION_DATABASE_URL that is a different login from the service's NETWORK_DATABASE_URL");
+  if (p.leakKeyShort) out.push(`LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
+  out.push(...lineAndStaffMessages(p, SECRET_MIN));
+  if (p.reviewInvalid) out.push(`NETWORK_REVIEW_MODE=human (got ${JSON.stringify(e.NETWORK_REVIEW_MODE)})`);
+  if (p.devSwitchSet) out.push(...devSwitches.map(k => `unset ${k} (dev only)`));
+  return out;
+}
+
 export function loadConfig(e: Env = process.env, argv: string[] = []): BackendConfig {
   const env = requirePlatformEnv(e);
   const isolatedRoute = networkRoutePolicy(e);
@@ -112,42 +123,26 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
   const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
   const lineStaff = lineAndStaffFacts(e, env === "production");
+  const sessionSecret = e.PLATFORM_SESSION_SECRET ?? "";
+  const devSwitches = Object.keys(e).filter(k => k.startsWith("PLATFORM_DEV_") && e[k]);
   const policy = backendBoot({
-    environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), database: Boolean(databaseUrl),
+    environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), production: isProduction(e), database: Boolean(databaseUrl),
     migrate: migrateOnBoot, migrationUrl: Boolean(e.MIGRATION_DATABASE_URL),
     sameLoginUrl: Boolean(e.MIGRATION_DATABASE_URL && databaseUrl && e.MIGRATION_DATABASE_URL === databaseUrl),
     turnstile: Boolean(e.TURNSTILE_SECRET_KEY), turnstileSite: Boolean(e.TURNSTILE_SITE_KEY?.trim()), proxyLength: proxySecret?.length ?? 0,
-    hashLength: e.PLATFORM_HASH_KEY?.length ?? 0, leakKeyBytes: new TextEncoder().encode(e.LEAK_LABEL_KEY ?? "").length,
+    hashLength: e.PLATFORM_HASH_KEY?.length ?? 0, sessionLength: sessionSecret.length,
+    sessionIsHashKey: sessionSecret !== "" && sessionSecret === e.PLATFORM_HASH_KEY,
+    leakKeyBytes: new TextEncoder().encode(e.LEAK_LABEL_KEY ?? "").length,
     ...lineStaff, publicEventsLogin: Boolean(e.NETWORK_PUBLIC_EVENTS_DATABASE_URL),
+    review: e.NETWORK_REVIEW_MODE ?? "", reviewSet: e.NETWORK_REVIEW_MODE !== undefined, devSwitch: devSwitches.length > 0,
   });
   const { deployed } = policy;
-  const missing: string[] = [];
-  if (policy.databaseMissing) missing.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
-  if (deployed) {
-    if (policy.hashMissing) missing.push("PLATFORM_HASH_KEY");
-    if (policy.turnstileMissing) missing.push("TURNSTILE_SECRET_KEY");
-    // The MCP connector and its authorize page (the agent signup path) are off without the site key.
-    if (policy.turnstileSiteMissing) missing.push("TURNSTILE_SITE_KEY");
-    missing.push(...otpConfigProblems(e));
-    if (policy.proxyMissing) missing.push("PLATFORM_PROXY_SECRET");
-    if (policy.publicEventsLoginMissing) missing.push("NETWORK_PUBLIC_EVENTS_DATABASE_URL");
-  }
-  // Deployed: migrations run as the owner, the service as a login that RLS and the grants apply to
-  // (audit: one superuser URL made every policy and grant moot in production).
+  const otpProblems = deployed ? otpConfigProblems(e) : [];
+  if (backendBootRefused(policy) || otpProblems.length) throw new Error(`PLATFORM_ENV=${env} needs ${backendBootMessages(policy, e, otpProblems, devSwitches).join("; ")}`);
   const migrationUrl = e.MIGRATION_DATABASE_URL || (deployed ? undefined : databaseUrl);
-  if (policy.migrationMissing) missing.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
-  if (policy.sharedLogin) throw new Error("MIGRATION_DATABASE_URL must be a different login from the service's NETWORK_DATABASE_URL");
-  if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
-  if (policy.proxyShort) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
-  if (policy.hashShort) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
-  // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
-  if (policy.leakKeyShort) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
-  // spec/bootPolicy.md, "Both entries refuse a deployment whose shared line or staff API could not work"
-  const lineStaffProblems = lineAndStaffMessages(policy, SECRET_MIN);
-  if (lineStaffProblems.length) throw new Error(`PLATFORM_ENV=${env} needs ${lineStaffProblems.join("; ")}`);
-  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
   const blooioWebhook = backendWebhookServed(e.NETWORK_CHANNEL ?? "");
+  const photoRelay = photoRelayConfig(e, deployed);
 
   const warnings: string[] = [];
   const num = (name: string, v: string | undefined, dflt: number) => {
@@ -161,8 +156,6 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const staffOff = (e.BACKEND_STAFF ?? "").toLowerCase() === "off";
   const staffPort = num("STAFF_PORT", e.STAFF_PORT, 4848);
   if (!staffOff && staffPort === port) throw new Error("STAFF_PORT must differ from PORT: the staff API never shares the public port");
-  // Local: loopback only. Deployed: every interface for the public port; the staff port is dual-stack ("::")
-  // because a private network may be IPv6 only. Nothing else may override this.
   const host = deployed ? "0.0.0.0" : "127.0.0.1";
   const staffHost = deployed ? "::" : "127.0.0.1";
 
@@ -183,8 +176,6 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
 
   const blooioAsked = e.NETWORK_CHANNEL === "blooio" && !argv.includes("--dry-run");
   const cloudAsked = e.NETWORK_CHANNEL === "eliza_cloud" && !argv.includes("--dry-run");
-  // The Blooio adapter is built only when the global flags are on; each app's own flag is checked again per send.
-  // The same global check as liveSendAllowed(env, "ntwrk") in packages/network/service/channel.ts.
   const channel = !isolatedRoute && (blooioAsked || cloudAsked) && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? cloudAsked ? "eliza_cloud" : "blooio" : "dry-run";
   if (blooioAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=blooio without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
   if (cloudAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=eliza_cloud without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
@@ -213,18 +204,11 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
     ops,
     ...(leakLabelKey ? { leakLabelKey } : {}),
+    ...(photoRelay ? { photoRelay } : {}),
     warnings,
   };
 }
 
-/**
- * Which send of which app is live under this configuration (docs/deploy.md section 6, the live-send table).
- * Queued sends (proposals, probes, relays, notices, reminders, and replies on the legacy Blooio webhook) leave
- * through the channel adapter, which asks `allowed` (liveSendAllowed) per app. Replies to a signed
- * /internal/turn go back to the Eliza gateway in the response, and the gateway sends them: no backend
- * flag gates them, for any app. The founder has not decided to change either fact (audit PER34, SHA41).
- * packages/network/test/live-send-table.integration.test.ts pins the turn-reply column at the signed turn route.
- */
 export interface LiveSendRow { app: AppId; flags: string[]; queued: "live" | "dry-run"; turnReplies: "sent by the gateway" }
 export function liveSendTable(e: Env, channel: BackendConfig["channel"], allowed: (env: Env, app: AppId) => boolean): LiveSendRow[] {
   return (Object.keys(APPS) as AppId[]).map(app => ({
@@ -235,11 +219,6 @@ export function liveSendTable(e: Env, channel: BackendConfig["channel"], allowed
   }));
 }
 
-/**
- * Why the service login may not run a deployed backend, or undefined. A superuser, a BYPASSRLS role or
- * the owner of the platform tables skips row-level security, so the per-app scoping (app.app_id), the
- * least-privilege grants and the never-updated consent events would not hold (audit: backend superuser).
- */
 export async function serviceLoginProblem(query: (q: string) => Promise<Record<string, unknown>[]>): Promise<string | undefined> {
   const [r] = await query(`select r.rolsuper, r.rolbypassrls,
       exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner
@@ -253,11 +232,7 @@ export async function serviceLoginProblem(query: (q: string) => Promise<Record<s
   }
 }
 
-// ------------------------------------------------------------------ logs
-
-/** Phone numbers in free text: E.164, NANP with separators, and bare 10-11 digit runs. */
 const PHONE_RES = [/\+\d[\d\s().-]{6,18}\d/g, /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g, /(?<![\d.])1?\d{10}(?![\d.])/g];
-/** Fields that may carry what a person wrote or a secret: dropped from every log line. */
 const DROP_KEYS = new Set(["text", "body", "message_text", "phone", "e164", "from", "to", "code", "token", "secret", "authorization", "cookie"]);
 
 export function redact(s: string): string {
@@ -269,7 +244,6 @@ export function redact(s: string): string {
 export type LogFields = Record<string, unknown>;
 export interface Logger { info(msg: string, f?: LogFields): void; warn(msg: string, f?: LogFields): void; error(msg: string, f?: LogFields): void }
 
-/** One JSON object per line: t, level, msg and fields. Phone numbers are masked; text and secrets are dropped. */
 export function jsonLogger(write: (line: string) => void = s => process.stdout.write(`${s}\n`), base: LogFields = {}): Logger {
   const line = (level: string, msg: string, f: LogFields = {}) => {
     const out: LogFields = { t: new Date().toISOString(), level, msg: redact(String(msg)), ...base };
@@ -282,7 +256,6 @@ export function jsonLogger(write: (line: string) => void = s => process.stdout.w
   return { info: (m, f) => line("info", m, f), warn: (m, f) => line("warn", m, f), error: (m, f) => line("error", m, f) };
 }
 
-/** Routes console.* through the logger, so that library lines are structured and redacted too. */
 export function captureConsole(log: Logger) {
   const fmt = (args: unknown[]) => args.map(a => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   console.log = (...a: unknown[]) => log.info(fmt(a));
@@ -291,14 +264,6 @@ export function captureConsole(log: Logger) {
   console.error = (...a: unknown[]) => log.error(fmt(a));
 }
 
-// ------------------------------------------------------------------ edge headers
-
-/**
- * The request the public API (and the MCP server) sees. Verified (verifyProxyHeaders, and the signed
- * host is a site the platform knows): Host and the URL become the site's host, and the signed headers
- * stay, so the same check further in still passes. Otherwise every proxy and forwarding header is
- * removed and the app comes from the request's own Host (which, on the deployed origin, names no app).
- */
 export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now()): Promise<{ req: Request; app?: AppId; edge: boolean }> {
   const headers = new Headers(req.headers);
   const url = new URL(req.url);
@@ -320,19 +285,14 @@ export async function normalizeEdge(req: Request, secret: string | undefined, ho
   return { req: new Request(url, init), app, edge: !!(v && signedApp) };
 }
 
-/** The client IP for the rate limits: the trusted edge header (normalizeEdge removed any other copy), else the socket. */
 export const ipOf = (req: Request, peer?: string) => req.headers.get(CLIENT_IP) || peer || "unknown";
 
-// ------------------------------------------------------------------ the process
-
-/** The parts of NetworkService the backend uses (a fake in tests). */
 export interface ServiceLike {
   fetch(req: Request): Promise<Response>;
   publicFetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response>;
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
   inboxTick(): Promise<void>;
   purge(): Promise<unknown>;
-  /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
   close(force?: boolean): Promise<void>;
 }
@@ -341,18 +301,10 @@ export interface BackendDeps {
   svc: ServiceLike;
   config: BackendConfig;
   log: Logger;
-  /** A cheap database check for /healthz (select 1). */
   ping: () => Promise<boolean>;
-  /**
-   * The MCP server and its OAuth endpoints (packages/mcp, when wired in), given the edge-normalized
-   * request (normalizeEdge). Undefined, or an undefined answer: those paths answer 404.
-   */
   mcp?: (req: Request) => Promise<Response | undefined>;
-  /** The time for the proxy signature check (default Date.now). The service's clock, so every check agrees. */
   now?: () => number;
-  /** Monitoring (ops.ts createOps): one round in each tick, and the snapshot for GET /ops/metrics. */
   ops?: { tick(): Promise<unknown>; metrics(): Promise<unknown> };
-  /** The public event catalog refresh (public-events.ts), one attempt per tick round beside the network work. */
   publicEvents?: () => Promise<unknown>;
 }
 
@@ -360,7 +312,6 @@ const isBlooioWebhook = isBlooioWebhookPath;
 const MCP_PATH = /^\/(mcp(\/.*)?|oauth\/.*|\.well-known\/oauth-[a-z-]+(\/.*)?)$/;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
-/** A short label for the access log: no query string, ids collapsed. */
 export function routeLabel(path: string): string {
   if (path.startsWith("/api/")) return path.split("/").slice(0, 4).join("/");
   if (path.startsWith("/webhooks/")) return path.split("/").slice(0, 4).join("/");
@@ -368,7 +319,6 @@ export function routeLabel(path: string): string {
   return path.length > 64 ? path.slice(0, 64) : path;
 }
 
-/** The bearer token matches (constant time). */
 function bearerIs(req: Request, token: string): boolean {
   const given = Buffer.from(req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "");
   const want = Buffer.from(token);
@@ -379,9 +329,7 @@ export function createBackend(d: BackendDeps) {
   const { svc, config: c, log } = d;
   const now = () => (d.now ?? Date.now)();
   let lifecycle = lifecycleInitial;
-  /** When each network's tick last finished in this process (ran, or skipped because another instance holds its lock). */
   const tickDone = new Map<string, number>();
-  /** The networks whose tick has not finished for longer than tickLateMs (only once ticks have started). */
   const lateTicks = () => {
     if (!lifecycle.timerStarted) return [];
     const t = now();
@@ -395,7 +343,6 @@ export function createBackend(d: BackendDeps) {
     return out;
   };
 
-  /** The public port. */
   const publicFetch = async (req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response> => {
     const t0 = performance.now();
     const url = new URL(req.url);
@@ -404,7 +351,6 @@ export function createBackend(d: BackendDeps) {
     let res: Response;
     try {
       if (path === "/healthz") {
-        // A hung tick loop is down for the uptime monitor too (the ops alerts run inside the same process).
         const status = await checkBackendHealth(backendAcceptsWork(lifecycle), {
           ping: () => d.ping(),
           hasLateTick: () => lateTicks().length > 0,
@@ -412,7 +358,6 @@ export function createBackend(d: BackendDeps) {
         res = status === "Ready" ? json(200, { ok: true, build: c.build, env: c.env })
           : json(503, { ok: false, status: HEALTH_FAILURE[status], build: c.build });
       } else if (path === "/ops/metrics") {
-        // Counts and network ids only. Without OPS_METRICS_TOKEN the route does not exist; a wrong token is 401.
         const token = c.ops.metricsToken;
         if (!token || !d.ops) res = json(404, { ok: false, error: "not_found" });
         else if (!bearerIs(req, token)) res = json(401, { ok: false, error: "unauthorized" });
@@ -423,21 +368,16 @@ export function createBackend(d: BackendDeps) {
       } else if (path === "/api" || path.startsWith("/api/")) {
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
         app = n.app;
-        // Deployed, only a request a site router signed may name a site (audit: a direct request with
-        // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
       } else if (isBlooioWebhook(path) && !c.blooioWebhook) {
         res = json(404, { ok: false, error: "webhook_not_served" });
       } else if (isBlooioWebhook(path) || INTERNAL_PATHS.has(path)) {
-        // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
         res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
-        // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
         app = n.app;
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : (d.mcp && (await track(d.mcp(n.req)))) || json(404, { ok: false, error: "mcp_not_enabled" });
       } else {
-        // The staff API never answers on the public port.
         res = json(404, { ok: false, error: "not_found" });
       }
     } catch (e) {
@@ -448,18 +388,15 @@ export function createBackend(d: BackendDeps) {
     return stamp(res);
   };
 
-  /** The staff port (private network only). */
   const staffFetch = async (req: Request): Promise<Response> => {
     const t0 = performance.now();
     const path = new URL(req.url).pathname;
-    // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages": the service also routes the webhook here.
     const res = !backendAcceptsWork(lifecycle) ? json(503, { ok: false, error: "shutting_down" })
       : isBlooioWebhook(path) && !c.blooioWebhook ? json(404, { ok: false, error: "webhook_not_served" }) : await track(svc.fetch(req));
     log.info("http", { port: "staff", method: req.method, route: routeLabel(path), status: res.status, ms: Math.round(performance.now() - t0) });
     return stamp(res);
   };
 
-  // Every network ticks on its own; a running tick is tracked so that shutdown waits for it.
   let timer: ReturnType<typeof setInterval> | undefined;
   const reserveTick = (tickKey: string) => {
     const reserved = stepBackendLifecycle(lifecycle, { type: "reserveTick", tickKey });
@@ -474,7 +411,7 @@ export function createBackend(d: BackendDeps) {
     catch (e) { log.error(`${tickKey} tick failed`, { error: (e as Error).message }); }
     finally { releaseTick(tickKey); }
   };
-  const networksThenNotify = async () => {
+  const inboxThenNetworks = async () => {
     await serviceTick("inbox", () => svc.inboxTick());
     await Promise.all([...svc.runtimes.values()].map(async rt => {
       if (!reserveTick(rt.id)) return;
@@ -485,16 +422,17 @@ export function createBackend(d: BackendDeps) {
       catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
       finally { releaseTick(rt.id); }
     }));
-    await serviceTick("retention", () => svc.purge());
-    // Notify after the networks record their sends. The delivery ID prevents duplicate sends across replicas.
-    const notify = svc.notifyTick;
-    if (notify) await serviceTick("notify", () => notify.call(svc));
   };
-  // A hung service worker leaves the health monitor's own round available.
+  const notify = svc.notifyTick;
   const ops = d.ops;
   const publicEvents = d.publicEvents;
-  const tickAll = () => Promise.all([networksThenNotify(), ops && serviceTick("ops", () => ops.tick()),
-    publicEvents && serviceTick("public_events", publicEvents)]).then(() => undefined);
+  const tickAll = () => Promise.all([
+    inboxThenNetworks(),
+    serviceTick("retention", () => svc.purge()),
+    notify && serviceTick("notify", () => notify.call(svc)),
+    ops && serviceTick("ops", () => ops.tick()),
+    publicEvents && serviceTick("public_events", publicEvents),
+  ]).then(() => undefined);
   const startTicks = () => {
     if (!canStartTimer(lifecycle)) return Promise.resolve(undefined);
     lifecycle = stepBackendLifecycle(lifecycle, { type: "startTimer", at: now() });
@@ -503,12 +441,6 @@ export function createBackend(d: BackendDeps) {
     return first;
   };
 
-  /**
-   * Graceful shutdown: /healthz answers 503, new work is refused, the listeners stop accepting, every
-   * unit of work and tick in flight finishes (they commit, deliver and release their advisory locks),
-   * then the database pool closes. After shutdownGraceMs the pool closes anyway, which ends the
-   * sessions and with them any lock they hold.
-   */
   let stopping: Promise<{ clean: boolean }> | undefined;
   const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => {
     if (stopping) return stopping;
@@ -536,11 +468,6 @@ export function createBackend(d: BackendDeps) {
   return { publicFetch, staffFetch, tickAll, startTicks, shutdown, get draining() { return !backendAcceptsWork(lifecycle); }, get inFlight() { return inFlight.size; } };
 }
 
-/**
- * Create the deployed service login named in `serviceUrl` when it does not exist yet (first deploy only,
- * run as the migration owner): LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, NOCREATEDB, member of
- * network_service, CONNECT on this database. An existing role is left exactly as it is.
- */
 export async function ensureServiceLogin(query: (q: string) => Promise<Record<string, unknown>[]>, serviceUrl: string): Promise<{ role: string; created: boolean }> {
   const u = new URL(serviceUrl);
   const role = decodeURIComponent(u.username);

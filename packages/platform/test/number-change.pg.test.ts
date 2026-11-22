@@ -383,7 +383,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
       const body = await req.json() as { codeVerifier: string };
       if (createHash("sha256").update(body.codeVerifier).digest("hex") !== challenge) return Response.json({ ok: false }, { status: 401 });
       return Response.json({ userId: `cloud-user-${cloudPhone}`, organizationId: "cloud-org-fixture", stewardUserId: "steward-fixture",
-        e164: cloudPhone, issuedAt: Math.floor(now / 1000), expiresAt: now + 3 * 3_600_000 });
+        e164: cloudPhone, issuedAt: Math.floor(now / 1000), expiresAt: now + 30 * MIN });
     }) as typeof fetch;
     const api = createPublicApi({
       store, now: () => now, ipOf: () => ip, minStartMs: 0, minVerifyMs: 0, log: () => {}, cloudAuthFetch,

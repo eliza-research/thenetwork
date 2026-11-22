@@ -65,8 +65,6 @@ async function currentNotice(tx: SQL, accounts: GatheringAccounts, app: AppInfo,
   const venue = !isAttendance(kind) && await gatheringVenueStillCurrent(tx, event, now);
   return gatheringNoticeAllowed(rollout, approved, reserved, current, true, venue, event.has_answer, kind);
 }
-
-/** Stage notices for current reservations in a normal locked Network unit. */
 export async function queueGatheringNotices(rt: NetworkRuntime, accountsFor: (tx: SQL) => GatheringAccounts, now: () => number): Promise<void> {
   const { app, adapter } = rt;
   if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter) || !adapter.live) return;
@@ -104,8 +102,6 @@ export async function lockGatheringNoticeAdmission(tx: SQL, app: string, runtime
   const kind = noticeKind(row.id);
   if (kind) await lockGatheringAdmission(tx, app, runtimeId, row, prefixFor(kind));
 }
-
-/** Recheck the RSVP and exact, still timely payload under the queue's existing row fences. */
 export async function gatheringNoticeAdmission(tx: SQL, app: AppInfo, runtimeId: string, accounts: GatheringAccounts,
   row: QueueRow, now: number): Promise<RecipientCheck> {
   const refused: RecipientCheck = { ok: false, reason: "gathering_notice_changed" };

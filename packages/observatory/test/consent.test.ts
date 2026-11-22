@@ -115,6 +115,28 @@ describe("consent-first game mode (NYC)", () => {
     for (const id of b!.participants) expect(about(g, id, b!.id)).toEqual([]);
   }, T);
 
+  test("a booked plan that the Network closes shows as cancelled, and a later outcome for it adds only a feed line", async () => {
+    const g = await game();
+    let booked: ReturnType<GameSource["state"]>["opportunities"][number] | undefined;
+    for (let day = 0; day < 10 && !booked; day++) {
+      await g.control({ type: "step", ms: DAY });
+      const now = g.state().clock.now;
+      booked = g.state().opportunities.find(o => o.state === "SCHEDULED" && (o.meetingAt ?? 0) > now + 6 * 3_600_000);
+    }
+    expect(booked).toBeDefined();
+    const id = booked!.id;
+    g.world.personaList().find(p => p.id === booked!.participants[0])!.public.claimedAge = 16;
+    await g.control({ type: "step", ms: 30 * MINUTE });
+    const closed = g.state().opportunities.find(o => o.id === id)!;
+    expect([closed.state, closed.reason]).toEqual(["CANCELLED", "minors policy"]);
+    await g.control({ type: "step", ms: (booked!.meetingAt! - g.state().clock.now) + DAY });
+    const after = g.state();
+    const later = after.opportunities.find(o => o.id === id)!;
+    expect(later.state).toBe("CANCELLED");
+    expect(Object.values(later.status).filter(st => st === "attended" || st === "no_show")).toEqual([]);
+    expect(after.feed.filter(f => f.opportunityId === id && f.kind === "outcome").every(f => f.text.includes("outcome after the plan closed"))).toBe(true);
+  }, T);
+
   test("member detail: agent-private facets (and their canaries) only under the truth lens", async () => {
     const g = await game({ engine: "off" });
     await g.control({ type: "step", ms: DAY });

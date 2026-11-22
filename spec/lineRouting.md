@@ -169,3 +169,75 @@ pure def lawEverythingAddsUnrefusedApps(friends: LookingForMention, dating: Look
   (friends != MentionRefused and dating != MentionRefused and work != MentionRefused) implies
     lookingForApps({ friends: friends, dating: dating, work: work, everything: true }) == List("friends", "slop", "peon")
 ```
+
+## Story: Report a person in the app where I met them
+
+> As a member of two or more apps, I want "block X", "report X" and my answer to "Who do you mean?" to reach the app where I met that person or where the question waits.
+
+### A block, a report and the answer to "Who do you mean?" go to the app where they belong
+
+New rule on 2026-11-22 (audit SD-250 and W3-220): before, these texts went to the app with the newest open item or the last app that wrote to the member, so a report about a person met in another app found nobody, and an answer to "Who do you mean?" could go to another app, where the waiting report lapsed and was never filed. Now, for a member of two or more apps, the service asks each app's network about the text. A block or report claims the app where the member's newest meeting with the named person took place. A text of at most four words claims the app where a "Who do you mean?" question from the last day waits, unless one of the member's other apps sent the member any message newer than the question, or the text is an answer with an age to a pending join for an app the member has yet to join. The service reads an app's network for an answer only when that app's stored state holds a question for the member; a block or report reads every app. The app with the newest claim takes the text, and on equal times the first app read keeps it. Changed again on 2026-11-22 (review of SD-250): before, only a newer open item in another app kept the answer from the question, so a short answer to another app's newer onboarding question ("climbing") or a join answer for a third app ("Kit, 29") went to the old question and was lost; and the service read every app's full state for every short text, which delayed the turn, and chose the newest claim in its own code. The claim comes after a dedicated line, a profile read, a survey reply and an app keyword, and before every other route ([text enrollment](textEnrollment.md)). A member of one app needs no read, because every route then reaches the same app. The network keeps the answer's own rules: an answer of more than four words is never taken as an answer.
+
+```quint
+pure val maxWhoAnswerWords: int = 4
+pure val memberAppsValues = Set(0, 1, 2, 4)
+pure val wordsValues = Set(1, 4, 5, 20)
+pure val meetingAtValues = Set(-1, 0, 7)
+pure val pendingSafetyAtValues = Set(-1, 0, 5, 9)
+pure val newestOtherMessageAtValues = Set(-1, 0, 5, 9)
+pure val atValues = Set(-1, 0, 5, 9)
+pure val leadAtValues = Set(-1, 0, 5, 9)
+
+pure def safetyRouteReadNeeded(memberApps: int, safetyCommand: bool, words: int): bool =
+  memberApps > 1 and (safetyCommand or words <= maxWhoAnswerWords)
+
+pure def safetyAppReadNeeded(safetyCommand: bool, questionStored: bool): bool =
+  safetyCommand or questionStored
+
+pure def safetyCommandClaims(meetingAt: int): bool = meetingAt >= 0
+
+pure def safetyAnswerClaims(pendingSafetyAt: int, newestOtherMessageAt: int, joinAnswerWithAge: bool): bool =
+  pendingSafetyAt >= 0 and pendingSafetyAt >= newestOtherMessageAt and not(joinAnswerWithAge)
+
+pure def safetyClaimLeads(claims: bool, at: int, leadAt: int): bool =
+  claims and at > leadAt
+
+pure def lawOneAppNeedsNoSafetyRead(safetyCommand: bool, words: int): bool =
+  not(safetyRouteReadNeeded(1, safetyCommand, words))
+
+pure def lawLongTextIsNoWhoAnswer(memberApps: int, words: int): bool =
+  words > maxWhoAnswerWords implies not(safetyRouteReadNeeded(memberApps, false, words))
+
+pure def lawCommandIsReadForSeveralApps(memberApps: int, words: int): bool =
+  memberApps > 1 implies safetyRouteReadNeeded(memberApps, true, words)
+
+pure def lawCommandReadsEveryApp(questionStored: bool): bool =
+  safetyAppReadNeeded(true, questionStored)
+
+pure def lawNoStoredQuestionNoAnswerRead(questionStored: bool): bool =
+  not(questionStored) implies not(safetyAppReadNeeded(false, questionStored))
+
+pure def lawNoMeetingNoCommandClaim(meetingAt: int): bool =
+  meetingAt < 0 implies not(safetyCommandClaims(meetingAt))
+
+pure def lawNoQuestionNoAnswerClaim(newestOtherMessageAt: int, joinAnswerWithAge: bool): bool =
+  not(safetyAnswerClaims(-1, newestOtherMessageAt, joinAnswerWithAge))
+
+pure def lawNewerMessageElsewhereKeepsTheAnswer(pendingSafetyAt: int, newestOtherMessageAt: int, joinAnswerWithAge: bool): bool =
+  newestOtherMessageAt > pendingSafetyAt implies not(safetyAnswerClaims(pendingSafetyAt, newestOtherMessageAt, joinAnswerWithAge))
+
+pure def lawJoinAnswerWithAgeKeepsTheAnswer(pendingSafetyAt: int, newestOtherMessageAt: int): bool =
+  not(safetyAnswerClaims(pendingSafetyAt, newestOtherMessageAt, true))
+
+pure def lawQuestionAfterEveryMessageClaims(pendingSafetyAt: int, newestOtherMessageAt: int): bool =
+  (pendingSafetyAt >= 0 and newestOtherMessageAt <= pendingSafetyAt) implies safetyAnswerClaims(pendingSafetyAt, newestOtherMessageAt, false)
+
+pure def lawNoClaimNeverLeads(at: int, leadAt: int): bool =
+  not(safetyClaimLeads(false, at, leadAt))
+
+pure def lawFirstClaimLeads(at: int): bool =
+  at >= 0 implies safetyClaimLeads(true, at, -1)
+
+pure def lawEqualTimeKeepsTheLead(at: int): bool =
+  not(safetyClaimLeads(true, at, at))
+```

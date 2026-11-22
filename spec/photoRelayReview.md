@@ -8,11 +8,11 @@ The [standalone relay model](models/photo_relay_item.md) follows the item from s
 
 ### Select one eligible photo using the current notice
 
-A selection requires configured policy and storage, a valid request and selection, and explicit consent to the current version. Resolve the exact sender and a separate recipient. Check that the selected photo is still eligible and that the current thread can supply the recipient label for the notice. Store a pending item bound to this consent. An idempotent retry reads the original stored item and deadline.
+A selection requires configured policy and storage, a valid request and selection, and explicit consent to the current version. Resolve the exact sender and a separate recipient. Check that the selected photo is still eligible and that the current thread can supply the recipient label for the notice. Store a pending item bound to this consent. An idempotent retry reads the original stored item and deadline. The item deadline is fifteen minutes after the consent, because the Eliza wire contract refuses an approved photo whose deadline is more than fifteen minutes after its consent (`RELAY_PHOTO_CONSENT_TTL_MS`). A longer review window needs an upstream contract change and a founder decision first. Changed: the review states now include ExpiredReview, so that a pending item that no reviewer decides by its deadline has an end of its own (audit OPP21).
 
 ```quint
 type SelectionPhase = Selecting | CheckingParties | CheckingPhoto | ResolvingNotice | ReadyToStore | StoredSelection | SelectionRefused
-type ReviewState = PendingReview | ApprovedReview | RejectedReview | RevokedReview
+type ReviewState = PendingReview | ApprovedReview | RejectedReview | RevokedReview | ExpiredReview
 type PhotoSelection = { phase: SelectionPhase, review: ReviewState }
 
 pure val relayItemTtlMs: int = 900000
@@ -87,4 +87,21 @@ pure def stepRevocationIsFinal(before: PhotoSelection, after: PhotoSelection): b
 
 pure def sometimesApproved(s: PhotoSelection): bool = s.review == ApprovedReview
 pure def sometimesRevoked(s: PhotoSelection): bool = s.review == RevokedReview
+```
+
+### A pending photo that no reviewer decides by its deadline expires, and the sender is told
+
+At or after the deadline, a pending item expires. An expired item is never reviewed, shown in the held list, claimed or delivered. The service expires due pending items at each tick of the app's first network, oldest deadline first and at most 100 items for each tick. In the same transaction it sends the sender at most one notice that the photo did not go, and it records a review expiry, which the operations alerts count as a missed review SLA. The notice goes through the normal send rules, so STOP, the daily cap or a member who left can refuse it, or the rules can defer it; the item expires anyway, because an undecided photo must not stay open for delivery. The sender can still revoke an expired item. This rule changed from "tells the sender once" because the send rules can refuse the notice, and it now names the batch limit of the indexed deadline query. New rule: before this change a pending item ended at its deadline in silence, with no notice to the sender and no alert, although the reply had said that a person checks the photo first (audit OPP21).
+
+```quint
+pure def canExpireSelection(s: PhotoSelection, now: int, deadline: int): bool =
+  s.phase == StoredSelection and s.review == PendingReview and now >= deadline
+pure def expireSelection(s: PhotoSelection, now: int, deadline: int): PhotoSelection = { ...s, review: ExpiredReview }
+
+pure def stepOnlyDeadlineExpires(before: PhotoSelection, via: str, after: PhotoSelection): bool =
+  (before.review != ExpiredReview and after.review == ExpiredReview) implies via == "expireSelection"
+pure def stepExpiredStaysUndelivered(before: PhotoSelection, after: PhotoSelection): bool =
+  before.review == ExpiredReview implies (after.review == ExpiredReview or after.review == RevokedReview)
+
+pure def sometimesExpired(s: PhotoSelection): bool = s.review == ExpiredReview
 ```

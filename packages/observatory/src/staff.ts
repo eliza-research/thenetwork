@@ -1,36 +1,14 @@
-// Staff access (admin-console 4): who is calling, with which roles, and the audit log.
-//  - Roles are per app (platform plan 5.1): "role@app" or "role@*" (every app); "role" alone is
-//    "role@*". Roles: admin, reviewer, safety, analyst, engineer (simulated worlds only) and
-//    cross_app_safety (the cross-app person view; "@*" only).
-//  - Static tokens: OBSERVATORY_TOKENS="admin:<tok>,reviewer@slop:<tok>,<tok>:safety@peon" (role@app:token
-//    or token:role@app; a token listed twice holds both grants). OBSERVATORY_TOKEN is an admin@* token.
-//    A token is sent only as "Authorization: Bearer <token>", never in a URL (it would stay in the
-//    history, in logs and in Referer headers), and the server refuses tokens shorter than 32
-//    characters. With SSO on, tokens are refused: every person signs in as themselves.
-//  - SSO: OBSERVATORY_TRUST_CF_ACCESS=1 takes the staff email from Cloudflare Access, and maps emails
-//    to roles with OBSERVATORY_ROLES="email:role@app,..." and, in real mode, platform.staff_roles. The email is trusted only from a verified
-//    Cf-Access-Jwt-Assertion: RS256 against the team's keys (https://<team>.cloudflareaccess.com/cdn-cgi/access/certs,
-//    cached), audience OBSERVATORY_CF_ACCESS_AUD, issuer, expiry and issue time (AccessVerifier).
-//    Without a team and an audience the server refuses to start; a token that fails a check gets 401.
-//  - Audit: every PII reveal, staff read of a member, timeline or opportunity, and staff action is
-//    written before the data is returned. A JSONL file under runs/audit/ by default, or the
-//    append-only table network.staff_audit through OBSERVATORY_AUDIT_DATABASE_URL (a separate,
-//    writable login: the real-mode data connection stays read-only).
 import { createHash, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { allowedByRole, globalGrants, mayOpenCrossApp, scopedGrants } from "../../core/src/generated/staffPermissions.ts";
+import { staffSecondFactorShown, tokensAccepted } from "../../core/src/generated/staffSignIn.ts";
 import { APP_IDS, isAppId, type AppId } from "./apps.ts";
 import { STAFF_ROLES, type AuditEntry, type Mode, type RoleGrant, type StaffRole, type StaffUser } from "./types.ts";
 
 export const REPO = resolve(import.meta.dirname, "../../..");
 
-/**
- * "role[@app]": a role for one app or for every app ("@*"; no "@" is "@*", the format before the four
- * apps). cross_app_safety exists only for every app. Unknown roles and apps are an error: a typo must
- * not grant nothing silently.
- */
 export function parseGrant(spec: string, where: string): RoleGrant {
   const at = spec.indexOf("@");
   const role = (at < 0 ? spec : spec.slice(0, at)).trim() as StaffRole, app = at < 0 ? "*" : spec.slice(at + 1).trim().toLowerCase();
@@ -46,10 +24,6 @@ const addGrant = <K>(out: Map<K, RoleGrant[]>, k: K, g: RoleGrant) => {
   out.set(k, list);
 };
 
-/**
- * OBSERVATORY_TOKENS -> token -> grants. Each entry is "role[@app]:token" (the old "role:token" is
- * "role@*:token") or "token:role[@app]". A token listed twice holds both grants.
- */
 export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: boolean; minLength?: number } = {}): Map<string, RoleGrant[]> {
   const out = new Map<string, RoleGrant[]>();
   const short = (tok: string) => { if (o.minLength && tok.length < o.minLength) throw new Error(`OBSERVATORY_TOKENS: a token is shorter than ${o.minLength} characters (use a random token, for example openssl rand -base64 32)`); return tok; };
@@ -58,14 +32,11 @@ export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: bo
     const bad = () => new Error(`OBSERVATORY_TOKENS: bad entry "${part.slice(0, Math.max(i, 0))}:..." (use role@app:token or token:role@app; role one of ${STAFF_ROLES.join(", ")})`);
     if (i < 1 || j >= part.length - 1) throw bad();
     const left = part.slice(0, i).trim(), right = part.slice(j + 1).trim();
-    // In production an entry must name its app ("reviewer@slop" or "reviewer@*"): an old "reviewer:<t>"
-    // entry would quietly give the role on every app, dating and hiring data included.
     if (o.explicitApp && ((isGrant(left) && !left.includes("@")) || (isGrant(right) && !right.includes("@") && !isGrant(left)))) {
       throw new Error(`OBSERVATORY_TOKENS: "${isGrant(left) ? left : right}" names no app; in production write role@app or role@*`);
     }
     if (isGrant(left) && part.slice(i + 1).trim()) addGrant(out, short(part.slice(i + 1).trim()), parseGrant(left, "OBSERVATORY_TOKENS"));
     else if (isGrant(right) && part.slice(0, j).trim()) addGrant(out, short(part.slice(0, j).trim()), parseGrant(right, "OBSERVATORY_TOKENS"));
-    // A role with an app that is wrong ("reviewer@tinder"): say what is wrong with it.
     else if (left.includes("@")) parseGrant(left, "OBSERVATORY_TOKENS");
     else if (right.includes("@")) parseGrant(right, "OBSERVATORY_TOKENS");
     else throw bad();
@@ -73,11 +44,6 @@ export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: bo
   return out;
 }
 
-/**
- * The format before the four apps: token -> roles, every role for every app. The Network service
- * (NETWORK_SERVICE_TOKENS) still reads it. An app-scoped entry is refused here: it would grant the
- * role for every app.
- */
 export function parseTokens(spec: string | undefined): Map<string, Set<StaffRole>> {
   const out = new Map<string, Set<StaffRole>>();
   for (const [tok, grants] of parseTokenGrants(spec)) {
@@ -88,7 +54,6 @@ export function parseTokens(spec: string | undefined): Map<string, Set<StaffRole
   return out;
 }
 
-/** OBSERVATORY_ROLES "email:role[@app],..." -> lowercased email -> grants. */
 export function parseRoles(spec: string | undefined): Map<string, RoleGrant[]> {
   const out = new Map<string, RoleGrant[]>();
   for (const part of (spec ?? "").split(",").map(x => x.trim()).filter(Boolean)) {
@@ -107,28 +72,21 @@ function sameToken(given: string, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** A staff user from grants: `roles` lists every role held (for display), in STAFF_ROLES order. */
 export function staffUser(id: string, grants: RoleGrant[], via: StaffUser["via"]): StaffUser {
   const sorted = [...grants].sort((a, b) => STAFF_ROLES.indexOf(a.role) - STAFF_ROLES.indexOf(b.role) || a.app.localeCompare(b.app));
   return { id, roles: STAFF_ROLES.filter(r => grants.some(g => g.role === r)), grants: sorted, via };
 }
 
-/** Staff roles stored in platform.staff_roles (real mode), read again every minute. */
 export interface StaffRoleSource { grants(email: string): RoleGrant[] }
 
 export interface StaffAuthOptions {
-  /** Token -> grants (or, the format before the four apps, roles for every app). */
   tokens: Map<string, RoleGrant[] | Set<StaffRole>>;
-  /** Take the staff email from Cloudflare Access (SSO). Only authenticateStaff() with an AccessVerifier accepts it. */
   trustCfAccess: boolean;
   roles: Map<string, RoleGrant[]>;
-  /** Verifies the Access JWT. Without it, an SSO request is refused. */
   access?: AccessVerifier;
-  /** platform.staff_roles, added to OBSERVATORY_ROLES for SSO users. */
   stored?: StaffRoleSource;
 }
 
-/** An SSO user's grants now: OBSERVATORY_ROLES and platform.staff_roles (re-read every minute). */
 export function ssoGrants(email: string, o: Pick<StaffAuthOptions, "roles" | "stored">): RoleGrant[] {
   const grants = [...(o.roles.get(email) ?? [])];
   for (const g of o.stored?.grants(email) ?? []) if (!grants.some(x => x.role === g.role && x.app === g.app)) grants.push(g);
@@ -139,29 +97,21 @@ export type AuthResult = { user: StaffUser } | { status: 401 | 403; error: strin
 
 const ACCESS_HEADERS = ["cf-access-jwt-assertion", "cf-access-authenticated-user-email"];
 
-/**
- * Who is calling: Cloudflare Access when trusted (the JWT is verified first), else a bearer token
- * (Authorization header only). With SSO on, a token is refused: each person signs in as themselves.
- */
 export async function authenticateStaff(req: Request, o: StaffAuthOptions): Promise<AuthResult> {
-  if (o.trustCfAccess && !ACCESS_HEADERS.some(h => req.headers.has(h))) return { status: 401, error: "sign in through Cloudflare Access (staff tokens are off when single sign-on is on)" };
-  if (o.trustCfAccess) {
-    const jwt = req.headers.get("cf-access-jwt-assertion")?.trim();
-    // Cloudflare Access sends the assertion with every request it lets through; the email header alone proves nothing.
-    if (!jwt) return { status: 401, error: "missing Cloudflare Access assertion" };
-    if (!o.access) return { status: 401, error: "Cloudflare Access is not configured (OBSERVATORY_CF_ACCESS_TEAM, OBSERVATORY_CF_ACCESS_AUD)" };
-    const v = await o.access.verify(jwt);
-    if ("error" in v) return { status: 401, error: `Cloudflare Access token refused: ${v.error}` };
-    const header = req.headers.get("cf-access-authenticated-user-email")?.trim().toLowerCase();
-    if (header && header !== v.email) return { status: 401, error: "Cloudflare Access email does not match the token" };
-    const grants = ssoGrants(v.email, o);
-    if (!grants.length) return { status: 403, error: "no staff role for this account" };
-    return { user: { ...staffUser(v.email, grants, "sso"), expiresAt: v.exp } };
-  }
-  return authenticate(req, o);
+  if (tokensAccepted(o.trustCfAccess)) return authenticate(req, o);
+  if (!ACCESS_HEADERS.some(h => req.headers.has(h))) return { status: 401, error: "sign in through Cloudflare Access (staff tokens are off when single sign-on is on)" };
+  const jwt = req.headers.get("cf-access-jwt-assertion")?.trim();
+  if (!jwt) return { status: 401, error: "missing Cloudflare Access assertion" };
+  if (!o.access) return { status: 401, error: "Cloudflare Access is not configured (OBSERVATORY_CF_ACCESS_TEAM, OBSERVATORY_CF_ACCESS_AUD)" };
+  const v = await o.access.verify(jwt);
+  if ("error" in v) return { status: 401, error: `Cloudflare Access token refused: ${v.error}` };
+  const header = req.headers.get("cf-access-authenticated-user-email")?.trim().toLowerCase();
+  if (header && header !== v.email) return { status: 401, error: "Cloudflare Access email does not match the token" };
+  const grants = ssoGrants(v.email, o);
+  if (!grants.length) return { status: 403, error: "no staff role for this account" };
+  return { user: { ...staffUser(v.email, grants, "sso"), expiresAt: v.exp, secondFactor: v.secondFactor } };
 }
 
-/** A bearer token in the Authorization header (role tokens only; Cloudflare Access goes through authenticateStaff). Never ?token=. */
 export function authenticate(req: Request, o: Pick<StaffAuthOptions, "tokens"> & Partial<StaffAuthOptions>): AuthResult {
   const auth = req.headers.get("authorization");
   const given = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : "";
@@ -174,10 +124,6 @@ export function authenticate(req: Request, o: Pick<StaffAuthOptions, "tokens"> &
   return { status: 401, error: "missing or wrong token" };
 }
 
-/**
- * The roles this user holds for one app: grants for that app and for every app. In real mode the
- * engineer role gives nothing (simulated worlds only). cross_app_safety is never a per-app role.
- */
 export function rolesFor(u: StaffUser, app: AppId, mode: Mode): Set<StaffRole> {
   return new Set(scopedGrants(grantsOf(u), app, mode === "real").map(g => g.role as StaffRole));
 }
@@ -185,28 +131,18 @@ export function rolesFor(u: StaffUser, app: AppId, mode: Mode): Set<StaffRole> {
 const grantsOf = (u: StaffUser): RoleGrant[] => u.grants ?? u.roles.map(role => ({ role, app: "*" }));
 export const globalRolesFor = (u: StaffUser): StaffRole[] => globalGrants(grantsOf(u)).map(g => g.role as StaffRole);
 
-/**
- * Admin for the app (admin@app or admin@*) passes every check for it; anyone else needs one of the
- * listed roles for that app. Without an app: the role for every app ("@*").
- */
 export function allowed(u: StaffUser, need: readonly StaffRole[], app?: AppId, mode: Mode = "game"): boolean {
   return allowedByRole(app ? [...rolesFor(u, app, mode)] : globalRolesFor(u), [...need]);
 }
-/** The role for every app ("role@*"). */
 export const hasEverywhere = (u: StaffUser, role: StaffRole) => globalRolesFor(u).includes(role);
-/** The cross-app person view: cross_app_safety@* or admin@*. Never a reviewer. */
 export const canCrossApp = (u: StaffUser) => mayOpenCrossApp(globalRolesFor(u));
-/** Apps where this user holds any role in this mode. */
 export const appsFor = (u: StaffUser, mode: Mode): AppId[] => APP_IDS.filter(a => rolesFor(u, a, mode).size > 0);
 
-/**
- * platform.staff_roles (real mode): loaded at start and every minute through the given connection. A
- * failed load keeps the last good list (and logs once); a database without the table gives none.
- */
 export class PgStaffRoles implements StaffRoleSource {
   private byEmail = new Map<string, RoleGrant[]>();
   private timer?: ReturnType<typeof setInterval>;
   private warned = false;
+  private skipped = new Set<string>();
   constructor(private sql: SQL, private everyMs = 60_000) {}
   async start() { await this.load(); this.timer = setInterval(() => { this.load(); }, this.everyMs); }
   async load() {
@@ -214,7 +150,10 @@ export class PgStaffRoles implements StaffRoleSource {
       const rows = await this.sql`select email, role, app_id from platform.staff_roles`;
       const next = new Map<string, RoleGrant[]>();
       for (const r of rows as { email: string; role: string; app_id: string | null }[]) {
-        try { addGrant(next, r.email.trim().toLowerCase(), parseGrant(`${r.role}@${r.app_id ?? "*"}`, "platform.staff_roles")); } catch { /* a row the console does not know: no grant */ }
+        try { addGrant(next, r.email.trim().toLowerCase(), parseGrant(`${r.role}@${r.app_id ?? "*"}`, "platform.staff_roles")); } catch (e) {
+          const key = `${r.email}|${r.role}|${r.app_id ?? "*"}`;
+          if (!this.skipped.has(key)) { this.skipped.add(key); console.warn(`Observatory: platform.staff_roles row skipped (email ${r.email}, role ${r.role}, app ${r.app_id ?? "*"}): ${(e as Error).message}`); }
+        }
       }
       this.byEmail = next;
     } catch (e) {
@@ -226,35 +165,21 @@ export class PgStaffRoles implements StaffRoleSource {
   stop() { if (this.timer) clearInterval(this.timer); }
 }
 
-// ---------------------------------------------------------------- Cloudflare Access JWT
 export interface AccessConfig {
-  /** The Access team: "<team>" or "<team>.cloudflareaccess.com" (OBSERVATORY_CF_ACCESS_TEAM). */
   team: string;
-  /** The Access application's audience tag (OBSERVATORY_CF_ACCESS_AUD). */
   aud: string;
-  /** Where the signing keys are. Default: https://<team>.cloudflareaccess.com/cdn-cgi/access/certs. */
   certsUrl?: string;
-  /** How long fetched keys are used before they are fetched again (default 1 hour). */
   cacheMs?: number;
-  /** A certs request that takes longer fails (default 5 s). */
   timeoutMs?: number;
-  /** When a refetch fails, keys this old are still used (default 24 hours after they were fetched): Cloudflare keeps old keys valid for days. */
   staleMs?: number;
-  /** Tests: the certs request and the clock. */
   fetch?: (url: string) => Promise<Response>;
   now?: () => number;
 }
-/** Clock difference allowed on exp, nbf and iat. */
 const ACCESS_SKEW_MS = 60_000;
-/** An unknown key id fetches the certs again at most this often (Cloudflare rotates its keys). */
 const ACCESS_REFETCH_MS = 30_000;
 
 const b64url = (s: string) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
-/**
- * Verifies a Cloudflare Access application token (Cf-Access-Jwt-Assertion): RS256 with a key from the
- * team's certs endpoint (cached), the audience, the issuer, exp, nbf and iat. Returns the email it carries.
- */
 export class AccessVerifier {
   readonly issuer: string;
   readonly certsUrl: string;
@@ -271,13 +196,11 @@ export class AccessVerifier {
 
   private now() { return this.c.now?.() ?? Date.now(); }
 
-  /** The signing key with this id: from the cache, else the certs are fetched again (at most every 30 s for an unknown id). */
   private async key(kid: string): Promise<CryptoKey | undefined> {
     const age = this.now() - this.fetchedAt;
     if (age > (this.c.cacheMs ?? 3_600_000) || (!this.keys.has(kid) && age > ACCESS_REFETCH_MS)) {
       this.loading ??= this.load().finally(() => { this.loading = undefined; });
       try { await this.loading; } catch (e) {
-        // A failed refetch keeps the last good keys for a while (stale grace), so a Cloudflare blip does not sign everyone out.
         if (!this.keys.size || age > (this.c.cacheMs ?? 3_600_000) + (this.c.staleMs ?? 86_400_000)) throw e;
         if (!this.staleWarned) { this.staleWarned = true; console.warn(`Observatory: Access certs refetch failed (${(e as Error).message}); using the keys fetched ${Math.round(age / 60_000)} min ago`); }
       }
@@ -305,7 +228,7 @@ export class AccessVerifier {
     this.staleWarned = false;
   }
 
-  async verify(token: string): Promise<{ email: string; exp: number } | { error: string }> {
+  async verify(token: string): Promise<{ email: string; exp: number; secondFactor: boolean } | { error: string }> {
     const parts = token.split(".");
     if (parts.length !== 3) return { error: "malformed token" };
     let header: { alg?: string; kid?: string }, claims: Record<string, unknown>;
@@ -324,43 +247,46 @@ export class AccessVerifier {
     if (exp === undefined || now >= exp + ACCESS_SKEW_MS) return { error: "expired" };
     if (iat === undefined || iat > now + ACCESS_SKEW_MS) return { error: "issued in the future" };
     if (nbf !== undefined && nbf > now + ACCESS_SKEW_MS) return { error: "not valid yet" };
-    // A service token (no email) is not a person: staff sign in as themselves (runbook-real 7.3).
     if (typeof claims.email !== "string" || !claims.email.includes("@")) return { error: "no email in the token" };
-    return { email: claims.email.trim().toLowerCase(), exp };
+    const methods = new Set((Array.isArray(claims.amr) ? claims.amr : []).filter((m): m is string => typeof m === "string").map(m => m.trim().toLowerCase()).filter(m => m.length > 0));
+    return { email: claims.email.trim().toLowerCase(), exp, secondFactor: staffSecondFactorShown(methods.has("mfa"), methods.size) };
   }
 }
 
-// ---------------------------------------------------------------- audit
 export interface AuditSink {
   readonly kind: "file" | "postgres";
   write(e: AuditEntry): Promise<void>;
-  /** Newest first. */
-  /** `apps`: only rows about these apps (rows with no app are left out too). */
   list(q?: { limit?: number; actor?: string; targetType?: string; targetId?: string; actions?: string[]; apps?: string[] }): Promise<AuditEntry[]>;
   close(force?: boolean): Promise<void>;
 }
 
-/** Append-only JSONL file (runs/audit/audit.jsonl by default). */
 export class FileAudit implements AuditSink {
   readonly kind = "file" as const;
   readonly file: string;
   private ready?: Promise<unknown>;
   private chain: Promise<void> = Promise.resolve();
+  private warnedLines = new Set<number>();
   constructor(dir = process.env.OBSERVATORY_AUDIT_DIR ?? join(REPO, "runs", "audit")) { this.file = join(dir, "audit.jsonl"); this.ready = mkdir(dir, { recursive: true }); }
+  private warnLine(line: number, why: string) {
+    if (this.warnedLines.has(line)) return;
+    this.warnedLines.add(line);
+    console.warn(`Observatory: audit file ${this.file} line ${line} skipped (${why})`);
+  }
   write(e: AuditEntry): Promise<void> {
-    // One append at a time, in order.
     const next = this.chain.then(async () => { await this.ready; await appendFile(this.file, JSON.stringify(e) + "\n"); });
     this.chain = next.catch(() => {});
     return next;
   }
   async list(q: Parameters<AuditSink["list"]>[0] = {}): Promise<AuditEntry[]> {
     await this.chain;
-    const text = await readFile(this.file, "utf8").catch(() => "");
-    // One bad line (a crash in the middle of a write, a hand edit) must not hide the rest of the log.
+    const text = await readFile(this.file, "utf8").catch((e: { code?: string }) => { if (e.code === "ENOENT") return ""; throw e; });
     const rows: AuditEntry[] = [];
     text.split("\n").forEach((l, i) => {
       if (!l.trim()) return;
-      try { const e = JSON.parse(l) as AuditEntry; if (e && typeof e === "object" && typeof e.action === "string") rows.push({ ...e, id: i + 1 }); } catch { /* skipped: not a row */ }
+      let e: AuditEntry | undefined;
+      try { e = JSON.parse(l) as AuditEntry; } catch (err) { this.warnLine(i + 1, (err as Error).message); return; }
+      if (e && typeof e === "object" && typeof e.action === "string") rows.push({ ...e, id: i + 1 });
+      else this.warnLine(i + 1, "not an audit row");
     });
     return rows.filter(e => match(e, q)).reverse().slice(0, q.limit ?? 200);
   }
@@ -372,11 +298,9 @@ function match(e: AuditEntry, q: Parameters<AuditSink["list"]>[0] = {}) {
     && (!q.apps || (!!e.app && q.apps.includes(e.app)));
 }
 
-/** network.staff_audit through a separate writable login (packages/observatory/db/schema.sql). */
 export class PgAudit implements AuditSink {
   readonly kind = "postgres" as const;
   private sql: SQL;
-  /** network.staff_audit has app_id (migration 0005). Without it the app goes in detail.app. */
   private hasApp?: Promise<boolean>;
   constructor(url: string) { this.sql = new SQL({ url, max: 2, idleTimeout: 30, connection: { application_name: "network-observatory-audit", statement_timeout: "10000" } }); }
   private appColumn() {
@@ -397,7 +321,6 @@ export class PgAudit implements AuditSink {
   }
   async list(q: Parameters<AuditSink["list"]>[0] = {}): Promise<AuditEntry[]> {
     const apps = q.apps ? `{${q.apps.join(",")}}` : null;
-    // The app column, or detail.app on a table from before migration 0005.
     const rows = await this.sql`select * from (select id, at, actor, roles, action, target_type, target_id, reason, mode, ok, detail,
         coalesce(to_jsonb(a)->>'app_id', detail->>'app') as app from network.staff_audit a) x
       where (${apps}::text[] is null or app = any(${apps}::text[]))

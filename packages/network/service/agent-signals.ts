@@ -1,4 +1,4 @@
-import { agentOptOutParticipation, agentSignalAfterDecision, agentSignalRoute, type AgentSignalPhase } from "../../core/src/generated/staffSafetyService.ts";
+import { agentOptOutParticipation, agentSignalAfterDecision, agentSignalEvidenceShown, agentSignalRoute, agentSignalWaitsForStaff, type AgentSignalPhase } from "../../core/src/generated/staffSafetyService.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { allowed } from "../../observatory/src/staff.ts";
 import type { StaffRole, StaffUser } from "../../observatory/src/types.ts";
@@ -9,13 +9,12 @@ export type AgentSignalKind = "opt_out" | "travel" | "safety_concern";
 export type AgentSignal = { kind: AgentSignalKind; evidence: string };
 
 const KINDS: readonly AgentSignalKind[] = ["opt_out", "travel", "safety_concern"];
-const WAITING_TAGS = ["signal:opt_out", "signal:safety_concern"];
+const WAITING_TAGS = KINDS.filter(kind => agentSignalWaitsForStaff(kind)).map(kind => `signal:${kind}`);
 const SIGNAL_PATH = /^\/signals\/([^/]{1,600})$/;
 const BODY_LIMIT = 4096;
 const FACET_STATUS = { SignalWaiting: "proposed", SignalReviewed: "confirmed", SignalDismissed: "rejected" } as const satisfies Record<AgentSignalPhase, string>;
 const PHASE: Record<string, AgentSignalPhase> = { proposed: "SignalWaiting", confirmed: "SignalReviewed", rejected: "SignalDismissed" };
 
-/** Parse the contract's signal list at the signed boundary. */
 export function parseAgentSignals(input: unknown): AgentSignal[] | undefined {
   if (!Array.isArray(input) || input.length > 20) return;
   const signals: AgentSignal[] = [];
@@ -28,10 +27,6 @@ export function parseAgentSignals(input: unknown): AgentSignal[] | undefined {
   return signals;
 }
 
-/**
- * spec/staffSafetyService.md, "An agent signal goes to the decision that owns it".
- * Call inside the action transaction after the original turn and membership locks.
- */
 export async function recordAgentSignals(tx: SQL, o: { app: AppId; memberId: string; actionId: string; signals: AgentSignal[]; now: number }): Promise<{ recorded: number }> {
   const at = new Date(o.now);
   for (const [index, signal] of o.signals.entries()) {
@@ -54,9 +49,8 @@ export async function recordAgentSignals(tx: SQL, o: { app: AppId; memberId: str
   return { recorded: o.signals.length };
 }
 
-/** True when a signal in the list opens or joins the member's safety case. */
 export function agentSignalsOpenCase(signals: readonly AgentSignal[]): boolean {
-  return signals.some(signal => agentSignalRoute(signal.kind) === "SignalOpensSafetyCase");
+  return signals.some(signal => agentSignalWaitsForStaff(signal.kind));
 }
 
 export interface AgentSignalReviewDeps {
@@ -64,8 +58,8 @@ export interface AgentSignalReviewDeps {
   user: StaffUser;
   now(): number;
   scoped<T>(run: (tx: SQL) => Promise<T>): Promise<T>;
-  /** The member's open safety case in the runtime, by member. */
   openCases(memberIds: string[]): Promise<Map<string, string>>;
+  ageInDoubt(memberIds: string[]): Promise<Set<string>>;
 }
 
 type Json = (body: unknown, status?: number) => Response;
@@ -84,27 +78,29 @@ function parseDecision(input: unknown): { dismiss: boolean; reason: string } | u
   return { dismiss: decision === "dismissed", reason: reason.trim() };
 }
 
-/** spec/staffSafetyService.md, "Safety staff decide a waiting agent signal once". Undefined: not a signal route. */
 export async function handleAgentSignalReview(req: Request, path: string, d: AgentSignalReviewDeps): Promise<Response | undefined> {
-  const need = (roles: StaffRole[]) => allowed(d.user, roles, d.app, "real") ? undefined
-    : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(role => `${role}@${d.app}`).join(" or ")}` }, 403);
+  const forbidden = (roles: StaffRole[]) => json({ ok: false, code: "forbidden", error: `needs role ${roles.map(role => `${role}@${d.app}`).join(" or ")}` }, 403);
+  const safetyRole = allowed(d.user, ["safety"], d.app, "real");
   if (path === "/signals") {
     if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
-    const no = need(["reviewer", "safety"]); if (no) return no;
+    if (!allowed(d.user, ["reviewer", "safety"], d.app, "real")) return forbidden(["reviewer", "safety"]);
     const rows = await d.scoped(async tx => {
       await audit(tx, d, { action: "read_agent_signals", ok: true, detail: {} });
       return tx<{ id: string; member_id: string; tags: string[]; value: string; valid_from: Date }[]>`select id,member_id,tags,value,valid_from from network.facets
         where app_id=${d.app} and status='proposed' and tags && ${tx.array(WAITING_TAGS, "TEXT")} order by valid_from desc, id limit 200`;
     });
-    const cases = await d.openCases([...new Set(rows.map(row => row.member_id))]);
+    const members = [...new Set(rows.map(row => row.member_id))];
+    const cases = await d.openCases(members);
+    const doubt = await d.ageInDoubt(members);
     return json({ ok: true, signals: rows.map(row => ({ id: row.id, memberId: row.member_id,
-      kind: row.tags.find(tag => WAITING_TAGS.includes(tag))!.slice("signal:".length), evidence: row.value, at: row.valid_from.getTime(),
+      kind: row.tags.find(tag => WAITING_TAGS.includes(tag))!.slice("signal:".length),
+      ...(agentSignalEvidenceShown(safetyRole, doubt.has(row.member_id)) ? { evidence: row.value } : { minor: true }), at: row.valid_from.getTime(),
       caseId: cases.get(row.member_id) ?? null })) });
   }
   const match = SIGNAL_PATH.exec(path);
   if (!match) return;
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-  const no = need(["safety"]); if (no) return no;
+  if (!safetyRole) return forbidden(["safety"]);
   let id: string;
   try { id = decodeURIComponent(match[1]!); } catch { return json({ ok: false, error: "invalid_signal" }, 400); }
   const bytes = await readCapped(req, BODY_LIMIT);
@@ -119,7 +115,7 @@ export async function handleAgentSignalReview(req: Request, path: string, d: Age
     const detail = { signal: id, decision: decision.dismiss ? "dismissed" : "reviewed" };
     await audit(tx, d, { action: "decide_agent_signal", ok: true, memberId: row?.member_id, reason: decision.reason, detail: { ...detail, phase: "requested" } });
     const phase = row ? PHASE[row.status] : undefined;
-    const next = phase && agentSignalAfterDecision(phase, true, decision.dismiss);
+    const next = phase && agentSignalAfterDecision(phase, safetyRole, decision.dismiss);
     if (!row || !phase || next === phase) {
       const refused = row ? "already_decided" : "unknown_signal";
       await audit(tx, d, { action: "decide_agent_signal", ok: false, memberId: row?.member_id, detail: { ...detail, phase: "refused", refused } });

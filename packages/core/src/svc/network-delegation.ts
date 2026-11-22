@@ -39,7 +39,6 @@ export function parseNetworkDelegation(value: unknown, expected: NetworkLoginTar
     || !uuid(x.userId) || !uuid(x.organizationId) || typeof x.stewardUserId !== "string" || !x.stewardUserId.trim() || x.stewardUserId.length > 256
     || typeof x.e164 !== "string" || !/^\+[1-9]\d{6,14}$/u.test(x.e164) || typeof x.agentId !== "string" || !/^personal:[0-9a-f-]{36}$/iu.test(x.agentId)
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(x.issuedAt) || !Number.isSafeInteger(x.expiresAt)
-    || !cloudIdentityTimesValid((x.issuedAt as number)*1000, x.expiresAt as number, now)
-    || (x.expiresAt as number) > (x.issuedAt as number)*1000 + 3600_000) return undefined;
+    || !cloudIdentityTimesValid((x.issuedAt as number)*1000, x.expiresAt as number, now)) return undefined;
   return value as NetworkDelegation;
 }

@@ -12,7 +12,7 @@ An explicit routing override or registered receiving line selects its own app. O
 
 ```quint
 type RoutePhase = AwaitingExplicitRoute | AwaitingFallbackRoute | DedicatedRoute | ProfileRoute | SurveyRoute | KeywordRoute |
-  PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
+  SafetyRoute | PendingJoinRoute | OpenItemRoute | RecentAppRoute | DefaultNetworkRoute
 type TextRoute = { phase: RoutePhase }
 type ExplicitFacts = { dedicated: bool, profileApp: bool, surveyApp: bool, appKeyword: bool }
 pure val initialRoute: TextRoute = { phase: AwaitingExplicitRoute }
@@ -52,14 +52,15 @@ pure def lawPreparedPeonTextRequiresExplicitHeader(header: str, profilePresent: 
 
 ### A pending join routes only a possible join answer
 
-Use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. The shell parses the answer for an age only when the sender has a pending join for an app they have yet to join and already belongs to an app. Use only pending fields from the routed app.
+After a safety claim, use a pending join for an app the sender has yet to join when the sender belongs to no app or the answer has an age. Otherwise use the newest open item, then the last app to contact the sender, then The Network. The shell parses the answer for an age only when the sender has a pending join for an app they have yet to join and already belongs to an app, and it parses the answer before it asks for a safety claim, so that a join answer with an age is never taken as an answer to "Who do you mean?". Use only pending fields from the routed app. Changed on 2026-11-22 (review of SD-250): the safety claim is now its own rule below, and the age reading comes first, because a short join answer such as "Kit, 29" for a third app went to a waiting "Who do you mean?" question.
 
 ```quint
-type FallbackFacts = { hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool, answerHasAge: bool, hasOpenItem: bool }
+type FallbackFacts = { safetyClaim: bool, hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool, answerHasAge: bool, hasOpenItem: bool }
 pure def shouldReadPendingAnswer(hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool): bool =
   hasPendingJoin and not(alreadyInPendingApp) and hasMembership
 pure def checkFallbackRoute(routing: TextRoute, fallbackFacts: FallbackFacts): TextRoute =
   if (routing.phase != AwaitingFallbackRoute) routing
+  else if (fallbackFacts.safetyClaim) { phase: SafetyRoute }
   else if (fallbackFacts.hasPendingJoin and not(fallbackFacts.alreadyInPendingApp) and
            (not(fallbackFacts.hasMembership) or fallbackFacts.answerHasAge)) { phase: PendingJoinRoute }
   else if (fallbackFacts.hasOpenItem) { phase: OpenItemRoute }
@@ -67,6 +68,24 @@ pure def checkFallbackRoute(routing: TextRoute, fallbackFacts: FallbackFacts): T
   else { phase: DefaultNetworkRoute }
 
 pure def pendingMatchesApp(pendingApp: str, routedApp: str): bool = pendingApp == routedApp
+```
+
+### A safety claim routes before every other fallback
+
+A block, a report or an answer to "Who do you mean?" that an app claims under the [shared-line routing](lineRouting.md) rule goes to that app, before a pending join, an open item or the last app to contact the sender. A dedicated line, a profile read, a survey reply and an app keyword still come first. Changed on 2026-11-22 (audit SD-250 and W3-220): before, there was no safety claim, so a report went to the app with the newest open item and found nobody when the member met the person in another app; the claim now has its own rule so that each rule checks one thing.
+
+```quint
+pure def lawSafetyClaimRoutesFirst(hasPendingJoin: bool, alreadyInPendingApp: bool, hasMembership: bool, answerHasAge: bool,
+    hasOpenItem: bool): bool =
+  checkFallbackRoute({ phase: AwaitingFallbackRoute }, { safetyClaim: true, hasPendingJoin: hasPendingJoin,
+    alreadyInPendingApp: alreadyInPendingApp, hasMembership: hasMembership, answerHasAge: answerHasAge,
+    hasOpenItem: hasOpenItem }).phase == SafetyRoute
+
+pure def lawExplicitRouteKeepsSafetyClaimOut(dedicated: bool, profileApp: bool, surveyApp: bool, appKeyword: bool): bool =
+  (dedicated or profileApp or surveyApp or appKeyword) implies
+    checkFallbackRoute(checkExplicitRoute(initialRoute, { dedicated: dedicated, profileApp: profileApp, surveyApp: surveyApp,
+      appKeyword: appKeyword }), { safetyClaim: true, hasPendingJoin: false, alreadyInPendingApp: false, hasMembership: true,
+      answerHasAge: false, hasOpenItem: false }).phase != SafetyRoute
 ```
 
 ### A join needs permission to enter this app

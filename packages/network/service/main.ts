@@ -1,13 +1,4 @@
 #!/usr/bin/env -S node --import=tsx
-// The Network service for every app (README.md in this folder).
-//   node --import tsx --env-file-if-exists=.env packages/network/service/main.ts [--once] [--dry-run] [--port N] [--host H] [--api-port N]
-//
-// It runs one network per row of platform.networks ('<app>:<city>'). Without --once: each network
-// ticks every minute on its own (a second instance skips a network while its lock is held), the
-// staff and webhook HTTP server binds 127.0.0.1:4848, and the public API the sites call (/api/*)
-// binds 127.0.0.1:8790 (PLATFORM_API_PORT). --once runs one tick of every network, delivers, and
-// exits. Sends are dry-run unless NETWORK_CHANNEL=blooio; the Blooio adapter still refuses every send
-// unless BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's <APP>_LIVE_APPROVED=1 (founder approval).
 import { RealClock } from "@thenetwork/core";
 import { BlooioClient } from "../../blooio/src/blooio/client.ts";
 import { BlooioAdapter as ProviderAdapter } from "../../blooio/src/adapters/blooio-adapter.ts";
@@ -17,7 +8,7 @@ import { networkRoutePolicy } from "./route-authority.ts";
 import { CloudChannelAdapter } from "./cloud-channel.ts";
 import { BlooioAdapter, liveFlag, liveSendAllowed } from "./channel.ts";
 import { serveService, startTicks } from "./serve.ts";
-import { backendWebhookServed, minimumSecretLength } from "../../core/src/generated/bootPolicy.ts";
+import { backendWebhookServed, declaredEnvironment, deployedEnvironment, lineAndStaffRefused, minimumSecretLength } from "../../core/src/generated/bootPolicy.ts";
 import { lineAndStaffFacts, lineAndStaffMessages, lineAndStaffProblemsFor } from "./line-staff-boot.ts";
 import { NetworkService, webhookSecretsFromEnv } from "./service.ts";
 
@@ -27,15 +18,11 @@ function arg(name: string): string | undefined {
 }
 
 async function main() {
-  // Fail closed: the environment must be declared, and production (or staging) refuses to start
-  // without Twilio, Turnstile, the proxy secret, the hash key, the session secret, a database and
-  // review mode "human" (env.ts bootConfigProblems). Only PLATFORM_ENV=dev gets the dev shortcuts.
   const env = assertBootConfig();
-  // spec/bootPolicy.md, "Both entries refuse a deployment whose shared line or staff API could not work"
   const lineStaff = lineAndStaffFacts(process.env, env === "production");
-  const lineStaffProblems = lineAndStaffMessages(lineAndStaffProblemsFor(env !== "dev", lineStaff), minimumSecretLength);
-  if (lineStaffProblems.length) throw new Error(`refusing to start (PLATFORM_ENV=${env}): needs ${lineStaffProblems.join("; ")}`);
-  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  const deployed = deployedEnvironment(declaredEnvironment(process.env.PLATFORM_ENV ?? "", process.env.NODE_ENV ?? ""));
+  const lineStaffProblems = lineAndStaffProblemsFor(deployed, lineStaff);
+  if (lineAndStaffRefused(lineStaffProblems)) throw new Error(`refusing to start (PLATFORM_ENV=${env}): needs ${lineAndStaffMessages(lineStaffProblems, minimumSecretLength).join("; ")}`);
   const blooioWebhook = backendWebhookServed(process.env.NETWORK_CHANNEL ?? "");
   const once = process.argv.includes("--once");
   const dryRun = process.argv.includes("--dry-run") || !!networkRoutePolicy(process.env);
@@ -51,7 +38,6 @@ async function main() {
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN, webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
     auditUrl: process.env.NETWORK_SERVICE_AUDIT_DATABASE_URL,
     network: { seed: Number(process.env.NETWORK_SEED ?? 1) },
-    // The dev site proxy (scripts/sites-dev.ts) names the site in X-Forwarded-Host. Trust it only on a local, non-production bind.
     publicApi: { trustForwardedHost: local && env === "dev" },
     adapter: cloud ? (_net,rt)=>new CloudChannelAdapter({clock,from:resolveSenderLine(),app:rt.app.id,city:rt.city,env:process.env,
       origin:process.env.NETWORK_CLOUD_DELIVERY_ORIGIN??"",secret:process.env.SERVICE_TURN_SECRET??""}) : blooio ? (net, rt) => {
@@ -64,7 +50,7 @@ async function main() {
   await svc.start();
   for (const rt of svc.runtimes.values()) {
     const mode = cloud ? (liveSendAllowed(process.env,rt.app.id) ? "eliza_cloud LIVE" : "eliza_cloud (refusing: live approval flags are needed)") : blooio ? (liveSendAllowed(process.env, rt.app.id) ? "blooio LIVE" : `blooio (refusing: BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1${rt.app.id === "ntwrk" ? "" : ` and ${liveFlag(rt.app.id)}=1`} are needed)`) : "dry-run";
-    console.log(`network ${rt.id}: sends ${mode}, review "human", matching ${rt.matchingAllowed ? "allowed (the admin switch decides)" : "not allowed (platform.networks)"}`);
+    console.log(`network ${rt.id}: sends ${mode}, review "human", matching ${rt.matchingAllowed ? "allowed (the admin switch decides)" : "not allowed (registry row or launch scope)"}`);
   }
   if (!lineStaff.staffTokenCount) console.warn("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (blooioWebhook && !process.env.BLOOIO_WEBHOOK_SECRET) console.warn("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");

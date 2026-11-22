@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
-export type ReviewState = "PendingReview" | "ApprovedReview" | "RejectedReview" | "RevokedReview";
+export type ReviewState = "PendingReview" | "ApprovedReview" | "RejectedReview" | "RevokedReview" | "ExpiredReview";
 /** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export type SelectionPhase = "Selecting" | "CheckingParties" | "CheckingPhoto" | "ResolvingNotice" | "ReadyToStore" | "StoredSelection" | "SelectionRefused";
 /** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
@@ -18,7 +18,8 @@ export type Event =
   | { type: "resolveNotice"; readyNotice: boolean }
   | { type: "recordSelection" }
   | { type: "recordReview"; choice: ReviewChoice; reviewerAuthorized: boolean; currentItem: boolean; itemLive: boolean }
-  | { type: "revokeSelection"; ownerMatches: boolean };
+  | { type: "revokeSelection"; ownerMatches: boolean }
+  | { type: "expireSelection"; now: number; deadline: number };
 
 /** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export const relayItemTtlMs: number = 900000;
@@ -37,6 +38,8 @@ export function checkSelection(s: PhotoSelection, inputValid: boolean, explicitC
   //@ ensures (inv(s) && canCheckSelection(s)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canCheckSelection(s)) ==> stepOnlyReviewApproves(s, "checkSelection", \result)
   //@ ensures (inv(s) && canCheckSelection(s)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canCheckSelection(s)) ==> stepOnlyDeadlineExpires(s, "checkSelection", \result)
+  //@ ensures (inv(s) && canCheckSelection(s)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, phase: inputValid && explicitConsent ? "CheckingParties" : "SelectionRefused" };
 }
 
@@ -52,6 +55,8 @@ export function checkParties(s: PhotoSelection, senderMatches: boolean, differen
   //@ ensures (inv(s) && canCheckParties(s)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canCheckParties(s)) ==> stepOnlyReviewApproves(s, "checkParties", \result)
   //@ ensures (inv(s) && canCheckParties(s)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canCheckParties(s)) ==> stepOnlyDeadlineExpires(s, "checkParties", \result)
+  //@ ensures (inv(s) && canCheckParties(s)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, phase: senderMatches && differentPeople && differentMembers ? "CheckingPhoto" : "SelectionRefused" };
 }
 
@@ -67,6 +72,8 @@ export function checkPhoto(s: PhotoSelection, currentPhoto: boolean): PhotoSelec
   //@ ensures (inv(s) && canCheckPhoto(s)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canCheckPhoto(s)) ==> stepOnlyReviewApproves(s, "checkPhoto", \result)
   //@ ensures (inv(s) && canCheckPhoto(s)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canCheckPhoto(s)) ==> stepOnlyDeadlineExpires(s, "checkPhoto", \result)
+  //@ ensures (inv(s) && canCheckPhoto(s)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, phase: currentPhoto ? "ResolvingNotice" : "SelectionRefused" };
 }
 
@@ -82,6 +89,8 @@ export function resolveNotice(s: PhotoSelection, readyNotice: boolean): PhotoSel
   //@ ensures (inv(s) && canResolveNotice(s)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canResolveNotice(s)) ==> stepOnlyReviewApproves(s, "resolveNotice", \result)
   //@ ensures (inv(s) && canResolveNotice(s)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canResolveNotice(s)) ==> stepOnlyDeadlineExpires(s, "resolveNotice", \result)
+  //@ ensures (inv(s) && canResolveNotice(s)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, phase: readyNotice ? "ReadyToStore" : "SelectionRefused" };
 }
 
@@ -97,6 +106,8 @@ export function recordSelection(s: PhotoSelection): PhotoSelection {
   //@ ensures (inv(s) && canRecordSelection(s)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canRecordSelection(s)) ==> stepOnlyReviewApproves(s, "recordSelection", \result)
   //@ ensures (inv(s) && canRecordSelection(s)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canRecordSelection(s)) ==> stepOnlyDeadlineExpires(s, "recordSelection", \result)
+  //@ ensures (inv(s) && canRecordSelection(s)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, phase: "StoredSelection" };
 }
 
@@ -130,6 +141,8 @@ export function recordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAu
   //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> stepOnlyReviewApproves(s, "recordReview", \result)
   //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> stepOnlyDeadlineExpires(s, "recordReview", \result)
+  //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, review: choice === "ApprovePhoto" ? "ApprovedReview" : (s.review === "ApprovedReview" ? "RevokedReview" : "RejectedReview") };
 }
 
@@ -163,6 +176,8 @@ export function revokeSelection(s: PhotoSelection, ownerMatches: boolean): Photo
   //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> alwaysSelectionStartsPending(\result)
   //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> stepOnlyReviewApproves(s, "revokeSelection", \result)
   //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> stepOnlyDeadlineExpires(s, "revokeSelection", \result)
+  //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> stepExpiredStaysUndelivered(s, \result)
   return { ...s, review: "RevokedReview" };
 }
 
@@ -202,6 +217,41 @@ export function reviewPreviewAllowed(s: PhotoSelection, claimed: boolean, review
   return photoHeldForReview(s, claimed) && reviewerAuthorized && itemLive;
 }
 
+/** Story: Choose one photo and allow a designated reviewer to decide / A pending photo that no reviewer decides by its deadline expires, and the sender is told (spec/photoRelayReview.md) */
+//@ pure
+export function canExpireSelection(s: PhotoSelection, now: number, deadline: number): boolean {
+  return s.phase === "StoredSelection" && s.review === "PendingReview" && now >= deadline;
+}
+
+/** Story: Choose one photo and allow a designated reviewer to decide / A pending photo that no reviewer decides by its deadline expires, and the sender is told (spec/photoRelayReview.md) */
+//@ pure
+export function expireSelection(s: PhotoSelection, now: number, deadline: number): PhotoSelection {
+  //@ ensures (inv(s) && canExpireSelection(s, now, deadline)) ==> alwaysSelectionStartsPending(\result)
+  //@ ensures (inv(s) && canExpireSelection(s, now, deadline)) ==> stepOnlyReviewApproves(s, "expireSelection", \result)
+  //@ ensures (inv(s) && canExpireSelection(s, now, deadline)) ==> stepRevocationIsFinal(s, \result)
+  //@ ensures (inv(s) && canExpireSelection(s, now, deadline)) ==> stepOnlyDeadlineExpires(s, "expireSelection", \result)
+  //@ ensures (inv(s) && canExpireSelection(s, now, deadline)) ==> stepExpiredStaysUndelivered(s, \result)
+  return { ...s, review: "ExpiredReview" };
+}
+
+/** Story: Choose one photo and allow a designated reviewer to decide / A pending photo that no reviewer decides by its deadline expires, and the sender is told (spec/photoRelayReview.md) */
+//@ pure
+export function stepOnlyDeadlineExpires(before: PhotoSelection, via: string, after: PhotoSelection): boolean {
+  return !(before.review !== "ExpiredReview" && after.review === "ExpiredReview") || via === "expireSelection";
+}
+
+/** Story: Choose one photo and allow a designated reviewer to decide / A pending photo that no reviewer decides by its deadline expires, and the sender is told (spec/photoRelayReview.md) */
+//@ pure
+export function stepExpiredStaysUndelivered(before: PhotoSelection, after: PhotoSelection): boolean {
+  return !(before.review === "ExpiredReview") || (after.review === "ExpiredReview" || after.review === "RevokedReview");
+}
+
+/** Story: Choose one photo and allow a designated reviewer to decide / A pending photo that no reviewer decides by its deadline expires, and the sender is told (spec/photoRelayReview.md) */
+//@ pure
+export function sometimesExpired(s: PhotoSelection): boolean {
+  return s.review === "ExpiredReview";
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PhotoSelection, event: Event): boolean {
@@ -212,6 +262,7 @@ export function enabled(current: PhotoSelection, event: Event): boolean {
   if (event.type === "recordSelection") return canRecordSelection(current);
   if (event.type === "recordReview") return canRecordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive);
   if (event.type === "revokeSelection") return canRevokeSelection(current, event.ownerMatches);
+  if (event.type === "expireSelection") return canExpireSelection(current, event.now, event.deadline);
   return false;
 }
 
@@ -227,6 +278,7 @@ export function step(current: PhotoSelection, event: Event): PhotoSelection {
   if (event.type === "recordSelection") return canRecordSelection(current) ? recordSelection(current) : current;
   if (event.type === "recordReview") return canRecordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive) ? recordReview(current, event.choice, event.reviewerAuthorized, event.currentItem, event.itemLive) : current;
   if (event.type === "revokeSelection") return canRevokeSelection(current, event.ownerMatches) ? revokeSelection(current, event.ownerMatches) : current;
+  if (event.type === "expireSelection") return canExpireSelection(current, event.now, event.deadline) ? expireSelection(current, event.now, event.deadline) : current;
   return current;
 }
 
@@ -251,6 +303,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recordSelection") return { type: "recordSelection" };
   if (raw.type === "recordReview" && (raw.choice === "ApprovePhoto" || raw.choice === "RejectPhoto" || raw.choice === "KeepPending") && typeof raw.reviewerAuthorized === "boolean" && typeof raw.currentItem === "boolean" && typeof raw.itemLive === "boolean") return { type: "recordReview", choice: raw.choice, reviewerAuthorized: raw.reviewerAuthorized, currentItem: raw.currentItem, itemLive: raw.itemLive };
   if (raw.type === "revokeSelection" && typeof raw.ownerMatches === "boolean") return { type: "revokeSelection", ownerMatches: raw.ownerMatches };
+  if (raw.type === "expireSelection" && Number.isSafeInteger(raw.now) && Number.isSafeInteger(raw.deadline)) return { type: "expireSelection", now: raw.now, deadline: raw.deadline };
   return undefined;
 }
 
@@ -268,7 +321,7 @@ export function parseState(x: unknown): PhotoSelection | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Selecting" || raw.phase === "CheckingParties" || raw.phase === "CheckingPhoto" || raw.phase === "ResolvingNotice" || raw.phase === "ReadyToStore" || raw.phase === "StoredSelection" || raw.phase === "SelectionRefused") && (raw.review === "PendingReview" || raw.review === "ApprovedReview" || raw.review === "RejectedReview" || raw.review === "RevokedReview") && Object.keys(raw).length === 2)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Selecting" || raw.phase === "CheckingParties" || raw.phase === "CheckingPhoto" || raw.phase === "ResolvingNotice" || raw.phase === "ReadyToStore" || raw.phase === "StoredSelection" || raw.phase === "SelectionRefused") && (raw.review === "PendingReview" || raw.review === "ApprovedReview" || raw.review === "RejectedReview" || raw.review === "RevokedReview" || raw.review === "ExpiredReview") && Object.keys(raw).length === 2)) return undefined;
   const parsed: PhotoSelection = ({ phase: raw.phase, review: raw.review });
   return inv(parsed) ? parsed : undefined;
 }

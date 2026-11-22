@@ -75,14 +75,14 @@ export function suggestionRetentionCutoff(now: number): number {
 
 /** Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff (spec/platformRetention.md) */
 //@ pure
-export function suggestionFinished(status: string): boolean {
-  return status === "rejected" || status === "expired" || status === "withdrawn";
+export function suggestionFinished(status: string, hasFact: boolean): boolean {
+  return status === "rejected" || status === "expired" || status === "withdrawn" || (status === "accepted" && !hasFact);
 }
 
 /** Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff (spec/platformRetention.md) */
 //@ pure
-export function suggestionPastRetention(status: string, batchExpiresAt: number, cutoff: number): boolean {
-  return suggestionFinished(status) && rowBeforeCutoff(batchExpiresAt, cutoff);
+export function suggestionPastRetention(status: string, hasFact: boolean, batchExpiresAt: number, cutoff: number): boolean {
+  return suggestionFinished(status, hasFact) && rowBeforeCutoff(batchExpiresAt, cutoff);
 }
 
 /** Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff (spec/platformRetention.md) */
@@ -93,9 +93,16 @@ export function batchPastRetention(remaining: number, batchExpiresAt: number, cu
 
 /** Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff (spec/platformRetention.md) */
 //@ pure
-export function lawLiveSuggestionStays(batchExpiresAt: number, cutoff: number): boolean {
+export function lawLiveSuggestionStays(hasFact: boolean, batchExpiresAt: number, cutoff: number): boolean {
   //@ ensures \result === true
-  return !suggestionPastRetention("proposed", batchExpiresAt, cutoff) && !suggestionPastRetention("accepted", batchExpiresAt, cutoff);
+  return !suggestionPastRetention("proposed", hasFact, batchExpiresAt, cutoff) && !suggestionPastRetention("accepted", true, batchExpiresAt, cutoff);
+}
+
+/** Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff (spec/platformRetention.md) */
+//@ pure
+export function lawAcceptedWithoutFactLeaves(batchExpiresAt: number, cutoff: number): boolean {
+  //@ ensures \result === true
+  return !rowBeforeCutoff(batchExpiresAt, cutoff) || suggestionPastRetention("accepted", false, batchExpiresAt, cutoff);
 }
 
 /** Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff (spec/platformRetention.md) */

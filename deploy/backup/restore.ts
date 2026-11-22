@@ -1,25 +1,4 @@
 #!/usr/bin/env -S node --import=tsx
-// Restore a backup into a NEW scratch database and check it against the backup's manifest (docs/deploy.md
-// section 8; the restore drill is runbook-real.md section 8). It never writes into an existing database.
-//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --from ./runs/backup/<stamp> --db restore_drill_20261008
-//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 postgres/production/<stamp> --db restore_drill_20261008
-//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 latest --db restore_drill_20261008     # the newest complete backup under BACKUP_PREFIX
-//   ... --keep-privileges --replay      # a recovery: replay the privacy changes of RESTORE_SOURCE_DATABASE_URL made after the backup
-//   ... --keep-privileges --source-lost # a recovery whose source database cannot be read (docs/runbook-privacy.md section 3)
-// The target server is RESTORE_DATABASE_URL (a login that may create databases; any database on that
-// server, usually the maintenance one). Exit 0: every table has the row count of the manifest.
-// Keep the scratch database only as long as the drill or the comparison needs it, then drop it.
-//
-// Safety (docs/deploy.md 8.2): a restore never changes a role or a privilege of the source server.
-//  - The drill (default) restores with --no-owner --no-privileges: no ALTER OWNER, GRANT or REVOKE at all.
-//  - --keep-privileges (a real recovery, runbook-real.md 8.3) keeps owners and grants, which apply to the
-//    objects of the new database only.
-//  - roles.sql (CREATE/ALTER ROLE for the whole server) runs only with --roles, and only on a server
-//    that is not the source (an empty replacement cluster). On the source server it is refused.
-//  - The source's own database on the source server is refused, as are the live names and any database that exists.
-//  - An encrypted backup (manifest.encryption) needs BACKUP_ENCRYPTION_KEY to decrypt after download.
-//  - A recovery (--keep-privileges) needs --replay (erasures, STOPs, leaves and bans of the source database after
-//    the backup: privacy-replay.ts) or --source-lost. A drill may replay too.
 import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -28,27 +7,19 @@ import { join } from "node:path";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { initial, shouldApplyRoles, step } from "../../packages/core/src/generated/databaseRestore.ts";
 import { pgEnv } from "./backup.ts";
-import { replayPrivacy, type PrivacyReplayResult } from "./privacy-replay.ts";
+import { endRestoredTexts, replayPrivacy, type PrivacyReplayResult, type RestoredTextsResult } from "./privacy-replay.ts";
 import { backupBucketFromEnv, backupKey, compareCounts, decryptFile, pgBin, redactUrls, rowCounts, run, safeDbName, sameServer, withDatabase, type BackupKey, type Manifest } from "./lib.ts";
 
-export interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; privacy?: PrivacyReplayResult; ms: number }
+export interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; privacy?: PrivacyReplayResult; texts?: RestoredTextsResult; ms: number }
 
-/**
- * Restore the backup in `dir` into the new database `db` on the server of `serverUrl`, then compare row
- * counts. `keepPrivileges`: keep owners and grants (inside the new database only). `roles`: also run
- * roles.sql, refused unless the target server is not the source server. `replayFrom`: the source database
- * whose privacy changes after the backup are replayed; a recovery needs it or `sourceLost`.
- */
 export async function restore(o: { serverUrl: string; db: string; dir: string; keepPrivileges?: boolean; roles?: boolean; replayFrom?: string; sourceLost?: boolean; log?: (msg: string, f?: Record<string, unknown>) => void }): Promise<RestoreResult> {
   const t0 = performance.now();
-  // spec/databaseRestore.md, "The target must be a valid scratch database name"
   let state = step(initial, { type: "checkName", name: o.db, validName: safeDbName(o.db) });
   if (state.phase !== "ReadingManifest") throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
   const manifest = JSON.parse(await fileAt(join(o.dir, "manifest.json")).text()) as Manifest;
   state = step(state, { type: "checkVersion", versionOne: manifest.version === 1 });
   if (state.phase !== "CheckingSource") throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
-  // spec/databaseRestore.md, "Manifest admission refuses source writes and unavailable dump files"
   state = step(state, { type: "checkManifest", manifest: {
     sourceKnown: Boolean(manifest.source),
     sameServer: Boolean(manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! })),
@@ -72,7 +43,6 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   } finally { await admin.close(); }
   const url = withDatabase(o.serverUrl, o.db);
   const env = pgEnv(url);
-  // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
   const rolesFile = manifest.files.roles && join(o.dir, manifest.files.roles);
   if (rolesFile && shouldApplyRoles(state, existsSync(rolesFile))) {
     await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", rolesFile], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
@@ -85,21 +55,16 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   try { got = await rowCounts(sql); } finally { await sql.close(); }
   const mismatches = compareCounts(manifest.rowCounts, got);
   state = step(state, { type: "recordCounts", countsAgree: mismatches.length === 0 });
-  // spec/databaseRestore.md, "Create the database before restoring and compare counts after the dump"
   let privacy: PrivacyReplayResult | undefined;
   if (state.phase === "ReplayingPrivacy" && o.replayFrom) {
     privacy = await replayPrivacy({ sourceUrl: o.replayFrom, targetUrl: url, queuedAt: new Date() });
     state = step(state, { type: "recordPrivacyReplay" });
   }
   if (state.phase !== "Finished") throw new Error("restore did not complete the row-count check and the privacy replay");
-  return { db: o.db, url, manifest, mismatches, ...(privacy ? { privacy } : {}), ms: Math.round(performance.now() - t0) };
+  const texts = o.sourceLost && !o.replayFrom ? await endRestoredTexts({ targetUrl: url, at: new Date() }) : undefined;
+  return { db: o.db, url, manifest, mismatches, ...(privacy ? { privacy } : {}), ...(texts ? { texts } : {}), ms: Math.round(performance.now() - t0) };
 }
 
-/**
- * Download a backup prefix from the bucket into `dir`. "latest": the newest prefix under BACKUP_PREFIX that
- * has a manifest. An encrypted backup is decrypted with `key` (default BACKUP_ENCRYPTION_KEY); the
- * encrypted copies are removed, and the manifest written to `dir` describes the plain files.
- */
 export async function download(prefix: string, dir: string, env: Record<string, string | undefined> = process.env, key?: BackupKey): Promise<string> {
   const bucket = backupBucketFromEnv(env);
   if (prefix === "latest") {
@@ -151,6 +116,7 @@ if (import.meta.main) {
     line(r.mismatches.length ? "error" : "info", "restore checked", {
       db: r.db, backupAt: r.manifest.createdAt, tables: Object.keys(r.manifest.rowCounts).length, rows, mismatches: r.mismatches.length, ms: r.ms,
       ...(r.privacy ? { privacyReplay: r.privacy } : {}),
+      ...(r.texts ? { restoredTexts: r.texts } : {}),
       ...(r.mismatches.length ? { first: r.mismatches.slice(0, 10) } : {}),
     });
     process.exitCode = r.mismatches.length ? 1 : 0;

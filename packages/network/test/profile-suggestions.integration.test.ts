@@ -278,7 +278,6 @@ test("a canonical ban blocks promotion but permits deleting owned suggestions", 
   expect(await facets()).toHaveLength(0);
 });
 
-// spec/profileSuggestionSource.md, "Resolve the owner and any claimed collection turn before authorizing live sources"
 test("a STOP in the consent ledger stops collection and acceptance before its projection reaches the member row", async () => {
   const b = (await store.propose(owner, input(), now))!;
   const accept = { batchId: b.id, revision: b.revision, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" as const }] };
@@ -318,7 +317,6 @@ test("collection asks Cloud once for each distinct source and connection, not on
   expect(asked.sort()).toEqual(["gmail:owned-google-connection", "google_calendar:owned-google-connection"]);
 });
 
-// spec/profileSuggestionReview.md, "Only a bounded batch of distinct, valid suggestions can be shown"
 test("a saved batch with a future Calendar event start renders for review, so the member is never told that nothing was saved", async () => {
   const eventStart = now + 3_600_000;
   const calendar: SourceSuggestion = { ...candidate(), source: "google_calendar", observedAt: eventStart, value: "I enjoy group walks", tags: ["walking"] };
@@ -344,7 +342,6 @@ test("leaving deletes the private suggestion batches with the member, even when 
   } finally { await service.close(); }
 });
 
-// spec/profileSuggestionSource.md, "Resolve the owner and any claimed collection turn before authorizing live sources"
 test("a STOP projection during the Cloud source calls does not wait for them, and the collection or acceptance then stops", async () => {
   const projected: string[] = [];
   const project = (state: string, optedOut: boolean) => sql.begin(async t => {
@@ -368,7 +365,6 @@ test("a STOP projection during the Cloud source calls does not wait for them, an
   expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("proposed");
 });
 
-// spec/profileSuggestionSource.md, "Resolve the owner and any claimed collection turn before authorizing live sources"
 test("a disconnect or withdrawal that commits during the Cloud source calls stops the collection that its cutoff covers", async () => {
   const revokedDuringCall = new ProfileSuggestions(sql, async () => {
     await sql`insert into platform.profile_suggestion_connection_receipts(request_nonce,request_hash,event_id,operation,app_id,person_id,member_id,user_id,organization_id,chat_id,connection_id,revoked_at,result)
@@ -389,7 +385,6 @@ test("a disconnect or withdrawal that commits during the Cloud source calls stop
   expect(await reconnected.propose(owner, input(), now)).not.toBeNull();
 });
 
-// spec/platformRetention.md, "Finished profile suggestions leave after the platform cutoff"
 test("retention removes finished suggestions and empty batches after the platform cutoff and keeps accepted facts", async () => {
   const second: SourceSuggestion = { ...candidate(), value: "I enjoy hiking", tags: ["hiking"] };
   const kept = (await store.propose(owner, input([candidate(), second]), now))!;
@@ -406,6 +401,21 @@ test("retention removes finished suggestions and empty batches after the platfor
   expect((await sql`select id,status from platform.profile_suggestions`).map((r: any) => r.status)).toEqual(["accepted"]);
   expect((await sql`select id from platform.profile_suggestion_batches`).map((r: any) => r.id)).toEqual([kept.id]);
   expect(await facets()).toHaveLength(1);
+});
+
+test("retention removes an accepted suggestion whose saved fact another path deleted, after the platform cutoff", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  expect(await store.decide(owner, { batchId: b.id, revision: b.revision,
+    decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" }] }, now)).toMatchObject({ kind: "saved" });
+  const [accepted] = await sql`select fact_id from platform.profile_suggestions where batch_id=${b.id}`;
+  await sql`delete from network.facets where id=${accepted.fact_id}`;
+  expect(await sql`select status,fact_id from platform.profile_suggestions where batch_id=${b.id}`).toEqual([{ status: "accepted", fact_id: null }]);
+  const cutoffEdge = b.expiresAt + 172_800_000;
+  await store.applyRetention(owner.app, cutoffEdge);
+  expect(await sql`select status from platform.profile_suggestions where batch_id=${b.id}`).toEqual([{ status: "accepted" }]);
+  await store.applyRetention(owner.app, cutoffEdge + 1);
+  expect(await sql`select id from platform.profile_suggestions where batch_id=${b.id}`).toEqual([]);
+  expect(await sql`select id from platform.profile_suggestion_batches where id=${b.id}`).toEqual([]);
 });
 
 const httpSecret = "local-suggestion-review-fixture-secret-only";
@@ -460,7 +470,6 @@ test("real HTTP review joins the signed stored turn, private preview, exact huma
     expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     expect((await http.post("preview", "preview", b.id)).status).toBe(403);
-    // spec/profileSuggestionReview.md, "A retried review command returns its stored result"
     expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     await storedTurn("delete", `delete ${b.id}`);
@@ -695,9 +704,16 @@ test("HTTP cannot save after proof or batch expiry during asynchronous source au
       async () => { clock.advance(expires === "proof" ? 2 : 60_000); return grant; });
     clock = http.clock;
     try {
-      expect((await http.post("decide", expires, b.id, { text })).status).toBe(503);
+      const answer = await http.post("decide", expires, b.id, { text });
       expect(await facets()).toHaveLength(0);
-      expect((await sql`select value,status from platform.profile_suggestions where batch_id=${b.id}`)[0]).toMatchObject({ value: "I enjoy climbing", status: "proposed" });
+      const [row] = await sql`select value,status from platform.profile_suggestions where batch_id=${b.id}`;
+      if (expires === "proof") {
+        expect(answer.status).toBe(503);
+        expect(row).toMatchObject({ value: "I enjoy climbing", status: "proposed" });
+      } else {
+        expect(answer).toEqual({ status: 403, body: { kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." } });
+        expect(row).toMatchObject({ value: null, status: "expired" });
+      }
     } finally { await http.stop(); }
   }
 });

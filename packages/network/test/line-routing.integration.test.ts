@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, MINUTE, SimClock } from "@thenetwork/core";
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
@@ -72,6 +72,27 @@ async function text(s: NetworkService, clock: SimClock, from: string, body: stri
 
 const activeApps = async (e164: string) => (await sql`select m.app_id from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id
   where ph.e164 = ${e164} and m.state = 'active' order by m.app_id`).map((r: any) => r.app_id as string);
+
+const memberIdOf = async (app: AppId, e164: string) => (await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
+  where m.app_id = ${app} and ph.e164 = ${e164}`)[0]!.id as string;
+
+async function metInSlop(s: NetworkService, clock: SimClock) {
+  const ana = newPhone(), ben = newPhone();
+  expect(await text(s, clock, ben, "slop.date")).toBe("join_asked");
+  expect(await text(s, clock, ben, "Ben, 32")).toBe("joined");
+  expect(await text(s, clock, ana, "slop.date")).toBe("join_asked");
+  expect(await text(s, clock, ana, "Ana, 30")).toBe("joined");
+  const anaSlop = await memberIdOf("slop", ana), benSlop = await memberIdOf("slop", ben);
+  await s.runtimeFor("slop")!.unitOfWork(n => {
+    const state = n.exportState();
+    state.interactions.push({ id: "routing-met", kind: "group", category: "social", at: clock.now() - DAY, outcome: "completed", participants: [anaSlop, benSlop] });
+    n.importState(state);
+  });
+  expect(await text(s, clock, ana, "friends.help")).toBe("join_asked");
+  expect(await text(s, clock, ana, "Ana, 30")).toBe("joined");
+  expect(await activeApps(ana)).toEqual(["friends", "slop"]);
+  return { ana, anaSlop, benSlop };
+}
 
 const compare = (misses: unknown[], text: string, got: unknown, want: unknown) => {
   if (JSON.stringify(got) !== JSON.stringify(want)) misses.push({ text, got, want });
@@ -174,6 +195,71 @@ describe.skipIf(!pgAvailable)("shared-line routing corpus through the inbound pa
     // STOP on the shared line stops every app the member is in (a member's STOP is "handled", a stranger's "stopped").
     expect(await text(s, clock, member, "STOP")).toBe("handled");
     for (const app of ["friends", "slop"] as const) expect(await s.accounts.optedIn(app, member)).toBe(false);
+  }, T);
+
+  test("a report on the shared line goes to the app where the member met the person, not to the app that wrote last", async () => {
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    await s.start();
+    const { ana, benSlop } = await metInSlop(s, clock);
+    expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
+    expect(await s.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([expect.objectContaining({ subjectId: benSlop, status: "open" })]);
+    expect(await s.runtimeFor("friends")!.readState(n => n.safetyReports())).toEqual([]);
+  }, T);
+
+  test("the answer to \"Who do you mean?\" goes to the app where the question waits, and the report is filed there", async () => {
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    await s.start();
+    const { ana, anaSlop, benSlop } = await metInSlop(s, clock);
+    await s.runtimeFor("slop")!.unitOfWork(n => {
+      const state = n.exportState();
+      state.members.find(m => m.id === anaSlop)!.pendingSafety = { verb: "report", kind: "other", at: clock.now(), targets: [benSlop] };
+      n.importState(state);
+    });
+    clock.advance(MINUTE);
+    expect(await text(s, clock, ana, "yes")).toBe("handled");
+    expect(await s.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([expect.objectContaining({ subjectId: benSlop })]);
+    expect(await s.runtimeFor("friends")!.readState(n => n.safetyReports())).toEqual([]);
+  }, T);
+
+  test("a short answer after another app's newer message goes to that app and leaves the older \"Who do you mean?\" waiting", async () => {
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    await s.start();
+    const { ana, anaSlop, benSlop } = await metInSlop(s, clock);
+    const anaFriends = await memberIdOf("friends", ana);
+    await s.runtimeFor("slop")!.unitOfWork(n => {
+      const state = n.exportState();
+      state.members.find(m => m.id === anaSlop)!.pendingSafety = { verb: "report", kind: "other", at: clock.now(), targets: [benSlop] };
+      n.importState(state);
+    });
+    clock.advance(MINUTE);
+    await sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, proactive, system, ts)
+      values ('friends', 'routing-newer-question', ${anaFriends}, 'outbound', 'imessage', 'What do you like to do on weekends?', 'dry_run', false, false, ${new Date(clock.now())})`;
+    clock.advance(MINUTE);
+    await text(s, clock, ana, "climbing");
+    expect(await s.runtimeFor("slop")!.readState(n => n.exportState().members.find(m => m.id === anaSlop)?.pendingSafety))
+      .toMatchObject({ verb: "report", targets: [benSlop] });
+    expect(await s.runtimeFor("slop")!.readState(n => n.safetyReports())).toEqual([]);
+  }, T);
+
+  test("a join answer with an age for a third app joins that app and leaves the waiting \"Who do you mean?\" alone", async () => {
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    await s.start();
+    const { ana, anaSlop, benSlop } = await metInSlop(s, clock);
+    expect(await text(s, clock, ana, "peon.biz")).toBe("join_asked");
+    await s.runtimeFor("slop")!.unitOfWork(n => {
+      const state = n.exportState();
+      state.members.find(m => m.id === anaSlop)!.pendingSafety = { verb: "report", kind: "other", at: clock.now(), targets: [benSlop] };
+      n.importState(state);
+    });
+    clock.advance(MINUTE);
+    expect(await text(s, clock, ana, "Ana, 30")).toBe("joined");
+    expect(await activeApps(ana)).toEqual(["friends", "peon", "slop"]);
+    expect(await s.runtimeFor("slop")!.readState(n => n.exportState().members.find(m => m.id === anaSlop)?.pendingSafety))
+      .toMatchObject({ verb: "report", targets: [benSlop] });
   }, T);
 
   test("an answer to \"what are you looking for?\": each app wanted, refused or absent, then only the apps not refused", async () => {

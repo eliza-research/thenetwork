@@ -5,28 +5,16 @@ import { PROFILE_REVIEW_WITHDRAWAL_PATH, parseProfileReviewWithdrawalRequest, pa
   type ProfileReviewWithdrawalRequest, type ProfileReviewWithdrawalProof } from "../../core/src/svc/profile-review-withdrawal.ts";
 import type { SuggestionOwner } from "./profile-suggestions.ts";
 
-/** Must verify canonical signed Cloud owner-withdrawal receipt, independent of OAuth state. */
 export type SuggestionWithdrawalOwnerResolver = (request: ProfileReviewWithdrawalRequest, requestSha256: string) => Promise<ProfileReviewWithdrawalProof | null>;
 export interface ConnectionCleanupCounts { pending: number; retainedAccepted: number; linkedFacts: number }
 export interface ProfileSuggestionWithdrawalDeps {
   secret: string; now: () => number; valid: () => boolean;
-  /** Mandatory fresh signed Cloud proof of durable canonical owner withdrawal command/event.
-   * Payload {request,requestSha256}; proof message identifiers must join stored Network inbound body.
-   * No provider OAuth state or active source-read grant is asserted or required. */
   resolveWithdrawalOwner: (request: ProfileReviewWithdrawalRequest, requestSha256: string) => Promise<unknown | null>;
-  /** Mandatory storage adapter: ONE transaction rechecks current person/member/app/owner join,
-   * proof expiry and durable owner-withdrawal event/message ownership; consumes nonce+request hash atomically with mutation.
-   * withdraw keeps all accepted facts and removes pending only; delete removes all connection-linked suggestions/facts regardless
-   * of retention; readback returns counts only. No call to active source authorization is allowed.
-   * Never affect batches created AFTER proof.cutoffAt, including reconnect/replay; apply cutoff
-   * in every suggestion/fact mutation and count readback. Recheck fence immediately before commit.
-   * Return null on replay or any join/authority drift. */
   applyOwnerWithdrawal: (owner: SuggestionOwner, request: ProfileReviewWithdrawalRequest,
     proof: ProfileReviewWithdrawalProof, fence: () => boolean) => Promise<ConnectionCleanupCounts | null>;
 }
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status,
   headers: { "content-type": "application/json", "cache-control": "no-store" } });
-/** Signed owner-withdrawal wire uses canonical recorded command authority; omission of either mandatory resolver fails closed. */
 export async function profileSuggestionWithdrawalEndpoint(req: Request, d: ProfileSuggestionWithdrawalDeps): Promise<Response> {
   const url = new URL(req.url);
   if (url.pathname !== PROFILE_REVIEW_WITHDRAWAL_PATH || url.search) return json({ error: "not_found" }, 404);
@@ -59,7 +47,6 @@ export async function profileSuggestionWithdrawalEndpoint(req: Request, d: Profi
     if (!counts || !fence()) return json({ error: "cleanup_denied" }, 403);
     const numbers = [counts.pending, counts.retainedAccepted, counts.linkedFacts];
     if (numbers.some(n => !Number.isSafeInteger(n) || n < 0)) return json({ error: "cleanup_unavailable" }, 503);
-    // Explicit allowlist: no connection details, source content, profile text or proof crosses back.
     return json({ kind: "owner_withdrawal", operation: request.operation,
       counts: { pending: counts.pending, retainedAccepted: counts.retainedAccepted, linkedFacts: counts.linkedFacts } });
   } catch { return json({ error: "cleanup_unavailable" }, 503); }

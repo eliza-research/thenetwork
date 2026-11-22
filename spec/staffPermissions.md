@@ -101,19 +101,38 @@ pure def staffMemberAccess(roles: List[str], realMode: bool): MemberAccess =
   else MemberRefused
 ```
 
+### The server grants a reveal for 5, 10 or 15 minutes only
+
+A safety staff member asks for a reveal of one member with a reason and a length. The length is 5, 10 or 15 minutes, and a request without a length gets 15 minutes. The server refuses any other length with `bad_minutes` and writes an audit row of the refusal; it does not shorten or lengthen the request. Changed on 2026-11-22 (audit stories-b-3): before, the server changed any length to a value from 1 to 15 minutes, so only the console form kept the three lengths of the [reveal form rule](consoleWorkspace.md).
+
+```quint
+pure val staffRevealMinuteChoices: Set[int] = Set(5, 10, 15)
+
+pure def staffRevealMinutesAccepted(revealMinutes: int): bool = staffRevealMinuteChoices.contains(revealMinutes)
+
+pure def lawAcceptedRevealEndsWithinFifteenMinutes(revealMinutes: int): bool =
+  staffRevealMinutesAccepted(revealMinutes) implies (revealMinutes >= 5 and revealMinutes <= 15)
+
+pure def lawRevealRefusesOneMinute(revealMinutes: int): bool =
+  revealMinutes < 5 implies not(staffRevealMinutesAccepted(revealMinutes))
+
+pure val revealMinutesValues = Set(-1, 0, 1, 4, 5, 7, 10, 15, 16, 90)
+```
+
 ## Story: Take a gate or safety step in the console as myself
 
 > As a staff member, I want to verify an employer, keep postings, review home help, member invitations, agent signals, privacy requests and held relay items in the console, so that the step needs my own role and the audit names me, not a shared token.
 
 ### Each console staff step needs the role that its staff route needs
 
-New rule (2026-11-21, audit PER35): these steps were raw staff-port calls with a shared token, so the console now offers them and checks the person's own role before it forwards a step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal and held relay items need the safety role. Member invitations and reading agent signals need the reviewer or safety role. Admin passes every check. A posting or employer step exists only on peon. A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count.
+New rule (2026-11-21, audit PER35): these steps were raw staff-port calls with a shared token, so the console now offers them and checks the person's own role before it forwards a step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal and held relay items need the safety role. Member invitations and reading agent signals need the reviewer or safety role. Admin passes every check. A posting or employer step exists only on peon. A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count. Releasing the sender of a signed shared-line turn that did not finish, and reading the shared-line turn watch counts, also need admin for all apps, because one shared line serves every app. Changed on 2026-11-22 (audit console-api-gaps): before, the console had no step for these two service routes, so staff used a shared token on the staff port. Changed on 2026-11-22 (audit STAFF-held-role): the console held-text routes hard-coded the safety role, so they now ask this rule for the read and the decision steps, and these two steps cover both held queues of the console, the leak queue and the relay queue. For a held relay read the console is stricter than the service: the service relay list also admits a reviewer, but the console needs safety, because a held text shows an adult's own words. Changed on 2026-11-22 (audit of the PER35 fix): a review decision needs the reviewer role and a safety case decision (hold, ban, dismiss, lift, close, clear a minor signal) needs the safety role. The console keeps its own review and safety routes for these two; the steps exist so that the service can refuse a shared token on them.
 
 ```quint
 type StaffStep = ReadPostings | SavePosting | ClosePosting | VerifyEmployer | ReadHomeHelp | DecideHomeHelp
   | ReadMemberInvitations | DecideMemberInvitation | SeedInvitations | VerifyMember | InviteMember
   | ReadAgentSignals | DecideAgentSignal | OpenPrivacyRequest | ConfirmPrivacyRequest | ReplayPrivacy
-  | ReadHeldRelay | DecideHeldRelay
+  | ReadHeldRelay | DecideHeldRelay | ResolveInboundTurn | ReadTurnWatch
+  | DecideReviewItem | DecideSafetyCase
 
 pure def staffStepRoles(staffStep: StaffStep): List[str] =
   match staffStep {
@@ -135,6 +154,10 @@ pure def staffStepRoles(staffStep: StaffStep): List[str] =
     | ReplayPrivacy => List("admin")
     | ReadHeldRelay => List("safety")
     | DecideHeldRelay => List("safety")
+    | ResolveInboundTurn => List("admin")
+    | ReadTurnWatch => List("admin")
+    | DecideReviewItem => List("reviewer")
+    | DecideSafetyCase => List("safety")
   }
 
 pure def staffStepEveryApp(staffStep: StaffStep): bool =
@@ -142,6 +165,8 @@ pure def staffStepEveryApp(staffStep: StaffStep): bool =
     | OpenPrivacyRequest => true
     | ConfirmPrivacyRequest => true
     | ReplayPrivacy => true
+    | ResolveInboundTurn => true
+    | ReadTurnWatch => true
     | _ => false
   }
 
@@ -174,7 +199,7 @@ pure val globalRolesValues = Set(List(), List("admin"), List("safety"), List("re
 
 ### The staff API takes a console step only from a named person
 
-New rule (2026-11-21, audit PER35): a shared role token recorded itself as the reviewer of record, so a step could change a gate or a safety state without a person on the audit row. When the service has a console token, it refuses every console staff step whose actor the console did not name in `X-Network-Staff-Id`. The console names the signed-in person and never takes the name from the browser. A service without a console token, as in development or a test harness, has no way to name a person, so it records its token.
+New rule (2026-11-21, audit PER35): a shared role token recorded itself as the reviewer of record, so a step could change a gate or a safety state without a person on the audit row. When the service has a console token, it refuses every console staff step whose actor the console did not name in `X-Network-Staff-Id`. The console names the signed-in person and never takes the name from the browser. A service without a console token, as in development or a test harness, has no way to name a person, so it records its token. Changed 2026-11-22: the two laws restated the definition, so they now check the decision at fixed inputs: a service with a console token refuses a shared token, and a named reviewer is always accepted. Two more laws say how the console token changes the decision: it only refuses steps, and it changes the answer only for a shared token. The step list in `serviceStaffStep` decides which routes are console steps. Changed 2026-11-22 (audit of the PER35 fix): the review decision route (`DecideReviewItem`) and the safety hold, ban, dismiss, lift, close and clear-minor routes (`DecideSafetyCase`) were not console steps, so a shared token recorded itself as the actor of a review decision or of a minor-signal clear, which lets a member be matched again. They are console steps now, and a service with a console token refuses a shared token on them.
 
 ```quint
 type StepActor = NamedReviewer | SharedToken
@@ -182,9 +207,15 @@ type StepActor = NamedReviewer | SharedToken
 pure def staffStepActorAccepted(consoleConfigured: bool, actor: StepActor): bool =
   actor == NamedReviewer or not(consoleConfigured)
 
-pure def lawConsoleServiceRefusesSharedToken(actor: StepActor): bool =
-  staffStepActorAccepted(true, actor) implies actor == NamedReviewer
+pure def lawConsoleServiceRefusesSharedToken(consoleConfigured: bool): bool =
+  consoleConfigured implies not(staffStepActorAccepted(consoleConfigured, SharedToken))
 
 pure def lawNamedReviewerAlwaysAccepted(consoleConfigured: bool): bool =
   staffStepActorAccepted(consoleConfigured, NamedReviewer)
+
+pure def lawConsoleTokenOnlyTightens(actor: StepActor): bool =
+  staffStepActorAccepted(true, actor) implies staffStepActorAccepted(false, actor)
+
+pure def lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: bool, actor: StepActor): bool =
+  staffStepActorAccepted(consoleConfigured, actor) != staffStepActorAccepted(not(consoleConfigured), actor) implies actor == SharedToken
 ```

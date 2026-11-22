@@ -93,7 +93,7 @@ describe("per-app copy", () => {
     for (const app of APP_IDS) {
       const c = copyFor(brandOf(APPS[app]));
       const texts = [c.welcome("Sam"), c.welcome("Sam", "Ana"), c.welcomeMinor("Sam"), c.welcomeAskAge("Sam"), c.growthAsk, c.growthPlain, c.noPromotion,
-        c.joinAsk(APPS[app].minJoinAge), c.joinNeedName, c.linkNotice, c.shareDone, c.leftApp, c.invitesNotOpen("Maya"), c.requestNoneYet("a climbing partner", false)];
+        c.joinAsk(APPS[app].minJoinAge), c.joinNeedName, c.linkNotice, c.shareDone, c.unshareDone, c.leftApp, c.invitesNotOpen("Maya"), c.requestNoneYet("a climbing partner", false)];
       for (const t of texts) expect([app, t, styleViolations(t)]).toEqual([app, t, []]);
       // The keyword texts (HELP names the support address, which the contact-details rule would flag): never "reply cancel".
       for (const t of Object.values(APPS[app].brand)) expect(styleViolations(t)).not.toContain("asks_cancel");

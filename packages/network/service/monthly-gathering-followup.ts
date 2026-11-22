@@ -14,8 +14,6 @@ import { currentGatheringMember, gatheringRsvpKey, gatheringRsvpReference, type 
 export type GatheringFollowupCommand = GatheringRsvpKey & (
   { kind: "attendance"; yes: boolean } | { kind: "reference" } | { kind: "preference"; reference: string; yes: boolean }
 );
-
-/** Keep malformed private command attempts out of the ordinary conversation. */
 export function gatheringFollowupRequested(text: string): boolean {
   return /^\s*gathering\s+(?:attended|reference|follow-up)\b/i.test(text);
 }
@@ -192,8 +190,6 @@ async function followupReply(tx: SQL, accounts: FollowupAccounts, owner: MemberC
   if (write) await savePreference(tx, accounts, ctx, owner.memberId, command, turn, hashKey);
   return FOLLOWUP_RECEIPT;
 }
-
-/** Use only from the signed, direct member unit that stores the private reply atomically. */
 export function saveGatheringFollowup(tx: SQL, accounts: FollowupAccounts, owner: MemberCommandOwner, command: GatheringFollowupCommand,
   turn: SignedResponse, now: number, hashKey: string): Promise<string | undefined> {
   return followupReply(tx, accounts, owner, command, turn, now, hashKey, true);
@@ -203,8 +199,6 @@ export async function gatheringFollowupReplyCurrent(tx: SQL, accounts: FollowupA
   command: GatheringFollowupCommand, turn: SignedResponse, now: number, hashKey: string, body: string): Promise<boolean> {
   return body === await followupReply(tx, accounts, owner, command, turn, now, hashKey, false);
 }
-
-/** Internal evidence only. Ordinary pair policy and a fresh review still govern any contact. */
 export async function gatheringMutualFollowups(tx: SQL, accounts: FollowupAccounts, app: AppInfo,
   key: GatheringRsvpKey, now: number): Promise<{ members: [string, string]; groupReviewId: string }[]> {
   return (await gatheringRepeatSourcesForEvent(tx, accounts, app, key, now)).map(({ members, groupReviewId }) => ({ members, groupReviewId }));
@@ -223,8 +217,6 @@ interface MutualChoice {
   one_at: Date;
   two_at: Date;
 }
-
-/** Read the current, exact two-choice epoch. No member text, address or reply ID leaves this module. */
 export async function gatheringRepeatSourcesForEvent(tx: SQL, accounts: FollowupAccounts, app: AppInfo, key: GatheringRsvpKey, now: number,
   o: { state?: NetworkState; expected?: GatheringRepeatSource; recipient?: GatheringFollowupRecipient } = {}): Promise<GatheringRepeatSource[]> {
   const ctx = await followupContext(tx, app, key, false, now, now, false, o.state);

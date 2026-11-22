@@ -129,19 +129,29 @@ pure def lawNoDirectOrdinaryReplyAfterOptOut(compliance: bool): bool =
 
 ### A replayed open turn answers with the current context
 
-A replay of an open turn answers open again with the member's current context, not the stored one. It does so only while the number is admitted to the app, the active membership is still the same member, and the context is available. Otherwise the replay is a final `turn_context_changed`. Changed on 2026-11-17 (audit SHA37): before, any change to the context between the first answer and the retry gave a final 409 and the member's message got no answer.
+A replay of an open turn answers open again with the member's current context, not the stored one. It does so only while the number is admitted to the app, the active membership is still the same member, and the context is available. When the number is admitted and the membership is the same member but the context is now unavailable, the replay answers handled with the fixed reply of the [shared context](sharedContext.md) rule, through the collected leak guard. The stored answer of the turn then becomes that handled answer, so a later replay and the turn receipt read it. Otherwise the replay is a final `turn_context_changed`. Changed on 2026-11-17 (audit SHA37): before, any change to the context between the first answer and the retry gave a final 409 and the member's message got no answer. Changed on 2026-11-22 (audit sharedLineReplay-r39-1 and SHA40-replay): before, a replay whose context became unavailable was a final `turn_context_changed`, so the member got nothing, where the first answer would have sent the fixed reply.
 
 ```quint
-pure def openReplayAnswersCurrent(admitted: bool, sameMember: bool, contextAvailable: bool): bool =
-  admitted and sameMember and contextAvailable
+type OpenReplayAnswer = ReplayCurrentContext | ReplayFixedReply | ReplayRefused
+
+pure def openReplayAnswer(admitted: bool, sameMember: bool, contextAvailable: bool): OpenReplayAnswer =
+  if (not(admitted) or not(sameMember)) ReplayRefused
+  else if (contextAvailable) ReplayCurrentContext
+  else ReplayFixedReply
 
 pure def lawOpenReplayNeedsAdmission(sameMember: bool, contextAvailable: bool): bool =
-  not(openReplayAnswersCurrent(false, sameMember, contextAvailable))
+  openReplayAnswer(false, sameMember, contextAvailable) == ReplayRefused
+
+pure def lawAnotherMemberIsRefused(admitted: bool, contextAvailable: bool): bool =
+  openReplayAnswer(admitted, false, contextAvailable) == ReplayRefused
+
+pure def lawAdmittedMemberReplayIsNeverRefused(contextAvailable: bool): bool =
+  openReplayAnswer(true, true, contextAvailable) != ReplayRefused
 ```
 
 ### Every collected reply passes the line's leak guard
 
-Every reply that a turn collects for the gateway passes the line queue's leak guard and thread check, and joins the line's thread history, whatever channel sends the runtime's other messages. A dry-run backend uses a line queue that never sends. A reply with any leak reason is not collected. Added on 2026-11-17 (audit SHA42): before, a dry-run backend skipped the guard and the history for the replies that the gateway still delivered.
+Every reply that a turn collects for the gateway passes the line queue's leak guard and thread check, and joins the line's thread history, whatever channel sends the runtime's other messages. A dry-run backend uses a line queue that never sends. A reply with any leak reason is not collected. Added on 2026-11-17 (audit SHA42): before, a dry-run backend skipped the guard and the history for the replies that the gateway still delivered. The STOP or leave confirmation that a retried turn adds after the member's unit already committed passes the same guard. Changed on 2026-11-22 (audit sharedLineReplay-r39-2): before, the service collected that confirmation directly, without the guard. The rescue of a compliance turn that failed after its consent change adds only the fixed confirmation copy of the app. A direct reply (a reply to a number that is not a member here, the fixed STOP or leave confirmation and the under-age decline) passes the guard but does not join the thread history, because the history belongs to a member, a leave can have deleted that member, and the fixed copy names nobody and carries no member data. Only the fixed reply for an unavailable context joins the history, and only when a member binds the turn. Changed on 2026-11-22 (audit SHA-confirmation-guard): this exception was not written, so the rule said that every collected reply joins the history.
 
 ```quint
 pure def collectedReplyMayLeave(leakReasons: int): bool = leakReasons == 0
@@ -152,7 +162,7 @@ pure def lawLeakingReplyIsNotCollected(leakReasons: int): bool =
 
 ### A completed signed row is later scrubbed and then removed
 
-The retention job removes the completed signed row's response and identifying data before it removes the tombstone. Keep the tombstone for the configured purge window plus thirty days.
+The retention job removes the completed signed row's response and identifying data before it removes the tombstone. Keep the tombstone for the configured purge window plus thirty days. A signed turn that did not finish keeps its sender key until staff resolve it, and the retention job never removes a row that still holds a sender key. Changed on 2026-11-22 (audit SHA-turnwatch-purge): before, the job removed a stuck turn that staff had not resolved, so the alert for a turn that may have been a STOP cleared with no staff action. A signed turn that did not finish keeps its sender key only until staff resolve it or the person's account is erased: account erasure removes the sender key, the response and the identifying data of every signed row of that number, stuck rows included, so the key never outlives the person. Added on 2026-11-22 (review of SHA-turnwatch-purge): the rule now says that erasure ends the keep, because a reader could take the keep as one with no limit for a person who asked for deletion.
 
 ```quint
 pure val turnTombstoneKeepMs: int = 30 * 24 * 60 * 60000

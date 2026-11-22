@@ -64,18 +64,11 @@ function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwor
   });
 }
 
-/** Stores whose tick computes an engine run without the lock, until that tick ends. */
 const computing = new WeakSet<NetworkStore>();
 
-/**
- * One tick, stored: under the lock, load the stored state, tick, then save. Returns false when another
- * holder has the lock or this store's engine run is in flight (nothing ran). The state is loaded on
- * every call, so this Network never ticks from an old copy.
- * spec/runtimeUnit.md, "The engine runs on a snapshot outside the store lock": a tick that reaches
- * its engine run ends that unit unsaved, computes the run without the lock, then waits for the lock
- * and ticks again on the newest state with the computed result.
- */
-export async function runTick(net: ConsentNetwork, store: NetworkStore | undefined, now: number): Promise<boolean> {
+export type TickUnitScope = <T>(unit: () => Promise<T>) => Promise<T>;
+
+export async function runTick(net: ConsentNetwork, store: NetworkStore | undefined, now: number, scope: TickUnitScope = unit => unit()): Promise<boolean> {
   const s = storeOf(net, store);
   if (!tickMayStartBesideEngine(computing.has(s))) return false;
   const unit = (engine: EngineStep) => () => stored(net, s, async n => { await n.tick(now, engine); return true as const; });
@@ -83,7 +76,8 @@ export async function runTick(net: ConsentNetwork, store: NetworkStore | undefin
     let engine: EngineStep = captureEngine;
     for (let attempt = 0; ; attempt++) {
       try {
-        return (await (attempt === 0 ? s.withTickLock(unit(engine)) : s.withLock(unit(engine)))) === true;
+        const step = unit(engine);
+        return (await scope<true | undefined>(() => attempt === 0 ? s.withTickLock(step) : s.withLock(step))) === true;
       } catch (e) {
         if (!(e instanceof EngineRunDue)) throw e;
         if (!engineAttemptAllowed(attempt)) return false;

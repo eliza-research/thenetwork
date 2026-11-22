@@ -196,8 +196,48 @@ export function lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): boolean {
 
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 //@ pure
+export function gatewayReceiptApplies(replyStatus: string, delivery: string): boolean {
+  return replyStatus === "collected" || replyStatus === "send_unknown" || (replyStatus === "failed_unknown" && delivery !== "unknown");
+}
+
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function gatewayReplySendTime(replyStatus: string, collectedAt: number, receivedAt: number): number {
+  return replyStatus === "failed_unknown" ? collectedAt : receivedAt;
+}
+
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
 export function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase {
   return pastLimit ? "AcceptanceExpired" : "AcceptanceUnknown";
+}
+
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function lawExpiredReplySendsAtCollection(replyStatus: string, collectedAt: number, receivedAt: number): boolean {
+  //@ ensures \result === true
+  return !(replyStatus === "failed_unknown") || gatewayReplySendTime(replyStatus, collectedAt, receivedAt) === collectedAt;
+}
+
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function lawReplySendTimeNotAfterReceipt(replyStatus: string, collectedAt: number, receivedAt: number): boolean {
+  //@ ensures \result === true
+  return !(collectedAt <= receivedAt) || gatewayReplySendTime(replyStatus, collectedAt, receivedAt) <= receivedAt;
+}
+
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function lawLateUnknownReceiptKeepsExpiredReply(replyStatus: string): boolean {
+  //@ ensures \result === true
+  return !(replyStatus === "failed_unknown") || !gatewayReceiptApplies(replyStatus, "unknown");
+}
+
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
+export function lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: string, delivery: string): boolean {
+  //@ ensures \result === true
+  return !gatewayReceiptApplies(replyStatus, delivery) || (replyStatus === "collected" || replyStatus === "send_unknown" || replyStatus === "failed_unknown");
 }
 
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */

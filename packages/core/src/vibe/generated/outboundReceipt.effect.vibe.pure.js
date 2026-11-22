@@ -55,7 +55,19 @@ export function lawFailedAcceptanceRecordsNoSend(phase) { return M.lawFailedAcce
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
 export function lawReceiptOwnerEndsNonMemberRow(phase) { return M.lawReceiptOwnerEndsNonMemberRow(phase); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function gatewayReceiptApplies(replyStatus, delivery) { return M.gatewayReceiptApplies(replyStatus, delivery); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function gatewayReplySendTime(replyStatus, collectedAt, receivedAt) { return M.gatewayReplySendTime(replyStatus, collectedAt, receivedAt); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export function gatewayReplyPhase(pastLimit) { return M.gatewayReplyPhase(pastLimit); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function lawExpiredReplySendsAtCollection(replyStatus, collectedAt, receivedAt) { return M.lawExpiredReplySendsAtCollection(replyStatus, collectedAt, receivedAt); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function lawReplySendTimeNotAfterReceipt(replyStatus, collectedAt, receivedAt) { return M.lawReplySendTimeNotAfterReceipt(replyStatus, collectedAt, receivedAt); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function lawLateUnknownReceiptKeepsExpiredReply(replyStatus) { return M.lawLateUnknownReceiptKeepsExpiredReply(replyStatus); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus, delivery) { return M.lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus, delivery); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export function lawGatewayReplyEndsOnlyPastLimit(pastLimit) { return M.lawGatewayReplyEndsOnlyPastLimit(pastLimit); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */

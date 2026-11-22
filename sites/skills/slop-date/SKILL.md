@@ -7,7 +7,7 @@ metadata:
   app: slop
   site: https://slop.date
   operator: Eliza Research Corporation
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # slop.date
@@ -98,7 +98,7 @@ send invitations, or change another app. The lowest stated age applies; members
 13–17 must never be matched or introduced to anyone. slop.date does not run criminal background checks. Members aged 13–17
 receive no dating matches or photo requests. Do not upload or rate photos during signup.
 After signup, an adult member who wants to add photos texts ADD PHOTOS to
-{{TEXT_LINE}}. The Network asks for the photo consent, then texts a private link
+{{TEXT_LINE}}. slop.date asks for the photo consent, then texts a private link
 that works once, for 15 minutes. Do not ask for the photos or the link here.
 
 Text STOP stops every text from the shared line; "leave slop.date" leaves this

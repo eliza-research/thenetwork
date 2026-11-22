@@ -360,7 +360,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
 
     // Hold: a decision note of 5+ characters; the person is held on slop and on friends.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "x" })).status).toBe(400);
-    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "reported after a date", reportId })).json()).toEqual({ ok: true });
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "reported after a date", reportId })).json()).toEqual({ reach: "all", ok: true });
     const level = async (app: AppId, id: string) => s.runtimeFor(app)!.readState(n => n.safetyCases().find(c => c.memberId === id)?.level);
     expect(await level("slop", b)).toBe("hold");
     expect(await level("friends", bf)).toBe("hold");
@@ -489,8 +489,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "x" })).status).toBe(400);
     const res = await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "record says 34; wrong report" });
     const out = await res.json() as any;
-    expect([res.status, out.ok]).toEqual([200, true]);
-    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "no_signal" });
+    expect([res.status, out.ok, out.reach]).toEqual([200, true, "all"]);
+    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "cleared" });
     expect((await minorReport())?.status).toBe("dismissed");
     // Nothing left to clear.
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "again, by mistake" })).json()).toMatchObject({ ok: false, reason: "no_signal" });
@@ -507,6 +507,71 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(rows.map(r => `${r.phase}:${r.ok}`)).toEqual(["requested:true", "result:true", "requested:true", "result:false", "requested:true", "result:false"]);
   }, T);
 
+  test("a minor report on slop holds the person out of matching on friends until staff clear it", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const gil = newPhone(), hal = newPhone();
+    for (const [p, who] of [[gil, "Gil, 31"], [hal, "Hal, 34"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    await web.login("friends", hal);
+    expect((await web.join("friends", 34, "Hal")).status).toBe(200);
+    const friends = s.runtimeFor("friends")!;
+    const hf = (await memberOf("friends", hal))!.id;
+    const onFriends = () => friends.readState(n => {
+      const m = n.memberList().find(x => x.id === hf);
+      return { known: !!m, minor: m?.minor === true, minorSignal: m?.minorSignal === true };
+    });
+    await friends.tick();
+    expect((await onFriends()).minorSignal).toBe(false);
+
+    expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
+    const person = ((await sql`select person_id::text from network.members where app_id = 'friends' and id = ${hf}`) as { person_id: string }[])[0]!.person_id;
+    expect((await sql`select person_id::text from platform.person_minor_signals`).map((r: any) => r.person_id)).toEqual([person]);
+    await friends.tick();
+    expect(await onFriends()).toEqual({ known: true, minor: true, minorSignal: true });
+
+    const res = await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: (await memberOf("slop", hal))!.id, note: "record says 34; wrong report" });
+    const out = await res.json() as any;
+    expect([res.status, out.ok]).toEqual([200, true]);
+    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "cleared" });
+    expect(await sql`select person_id from platform.person_minor_signals`).toEqual([]);
+    await friends.tick();
+    expect(await onFriends()).toEqual({ known: true, minor: false, minorSignal: false });
+  }, T);
+
+  test("one-app minor clears on every app end the person signal, so a later join on a new app is not held", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock, { tokens: "safety@slop:slop-safety-tok,safety@friends:friends-safety-tok,safety:saf-tok" });
+    const web = site(s, clock, otp);
+    const gil = newPhone(), hal = newPhone();
+    for (const [p, who] of [[gil, "Gil, 31"], [hal, "Hal, 34"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    await web.login("friends", hal);
+    expect((await web.join("friends", 34, "Hal")).status).toBe(200);
+    const hs = (await memberOf("slop", hal))!.id, hf = (await memberOf("friends", hal))!.id;
+    expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
+    const signals = async () => (await sql`select person_id::text from platform.person_minor_signals`).length;
+    expect(await signals()).toBe(1);
+
+    const onFriends = await (await staff(s, "friends-safety-tok", "POST", "/apps/friends/safety/clear-minor", { memberId: hf, note: "record says 34" })).json() as any;
+    expect([onFriends.ok, onFriends.reach, onFriends.apps]).toEqual([true, "app", [{ app: "friends", result: "cleared" }]]);
+    expect(await signals()).toBe(1);
+
+    const onSlop = await (await staff(s, "slop-safety-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: hs, note: "record says 34; wrong report" })).json() as any;
+    expect([onSlop.ok, onSlop.reach, onSlop.apps]).toEqual([true, "app", [{ app: "slop", result: "cleared" }]]);
+    expect(await signals()).toBe(0);
+
+    clock.advance(HOUR);
+    await web.login("peon", hal);
+    expect((await web.join("peon", 34, "Hal")).status).toBe(200);
+    const hp = (await memberOf("peon", hal))!.id;
+    const peon = s.runtimeFor("peon")!;
+    await peon.tick();
+    expect(await peon.readState(n => n.memberList().find(x => x.id === hp)?.minorSignal === true)).toBe(false);
+    expect((await loadSnapshot(sql, clock.now(), { app: "peon" })).members.find(x => x.id === hp)).not.toHaveProperty("minorSignalAt");
+  }, T);
+
   test("the console's client (observatory ServiceClient) reads the queue and acts through these routes; the signed-in person is the actor", async () => {
     await fresh();
     const clock = new SimClock(START);
@@ -520,7 +585,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       const reports = await client.reports();
       expect(Array.isArray(reports) && reports[0]).toMatchObject({ kind: "unsafe", status: "open" });
       const r = (reports as { id: string; subjectId: string }[])[0]!;
-      expect(await client.safety("safety.lead@example.org", { action: "hold", memberId: r.subjectId, note: "urgent report", reportId: r.id } as never)).toEqual({ ok: true });
+      expect(await client.safety("safety.lead@example.org", { action: "hold", memberId: r.subjectId, note: "urgent report", reportId: r.id } as never)).toEqual({ ok: true, reach: "all" });
       expect(await client.safety("safety.lead@example.org", { action: "ban", memberId: r.subjectId, by: "person", note: "threat confirmed", reportId: r.id } as never)).toEqual({ ok: true });
       expect(await client.safety("safety.lead@example.org", { action: "ban", memberId: r.subjectId, by: "person", note: "threat confirmed" } as never)).toMatchObject({ ok: false, code: "already_banned" });
       expect((await sql`select banned_by from platform.bans`).map((x: any) => x.banned_by)).toEqual(["safety.lead@example.org"]);
@@ -568,7 +633,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // The photo consent says safety looks only after a report: with no open report or safety case about the member, no link (refused and audited).
     expect(await (await staff(s, "saf-tok", "GET", `/apps/slop/members/${a}/photos`, undefined, { "x-network-reason": "just curious" })).json()).toEqual({ ok: false, reason: "no_report" });
     // A staff hold opens a safety case about each of them.
-    for (const id of [k, a]) expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: id, note: "report review" })).json()).toEqual({ ok: true });
+    for (const id of [k, a]) expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: id, note: "report review" })).json()).toEqual({ reach: "all", ok: true });
     expect(await (await staff(s, "saf-tok", "GET", `/apps/slop/members/${k}/photos`, undefined, { "x-network-reason": "report review" })).json()).toEqual({ ok: false, reason: "adults_only" });
 
     // Staff read: a reason is required; the audit row comes before the link.
@@ -808,7 +873,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       return (x?.trust ?? []).some((t: any) => t.id === id && t.level === "hold");
     };
     // Before the fix a peon-only reviewer held the person on slop.date too, and the audit row said "apps: 2".
-    expect((await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: peon, note: "report after an interview" })).status).toBe(200);
+    const localHold = await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: peon, note: "report after an interview" });
+    expect([localHold.status, await localHold.json()]).toEqual([200, { reach: "app", ok: true }]);
     expect([await held("peon", peon), await held("slop", slop)]).toEqual([true, false]);
     expect(await (await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/ban", { memberId: peon, by: "phone", note: "repeated reports" })).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(0);
@@ -837,7 +903,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       const snapshot = await loadSnapshot(sql, clock.now(), { app });
       return (snapshot.members.find(member => member.id === id) as { accountStatus: string } | undefined)?.accountStatus;
     };
-    expect(await (await staff(initial.s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: former, note: "local safety review" })).json()).toEqual({ ok: true });
+    expect(await (await staff(initial.s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: former, note: "local safety review" })).json()).toEqual({ reach: "app", ok: true });
     expect(await status("peon", former)).toBe("restricted");
     expect(await status("slop", slopId)).toBe("active");
     expect(await text(initial.s, clock, phone, "leave peon.biz")).toBe("left");
@@ -862,7 +928,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: true });
     expect(await status("peon", current)).toBe("active");
 
-    expect(await (await staff(restarted.s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: current, note: "global safety review" })).json()).toEqual({ ok: true });
+    expect(await (await staff(restarted.s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: current, note: "global safety review" })).json()).toEqual({ reach: "all", ok: true });
     expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
     expect(await status("peon", current)).toBe("restricted");
     expect(await (await lift("peon", "saf-tok", current)).json()).toEqual({ ok: true });

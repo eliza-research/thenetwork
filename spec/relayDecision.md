@@ -36,6 +36,45 @@ pure def lawARelayPassHasNoReason(hasBlock: bool, hasReason: bool): bool =
   relayVerdict(hasBlock, hasReason) == Pass implies (not(hasBlock) and not(hasReason))
 ```
 
+### A relay text that says the sender is under 18 starts the minors policy
+
+The engine reads the text of each item for a minor's own words ("I'm 16", "I'm still in high school") and records an age signal on the item. The desk also reads a `minor_signal` flag of the relay classifier as an age signal, because the engine keeps only the age signal of its rules. When the item has an age signal and the Network has not already marked the sender with a minor signal, the desk starts the minors policy before it answers the sender. The Network marks the sender as a minor, writes a 0-point `relay_age_signal` event in the sender's safety case, records the adults whom the sender met, and closes every open opportunity of the sender, including the match of the item. A sender who already has the minor signal gets no second event. The rules above still block the item, or hold it without its text. New rule: the age signal only decided whether the held desk kept the text, so the sender stayed matchable (audit ST-D2). The laws use fixed inputs, because the first law only restated the definition. The Network also gives the minor signal to the person, so the other apps of the person stop matching them, and on an 18+ app it writes an `age_review` event for staff, as the inbound path does.
+
+```quint
+pure def relayStartsMinorPolicy(ageSignal: bool, senderMarkedMinor: bool): bool =
+  ageSignal and not(senderMarkedMinor)
+
+pure def lawAnUnmarkedSenderStartsTheMinorsPolicyExactlyOnAnAgeSignal(ageSignal: bool): bool =
+  relayStartsMinorPolicy(ageSignal, false) == ageSignal
+
+pure def lawAMarkedSenderGetsNoSecondMinorsPolicy(ageSignal: bool): bool =
+  not(relayStartsMinorPolicy(ageSignal, true))
+
+pure def lawNoAgeSignalStartsNoMinorsPolicy(senderMarkedMinor: bool): bool =
+  not(relayStartsMinorPolicy(false, senderMarkedMinor))
+```
+
+### A block for the sender's severe words reaches the sender's safety case
+
+A severe reason is a threat or a slur that the rules find, or a block flag from the classifier. When the verdict is a block and one of its reasons is severe, the desk writes a 0-point `relay_block` event in the sender's safety case. The event keeps no text and no reason code. A hold, or a block without a severe reason, writes no event. New rule: a block for the sender's own severe words left no record, so the item never reached the safety console (audit SD-254). The laws use fixed inputs, because the first law only restated the definition.
+
+```quint
+pure def relaySevereBlockCaseEvent(verdict: RelayVerdict, severeReason: bool): bool =
+  verdict == Block and severeReason
+
+pure def lawABlockWritesACaseEventExactlyForASevereReason(severeReason: bool): bool =
+  relaySevereBlockCaseEvent(Block, severeReason) == severeReason
+
+pure def lawAPassWritesNoCaseEvent(severeReason: bool): bool =
+  not(relaySevereBlockCaseEvent(Pass, severeReason))
+
+pure def lawNoSevereReasonWritesNoCaseEvent(verdict: RelayVerdict): bool =
+  not(relaySevereBlockCaseEvent(verdict, false))
+
+pure def lawAHeldItemWritesNoCaseEvent(severeReason: bool): bool =
+  not(relaySevereBlockCaseEvent(Hold, severeReason))
+```
+
 ## Story: Relay only to the match I named
 
 > As a member with more than one match, I want Eliza to pass my item only to the match I named, and to ask me which one when I did not say.
@@ -85,7 +124,7 @@ pure def lawSeveralMatchesAreNotAbuse(liveMatches: int): bool =
 
 ### Negative feedback after a meeting ends the relay thread
 
-A relay thread is open only while its match is mutual, both members said yes, and neither member gave negative feedback about the other after the meeting. Negative feedback is a check-in answer with negative sentiment that does not say the other person did not come: the same answer that keeps the pair from being matched again. When the thread ends, the match is no longer live in either direction: the shared context does not offer it, a relay request that names it gets the "match is closed" notice, a relay without a name does not count it, and a queued relay item for it fails its final dispatch check. A block or a report is not needed. New rule: negative feedback only kept the pair from new matches, and the other member could keep sending relayed texts until the member blocked them (audit OPP58).
+A relay thread is open only while its match is mutual, both members said yes, and neither member gave negative feedback about the other after the meeting. Negative feedback is a check-in answer with negative sentiment that does not say the other person did not come: the same answer that keeps the pair from being matched again. When the thread ends, the match is no longer live in either direction: a turn that opens after the feedback does not offer it, so a relay request of that turn that names it is refused as an item the turn did not offer; only a turn that opened before the feedback and offered the match gets the "match is closed" notice for it; a relay without a name does not count it; a staff release of a held item for it delivers nothing; and a queued relay item for it fails its final dispatch check. A block or a report is not needed. New rule: negative feedback only kept the pair from new matches, and the other member could keep sending relayed texts until the member blocked them (audit OPP58). Changed 2026-11-22: the second law only restated the definition, so it is now two laws. One checks the safety property at fixed inputs: a match that is not mutual, or that has no yes from both members, has no open thread. The other ties the ended thread to `relayTarget`: when negative feedback ends the only match's thread, a relay without a name has no match, and a relay that names it is never sent to it (`RelayNamedNotLive`). Changed: this rule said that every relay request that names the closed match gets the "match is closed" notice, but the endpoint refuses an item that the turn did not offer, and a staff release looked the match up without the thread check and could deliver a held item after the thread ended (audit RELAY-spec-closed-notice, RELAY-release-closed).
 
 ```quint
 pure def relayThreadOpen(mutual: bool, bothSaidYes: bool, negativeFeedback: bool): bool =
@@ -94,6 +133,9 @@ pure def relayThreadOpen(mutual: bool, bothSaidYes: bool, negativeFeedback: bool
 pure def lawNegativeFeedbackEndsTheThread(mutual: bool, bothSaidYes: bool): bool =
   not(relayThreadOpen(mutual, bothSaidYes, true))
 
-pure def lawAnOpenThreadIsMutualWithBothYes(mutual: bool, bothSaidYes: bool, negativeFeedback: bool): bool =
-  relayThreadOpen(mutual, bothSaidYes, negativeFeedback) implies (mutual and bothSaidYes)
+pure def lawNoThreadWithoutMutualYes(bothSaidYes: bool, negativeFeedback: bool): bool =
+  not(relayThreadOpen(false, bothSaidYes, negativeFeedback)) and not(relayThreadOpen(true, false, negativeFeedback))
+
+pure def lawEndedOnlyThreadHasNoRelayTarget(mutual: bool, bothSaidYes: bool, named: bool): bool =
+  relayTarget(if (relayThreadOpen(mutual, bothSaidYes, true)) 1 else 0, named, relayThreadOpen(mutual, bothSaidYes, true)) == (if (named) RelayNamedNotLive else RelayToNoMatch)
 ```

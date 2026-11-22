@@ -37,7 +37,7 @@ import {
 } from "../../core/src/generated/outboundAdmission.ts";
 import { controlQuietHoursValid } from "../../core/src/generated/participationControls.ts";
 import {
-  acceptanceEndsRow, acceptanceRecordsSend, gatewayReplyPhase, returnsPersonSlot, step as stepReceipt, type FailureKind, type ReceiptPhase,
+  acceptanceEndsRow, acceptanceRecordsSend, gatewayReceiptApplies, gatewayReplyPhase, gatewayReplySendTime, returnsPersonSlot, step as stepReceipt, type FailureKind, type ReceiptPhase,
 } from "../../core/src/generated/outboundReceipt.ts";
 import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/outboundReceiptShell.js";
@@ -223,6 +223,10 @@ export class IdempotencyConflictError extends Error {
 /** Statuses that still wait for the worker (the console's backlog). */
 export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending", "unknown_acceptance"];
 export const GATEWAY_WAITING = ["collected", "send_unknown"];
+export type TurnReceiptOutcome = "accepted" | "unknown" | "rejected";
+export function gatewayReceiptMoves(outcome: TurnReceiptOutcome): string[] {
+  return [...GATEWAY_WAITING, "failed_unknown"].filter(status => gatewayReceiptApplies(status, outcome));
+}
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
 const FAILURE_KIND = {
   unknown: "UnknownResult", retryable: "Retryable", await_recipient: "NeedReply", blocked: "BlockedNumber",
@@ -588,8 +592,6 @@ export class OutboundQueue {
   }
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean, seenInbound: unknown): Promise<StatusChange> {
-    // Admit only the current canonical member and immutable payload, after the async gates.
-    // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
       await this.o.checks.lockAdmission?.(row, tx);
@@ -599,8 +601,6 @@ export class OutboundQueue {
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
         member = await this.memberDeliverySettings(tx, row, true);
         if (!member || member.account_status==='removed' || member.account_status==='invited') return "dropped_forgotten";
-        // A paused or restricted account still gets replies to its own messages, compliance texts and
-        // safety notices (snapshot.ts); the engine already decides those. The fence stops only proactive sends.
         if (row.kind==="proactive" && (member.account_status!=="active" || member.safety_held)) return "suppressed_ineligible";
         if (this.o.provider.receipt) {
           const [binding] = await tx`select membership.member_id from platform.memberships membership
@@ -614,16 +614,13 @@ export class OutboundQueue {
         }
         if (row.kind!=="compliance" && member.opted_out) return "refused_opted_out";
       }
-      // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
-      // The consent ledger again for every row, a direct text to a non-member too: a STOP that came during the gates wins.
       if (consentPolicy(row.kind==="compliance", await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true))==="OptedOut") return "refused_opted_out";
-      // Recheck eligibility after person/member fences; app state fences were acquired first, as in canonical erasure.
       const decision = await this.o.checks.admit?.(row, tx);
       const start = this.now;
       const pending = tx`id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)}`;
       if (decision?.ok === false) {
-        if (!("retryAt" in decision)) return "suppressed_ineligible";
+        if (!("retryAt" in decision)) return { ended: "suppressed_ineligible", note: decision.reason } as const;
         const deferred = await tx`update platform.outbound set status='retry_scheduled',next_attempt_at=${new Date(decision.retryAt)},
           note=${decision.reason},updated_at=${new Date(start)},person_cap=false where ${pending} returning id`;
         if (deferred.length) return "retry_scheduled";
@@ -644,12 +641,14 @@ export class OutboundQueue {
           }
         }
       }
-      // Another worker claimed or ended the row since this drain read it: leave it to that worker.
       const [now] = await tx`select status,lease_until from platform.outbound where id=${row.id}`;
       if (now && (now.status!==row.status || now.lease_until!==null)) return {busy:String(now.status)};
       return "dropped_forgotten";
     });
-    if (typeof admission==="object") return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
+    if (typeof admission==="object") {
+      if ("busy" in admission) return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
+      return this.end(row, admission.ended, admission.note);
+    }
     if (admission === "deferred_quiet_hours" || admission === "retry_scheduled") {
       if (row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
       return { id: row.id, app: row.app, memberId: row.memberId, status: admission };
@@ -905,14 +904,6 @@ export class OutboundQueue {
     return rows.length;
   }
 
-  // ---------------------------------------------------------------- replies another transport delivers
-  // In a signed turn (the Eliza Cloud seam) the Network's replies are collected and returned to Cloud,
-  // which sends them; they never pass dispatch(). They still get this queue's leak guard (canary shapes,
-  // contacts, the recipient's leak sources and the core-14 thread check) and they join the thread history
-  // the guard reads: a row with status "collected" in the caller's transaction, "sent" with sent_at once
-  // Cloud reports acceptance (collectedReceipt).
-
-  /** The leak guard's reasons for one reply that another transport will deliver (empty: it may go). `db`: the caller's transaction. */
   async collectedLeaks(db: SQL, i: { id: string; memberId?: string; to: string; kind: MessageKind; text: string; contactAllow?: readonly string[] }): Promise<string[]> {
     const row: QueueRow = {
       id: i.id, app: this.app, ...(i.memberId ? { memberId: i.memberId } : {}), line: this.line, to: normalizeAddress(i.to), kind: i.kind, text: i.text, mediaUrls: [],
@@ -921,7 +912,6 @@ export class OutboundQueue {
     return this.leakReasons(row, db, i.contactAllow);
   }
 
-  /** Record collected replies to members (thread history for the leak guard) in the caller's transaction. A replay is a no-op. */
   async recordCollected(tx: SQL, items: { id: string; memberId: string; to: string; kind: MessageKind; text: string }[]): Promise<void> {
     const now = new Date(this.now);
     for (const i of items) {
@@ -933,19 +923,20 @@ export class OutboundQueue {
     }
   }
 
-  /**
-   * Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at) and the
-   * conversation's streak, as a send this queue made; the others end.
-   */
-  async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
+  async collectedReceipt(tx: SQL, ids: string[], outcome: TurnReceiptOutcome, at: number): Promise<void> {
     if (!ids.length) return;
     const status = receiptMessageStatus(outcome);
-    const moved = await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
-      sent_at = case when ${receiptAccepted(outcome)} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
-      ended_at = case when ${receiptFinal(outcome)} then coalesce(ended_at, ${new Date(this.now)}) else null end
-      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown') returning line, to_address, kind`;
-    // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
-    if (receiptAccepted(outcome)) for (const r of moved as any[]) await this.countSend(tx, r.line, r.to_address, r.kind, false, new Date(at));
+    const rows = await tx<{ id: string; status: string; line: string; to_address: string; kind: MessageKind; created_at: Date; sent_at: Date | null }[]>`select
+      id, status, line, to_address, kind, created_at, sent_at from platform.outbound
+      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) order by id for update`;
+    for (const r of rows) {
+      if (!gatewayReceiptApplies(r.status, outcome)) continue;
+      const sentAt = receiptAccepted(outcome) ? r.sent_at ?? new Date(gatewayReplySendTime(r.status, r.created_at.getTime(), at)) : r.sent_at;
+      const moved = await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)}, sent_at = ${sentAt},
+        ended_at = case when ${receiptFinal(outcome)} then coalesce(ended_at, ${new Date(this.now)}) else null end
+        where app_id = ${this.app} and id = ${r.id} and status = ${r.status} returning id`;
+      if (moved.length && sentAt && receiptAccepted(outcome)) await this.countSend(tx, r.line, r.to_address, r.kind, false, sentAt);
+    }
   }
 
   /** Rows of this app the leak guard parked for a person (GET /queue/leak-review), oldest first. */

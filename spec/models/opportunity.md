@@ -1269,7 +1269,7 @@ module opportunity {
     init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
       .then(answer("a", "counter", ALL_OPEN)).then(settled)
       .expect(stat(s, "o2", "a") == "probing" and mm(s, "a").aw.kind == "probe" and mm(s, "a").aw.clarified and safety)
-      .then(tick(27, ALL_OPEN)).then(settled)
+      .then(tick(PROBE_TTL + 1, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").parts == Set("b", "c") and stat(s, "o2", "a") == "out" and op(s, "o2").revealSent == Set()
               and counterIsNotYes and safety)
 
@@ -1439,7 +1439,7 @@ module opportunity {
   run refusedProbeSilenceTest =
     init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
       .then(queueDecide("probe", "o1", "a", "refused")).then(settled)
-      .then(tick(27, ALL_OPEN)).then(settled)
+      .then(tick(PROBE_TTL + 1, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").expiredSilent.contains("a") and not(silenceOnlyAfterDelivery) and safety)
 
   // F28. A refused initial invitation does not contribute to an automatic pause at either deadline.
@@ -1458,7 +1458,8 @@ module opportunity {
       .then(queueDecide("probe", "o1", "b", "delivered")).then(settled)
       .then(tick(PROBE_TTL - 1, ALL_OPEN)).then(settled).expect(unansweredInvitations(s, "b") == Set())
       .then(tick(1, ALL_OPEN)).then(settled)
-      .expect(unansweredInvitations(s, "b") == Set("o1") and not(mm(s, "b").onlyWhenAsked))
+      .expect(unansweredInvitations(s, "b") == Set("o1") and not(mm(s, "b").onlyWhenAsked) and stat(s, "o1", "a") == "probing")
+      .then(probeSend("o1", "a", ALL_OPEN)).then(settled).then(answer("a", "yes", ALL_OPEN)).then(settled)
       .then(probeSend("o1", "c", ALL_OPEN)).then(settled).then(queueDecide("probe", "o1", "c", "delivered")).then(settled)
       .then(answer("c", "no", ALL_OPEN)).then(settled).then(answer("a", "ack", ALL_OPEN)).then(settled)
       .then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
@@ -1508,12 +1509,12 @@ module opportunity {
       .then(tick(1, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "scheduled" and bookedMembersTold and safety)
 
-  // SD-076 (791ff6a, opportunity-withdraw-yes.test.ts): "yes, but none of those times", silence for 26
-  // hours keeps the yes and ends the slot; then "no thanks" takes the yes back and the request item closes.
+  // SD-076 (791ff6a, opportunity-withdraw-yes.test.ts): "yes, but none of those times", silence past the
+  // probe window keeps the yes and ends the slot; then "no thanks" takes the yes back and the request item closes.
   run noAfterRetryTest =
     init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
       .then(answer("a", "yes_other_times", ALL_OPEN)).then(settled)
-      .then(tick(27, ALL_OPEN)).then(settled)
+      .then(tick(PROBE_TTL + 1, ALL_OPEN)).then(settled)
       .expect(stat(s, "o1", "a") == "available" and mm(s, "a").aw.kind == "none" and slotOwnerAlive)
       .then(answer("a", "no", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "closed" and op(s, "o1").revealSent == Set() and safety)

@@ -96,10 +96,10 @@ module profile_learning {
   pure def batchOf(i: int): int = if (i <= 2) 1 else 2
   pure def itemsOf(b: int): Set[int] = ITEMS.filter(i => batchOf(i) == b)
   // Time is an integer tick. The scales are symbolic: only the order of the thresholds matters.
-  pure val SKEW = 2           // signed-call skew bound (svc-auth.ts:17 SVC_MAX_SKEW_S, 60 s)
+  pure val SKEW = 2           // signed-call skew bound (svc-auth.ts SVC_MAX_SKEW_S, 60 s)
   pure val MAXT = 12          // time bound for the model
-  pure val PARENT = 4         // a parent turn is usable for 5 min (cloud-profile-review-owner.ts:9, :52)
-  pure val SRC_TTL = 2        // a source proof lives at most 5 s (profile-review-source.ts:68)
+  pure val PARENT = 4         // a parent turn is usable for 5 min (cloud-profile-review-owner.ts MAX_PARENT_AGE_MS)
+  pure val SRC_TTL = 2        // a source proof lives at most 5 s (core/src/svc/profile-review-source.ts parseProfileReviewSourceProof)
   pure val RETENTION = 2      // platformKeepMs (spec/platformRetention.md), counted from the batch expiry
   // Pending lifetime: the proposal's expiresAt, chosen as 2 or 4 ticks after created_at (collectBegin).
   pure val INF = 100
@@ -114,12 +114,14 @@ module profile_learning {
   type Plan = { conn: int, cal: bool, obs: int, authAt: int }
   type Collect = { active: bool, b: int, at: int, calls: int, until: int, ttl: int, retain: bool }
   // kind: "none" | "saved" | "preview" (decide) | "deleted" (delete). rev: the batch revision after the commit.
-  type Req = { kind: str, b: int, rev: int, committed: bool, lost: bool }
+  // receipt: the stored result "profile-review:<b>" on the review turn (PS keepReview), written in the same
+  // transaction as the commit and removed when forget or delete everything resets action_receipts.
+  type Req = { kind: str, b: int, rev: int, committed: bool, lost: bool, receipt: bool }
 
   pure val NOITEM: Item = { status: "none", conn: 1, cal: false, obs: 0, hasValue: false, fact: false, authAt: -1 }
   pure val NOBATCH: Batch = { exists: false, createdAt: -1, expiresAt: -1, rev: 0, retain: false }
   pure val NOCOL: Collect = { active: false, b: 1, at: -1, calls: 0, until: INF, ttl: 0, retain: false }
-  pure val NOREQ: Req = { kind: "none", b: 1, rev: 0, committed: false, lost: false }
+  pure val NOREQ: Req = { kind: "none", b: 1, rev: 0, committed: false, lost: false, receipt: false }
 
   // ------------------------------------------------------------------ state
   var nowN: int
@@ -438,7 +440,8 @@ module profile_learning {
     val bt = batch.get(b)
     val rev = if (stale) bt.rev - 1 else bt.rev
     if (nowN >= bt.expiresAt)
-      // view() / PS:273-276: expire pending rows, deny. The expiry write commits.
+      // PS decide: expire pending rows, deny. The expiry write commits, also when the batch expired during the
+      // Cloud source calls (spec/profileSuggestionReview.md, fix of IPP-3: the code threw and rolled back).
       all {
         row' = ITEMS.mapBy(j => if (batchOf(j) == b and row.get(j).status == "proposed")
                                    row.get(j).with("status", "expired").with("hasValue", false)
@@ -456,7 +459,7 @@ module profile_learning {
         row' = row.set(i, row.get(i).with("status", "accepted").with("hasValue", false).with("fact", true)),
         facts' = facts.union(Set(i)),
         batch' = batch.set(b, bt.with("rev", bt.rev + 1)),
-        lastReq' = { kind: "saved", b: b, rev: bt.rev + 1, committed: true, lost: lost },
+        lastReq' = { kind: "saved", b: b, rev: bt.rev + 1, committed: true, lost: lost, receipt: true },
         acceptedAfterExpiry' = (acceptedAfterExpiry or nowN >= bt.expiresAt),
         everAccepted' = true,
         addedAfterStop' = (addedAfterStop or ledgerStop),
@@ -467,7 +470,7 @@ module profile_learning {
         eligible, sourceProof(row.get(i).conn),
         row' = row, facts' = facts,
         batch' = batch.set(b, bt.with("rev", bt.rev + 1)),
-        lastReq' = { kind: "preview", b: b, rev: bt.rev + 1, committed: true, lost: lost },
+        lastReq' = { kind: "preview", b: b, rev: bt.rev + 1, committed: true, lost: lost, receipt: true },
         acceptedAfterExpiry' = acceptedAfterExpiry, everAccepted' = everAccepted,
         addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld, addedMinor' = addedMinor,
       } else all {
@@ -475,7 +478,7 @@ module profile_learning {
         row' = row.set(i, row.get(i).with("status", "rejected").with("hasValue", false)),
         facts' = facts,
         batch' = batch.set(b, bt.with("rev", bt.rev + 1)),
-        lastReq' = { kind: "saved", b: b, rev: bt.rev + 1, committed: true, lost: lost },
+        lastReq' = { kind: "saved", b: b, rev: bt.rev + 1, committed: true, lost: lost, receipt: true },
         acceptedAfterExpiry' = acceptedAfterExpiry, everAccepted' = everAccepted,
         addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld, addedMinor' = addedMinor,
       },
@@ -496,7 +499,7 @@ module profile_learning {
       batch' = batch.set(b, NOBATCH),
       row' = ITEMS.mapBy(i => if (batchOf(i) == b) NOITEM.with("status", "gone") else row.get(i)),
       facts' = facts.exclude(itemsOf(b)),
-      lastReq' = { kind: "deleted", b: b, rev: batch.get(b).rev, committed: true, lost: lost },
+      lastReq' = { kind: "deleted", b: b, rev: batch.get(b).rev, committed: true, lost: lost, receipt: true },
       everDeleted' = true,
     },
     collectReceipt' = collectReceipt, col' = col, plan' = plan, v1Receipts' = v1Receipts, v2Receipts' = v2Receipts,
@@ -510,14 +513,16 @@ module profile_learning {
     keepClock, keepMember, keepCloud }
 
   // The gateway sends the same signed request again after a lost reply. EP calls PS priorReview first
-  // (fix of SD-458): owned() must find the member; the stored "saved" or "deleted" result comes back as it
-  // is; a stored "preview" comes back only while the batch keeps that revision and has not expired (an
-  // older preview is stale, and a denial is correct).
+  // (fix of SD-458): owned() must find the member and the review turn must still hold the stored result
+  // (PS replayReview, spec/profileSuggestionReview.md storedReviewReplays); the stored "saved" or "deleted"
+  // result comes back as it is; a stored "preview" comes back only while the batch keeps that revision and
+  // has not expired (an older preview is stale, and a denial is correct). The replay reads only the
+  // receipt, so `ok` needs it, while `stable` says whether the first result is still current (IPP-5).
   action retryLast = all {
     lastReq.lost,
     val bt = batch.get(lastReq.b)
     val previewCurrent = bt.exists and bt.rev == lastReq.rev and nowN < bt.expiresAt
-    val ok = ownedExists and (lastReq.kind != "preview" or previewCurrent)
+    val ok = lastReq.receipt and ownedExists and (lastReq.kind != "preview" or previewCurrent)
     // A denial is a defect only when the owner still exists and the stored result is still current.
     val stable = ownedExists and (lastReq.kind != "preview" or previewCurrent)
     all {
@@ -549,8 +554,9 @@ module profile_learning {
   // (now - RETENTION) is deleted, and a batch with no row left past the same cutoff is deleted.
   action retentionTick = all {
     val cutoff = nowN - RETENTION
-    def purge(i: int): bool = row.get(i).status.in(TERMINAL) and batch.get(batchOf(i)).exists
-      and batch.get(batchOf(i)).expiresAt < cutoff
+    // An accepted row whose fact is gone is finished too (spec/platformRetention.md suggestionFinished, IPP-4).
+    def purge(i: int): bool = (row.get(i).status.in(TERMINAL) or (row.get(i).status == "accepted" and not(i.in(facts))))
+      and batch.get(batchOf(i)).exists and batch.get(batchOf(i)).expiresAt < cutoff
     val left = ITEMS.mapBy(i => if (purge(i)) NOITEM.with("status", "gone") else row.get(i))
     def empty(b: int): bool = batch.get(b).exists and batch.get(b).expiresAt < cutoff
       and itemsOf(b).forall(i => left.get(i).status == "gone" or left.get(i).status == "none")
@@ -588,7 +594,8 @@ module profile_learning {
     keepClock, keepMember, keepTurns, keepStore, keepGhost }
 
   // One V1 transaction. The proof says connectionState "revoked" with revokedAt on the Cloud clock.
-  // Rows are selected by source_authorized_at <= revokedAt, both on the Cloud clock (fix of SD-172).
+  // Rows are selected by source_authorized_at <= revokedAt, both on the Cloud clock (fix of SD-172), with
+  // cleanupCoversGrant (spec/profileSuggestionSource.md); the collectCommit check uses the same rule.
   action v1(c: int, op: str, nonce: int): bool = all {
     reviewEnabled, conn.get(c) == "revoked", revokedAt.get(c) >= 0, ownedExists,
     val cut = revokedAt.get(c)
@@ -653,7 +660,8 @@ module profile_learning {
       all { batch' = batch, row' = row, facts' = facts, v2Receipts' = v2Receipts, v2Done' = v2Done,
             touchedAfterCutoff' = touchedAfterCutoff }
     else
-      // Rows are selected by source_authorized_at <= cutoffAt, both on the Cloud clock (fix of SD-172).
+      // Rows are selected by source_authorized_at <= cutoffAt, both on the Cloud clock (fix of SD-172),
+      // with cleanupCoversGrant.
       def hit(i: int): bool = batch.get(batchOf(i)).exists and row.get(i).authAt <= wCutoff and row.get(i).conn == wConn
         and (if (op == "withdraw") row.get(i).status == "proposed" else row.get(i).status != "gone" and row.get(i).status != "none")
       val hits = ITEMS.filter(i => hit(i))
@@ -692,12 +700,12 @@ module profile_learning {
     leaveStage' = "forgot", forgotten' = true, sealed' = true,
     facts' = Set(),
     // RT forget: delete from platform.profile_suggestion_batches (rows cascade). RT:592-595 resets the
-    // member's inbound turns (action_receipts '{}'): the collect and V2 receipts go.
+    // member's inbound turns (action_receipts '{}'): the collect, review and V2 receipts go.
     batch' = BATCHES.mapBy(b => NOBATCH),
     row' = ITEMS.mapBy(i => if (row.get(i).status == "none") NOITEM else NOITEM.with("status", "gone")),
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held, minor' = minor, membership' = membership,
     collectReceipt' = Set(), col' = col, plan' = plan,
-    v1Receipts' = v1Receipts, v2Receipts' = Set(), lastReq' = lastReq,
+    v1Receipts' = v1Receipts, v2Receipts' = Set(), lastReq' = lastReq.with("receipt", false),
     keepClock, keepCloud, keepTurns, keepGhost }
   action leaveMembership = all { leaveStage == "forgot",
     leaveStage' = "done", membership' = "removed",
@@ -719,9 +727,9 @@ module profile_learning {
     row' = ITEMS.mapBy(i => if (row.get(i).status == "none") NOITEM else NOITEM.with("status", "gone")),
     facts' = Set(),
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held, minor' = minor,
-    // PG:369-371 resets the person's inbound turns (action_receipts '{}'): the collect and V2 receipts go.
+    // PG:369-371 resets the person's inbound turns (action_receipts '{}'): the collect, review and V2 receipts go.
     collectReceipt' = Set(), col' = col, plan' = plan,
-    v1Receipts' = Map(), v2Receipts' = Set(), lastReq' = lastReq,
+    v1Receipts' = Map(), v2Receipts' = Set(), lastReq' = lastReq.with("receipt", false),
     keepClock, keepCloud, keepTurns, keepGhost }
 
   // ------------------------------------------------------------------ step
@@ -842,7 +850,7 @@ module profile_learning {
   // wait on a Cloud round trip. (SD-112, fixed: no action holds the person or member row lock across a
   // Cloud call; witness_stopProjectedDuringCollect shows the projection runs while a collect is open.)
 
-  // INV-16. The 5 s source proof (profile-review-source.ts:68) and PF:92 min(): one Cloud source call per
+  // INV-16. The 5 s source proof (core/src/svc/profile-review-source.ts parseProfileReviewSourceProof) and PF:92 min(): one Cloud source call per
   // distinct (source, connection) in one transaction, else the earliest proof bounds the whole batch.
   // (SD-455, fixed)
   val inv_oneSourceCallPerScope = col.active implies col.calls <= scopesOf(col.b).size()
@@ -1029,6 +1037,21 @@ module profile_learning {
       .expect(inv_retryKeepsResult and batch.get(1).rev == 2)
       .then(memberReviewCmd).then(deleteBatch(1, true)).then(retryLast)
       .expect(inv_retryKeepsResult and not(batch.get(1).exists) and safety)
+
+  // IPP-5: the retry invariant can fail. A commit whose review receipt is gone while the owner stays makes
+  // the retry deny a current result; this run removes the receipt by hand to show the check is live.
+  action dropReviewReceipt = all { lastReq.receipt, lastReq' = lastReq.with("receipt", false),
+    batch' = batch, row' = row, facts' = facts, collectReceipt' = collectReceipt, col' = col, plan' = plan,
+    v1Receipts' = v1Receipts, v2Receipts' = v2Receipts,
+    keepClock, keepMember, keepCloud, keepTurns, keepGhost }
+  run retryWithoutReceiptTest =
+    initWith(true)
+      .then(memberCollectCmd(1)).then(consentContext(1))
+      .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
+      .then(memberReviewCmd)
+      .then(decide(1, 1, "accept", false, true))
+      .then(dropReviewReceipt).then(retryLast)
+      .expect(retryDeniedAfterCommit and not(inv_retryKeepsResult))
 
   // One review turn applies one command (PS:271, PS:332): a delete on the turn of the accept is refused.
   run oneCommandPerTurnTest =

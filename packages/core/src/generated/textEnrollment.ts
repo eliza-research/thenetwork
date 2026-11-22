@@ -2,13 +2,13 @@
 //@ backend dafny
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "KeywordRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
+export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "KeywordRoute" | "SafetyRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export interface TextRoute { phase: RoutePhase }
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
-export interface FallbackFacts { hasPendingJoin: boolean; alreadyInPendingApp: boolean; hasMembership: boolean; answerHasAge: boolean; hasOpenItem: boolean }
+export interface FallbackFacts { safetyClaim: boolean; hasPendingJoin: boolean; alreadyInPendingApp: boolean; hasMembership: boolean; answerHasAge: boolean; hasOpenItem: boolean }
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
 export type JoinPhase = "AwaitingBan" | "JoinHeld" | "AwaitingInvite" | "InviteRequired" | "AwaitingAnswer" | "AskForAge" | "AskForHome" | "AwaitingJoinAge" | "RefuseAge" | "AskForName" | "AwaitingMember" | "AwaitingWelcome" | "JoinedWaitlist" | "JoinedWithShare" | "JoinedWithLookingFor" | "JoinedWithoutFollowUp" | "AwaitingAgeRecord" | "AwaitingInviteAgeRecord";
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
@@ -27,8 +27,8 @@ export type Event =
   | { type: "readJoinAnswer"; answerFacts: JoinAnswerFacts }
   | { type: "recordStatedAge" }
   | { type: "checkTextJoinAge"; ageAllowed: boolean }
-  | { type: "recordWelcome"; hasOtherApp: boolean; sharedNetwork: boolean; invited: boolean }
-  | { type: "recordTextMembership"; membershipActive: boolean };
+  | { type: "recordTextMembership"; membershipActive: boolean }
+  | { type: "recordWelcome"; hasOtherApp: boolean; sharedNetwork: boolean; invited: boolean };
 
 /** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
 export const preparedPeonTextHeader: string = "join peon";
@@ -100,7 +100,21 @@ export function pendingMatchesApp(pendingApp: string, routedApp: string): boolea
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
 //@ pure
 export function checkFallbackRoute(routing: TextRoute, fallbackFacts: FallbackFacts): TextRoute {
-  return routing.phase !== "AwaitingFallbackRoute" ? routing : (fallbackFacts.hasPendingJoin && !fallbackFacts.alreadyInPendingApp && (!fallbackFacts.hasMembership || fallbackFacts.answerHasAge) ? ({ phase: "PendingJoinRoute" } as TextRoute) : (fallbackFacts.hasOpenItem ? ({ phase: "OpenItemRoute" } as TextRoute) : (fallbackFacts.hasMembership ? ({ phase: "RecentAppRoute" } as TextRoute) : ({ phase: "DefaultNetworkRoute" } as TextRoute))));
+  return routing.phase !== "AwaitingFallbackRoute" ? routing : (fallbackFacts.safetyClaim ? ({ phase: "SafetyRoute" } as TextRoute) : (fallbackFacts.hasPendingJoin && !fallbackFacts.alreadyInPendingApp && (!fallbackFacts.hasMembership || fallbackFacts.answerHasAge) ? ({ phase: "PendingJoinRoute" } as TextRoute) : (fallbackFacts.hasOpenItem ? ({ phase: "OpenItemRoute" } as TextRoute) : (fallbackFacts.hasMembership ? ({ phase: "RecentAppRoute" } as TextRoute) : ({ phase: "DefaultNetworkRoute" } as TextRoute)))));
+}
+
+/** Story: Text the Network to join an app / A safety claim routes before every other fallback (spec/textEnrollment.md) */
+//@ pure
+export function lawSafetyClaimRoutesFirst(hasPendingJoin: boolean, alreadyInPendingApp: boolean, hasMembership: boolean, answerHasAge: boolean, hasOpenItem: boolean): boolean {
+  //@ ensures \result === true
+  return checkFallbackRoute(({ phase: "AwaitingFallbackRoute" } as TextRoute), ({ safetyClaim: true, hasPendingJoin: hasPendingJoin, alreadyInPendingApp: alreadyInPendingApp, hasMembership: hasMembership, answerHasAge: answerHasAge, hasOpenItem: hasOpenItem } as FallbackFacts)).phase === "SafetyRoute";
+}
+
+/** Story: Text the Network to join an app / A safety claim routes before every other fallback (spec/textEnrollment.md) */
+//@ pure
+export function lawExplicitRouteKeepsSafetyClaimOut(dedicated: boolean, profileApp: boolean, surveyApp: boolean, appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return !(dedicated || profileApp || surveyApp || appKeyword) || checkFallbackRoute(checkExplicitRoute(initialRoute, ({ dedicated: dedicated, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)), ({ safetyClaim: true, hasPendingJoin: false, alreadyInPendingApp: false, hasMembership: true, answerHasAge: false, hasOpenItem: false } as FallbackFacts)).phase !== "SafetyRoute";
 }
 
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
@@ -233,6 +247,13 @@ export function textJoinKeepsMemberId(membership: JoinMembership): boolean {
 
 /** Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed (spec/textEnrollment.md) */
 //@ pure
+export function lawInvitedMembershipKeepsItsMemberId(membership: JoinMembership): boolean {
+  //@ ensures \result === true
+  return !(membership === "InvitedMembership") || textJoinKeepsMemberId(membership);
+}
+
+/** Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed (spec/textEnrollment.md) */
+//@ pure
 export function lawNoMembershipGetsNewMemberId(membership: JoinMembership): boolean {
   //@ ensures \result === true
   return !(membership === "NoMembership") || !textJoinKeepsMemberId(membership);
@@ -250,13 +271,6 @@ export function lawRemovedMembershipGetsNewMemberId(membership: JoinMembership):
 export function lawLiveMembershipKeepsItsMemberId(membership: JoinMembership): boolean {
   //@ ensures \result === true
   return !(membership === "LiveMembership") || textJoinKeepsMemberId(membership);
-}
-
-/** Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed (spec/textEnrollment.md) */
-//@ pure
-export function lawInvitedMembershipKeepsItsMemberId(membership: JoinMembership): boolean {
-  //@ ensures \result === true
-  return !(membership === "InvitedMembership") || textJoinKeepsMemberId(membership);
 }
 
 /** Story: Text the Network to join an app / A recorded-age decline without a stated age is sent at most once a day (spec/textEnrollment.md) */
@@ -277,6 +291,22 @@ export function lawStatedAgeDeclineIsAlwaysSent(declinedInLastDay: boolean): boo
 export function lawRecordedAgeDeclineAtMostOnceADay(statedAge: boolean): boolean {
   //@ ensures \result === true
   return !(!statedAge) || !sendAgeDecline(statedAge, true);
+}
+
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
+//@ pure
+export function canRecordTextMembership(joining: TextJoin): boolean {
+  return joining.phase === "AwaitingMember" && joining.ageAllowed && joining.hasName && !joining.invalidHome;
+}
+
+/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
+//@ pure
+export function recordTextMembership(joining: TextJoin, membershipActive: boolean): TextJoin {
+  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysInviteRefusalKeepsStatedAge(\result)
+  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysStatedAgeRecordedFirst(\result)
+  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysRefusedFloorOnlyDeclines(\result)
+  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
+  return { ...joining, phase: membershipActive ? "AwaitingWelcome" : "JoinedWaitlist" };
 }
 
 /** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
@@ -317,22 +347,6 @@ export function sometimesRefusesAge(joining: TextJoin): boolean {
 //@ pure
 export function sometimesAsksWhatTheyWant(joining: TextJoin): boolean {
   return joining.phase === "JoinedWithLookingFor";
-}
-
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
-//@ pure
-export function canRecordTextMembership(joining: TextJoin): boolean {
-  return joining.phase === "AwaitingMember" && joining.ageAllowed && joining.hasName && !joining.invalidHome;
-}
-
-/** Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up (spec/textEnrollment.md) */
-//@ pure
-export function recordTextMembership(joining: TextJoin, membershipActive: boolean): TextJoin {
-  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysInviteRefusalKeepsStatedAge(\result)
-  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysStatedAgeRecordedFirst(\result)
-  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysRefusedFloorOnlyDeclines(\result)
-  //@ ensures (inv(joining) && canRecordTextMembership(joining)) ==> alwaysMembershipRequiresCompletedEligibleAnswer(\result)
-  return { ...joining, phase: membershipActive ? "AwaitingWelcome" : "JoinedWaitlist" };
 }
 
 /** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
@@ -406,8 +420,8 @@ export function enabled(current: TextJoin, event: Event): boolean {
   if (event.type === "readJoinAnswer") return canReadJoinAnswer(current);
   if (event.type === "recordStatedAge") return canRecordStatedAge(current);
   if (event.type === "checkTextJoinAge") return canCheckTextJoinAge(current);
-  if (event.type === "recordWelcome") return canRecordWelcome(current);
   if (event.type === "recordTextMembership") return canRecordTextMembership(current);
+  if (event.type === "recordWelcome") return canRecordWelcome(current);
   return false;
 }
 
@@ -421,8 +435,8 @@ export function step(current: TextJoin, event: Event): TextJoin {
   if (event.type === "readJoinAnswer") return canReadJoinAnswer(current) ? readJoinAnswer(current, event.answerFacts) : current;
   if (event.type === "recordStatedAge") return canRecordStatedAge(current) ? recordStatedAge(current) : current;
   if (event.type === "checkTextJoinAge") return canCheckTextJoinAge(current) ? checkTextJoinAge(current, event.ageAllowed) : current;
-  if (event.type === "recordWelcome") return canRecordWelcome(current) ? recordWelcome(current, event.hasOtherApp, event.sharedNetwork, event.invited) : current;
   if (event.type === "recordTextMembership") return canRecordTextMembership(current) ? recordTextMembership(current, event.membershipActive) : current;
+  if (event.type === "recordWelcome") return canRecordWelcome(current) ? recordWelcome(current, event.hasOtherApp, event.sharedNetwork, event.invited) : current;
   return current;
 }
 
@@ -446,8 +460,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readJoinAnswer" && is_JoinAnswerFacts(raw.answerFacts)) return { type: "readJoinAnswer", answerFacts: ({ hasAge: raw.answerFacts.hasAge, hasName: raw.answerFacts.hasName, invalidHome: raw.answerFacts.invalidHome, floorRefused: raw.answerFacts.floorRefused }) };
   if (raw.type === "recordStatedAge") return { type: "recordStatedAge" };
   if (raw.type === "checkTextJoinAge" && typeof raw.ageAllowed === "boolean") return { type: "checkTextJoinAge", ageAllowed: raw.ageAllowed };
-  if (raw.type === "recordWelcome" && typeof raw.hasOtherApp === "boolean" && typeof raw.sharedNetwork === "boolean" && typeof raw.invited === "boolean") return { type: "recordWelcome", hasOtherApp: raw.hasOtherApp, sharedNetwork: raw.sharedNetwork, invited: raw.invited };
   if (raw.type === "recordTextMembership" && typeof raw.membershipActive === "boolean") return { type: "recordTextMembership", membershipActive: raw.membershipActive };
+  if (raw.type === "recordWelcome" && typeof raw.hasOtherApp === "boolean" && typeof raw.sharedNetwork === "boolean" && typeof raw.invited === "boolean") return { type: "recordWelcome", hasOtherApp: raw.hasOtherApp, sharedNetwork: raw.sharedNetwork, invited: raw.invited };
   return undefined;
 }
 

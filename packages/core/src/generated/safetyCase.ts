@@ -239,6 +239,121 @@ export function minorClearResult(actorPresent: boolean, memberKnown: boolean, ha
   return !actorPresent ? "ActorRequired" : (!memberKnown ? "UnknownMember" : (!hasSignal ? "NoMinorSignal" : (!ageKnown ? "AgeUnknown" : (recordMinor ? "RecordMinor" : (statedMinor ? "StatedMinor" : "AllowedAction")))));
 }
 
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function personMinorSignalOpen(signalKnown: boolean, signalAt: number, clearedKnown: boolean, clearedAt: number): boolean {
+  return signalKnown && (!clearedKnown || signalAt > clearedAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawAnUnclearedMinorSignalHoldsThePerson(signalAt: number): boolean {
+  //@ ensures \result === true
+  return personMinorSignalOpen(true, signalAt, false, 0);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawAClearAtOrAfterTheSignalEndsIt(signalAt: number, clearedAt: number): boolean {
+  //@ ensures \result === true
+  return !(clearedAt >= signalAt) || !personMinorSignalOpen(true, signalAt, true, clearedAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawANewSignalAfterAClearHoldsAgain(signalAt: number, clearedAt: number): boolean {
+  //@ ensures \result === true
+  return !(signalAt > clearedAt) || personMinorSignalOpen(true, signalAt, true, clearedAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawNoSignalHoldsNobody(signalAt: number, clearedKnown: boolean, clearedAt: number): boolean {
+  //@ ensures \result === true
+  return !personMinorSignalOpen(false, signalAt, clearedKnown, clearedAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function personMinorSignalEndsEverywhere(everyMembershipCleared: boolean, signalAt: number, earliestClearAt: number): boolean {
+  return everyMembershipCleared && !personMinorSignalOpen(true, signalAt, true, earliestClearAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: number, earliestClearAt: number): boolean {
+  //@ ensures \result === true
+  return !personMinorSignalEndsEverywhere(false, signalAt, earliestClearAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawASignalAfterTheEarliestClearStays(signalAt: number, earliestClearAt: number): boolean {
+  //@ ensures \result === true
+  return !(signalAt > earliestClearAt) || !personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear (spec/safetyCase.md) */
+//@ pure
+export function lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: number, earliestClearAt: number): boolean {
+  //@ ensures \result === true
+  return !(earliestClearAt >= signalAt) || personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function pairOpportunityClosesOnBlock(open: boolean, bothOnIt: boolean): boolean {
+  return open && bothOnIt;
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function pairBlockCancellationGoesTo(booked: boolean, actorKnown: boolean, isActor: boolean): boolean {
+  return booked && (!actorKnown || !isActor);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function lawOtherOpportunitiesStay(open: boolean, bothOnIt: boolean): boolean {
+  //@ ensures \result === true
+  return !(!bothOnIt) || !pairOpportunityClosesOnBlock(open, bothOnIt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function lawAClosedOpportunityStaysClosed(bothOnIt: boolean): boolean {
+  //@ ensures \result === true
+  return !pairOpportunityClosesOnBlock(false, bothOnIt);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function lawTheKnownActorGetsNoCancellation(booked: boolean): boolean {
+  //@ ensures \result === true
+  return !pairBlockCancellationGoesTo(booked, true, true);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function lawTheOthersOfABookingHearItIsOff(actorKnown: boolean): boolean {
+  //@ ensures \result === true
+  return pairBlockCancellationGoesTo(true, actorKnown, false);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function lawWithAnUnknownActorEveryParticipantHears(isActor: boolean): boolean {
+  //@ ensures \result === true
+  return pairBlockCancellationGoesTo(true, false, isActor);
+}
+
+/** Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair (spec/safetyCase.md) */
+//@ pure
+export function lawNoCancellationBeforeABooking(actorKnown: boolean, isActor: boolean): boolean {
+  //@ ensures \result === true
+  return !pairBlockCancellationGoesTo(false, actorKnown, isActor);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: SafetyCase, event: Event): boolean {

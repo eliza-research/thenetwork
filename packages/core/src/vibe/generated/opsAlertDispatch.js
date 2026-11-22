@@ -1,6 +1,7 @@
 // Generated from spec/opsAlertDispatch.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/opsAlertDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { publicEventRefreshMs as publicEventCatalog_publicEventRefreshMs, publicEventRetryMs as publicEventCatalog_publicEventRetryMs } from "./publicEventCatalog.js";
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export const alertPostWindowMs = 3600000;
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) */
@@ -13,6 +14,8 @@ export const turnWatchReplyAfterMs = 900000;
 export const turnWatchWindowMs = 86400000;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export const initial = { phase: "AwaitingNotices" };
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+export const catalogStaleAfterMs = exact_opsAlertDispatch(publicEventCatalog_publicEventRefreshMs + publicEventCatalog_publicEventRetryMs);
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
@@ -182,6 +185,29 @@ export function lawTurnWatchKeysDiffer(first, second) {
     //@ ensures \result === true
     return !(first !== second) || turnWatchAlertKey(first) !== turnWatchAlertKey(second);
 }
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function catalogScanOverdue(scanned, scanAgeMs, uptimeMs) {
+    return scanned ? scanAgeMs > catalogStaleAfterMs : uptimeMs > catalogStaleAfterMs;
+}
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawRecentScanIsQuiet(scanAgeMs, uptimeMs) {
+    //@ ensures \result === true
+    return !(scanAgeMs <= catalogStaleAfterMs) || !catalogScanOverdue(true, scanAgeMs, uptimeMs);
+}
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawMissedDayAndRetryAlerts(uptimeMs) {
+    //@ ensures \result === true
+    return catalogScanOverdue(true, exact_opsAlertDispatch(catalogStaleAfterMs + 1), uptimeMs);
+}
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+//@ pure
+export function lawNewProcessWaitsForFirstScan(scanAgeMs) {
+    //@ ensures \result === true
+    return !catalogScanOverdue(false, scanAgeMs, catalogStaleAfterMs);
+}
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current, event) {
@@ -248,4 +274,10 @@ export function parseState(x) {
 export function initialHolds() {
     //@ ensures inv(\result)
     return initial;
+}
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_opsAlertDispatch(n) {
+    if (!Number.isSafeInteger(n))
+        throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+    return n;
 }

@@ -570,7 +570,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (name === "submit_profile") expect(data.submitted).toBe(false);
           if (app === "ntwrk") {
             expect(data.next_step).toContain("invite-only");
-            expect(data.next_step).toContain("Use a forwarded invitation in the app's browser");
+            expect(data.next_step).toContain("disconnect The Network in your agent's connector settings, then connect it again");
+            expect(data.next_step).toContain("choose Finish signup");
+            expect(data.next_step).toContain("Enter the invitation on that page");
             expect(data.next_step).not.toContain("sign up there");
           } else expect(data.next_step).toContain("https://friends.help/SKILL.md");
         }
@@ -863,9 +865,12 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(new URL(b.location!).origin).toBe("http://127.0.0.1:55103");
       expect(new URL(b.location!).searchParams.get("iss")).toBe(st.sites.slop.origin);
       const about = "I'm Rae, a woman, 30, in Williamsburg, seeking men 28-38 within 5 miles for a long-term relationship. I like climbing and live music. Free weekend afternoons.";
+      const agentProfiles = async () => (await sql`select body from network.messages where member_id = ${before!.id} and direction = 'inbound' and type = 'agent_profile'`).length;
+      const agentProfilesBefore = await agentProfiles();
       expect(toolData(await rpc(st, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, a.token!.access_token))).toMatchObject({ app: "slop", submitted: true });
       expect((await memberRow("slop", phone))?.id).toBe(before?.id);
-      expect((await sql`select body from network.messages where member_id = ${before!.id} and direction = 'inbound'`).some((r: any) => r.body === about)).toBe(true);
+      expect(await agentProfiles()).toBe(agentProfilesBefore + 1);
+      expect((await sql`select body from network.messages where member_id = ${before!.id} and direction = 'inbound'`).some((r: any) => r.body === about)).toBe(false);
       expect(toolData(await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, b.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
       const otherPhone = newPhone();
       const otherBrowser = new Browser();

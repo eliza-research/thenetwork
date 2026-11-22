@@ -185,6 +185,33 @@ export function sometimesReplaysSourceCollection(flow: SourceFlow): boolean {
 
 /** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
 //@ pure
+export function cleanupCoversGrant(cutoffAt: number, authorizedAt: number): boolean {
+  return authorizedAt <= cutoffAt;
+}
+
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
+//@ pure
+export function lawCleanupCoversGrantAtSameTime(authorizedAt: number): boolean {
+  //@ ensures \result === true
+  return cleanupCoversGrant(authorizedAt, authorizedAt);
+}
+
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
+//@ pure
+export function lawCleanupMissesLaterGrant(cutoffAt: number): boolean {
+  //@ ensures \result === true
+  return !cleanupCoversGrant(cutoffAt, exact_profileSuggestionSource(cutoffAt + 1));
+}
+
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
+//@ pure
+export function lawLegacyRowIsCovered(cutoffAt: number): boolean {
+  //@ ensures \result === true
+  return !(cutoffAt >= 0) || cleanupCoversGrant(cutoffAt, 0);
+}
+
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
+//@ pure
 export function canStartSourceCleanup(flow: SourceFlow): boolean {
   return flow.phase === "SourceInitial";
 }
@@ -359,4 +386,10 @@ export function parseState(x: unknown): SourceFlow | undefined {
 export function initialHolds(): SourceFlow {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_profileSuggestionSource(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

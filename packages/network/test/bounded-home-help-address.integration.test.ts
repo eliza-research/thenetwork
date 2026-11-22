@@ -26,8 +26,8 @@ class FakeOtp implements OtpProvider {
 const ADDRESS = "77 Canary Street Apt 4, Brooklyn NY 11222";
 const CLOSED = "The private address step for that home-help plan is not open. It opens only when everyone on the current plan agrees.";
 
-test.skipIf(!pgAvailable)("the address step opens only for the approved roster after everyone agrees, and a changed roster closes it", async () => {
-  const url = await migratedDb("home_help_address_flow");
+async function addressWorld(database: string) {
+  const url = await migratedDb(database);
   const sql = new SQL(url);
   // Friday 12:00 in New York; the task is on Saturday afternoon.
   const clock = new SimClock(Date.UTC(2026, 10, 20, 17));
@@ -78,8 +78,12 @@ test.skipIf(!pgAvailable)("the address step opens only for the approved roster a
     expect((await site(phone, "/api/auth/otp/start", { phone })).status).toBe(200);
     expect((await site(phone, "/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
   };
-
-  try {
+  const close = async () => {
+    await service.close();
+    await sql.close();
+    await dropDb(url);
+  };
+  const ready = async () => {
     await service.start();
     const people = [["+12125550241", "Rae"], ["+12125550242", "Ari"], ["+12125550243", "Bea"], ["+12125550244", "Cy"]] as const;
     const ids = new Map<string, string>();
@@ -104,6 +108,29 @@ test.skipIf(!pgAvailable)("the address step opens only for the approved roster a
     expect((await staff(`/${planId}`, { action: "nominate", revision: 1, helperIds })).status).toBe(200);
     expect((await staff(`/${planId}`, { action: "approve", revision: 2, helperIds })).status).toBe(200);
     const addressCommand = `HOME HELP ADDRESS ${code} 2`;
+    return { rae, ari, bea, people, ids, code: code!, planId, addressCommand };
+  };
+  return { sql, sent, clock, say, staff, site, login, service, close, ready };
+}
+
+async function everyoneAgrees(world: Awaited<ReturnType<typeof addressWorld>>, plan: Awaited<ReturnType<Awaited<ReturnType<typeof addressWorld>>["ready"]>>) {
+  const { say, site, login, service, sent } = world;
+  const { rae, ari, bea, code, addressCommand } = plan;
+  await service.tick();
+  await say(rae, `YES HOME HELP ${code} 2`);
+  for (let i = 0; i < 8 && sent.filter(s => s.text.includes(`YES HOME HELP ${code} 2`)).length < 3; i++) { world.clock.advance(30 * MINUTE); await service.tick(); }
+  for (const helper of [ari, bea]) expect(await say(helper, `YES HOME HELP ${code} 2`)).toEqual([expect.stringContaining(addressCommand)]);
+  await login(rae);
+  expect(await site(rae, "/api/home-help/venue", { action: "submit", id: code, revision: 2, address: ADDRESS })).toEqual({ status: 200, body: { ok: true } });
+  await login(ari);
+  expect(await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).toEqual({ status: 200, body: { ok: true, address: ADDRESS } });
+}
+
+test.skipIf(!pgAvailable)("the address step opens only for the approved roster after everyone agrees, and a changed roster closes it", async () => {
+  const world = await addressWorld("home_help_address_flow");
+  const { sql, sent, clock, say, staff, site, login, service } = world;
+  try {
+    const { rae, ari, bea, people, ids, code, planId, addressCommand } = await world.ready();
 
     // Approved, but nobody has agreed yet: the step is closed and the site refuses the address.
     expect(await say(rae, addressCommand)).toEqual([CLOSED]);
@@ -157,8 +184,47 @@ test.skipIf(!pgAvailable)("the address step opens only for the approved roster a
     expect(stored).not.toContain("Canary Street");
     expect(JSON.stringify(sent)).not.toContain("Canary Street");
   } finally {
-    await service.close();
-    await sql.close();
-    await dropDb(url);
+    await world.close();
+  }
+}, 120_000);
+
+test.skipIf(!pgAvailable)("after everyone agreed, a helper's STOP closes the address step for every participant and the reveal answers 409", async () => {
+  const world = await addressWorld("home_help_address_stop");
+  const { say, site } = world;
+  try {
+    const plan = await world.ready();
+    const { rae, ari, bea, code, addressCommand } = plan;
+    await everyoneAgrees(world, plan);
+    expect((await say(rae, addressCommand))[0]).toContain("Your address is saved for this plan.");
+
+    await say(bea, "STOP");
+    expect(await say(rae, addressCommand)).toEqual([CLOSED]);
+    expect(await say(ari, addressCommand)).toEqual([CLOSED]);
+    expect((await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).status).toBe(409);
+  } finally {
+    await world.close();
+  }
+}, 120_000);
+
+test.skipIf(!pgAvailable)("after everyone agreed, a staff safety hold on a helper closes the address step for every participant and the reveal answers 409", async () => {
+  const world = await addressWorld("home_help_address_hold");
+  const { say, site, service } = world;
+  try {
+    const plan = await world.ready();
+    const { rae, ari, ids, code, addressCommand } = plan;
+    await everyoneAgrees(world, plan);
+    expect((await say(rae, addressCommand))[0]).toContain("Your address is saved for this plan.");
+
+    const held = await service.fetch(new Request("http://localhost/apps/ntwrk/safety/hold", {
+      method: "POST", headers: { authorization: "Bearer ntwrk-safety", "content-type": "application/json" },
+      body: JSON.stringify({ memberId: ids.get("Bea")!, note: "Synthetic safety hold for this test" }),
+    }));
+    expect(held.status).toBe(200);
+    expect(await held.json()).toMatchObject({ ok: true });
+    expect(await say(rae, addressCommand)).toEqual([CLOSED]);
+    expect(await say(ari, addressCommand)).toEqual([CLOSED]);
+    expect((await site(ari, "/api/home-help/venue", { action: "reveal", id: code, revision: 2 })).status).toBe(409);
+  } finally {
+    await world.close();
   }
 }, 120_000);

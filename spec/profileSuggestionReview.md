@@ -22,7 +22,7 @@ pure val initial: ReviewRequest = {
 
 ### Only a current batch for the same person, app and chat enters review
 
-The batch is pending, has a valid ID and a positive revision, belongs to the authenticated person, app and chat, and expires strictly after the check time.
+The batch is pending, has a valid ID and a positive revision, belongs to the authenticated person, app and chat, and expires strictly after the check time. The store applies the same deadline when it applies a decision, with the time after its Cloud source calls: when the batch expired by then, also during those calls, the store removes the text of the pending suggestions, commits that removal and answers denied. Changed 2026-11-22: a batch that expired during the Cloud source calls made the store stop with an error and roll back, so the pending text stayed until the retention pass (IPP-3).
 
 ```quint
 pure def canCheckBatch(review: ReviewRequest): bool = review.phase == Unchecked

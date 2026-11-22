@@ -34,6 +34,8 @@ apps together.
 - **Retries.** Retryable errors back off (30 s, doubling, at most 30 min) and fail after 6 attempts. Blooio conversation limits hold the row until the person writes. Number-level blocks end it (`blocked`).
 - **Receipts.** `message.delivered`, `message.read` and `message.failed` webhooks move a row to `delivered`, `read` or `failed`. A status never goes back.
 - **Non-members.** A row to someone who is not a member (a join question, a decline) keeps the address and the text only until it ends.
+- **Replies another transport delivers.** In a signed turn the Network's replies go back to Eliza Cloud, which sends them; they never pass dispatch. `collectedLeaks` runs this queue's leak guard on each one (canary shapes, contacts, the recipient's leak sources and the thread check) in the caller's transaction, and `recordCollected` writes it as `collected` so that the thread history includes it. `collectedReceipt` applies the turn receipt: accepted makes the reply `sent` with a send time and a count in the unanswered streak, unknown makes it `send_unknown`, rejected makes it `refused_gateway`. A reply with no final receipt ends `failed_unknown` after the receipt deadline (6 h); an accepted or rejected receipt that comes later still applies (`gatewayReceiptApplies` in `spec/outboundReceipt.md`), and a late accepted receipt records the send at the time the reply was collected (`gatewayReplySendTime`).
+- **Refusal reasons.** A row that a check refuses for good keeps the reason in `note` (for example `reengagement_changed` from the claim transaction).
 
 ## Send-time checks (at dispatch, in this order)
 
@@ -44,7 +46,7 @@ database at send time, so a STOP that arrives while a message waits wins. Every 
 1. **Too old or stale**: a proactive row after 24 h, any row after 3 days, or a row about an opportunity that closed: `expired`.
 2. **The live flags** (`refused_not_approved`).
 3. **Consent** (not compliance): the platform consent ledger, bans and the member's own opt-out (`refused_opted_out`).
-4. **The recipient at send time** (not compliance): paused, blocked, on safety hold, a minor for content about others (`suppressed_ineligible`). The Network runtime supplies it.
+4. **The recipient at send time** (not compliance): paused, blocked, on safety hold, a minor for content about others, or a venue booking notice whose link the current booking no longer approves (`suppressed_ineligible`). The Network runtime supplies it.
 5. **A reply** must answer an inbound message from the same person within the last hour.
 6. **Quiet hours** (default 21:00-09:00 recipient local) for every agent-initiated kind: deferred, never dropped. An unusable zone parks the row (`parked_invalid_timezone`).
 7. **Apple line safety**: at most **3 unanswered** messages per conversation (line and address, across apps). After that, exactly **one re-engagement** once **14 days** have passed since our last send. Anything else waits until the person writes back (a message or a tapback), which resets both counters (`platform.line_conversations`).

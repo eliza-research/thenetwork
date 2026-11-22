@@ -56,8 +56,11 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     expect(() => otpProviderFromEnv({ PLATFORM_ENV: "dev", OTP_PROVIDER: "unexpected" })).toThrow("Unknown OTP_PROVIDER");
     expect(() => new BlooioOtpProvider({ ...ENV, OTP_PROVIDER: "twilio" })).toThrow("OTP_PROVIDER=blooio");
     for (const env of [{ ...ENV, BLOOIO_API_KEY: "" }, { ...ENV, BLOOIO_FROM: "" }, { ...ENV, BLOOIO_FROM_NUMBER: "+12125550101" }]) expect(() => new BlooioOtpProvider(env)).toThrow();
-    const base = { PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/test", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/test", PLATFORM_HASH_KEY: KEY, PLATFORM_SESSION_SECRET: KEY, PLATFORM_PROXY_SECRET: KEY, LEAK_LABEL_KEY: KEY, TURNSTILE_SECRET_KEY: "synthetic" };
+    const base = { PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/test", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/test", PLATFORM_HASH_KEY: KEY, PLATFORM_SESSION_SECRET: `session-${KEY}`, PLATFORM_PROXY_SECRET: KEY, LEAK_LABEL_KEY: KEY, TURNSTILE_SECRET_KEY: "synthetic",
+      TURNSTILE_SITE_KEY: "synthetic-site", NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/test", SERVICE_TURN_SECRET: `turn-${KEY}`, NETWORK_SERVICE_TOKENS: `admin@*:staff-${KEY}` };
     expect(bootConfigProblems({ ...base, ...ENV })).toEqual([]);
+    expect(bootConfigProblems({ ...base, ...ENV, PLATFORM_SESSION_SECRET: KEY })).toEqual(["a PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY"]);
+    expect(bootConfigProblems({ ...base, ...ENV, PLATFORM_ENV: "production", PLATFORM_SESSION_SECRET: KEY })).toEqual(["a PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY"]);
     expect(loadConfig({ ...base, ...ENV }).env).toBe("staging");
     expect(() => loadConfig({ ...base, ...ENV, BLOOIO_FROM: "" })).toThrow("BLOOIO_FROM");
     const twilio = { OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "synthetic", TWILIO_AUTH_TOKEN: "synthetic", TWILIO_VERIFY_SERVICE_SID: "synthetic" };
@@ -97,7 +100,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       otp: provider(),
       env: { PLATFORM_ENV: "production" },
       hashKey: KEY,
-      sessionSecret: KEY,
+      sessionSecret: `session-${KEY}`,
       turnstile: { verify: async () => false },
       now: () => now,
       ipOf: () => "203.0.113.231",
@@ -302,7 +305,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     const api = createPublicApi({
       // A longer send timeout than provider(): this case makes many sends on a shared machine.
       store, otp: new BlooioOtpProvider(ENV, { baseUrl: `http://127.0.0.1:${server.port}/v4`, timeoutMs: 5000 }),
-      env: { PLATFORM_ENV: "production", PLATFORM_PHONE_OTP_ONLY_APPS: "friends" }, hashKey: KEY, sessionSecret: KEY,
+      env: { PLATFORM_ENV: "production", PLATFORM_PHONE_OTP_ONLY_APPS: "friends" }, hashKey: KEY, sessionSecret: `session-${KEY}`,
       turnstile: { verify: async () => true }, now: () => now, ipOf: () => "198.51.100.77", minStartMs: 0, minVerifyMs: 0, log: line => logs.push(line),
     });
     const call = async (host: string, path: string, body: unknown) =>

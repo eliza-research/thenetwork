@@ -1,25 +1,3 @@
-// Photos sent to the shared line by text (MMS or iMessage attachments; critical path item 5).
-//
-// Order of checks for a message with attachments, before any byte is fetched:
-//  1. The sender is a person with a live slop.date membership. Anyone else: the photo is dropped
-//     (never fetched, never stored) and nothing is answered about it.
-//  2. PhotoService.mayTake: photos are on, the person is not banned, and the person is an adult (the
-//     lowest age they ever stated is 18 or more, never unknown; no failed staff age check). A member
-//     aged 13-17, or of unknown age, gets one plain answer a day and the photo is dropped: never
-//     fetched, never stored, never rated. A banned person gets no answer.
-//  3. The photo consent (PHOTO_CONSENT, the same text as the site) is asked once by text. Until the
-//     person answers YES PHOTOS, the photo is dropped and nothing is kept; they send it again after.
-//     Only that explicit answer (or NO PHOTOS) is taken as the answer, and only on slop: a bare "yes" or
-//     "no" in the day after the ask is an answer to something else (a probe, a date ask, another app on
-//     the shared line) and goes on to the Network unchanged. The consent is stored on the slop
-//     membership (profile.photoConsent), so leaving slop.date clears it.
-//  4. No attachment arrives through the Eliza gateway turn, so the member asks for a link instead:
-//     ADD PHOTOS (or YES PHOTOS to the consent ask) gets one app-bound, single-use link that works for
-//     15 minutes (spec/photoUploadLink.md; platform photo-upload-link.ts). The link page posts the
-//     photos to /api/photos/upload, which checks the same rules again.
-//  5. With consent: each attachment (at most PHOTO_MAX_PER_MESSAGE) is fetched with a byte cap and goes
-//     through PhotoService.upload, which checks everything again (type on the bytes, size, count),
-//     strips metadata, stores it privately and rates the member (adults only).
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
@@ -29,14 +7,10 @@ import type { PhotoUploadLinks, UploadLinkIssue } from "../../platform/src/photo
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
 
-/** The app that takes photos by text. */
 export const PHOTO_APP: AppId = "slop";
-/** Attachments taken from one message. */
 export const PHOTO_MAX_PER_MESSAGE = photoMaxPerMessage;
-/** Membership states that may send photos. */
 const LIVE = new Set(["active", "paused", "onboarding"]);
 
-/** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
   ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree and I will text you a private link to add them. Reply NO PHOTOS and I keep none.`,
   link: (url: string) => `Here is your private link to add up to 4 photos, 4 MB each and 8 MB in all. It works once, for 15 minutes: ${url} To delete your photos, text DELETE PHOTOS. To request a copy, email help@ntwrk.party.`,
@@ -51,7 +25,6 @@ export const PHOTO_TEXT = {
   noneToDelete: "You have no photos with me.",
 } as const;
 
-/** The explicit request for a photo upload link: "ADD PHOTOS" (also "add a photo", "upload photos"). */
 export function photoAddRequest(text: string): boolean {
   return /^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
 }
@@ -60,7 +33,6 @@ export function photoDeleteRequest(text: string): boolean {
   return /^\s*(?:delete|remove|erase)\s+(?:all\s+)?(?:of\s+)?(?:my\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text ?? "");
 }
 
-/** The explicit answer to the photo consent ask: "YES PHOTOS" or "NO PHOTOS" (a bare yes or no is never taken). */
 export function photoConsentReply(text: string): "yes" | "no" | undefined {
   const m = /^\s*(yes|no)[\s,.:!-]+photos?[\s.!]*$/i.exec(text ?? "");
   return m ? (m[1]!.toLowerCase() as "yes" | "no") : undefined;
@@ -75,18 +47,10 @@ export interface PhotoIntakeDeps {
   people: PeopleStore;
   accounts: Accounts;
   photos: PhotoService;
-  /**
-   * The single-use upload links (spec/photoUploadLink.md), and the holder check and guarded consent write
-   * they share. The service always passes them. The simulation's in-memory stores have none: ADD PHOTOS is
-   * not handled there, and YES PHOTOS uses the memory fallback in holderRefusal and recordConsent below.
-   */
   links?: Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent">;
-  /** The keyed phone hash (pending texts and rate limits). */
   phoneKey: (e164: string) => string;
   now: () => number;
-  /** One attachment's bytes, at most `maxBytes` (undefined: not fetched or too large). Fakes in the simulation; never called before the checks pass. */
   fetchMedia: (url: string, maxBytes: number) => Promise<Uint8Array | "too_large" | undefined>;
-  /** One fixed text to the sender (not stored as a member message). */
   reply: (e164: string, text: string, key: string) => Promise<void>;
   log?: (s: string) => void;
 }
@@ -94,14 +58,12 @@ export interface PhotoIntakeDeps {
 export class PhotoIntake {
   constructor(private readonly d: PhotoIntakeDeps) {}
 
-  /** The person's live slop membership, if any. */
   private async member(e164: string) {
     const person = await this.d.accounts.personFor(e164);
     const m = person && (await this.d.people.getMembership(person.id, PHOTO_APP));
     return person && m && LIVE.has(m.state) ? { person, m } : undefined;
   }
 
-  /** Attachments on a message from `e164` (ref: the inbound message id, for reply keys). */
   async photosIn(e164: string, mediaUrls: readonly string[], ref: string): Promise<PhotoIntakeOutcome> {
     const who = await this.member(e164);
     if (!who) { this.d.log?.("[photos] a photo by text from someone with no slop membership: dropped, not fetched"); return { outcome: "not_member" }; }
@@ -129,11 +91,6 @@ export class PhotoIntake {
     return { outcome: "stored", stored, refused: no };
   }
 
-  /**
-   * The answer to the photo consent ask. True when it was one (YES PHOTOS or NO PHOTOS, on slop, within
-   * a day of the ask); false otherwise, and the message then goes on as a normal message. `app`: the app
-   * the message was routed to (another app's message on the shared line is never a photo answer).
-   */
   async consentAnswer(e164: string, text: string, ref: string, app: AppId = PHOTO_APP): Promise<boolean> {
     if (app !== PHOTO_APP) return false;
     const a = photoConsentReply(text);
@@ -144,14 +101,11 @@ export class PhotoIntake {
     await this.d.people.deletePending(key, "photo_consent", PHOTO_APP);
     const who = await this.member(e164);
     if (a === "yes") {
-      // The consent is kept only for a holder who may get a link (adult, live, not banned, not held), by
-      // a guarded write that never makes a banned or departed membership live again (recordConsent).
       const refused = who ? await this.holderRefusal(who.person.id) : "not_member";
       if (who && !refused && await this.recordConsent(who.person.id)) {
         const link = await this.d.links?.issue(who.person.id, PHOTO_APP, "text");
         await this.d.reply(e164, link?.ok ? `Thanks. ${PHOTO_TEXT.link(link.url)}` : PHOTO_TEXT.agreed, `sys:${ref}`);
       } else if (refused && refused !== "banned" && refused !== "not_member") {
-        // Not swallowed in silence: the same plain answer a photo gets (once a day).
         await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
       }
     } else {
@@ -160,15 +114,10 @@ export class PhotoIntake {
     return true;
   }
 
-  /** The issue rule's holder facts (spec/photoUploadLink.md); in memory, the photo checks alone. */
   private async holderRefusal(personId: string) {
     return this.d.links ? (await this.d.links.refusal(personId, PHOTO_APP))?.reason : await this.d.photos.mayTake(personId, PHOTO_APP);
   }
 
-  /**
-   * The YES PHOTOS consent. In Postgres, the guarded write (writePhotoConsent: profile keys only, while
-   * live). In memory, nothing runs between the read and the write, so the live row read just before is kept.
-   */
   private async recordConsent(personId: string): Promise<boolean> {
     if (this.d.links) return this.d.links.recordConsent(personId, PHOTO_APP);
     const m = await this.d.people.getMembership(personId, PHOTO_APP);
@@ -177,16 +126,10 @@ export class PhotoIntake {
     return true;
   }
 
-  /**
-   * ADD PHOTOS on slop: a link for a consenting adult member, the consent ask first otherwise. True when
-   * it was this request; false otherwise (a non-member's message goes on as a normal message).
-   */
   async addRequest(e164: string, text: string, ref: string, app: AppId = PHOTO_APP): Promise<boolean> {
     if (app !== PHOTO_APP || !this.d.links || !photoAddRequest(text)) return false;
     const who = await this.member(e164);
     if (!who) return false;
-    // The issue rule's holder facts, staff hold included, before the consent ask: a held member is not
-    // asked for a consent that gives no link.
     const refused = await this.holderRefusal(who.person.id);
     if (refused) {
       if (refused !== "banned") await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
@@ -215,12 +158,6 @@ export class PhotoIntake {
     return link.reason === "daily_limit" ? PHOTO_TEXT.linkLimit : PHOTO_TEXT.notAdult;
   }
 
-  /**
-   * One text a day per number and kind. True when it was sent. The cap uses the store's minimum-gap
-   * rule, not the raw count of a fixed clock window: a window that starts at midnight UTC sends the
-   * same text twice in one evening for a member in New York (the STOP hint, PR #124, fixed the same
-   * class the same way: docs/results/2026-10-22-stop-hint-cooldown.md).
-   */
   private async once(e164: string, kind: string, text: string, ref: string): Promise<boolean> {
     const { ok } = await this.d.people.hit(`${kind}:${this.d.phoneKey(e164)}`, DAY, this.d.now(), { minGapMs: DAY });
     if (!ok) return false;
@@ -229,10 +166,6 @@ export class PhotoIntake {
   }
 }
 
-/**
- * The default attachment fetch: https only, no redirects, a 15 s timeout and a byte cap while reading
- * (a body past the cap is abandoned). The URL comes from a signed Blooio webhook.
- */
 export async function fetchMediaCapped(url: string, maxBytes: number): Promise<Uint8Array | "too_large" | undefined> {
   let u: URL;
   try { u = new URL(url); } catch { return undefined; }

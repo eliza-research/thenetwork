@@ -28,8 +28,8 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //     main.ts:36-37 reads the database URL with `||` (W3-458, fixed), and outside dev main.ts:39-45
 //     refuses a superuser, BYPASSRLS or owner login (Q-boot_config-W4-3, fixed).
 //   - server.ts (deploy/backend/server.ts:31; the production entry: Dockerfile CMD, railway.toml). It
-//     runs backend.ts loadConfig (backend.ts:85-107), which calls assertBootConfig first, so the same
-//     bootProblems gate as main.ts, and then its own checks (Q-boot_config-W4-1, fixed; W3-448). Then
+//     runs backend.ts loadConfig, whose spec/bootPolicy.md backendBoot refuses all that the bootProblems
+//     gate of main.ts refuses, and then its own checks (Q-boot_config-W4-1, fixed; W3-448). Then
 //     server.ts:44-51 moves platform.settings.environment from 'dev' to PLATFORM_ENV once
 //     (PLATFORM_DB_ENVIRONMENT_INIT=1, deployed only), and server.ts:57-60 refuses a superuser,
 //     BYPASSRLS or owner login (deployed only).
@@ -87,6 +87,16 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //     does not cover the host, an API error, a build or wrangler error, a smoke failure) is a
 //     nondeterministic failure.
 //   - The problem texts are outside the model; only "no problem" matters for each gate.
+//   - Secret values are outside the model; only their lengths are in it. So two refusals that compare
+//     values are not modeled: a session secret equal to the hash key (spec/bootPolicy.md sharedBoot
+//     sessionReused, used by both entries; createPublicApi also refuses it outside dev) and a turn secret
+//     that is also a staff token. For a configuration in the model, bootOk and loadConfigOk assume
+//     distinct values. Tests: backend.test.ts "every refused boot fact", service-entry.integration.test.ts
+//     "refuses a session secret that is the hash key", blooio-otp.integration.test.ts.
+//   - The photo relay setup (spec/bootPolicy.md photoRelaySetup) is outside the model: the model has no
+//     photo relay variable, so each configuration in it has none of the four parts, and loadConfig then
+//     turns photo relay off. loadConfig refuses a partial setup after backendBoot; backend.test.ts
+//     "photo relay is configured from all four variables together" covers it.
 //
 // ASSUMPTIONS (named; no code makes them true)
 //   - W3-452: no code snapshots the environment. Each caller reads `o.env ?? process.env` when it is
@@ -206,9 +216,11 @@ module boot_config {
   // production is one, whatever PLATFORM_ENV says (env.ts header: fail closed).
   pure def liveLike(c: Config): bool = deployed(c) or productionEnv(c.nodeEnv, c.platformEnv)
 
-  // backend.ts loadConfig (85-107). assertBootConfig first (89, Q-boot_config-W4-1), then its own
-  // checks: the database URL with || in every environment (92-94), the migration login (99-102) and the
-  // proxy secret length in every environment (104). The duplicates of the gate are removed.
+  // backend.ts loadConfig: spec/bootPolicy.md backendBoot and backendBootRefused. For the facts in the model it
+  // refuses what the gate refuses (an undeclared environment, dev that says production, the OTP provider, Turnstile,
+  // the proxy, hash, session and leak keys, review mode, dev switches; the value comparisons and the photo relay
+  // setup are abstractions, see the header), and adds its own checks: the database URL with || in
+  // every environment, the migration login and the proxy secret length in every environment.
   pure def loadConfigOk(c: Config): bool =
     val d = deployed(c)
     and {
@@ -1051,13 +1063,12 @@ module boot_config {
       .then(check(stage == "down" and lastRefusal == "db_env" and upDbAgrees))
 
   // W3-457 (fixed): outside dev a 10-character staff token or console token is refused; in dev it is not.
+  // spec/bootPolicy.md backendBoot refuses the short staff token at the gate, before the environment row moves.
   run shortStaffTokenTest =
     init
       .then(setCfg({ ...READY, staffTokenLen: 10, initFlag: true }))
       .then(bootBackend)
-      .then(backendInit)
-      .then(construct)
-      .then(check(stage == "down" and lastRefusal == "staff_token" and dbEnv == "production"))
+      .then(check(stage == "down" and lastRefusal == "gate" and refused == 1 and dbEnv == "dev"))
       .then(setCfg({ ...READY, platformEnv: "staging", nodeEnv: "", consoleTokenLen: 10 }))
       .then(setDbEnv("staging"))
       .then(bootBackend)

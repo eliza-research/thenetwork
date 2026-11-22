@@ -171,3 +171,29 @@ pure def lawPossibleStopIsBad(complianceCount: int): bool =
 pure def lawTurnWatchKeysDiffer(first: TurnWatchCondition, second: TurnWatchCondition): bool =
   first != second implies turnWatchAlertKey(first) != turnWatchAlertKey(second)
 ```
+
+## Story: Hear when the public event catalog stops refreshing
+
+> As an operator, I want an alert when the public event catalog has not refreshed for longer than one refresh interval and one retry, so members are not offered expired events.
+
+### The catalog alerts when its last scan is older than a day and one retry
+
+The shell reads the time of the last successful catalog scan. The catalog is overdue when its last scan is older than the refresh interval plus the retry interval of the [public event catalog](publicEventCatalog.md). With no successful scan, the catalog is overdue once the process has run that long. An overdue catalog is one warning alert. A catalog that the shell cannot read is a read warning. Changed: this rule is new, because a failing refresh logged one line per attempt and no alert fired until members saw an empty catalog.
+
+```quint
+import publicEventCatalog as Catalog from "./publicEventCatalog"
+
+pure val catalogStaleAfterMs: int = Catalog::publicEventRefreshMs + Catalog::publicEventRetryMs
+pure val scanAgeMsValues = Set(0, catalogStaleAfterMs, catalogStaleAfterMs + 1)
+pure val uptimeMsValues = Set(0, catalogStaleAfterMs, catalogStaleAfterMs + 1)
+
+pure def catalogScanOverdue(scanned: bool, scanAgeMs: int, uptimeMs: int): bool =
+  if (scanned) scanAgeMs > catalogStaleAfterMs else uptimeMs > catalogStaleAfterMs
+
+pure def lawRecentScanIsQuiet(scanAgeMs: int, uptimeMs: int): bool =
+  scanAgeMs <= catalogStaleAfterMs implies not(catalogScanOverdue(true, scanAgeMs, uptimeMs))
+pure def lawMissedDayAndRetryAlerts(uptimeMs: int): bool =
+  catalogScanOverdue(true, catalogStaleAfterMs + 1, uptimeMs)
+pure def lawNewProcessWaitsForFirstScan(scanAgeMs: int): bool =
+  not(catalogScanOverdue(false, scanAgeMs, catalogStaleAfterMs))
+```

@@ -16,7 +16,9 @@ Compared again 2026-11-19: `review.tsx`, `store.ts` and `admin.tsx` have not cha
 
 Compared again 2026-11-21 (audit COV08): `review.tsx` (`ReviewQueue`, `onKey`, `approveBlock`, `act`, `ReviewActions`), `store.ts` (`decide`, `canAct`, `canReview`), `admin.tsx` (`Config`) and the generated `staffReview` controller have not changed since 2026-11-19. On the server, `POST /review/:oppId` (`service.ts`, role reviewer, a required integer revision) and `ConsentNetwork.decide` and `reviewBlock` (`network.ts`) still agree with `serverApply`: the deadline first (`review_expired`, and the item expires), then `review_stale` for another revision, then `reviewBlock` (a minor, declined or unknown participant, or matching paused, refuses approve and edit). Three server refusals are outside the model and do not change its traces: `note_required` (the page asks for the note first, `requireReviewNote`), and `staff_review_required` and `gathering_repeat_fixed_pair` for a monthly gathering repeat, which this model's queue does not hold. The key handler uses `store.canReview()` (reviewer role) and `approveBlock` uses `store.canAct()`; the model has one constant `CAN_ACT` for both. The key-repeat defect below is still in the code (`onKey` reads no `e.repeat`).
 
-Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`ReviewQueue`, `onKey`) does not ignore key-repeat events. A held `a` approves the selected card. When the accepted answer moves the selection, the next repeat event approves the next card. `repeatNeverDecides` states the rule. It is not part of `safety`; `heldKeyDecidesTest` replays the defect.
+Open defect: the queue key handler in `packages/observatory/web/review.tsx` (`ReviewQueue`, `onKey`) does not ignore key-repeat events. A held `a` approves the selected card. When the accepted answer moves the selection, the next repeat event approves the next card. `repeatNeverDecides` states the rule.
+
+Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the convention of [staff_console](staff_console.md). Before, the code action was in `step` and the rule was outside `safety`, so `safety` did not check the intended design. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` (one `keyPressBy(code, ...)` body) follows the code and is outside `step`: `heldKeyDecidesTest` shows the rule fail after it, and `heldKeyIgnoredTest` shows the intended handler. The fix is a web change (frontend agent).
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -354,14 +356,23 @@ module review_desk {
       oldAnswers: if (a.ok and not(live)) st1.oldAnswers + 1 else st1.oldAnswers }),
   }
 
-  // The queue keyboard handler (capture phase). It does not look at key repeat.
+  // The queue keyboard handler (capture phase). The intended handler ignores a key-repeat event.
+  // keyPressCode is the code of review.tsx onKey, which reads no KeyboardEvent.repeat (REVIEW-KEYREPEAT).
   action keyPress = {
     nondet key = Set("a", "r", "e", "s", "digit", "esc").oneOf()
     nondet digit = Set(1, 2, 3).oneOf()
     nondet repeat = Set(true, false).oneOf()
     keyPressOf(key, digit, repeat)
   }
-  action keyPressOf(key: str, digit: int, repeat: bool): bool = {
+  action keyPressCode = {
+    nondet key = Set("a", "r", "e", "s", "digit", "esc").oneOf()
+    nondet digit = Set(1, 2, 3).oneOf()
+    nondet repeat = Set(true, false).oneOf()
+    keyPressCodeOf(key, digit, repeat)
+  }
+  action keyPressOf(key: str, digit: int, repeat: bool): bool = keyPressBy(false, key, digit, repeat)
+  action keyPressCodeOf(key: str, digit: int, repeat: bool): bool = keyPressBy(true, key, digit, repeat)
+  action keyPressBy(code: bool, key: str, digit: int, repeat: bool): bool = {
     val b = s.br
     val o = b.sel
     val c = b.ctl
@@ -370,7 +381,8 @@ module review_desk {
     all {
       if (key == "esc") c.mode != "IdleReview" else o != 0,
       s' = render(
-        if (key == "esc") { ...st, br: saveB(b, stepMode(c, "IdleReview", false)) }
+        if (repeat and not(code)) st
+        else if (key == "esc") { ...st, br: saveB(b, stepMode(c, "IdleReview", false)) }
         else if (key == "a") (if (CAN_ACT and not(blockedOf(s, o))) act(st, o, "approve", repeat) else st)
         else if (key == "r") { ...st, br: saveB(b, stepMode(c, "RejectReview", false)) }
         else if (key == "s") (if (CAN_ACT and swaps >= 1) { ...st, br: saveB(b, stepMode(c, "RerollReview", false)) } else st)
@@ -530,11 +542,10 @@ module review_desk {
   val safety = and {
     requiredNoteBelongsToRejection, ctlBoundToSelection, decisionOnlyToVisibleCard, oldResponseNeverMovesSelection,
     approveOnlyWhenUnblocked, serverApproveBeforeDeadline, approveMatchesSeenPeople, confirmSendsAskedDirection,
-    draftsBoundToItem, approveCarriesOwnDrafts,
+    draftsBoundToItem, approveCarriesOwnDrafts, repeatNeverDecides,
   }
 
-  // OPEN DEFECT, not in safety: a key-repeat event must never send a decision. review.tsx onKey does not
-  // check KeyboardEvent.repeat. heldKeyDecidesTest replays the violation.
+  // A key-repeat event never sends a decision. keyPressCode (review.tsx onKey) breaks it: heldKeyDecidesTest.
   val repeatNeverDecides = s.sent.forall(r => not(r.repeat))
 
   // ---------------------------------------------------------------- reachability witnesses
@@ -614,13 +625,21 @@ module review_desk {
     .then(serverMatchingOf(1)).then(adminReloadOf(1))
     .then(all { assert(not(s.matchingOn) and s.msent.size() == 1 and s.raceDrops == 1 and not(s.admins.get(1).asking)), s' = s })
 
-  // OPEN DEFECT: hold the a key. The first keydown approves 1; the answer moves the selection to 2;
-  // the next repeat event approves 2, which the reviewer did not press for.
+  // Code (REVIEW-KEYREPEAT, open): hold the a key. The first keydown approves 1; the answer moves the
+  // selection to 2; the next repeat event approves 2, which the reviewer did not press for.
   run heldKeyDecidesTest = threeItems
     .then(keyPressOf("a", 0, false))
     .then(serverApplyReq(1, false, true, false, [1, 2]))
     .then(deliverAns(1))
-    .then(keyPressOf("a", 0, true))
+    .then(keyPressCodeOf("a", 0, true))
     .then(all { assert(not(repeatNeverDecides) and s.sent.exists(r => r.id == 2 and r.repeat)), s' = s })
+
+  // Intended: the same held key sends only the first approve.
+  run heldKeyIgnoredTest = threeItems
+    .then(keyPressOf("a", 0, false))
+    .then(serverApplyReq(1, false, true, false, [1, 2]))
+    .then(deliverAns(1))
+    .then(keyPressOf("a", 0, true))
+    .then(all { assert(repeatNeverDecides and s.repeats == 1 and not(s.sent.exists(r => r.id == 2))), s' = s })
 }
 ```

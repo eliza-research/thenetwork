@@ -14,6 +14,8 @@ Production chooses its view class with [Observatory staff permissions](../staffP
 
 Compared again with `vibestack-matching` on 2026-11-18, and on 2026-11-19 (no change in `shape.ts`, `people.ts`, `apps.tsx` or the member keys that `sources/real.ts` writes; `countsMember` still keeps `declined`, `weekly` and `community: "declined"`). Compared again 2026-11-21 (audit COV08): `shape.ts` (`viewClass`, `countsMember`, `countsOpp`, `stripOracle`), `people.ts` (`summary`, `restricted`, `origin`), `apps.tsx` (the reason gate, `canOpenPerson`) and `server.ts` (`recheck` sets `w.cls` again, `PERSON_REASON_MIN` 5, `truthFor`) have not changed; no drift. Open defect: `countsMember` in `packages/observatory/src/shape.ts` drops the age fields, but it keeps `declined` (set by `packages/observatory/src/sources/real.ts` for a member declined at join, that is under 13, with `community: "declined"`) and `weekly` (never set for members aged 13-17). A counts-class caller can read these age facts. `countsGetNoAgeFacts` states the rule; it is not part of `safety`, and `declinedLeaksTest` replays the defect.
 
+Compared again 2026-11-22 after the fix of PRIV-COUNTS: `countsMember` in `packages/observatory/src/shape.ts` now drops `declined`, `weekly`, `calendar` (added later on 2026-11-22) and `community` with the age fields, `memberFieldLevel` puts them in the full class, `countsGetNoAgeFacts` is part of `safety`, and `declinedLeaksTest` checks the fixed field use. `packages/observatory/test/staff.test.ts` ("an analyst's members carry no age band") is the boundary case.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=15 max-samples=3000
@@ -74,7 +76,7 @@ module console_privacy {
     if (r.admin or r.reviewer or r.safety or r.engineer) Full else Counts
 
   pure def memberFieldLevel(key: str): ViewClass =
-    if (Set("name", "age", "minor", "ageUnknown", "trust", "occupation", "controlled").contains(key)) Full else Counts
+    if (Set("name", "age", "minor", "ageUnknown", "trust", "occupation", "controlled", "declined", "weekly", "calendar", "community").contains(key)) Full else Counts
 
   pure def oppFieldLevel(key: str): ViewClass =
     if (Set("feedback", "explanations", "objective").contains(key)) Full else Counts
@@ -139,11 +141,11 @@ module console_privacy {
   // person can hold two private memberships (the one-line rule of holdLines then has force).
   pure val PRIVATE_CHOICES = Set(Set("slop"), Set("slop", "friends"))
   pure val MEMBER_KEYS = Set("id", "name", "age", "minor", "ageUnknown", "trust", "occupation", "controlled", "area", "counters",
-                             "declined", "weekly", "community")
+                             "declined", "weekly", "calendar", "community")
   // Fields that tell the member's age band. declined: declined at join (under 13); community "declined" says
-  // the same; weekly: never set for members aged 13-17 (types.ts ObsMember). The code keeps the last three
-  // in countsMember (an open defect, see countsGetNoAgeFacts).
-  pure val AGE_FACT_KEYS = Set("age", "minor", "ageUnknown", "trust", "declined", "weekly", "community")
+  // the same; weekly: never set for members aged 13-17 (types.ts ObsMember); calendar: said only in a first booked
+  // plan, which a member aged 13-17 never gets. countsMember drops all of them (PRIV-COUNTS, fixed 2026-11-22).
+  pure val AGE_FACT_KEYS = Set("age", "minor", "ageUnknown", "trust", "declined", "weekly", "calendar", "community")
   pure val OPP_KEYS = Set("id", "state", "participants", "feedback", "explanations", "objective")
   pure val OPP_STATES = Set("PROPOSED", "ACCEPTED", "COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED")
 
@@ -317,14 +319,14 @@ module console_privacy {
   // Code: apps.tsx AppPanel disables Open below 5 trimmed characters.
   val panelNeedsReason: bool = opened.indices().forall(i => opened[i].reason >= PERSON_REASON_MIN)
 
-  // OPEN DEFECT, not in safety: the counts class gets no age fact at all, masked or not. shape.ts countsMember
-  // keeps declined, weekly and community. declinedLeaksTest replays it.
+  // Rule: admin-console 4.1, the counts class gets no age fact at all, masked or not. Code: shape.ts countsMember
+  // drops declined, weekly and community with the age fields (PRIV-COUNTS, fixed 2026-11-22).
   val countsGetNoAgeFacts: bool =
     memberSent.cls == Counts implies memberSent.fields.forall(f => not(AGE_FACT_KEYS.contains(f.key)))
 
   val safety: bool = and {
     noFieldAboveClass, truthOnlyFullLens, oracleOnlyWhenShown,
-    privateNotListed, hiddenHoldsRestricted, privateOriginHidden, panelNeedsReason,
+    privateNotListed, hiddenHoldsRestricted, privateOriginHidden, panelNeedsReason, countsGetNoAgeFacts,
   }
 
   // ================================================================ witnesses (each MUST be violated)
@@ -373,10 +375,10 @@ module console_privacy {
     crossAppShown(true, true), not(crossAppShown(true, false)), not(crossAppShown(false, true)),
   })
 
-  // OPEN DEFECT: the counts class keeps the declined flag and the weekly opt-in.
+  // PRIV-COUNTS (fixed 2026-11-22): the counts class drops the declined flag, the weekly opt-in and the community.
   run declinedLeaksTest = assert(and {
-    memberFieldUse(Counts, "declined") == Keep, memberFieldUse(Counts, "weekly") == Keep,
-    AGE_FACT_KEYS.contains("declined"),
+    memberFieldUse(Counts, "declined") == Drop, memberFieldUse(Counts, "weekly") == Drop, memberFieldUse(Counts, "community") == Drop,
+    memberFieldUse(Full, "declined") == Keep, AGE_FACT_KEYS.contains("declined"),
   })
 
   // A reason of four characters does not open a panel; five does.

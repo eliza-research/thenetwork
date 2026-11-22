@@ -56,11 +56,26 @@ describe.skipIf(!pgAvailable)("phone change on an OTP sign-in site", () => {
   test("a banned new number refuses after its code is proved, and the person stays on the old number", async () => {
     const [A, B] = [newPhone(), newPhone()];
     const { b } = await webJoin(st, "slop", A, { age: 30 });
+    expect(await (await st.site("slop", "/api/me/phone/start", { browser: b, json: { phone: B } })).json()).toEqual({ ok: true });
+    const code = st.otp.last(B);
+    expect(code).toMatch(/^\d{6}$/);
+    await st.svc.people.ban({ id: crypto.randomUUID(), scope: "phone", personId: null, phoneHash: st.svc.publicApi.accounts.phoneHash(B),
+      reason: "owned fixture", reportId: null, bannedBy: "fixture", at: st.clock.now() });
+    const refused = await st.site("slop", "/api/me/phone/confirm", { browser: b, json: { code } });
+    expect({ status: refused.status, body: await refused.json() }).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(await st.svc.publicApi.accounts.personFor(B)).toBeUndefined();
+    expect((await st.site("slop", "/api/me", { browser: b })).status).toBe(200);
+  }, T);
+
+  // spec/otpLimits.md, "Start keeps its public response private"; spec/phoneChange.md, "The verified request can move only when both numbers allow it"
+  test("a number banned before the start gets the ordinary answer and no code, and the person stays on the old number", async () => {
+    const [A, B] = [newPhone(), newPhone()];
+    const { b } = await webJoin(st, "slop", A, { age: 30 });
     await st.svc.people.ban({ id: crypto.randomUUID(), scope: "phone", personId: null, phoneHash: st.svc.publicApi.accounts.phoneHash(B),
       reason: "owned fixture", reportId: null, bannedBy: "fixture", at: st.clock.now() });
     expect(await (await st.site("slop", "/api/me/phone/start", { browser: b, json: { phone: B } })).json()).toEqual({ ok: true });
-    const refused = await st.site("slop", "/api/me/phone/confirm", { browser: b, json: { code: st.otp.last(B) } });
-    expect({ status: refused.status, body: await refused.json() }).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(st.otp.last(B)).toBeUndefined();
+    expect(await (await st.site("slop", "/api/me/phone/confirm", { browser: b, json: { code: "123456" } })).json()).toMatchObject({ ok: false });
     expect(await st.svc.publicApi.accounts.personFor(B)).toBeUndefined();
     expect((await st.site("slop", "/api/me", { browser: b })).status).toBe(200);
   }, T);
@@ -93,7 +108,7 @@ describe.skipIf(!pgAvailable)("phone change on a Cloud sign-in site", () => {
         const body = await req.json() as { codeVerifier: string };
         if (createHash("sha256").update(body.codeVerifier).digest("hex") !== challenge) return Response.json({ ok: false }, { status: 401 });
         return Response.json({ userId: `cloud-user-${cloudPhone}`, organizationId: "cloud-org-fixture", stewardUserId: "steward-fixture",
-          e164: cloudPhone, issuedAt: Math.floor(now / 1000), expiresAt: now + 3 * 3_600_000 });
+          e164: cloudPhone, issuedAt: Math.floor(now / 1000), expiresAt: now + 30 * MIN });
       },
     });
   }, T);

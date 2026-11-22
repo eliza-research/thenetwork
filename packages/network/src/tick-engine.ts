@@ -1,43 +1,28 @@
-// spec/runtimeUnit.md, "The engine runs on a snapshot outside the store lock"
-// The engine call of a tick, as a step that runTick (store.ts) supplies: inline (no store: the
-// simulator and direct ticks), capture (the first unit under the lock: record the request and end
-// the unit), or a prepared result (the commit unit under the lock).
 import { runEngine, type EngineConfigInput, type EngineDeps, type EngineResult } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import type { NetworkEvent } from "@thenetwork/core";
 import { evidenceOwner, preparedItemCommits, preparedRunUsable } from "../../core/src/generated/runtimeUnit.ts";
 
-/** One engine run that a tick asks for. `key` names the run: its kind and its New York day. */
 export interface EngineRequest { key: string; input: EngineInput; config: EngineConfigInput; deps: EngineDeps }
 export type EngineStep = (request: EngineRequest) => Promise<EngineResult>;
 
 export const inlineEngine: EngineStep = request => runEngine(request.input, request.config, request.deps);
 
-/** Thrown at the engine call of a capturing tick: the unit ends without a save. */
 export class EngineRunDue extends Error {
   constructor(readonly request: EngineRequest) { super(`engine run ${request.key} is due`); }
 }
 
-/** Record the request from the loaded state. A copy: the state of later units never changes it. */
 export const captureEngine: EngineStep = async request => {
   throw new EngineRunDue({ ...request, input: structuredClone(request.input) });
 };
 
-/** Compute a captured request. It runs without the store lock. */
 export async function computeEngine(request: EngineRequest): Promise<{ request: EngineRequest; result: EngineResult }> {
   return { request, result: await inlineEngine(request) };
 }
 
-/** The evidence key of a public event: a separate namespace, so an event id never reads as a member id. */
 const eventOwner = (id: string) => `event\0${id}`;
 
-/**
- * spec/runtimeUnit.md, "A prepared engine result commits only for members whose evidence did not change"
- * The engine evidence of the input, one digest per owner (evidenceOwner): each public event is its own
- * evidence (it leaves the input when it starts, by the clock, with no member change); each other list
- * item and record entry that names a member goes to every member it names; the rest is shared.
- */
 function evidence(input: EngineInput, ids: ReadonlySet<string>): { shared: string; owners: Map<string, string> } {
   const parts = new Map<string, string[]>();
   const shared: string[] = [];
@@ -65,12 +50,6 @@ function evidence(input: EngineInput, ids: ReadonlySet<string>): { shared: strin
   return { shared: digest(shared), owners: new Map([...parts].map(([key, xs]) => [key, digest(xs)])) };
 }
 
-/**
- * spec/runtimeUnit.md, "A prepared engine result commits only for members whose evidence did not change"
- * The engine step of the commit unit. A different run asks for a new computation (EngineRunDue); in the
- * same run, each proposal, question and standing row keeps only when no owner it names (its members, the
- * public event that anchors a proposal) has changed evidence.
- */
 export function preparedEngine(prepared: { request: EngineRequest; result: EngineResult }): EngineStep {
   return async current => {
     const ids = new Set<string>([...prepared.request.input.members, ...current.input.members].map(m => m.id));

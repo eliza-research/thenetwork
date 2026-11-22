@@ -28,7 +28,7 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //                                               with its `validated` cache and `validationRounds`, auth(),
 //                                               authenticatedSiteSession, cloudGrantAuthority, validateCloudGrant
 //   packages/platform/src/cloud-delegation.ts   productionCloudDelegation.exchange / validate
-//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (no future issue time, one-hour proof life)
+//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (cloudIdentityTimesValid: skew and one-hour proof life)
 //   packages/core/src/svc/profile-review-*.ts  owner, source, withdrawal and disconnect proof windows
 //   packages/platform/src/sessions.ts           create, authenticate (rotation after 24 h), revoke
 //   packages/platform/src/pg-store.ts           admitMembership and attachPerson: only the joining session
@@ -54,13 +54,13 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //  - The OTP login is one action here: only its interplay with the per-app mode is in this model.
 //  - Two apps (slop, ntwrk), two phones (X, Y), two humans (alice, bob).
 //  - A Cloud session never rotates: its expiry is at most the proof expiry (sessionDeadline with the
-//    identity expiry), and SessionService.authenticate rotates only after 24 h. In production
-//    parseNetworkDelegation caps the proof at one hour after issuedAt. OPEN DRIFT: the staging-local
-//    callback (parseCloudIdentity in api.ts) checks only that the expiry is in the future; it has no
-//    one-hour cap, so a staging Cloud that issued a longer proof would give a session that can rotate
-//    (rotatedCookies then copies the previous cache entry, W3-373). The model keeps PROOF_LIFE for every
-//    mode; staging Cloud's own limit is outside this repository. The invariant `cloudSessionNeverRotates`
-//    keeps the production fact checked.
+//    identity expiry), and SessionService.authenticate rotates only after 24 h. The staging-local
+//    callback (parseCloudIdentity in api.ts) and the production parser (parseNetworkDelegation) both call
+//    cloudIdentityTimesValid of spec/cloudSignIn.md, which caps the proof at one hour after issuedAt
+//    (cloudProofLifeValid). W3-373 closed on 2026-11-22: the staging callback had no cap, and a longer
+//    staging proof gave a Cloud session that could rotate. rotatedCookies no longer reseals a Cloud
+//    identity, because a Cloud session never reaches the rotation age. PROOF_LIFE holds for every mode,
+//    and the invariant `cloudSessionNeverRotates` checks it.
 //  - The 10 000-entry clear (publishCloudValidation) is the action `cacheClear` (it only removes entries).
 //  - A restart (new env) is `restart`: the in-memory cache and the requests in flight are lost.
 //  - Assumption (recycled numbers, phone_identity and auth_edge): when a carrier gives a number with a
@@ -72,8 +72,7 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 //    every Cloud session and Cloud grant of the earlier holder has ended with its proof. OTP sessions of
 //    the earlier holder (30 days, rotated every 24 h) can still be live; auth_edge covers them
 //    (staleSessionNoAct, AE-3). The step uses `recycle` (both assumptions). The assumption does NOT hold
-//    for staging-local (parseCloudIdentity has no one-hour cap, see the open drift above) or for a
-//    number that is handed over without aging: `recycleUnaged` and `recycleStale` drop it, and the
+//    for a number that is handed over without aging: `recycleUnaged` and `recycleStale` drop it, and the
 //    trace w3_126NullGrantTest shows what then breaks.
 //  - AE-3 (fixed on 2026-11-21, recorded in auth_edge): `textJoin` is the code: a text join has no joining
 //    session, so every person-less session of the number ends (SD-054; pg-store.ts attachPerson). Without
@@ -101,7 +100,7 @@ module cloud_auth {
   pure val VALIDATION_TTL = 60
   // api.ts CLOUD_CLOCK_SKEW_MS (30 s).
   pure val CLOUD_SKEW = 30
-  // network-delegation.ts: a delegation lives at most one hour after issuedAt.
+  // spec/cloudSignIn.md cloudProofLifeMs: a Cloud proof lives at most one hour after issuedAt, in every mode.
   pure val PROOF_LIFE = HOUR
   // sessions.ts.
   pure val SESSION_TTL = 30 * DAY
@@ -514,7 +513,7 @@ module cloud_auth {
     now' = now, cfg' = cfg, sess' = sess, cache' = cache, flight' = flight, ghost' = ghost,
   }
   action recycle(p: str, h: str): bool = recycleWith(p, h, true, true)
-  // Without carrier aging (staging-local, or a number handed over at once); Cloud is current.
+  // Without carrier aging (a number handed over at once); Cloud is current.
   action recycleUnaged(p: str, h: str): bool = recycleWith(p, h, true, false)
   // Without either assumption (W3-126, W3-127): Cloud keeps the earlier holder's binding.
   action recycleStale(p: str, h: str): bool = recycleWith(p, h, false, false)

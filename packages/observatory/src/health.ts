@@ -66,7 +66,7 @@ export function healthAlerts(x: AlertInput): HealthAlert[] {
     if (n > 0) add("info", `send_refused:${reason}`, n, `${n} send(s) refused in the last 24 h: ${reason.replace(/_/g, " ")}`);
   if (x.guardBlocked > 0) add("warn", "guard_blocked", x.guardBlocked, `The leak guard stopped ${x.guardBlocked} message(s) in the last 24 h`);
   if (x.expectEngine) {
-    if (x.matchingLocked) add("info", "matching_off", 0, "Proactive matching is off until this app's engine pack ships: joins, onboarding and safety only");
+    if (x.matchingLocked) add("info", "matching_off", 0, "Proactive matching is locked: the Network service has not confirmed that this app may match (joins, onboarding and safety only)");
     else if (!x.matchingEnabled) add("info", "matching_off", 0, "Proactive matching is off (admin switch): no engine runs");
     else if (x.lastEngineRun === undefined) { if (missedMatcherHeartbeat(x.now, x.start)) add("bad", "matcher_heartbeat", 0, "No engine run yet"); }
     else if (missedMatcherHeartbeat(x.now, x.lastEngineRun)) {

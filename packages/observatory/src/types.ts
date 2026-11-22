@@ -7,9 +7,11 @@ import type {
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
 import type { SearchTally } from "@thenetwork/engine";
-import type { ReviewPlanPreview } from "../../network/src/network.ts";
+import type { ReviewPlanPreview, ReviewProbePreview, ReviewProbeText } from "../../network/src/network.ts";
 
 export type StaffPlanPreview = ReviewPlanPreview & { app: string };
+export type StaffProbePreview = ReviewProbePreview & { app: string };
+export type { ReviewProbeText };
 
 export type Mode = "game" | "real";
 
@@ -453,8 +455,8 @@ export interface StaffUser {
   /** The roles with their app. A grant without an app ("email:role") is "role@*". */
   grants: RoleGrant[];
   via: "token" | "sso";
-  /** SSO: when the Cloudflare Access token expires (ms). Sockets close then (they are re-checked on a timer too). */
   expiresAt?: number;
+  secondFactor?: boolean;
 }
 
 export interface AuditEntry {
@@ -664,8 +666,8 @@ export type ControlCommand =
 
 export interface ControlResult {
   ok: boolean; error?: string; data?: unknown;
-  /** Machine-readable reason when refused or invalidated (e.g. "participant_minor", "busy_elsewhere", "matching_paused", "forbidden"). */
   code?: string;
+  reach?: "app" | "all";
 }
 
 // ---------------------------------------------------------------- per-app Member 360 (admin-console 3.3.1)

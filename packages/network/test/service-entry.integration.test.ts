@@ -3,6 +3,7 @@
 // "Exactly one system answers the carrier's inbound messages". Needs the dev Postgres on :54339.
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
@@ -11,7 +12,7 @@ import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { backendWebhookServed } from "../../core/src/generated/bootPolicy.ts";
 import { DryRunAdapter } from "../service/channel.ts";
-import { serveService } from "../service/serve.ts";
+import { serveService, startTicks } from "../service/serve.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 
 const REPO = resolve(import.meta.dirname, "../../..");
@@ -39,21 +40,23 @@ afterAll(async () => {
   await admin.close();
 });
 
+const runMain = async (env: Record<string, string>) => {
+  const p = spawnProcess([process.execPath, "--import", "tsx", "packages/network/service/main.ts", "--once", "--dry-run"], {
+    cwd: REPO, stdout: "pipe", stderr: "pipe",
+    env: {
+      PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", PLATFORM_ENV: "production",
+      OTP_PROVIDER: "blooio", BLOOIO_API_KEY: "synthetic-key", BLOOIO_FROM: "+12125550100", TURNSTILE_SECRET_KEY: "synthetic-turnstile",
+      PLATFORM_PROXY_SECRET: "p".repeat(40), PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "s".repeat(40),
+      DATABASE_URL: "postgres://x@db.invalid/none", ...env,
+    },
+  });
+  const code = await p.exited;
+  return { code, err: await new Response(p.stderr).text() };
+};
+const staff = `admin@*:${"a".repeat(40)}`;
+
 test("a staging or production main.ts refuses a missing or weak turn secret, missing or weak staff tokens, and a reused turn secret", async () => {
-  const run = async (env: Record<string, string>) => {
-    const p = spawnProcess([process.execPath, "--import", "tsx", "packages/network/service/main.ts", "--once", "--dry-run"], {
-      cwd: REPO, stdout: "pipe", stderr: "pipe",
-      env: {
-        PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", PLATFORM_ENV: "production",
-        OTP_PROVIDER: "blooio", BLOOIO_API_KEY: "synthetic-key", BLOOIO_FROM: "+12125550100", TURNSTILE_SECRET_KEY: "synthetic-turnstile",
-        PLATFORM_PROXY_SECRET: "p".repeat(40), PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "s".repeat(40),
-        DATABASE_URL: "postgres://x@db.invalid/none", ...env,
-      },
-    });
-    const code = await p.exited;
-    return { code, err: await new Response(p.stderr).text() };
-  };
-  const staff = `admin@*:${"a".repeat(40)}`;
+  const run = runMain;
   const missing = await run({});
   expect(missing.code).not.toBe(0);
   expect(missing.err).toContain("refusing to start (PLATFORM_ENV=production)");
@@ -69,6 +72,14 @@ test("a staging or production main.ts refuses a missing or weak turn secret, mis
   expect(unparsed.code).not.toBe(0);
   expect(unparsed.err).toContain("NETWORK_SERVICE_TOKENS");
   expect(unparsed.err).not.toContain("OBSERVATORY_TOKENS");
+}, 120_000);
+
+test("a staging or production main.ts refuses a session secret that is the hash key", async () => {
+  for (const environment of ["staging", "production"]) {
+    const reused = await runMain({ PLATFORM_ENV: environment, SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: staff, PLATFORM_SESSION_SECRET: "h".repeat(40) });
+    expect(reused.code, environment).not.toBe(0);
+    expect(reused.err, environment).toContain(`refusing to start (PLATFORM_ENV=${environment}): needs a PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY`);
+  }
 }, 120_000);
 
 test("with NETWORK_CHANNEL=eliza_cloud serveService does not serve the Blooio webhook; otherwise it does", async () => {
@@ -88,5 +99,31 @@ test("with NETWORK_CHANNEL=eliza_cloud serveService does not serve the Blooio we
       if (served) expect([r.status, body.error]).toEqual([200, undefined]);
       else expect([r.status, body.error]).toEqual([404, "webhook_not_served"]);
     } finally { s.stop(); }
+  }
+}, 60_000);
+
+test("the main.ts tick loop runs retention and notifications beside a long network tick, and a failed worker does not stop another", async () => {
+  const runtimes = [...service.runtimes.values()];
+  const ticks = runtimes.map(rt => rt.tick);
+  const { purge, notifyTick, inboxTick } = service;
+  const ran: string[] = [], lines: string[] = [];
+  let release = () => {};
+  const held = new Promise<void>(r => { release = r; });
+  for (const rt of runtimes) rt.tick = async () => { ran.push(`network:${rt.id}`); await held; return true; };
+  service.purge = async () => { ran.push("retention"); throw new Error("retention unavailable"); };
+  service.notifyTick = async () => { ran.push("notify"); };
+  service.inboxTick = async () => { ran.push("inbox"); };
+  try {
+    const loop = startTicks(service, line => lines.push(line));
+    for (let i = 0; i < 100 && !(ran.includes("retention") && ran.includes("notify")); i++) await sleep(20);
+    expect([...ran].sort()).toEqual(["inbox", ...runtimes.map(rt => `network:${rt.id}`), "notify", "retention"].sort());
+    expect(lines).toContain("retention: tick failed: retention unavailable");
+    release();
+    await loop.first;
+    await loop.stop();
+  } finally {
+    release();
+    runtimes.forEach((rt, i) => { rt.tick = ticks[i]!; });
+    Object.assign(service, { purge, notifyTick, inboxTick });
   }
 }, 60_000);

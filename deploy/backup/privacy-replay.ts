@@ -1,32 +1,70 @@
-// The privacy replay of a restore (docs/runbook-privacy.md section 3): carry the erasures, STOPs, leaves and bans
-// that the source database recorded after the backup into the restored database, before the backend serves it.
-// spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored database"
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { replaysErasure, replaysLeave, replaysSourceRow, replaysStop } from "../../packages/core/src/generated/databaseRestore.ts";
+import { replaysErasure, replaysLeave, replaysSourceRow, replaysStop, restoredText, type RestoredTextStatus } from "../../packages/core/src/generated/databaseRestore.ts";
+import { GATEWAY_WAITING, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
 import { resolveConsent, type ConsentState } from "../../packages/platform/src/consent.ts";
 
-export interface PrivacyReplayResult { consentEvents: number; bans: number; suppressions: number; erasures: number; leaves: number; stops: number }
+export interface RestoredTextsResult { textsTaken: number; textsEnded: number }
+export interface PrivacyReplayResult extends RestoredTextsResult { consentEvents: number; bans: number; suppressions: number; erasures: number; leaves: number; stops: number }
+
+const SOURCE_TEXT_COLUMNS = ["status", "attempts", "next_attempt_at", "updated_at", "lease_owner", "lease_until", "in_doubt", "provider_message_id",
+  "provider_message_ids", "chat_id", "transport", "new_conversation", "reengagement", "person_cap", "sent_at", "delivered_at", "read_at",
+  "ended_at", "last_error", "note", "history_recorded", "to_address", "body", "leak_released_by"].join(", ");
+
+const PARKED = ["parked_leak_review"];
+const IN_DOUBT = [...GATEWAY_WAITING, "failed_unknown"];
+const UNSETTLED = [...WAITING, ...PARKED, ...IN_DOUBT];
+
+function restoredTextStatus(status: string): RestoredTextStatus {
+  if (WAITING.includes(status)) return "WaitingText";
+  if (PARKED.includes(status)) return "ParkedText";
+  if (IN_DOUBT.includes(status)) return "InDoubtText";
+  return "SettledText";
+}
+
+async function settleRestoredTexts(tx: SQL, src: SQL | undefined, at: Date): Promise<RestoredTextsResult> {
+  const unsettled = await tx`select id, status from platform.outbound where status = any(${UNSETTLED}::text[]) order by id` as { id: string; status: string }[];
+  const ids = unsettled.map(r => r.id);
+  const source = new Map((src && ids.length
+    ? await src`select id, to_jsonb(o)::text as row from platform.outbound o where id = any(${ids}::text[])` as { id: string; row: string }[]
+    : []).map(r => [r.id, r.row] as const));
+  const ended: string[] = [];
+  let textsTaken = 0;
+  for (const { id, status } of unsettled) {
+    const row = source.get(id);
+    switch (restoredText(restoredTextStatus(status), src !== undefined, row !== undefined)) {
+      case "TakeSourceText":
+        await tx.unsafe(`update platform.outbound t set (${SOURCE_TEXT_COLUMNS}) =
+          (select ${SOURCE_TEXT_COLUMNS} from jsonb_populate_record(null::platform.outbound, $1::jsonb)) where t.id = $2`, [row!, id]);
+        textsTaken++;
+        break;
+      case "EndRestoredText": ended.push(id); break;
+      case "KeepRestoredText": break;
+    }
+  }
+  if (ended.length) await tx`update platform.outbound set status = 'expired', ended_at = ${at}, updated_at = ${at}, next_attempt_at = ${at},
+    lease_owner = null, lease_until = null, to_address = case when member_id is null then null else to_address end,
+    body = case when member_id is null then null else body end, note = 'restore: not settled in the source' where id = any(${ended}::text[])`;
+  return { textsTaken, textsEnded: ended.length };
+}
+
+export async function endRestoredTexts(o: { targetUrl: string; at: Date }): Promise<RestoredTextsResult> {
+  const target = new SQL({ url: o.targetUrl, max: 1, connection: { application_name: "network-restore-texts" } });
+  try { return await target.begin(tx => settleRestoredTexts(tx, undefined, o.at)); }
+  finally { await target.close(); }
+}
 
 type Row = Record<string, unknown>;
 interface MembershipRow { person_id: string; app_id: string; member_id: string; state: string }
 
-/** Copy the rows of `table` whose `key` the restored database lacks, every column as the source has it. */
 async function copyMissing(source: SQL, target: SQL, table: "consent_events" | "bans" | "suppression", key: "id" | "phone_hash",
   adjust: (row: Row) => Row = row => row, keep: (row: Row) => boolean = () => true): Promise<Row[]> {
   const have = new Set((await target.unsafe(`select ${key}::text as k from platform.${table}`) as { k: string }[]).map(r => r.k));
   const rows = (await source.unsafe(`select to_jsonb(t) as row from platform.${table} t order by ${key}`) as { row: Row }[])
-    // spec/databaseRestore.md, "A source row that the restored database lacks is replayed"
     .map(r => r.row).filter(row => replaysSourceRow(have.has(String(row[key])))).map(adjust).filter(keep);
   if (rows.length) await target.unsafe(`insert into platform.${table} select * from jsonb_populate_recordset(null::platform.${table}, $1::jsonb)`, [rows as never]);
   return rows;
 }
 
-/**
- * Read the source database and write the restored one in one transaction. Consent events, bans and suppressions
- * are copied at once (the send path, joins and sign-in read them); a copied ban also removes the number's queued
- * texts and revokes the person's live shares, as the live ban write does. Erasures, leaves, STOPs and the
- * projection of a copied ban are queued in platform.privacy_replay, which the backend runs when it starts.
- */
 export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; queuedAt: Date }): Promise<PrivacyReplayResult> {
   const source = new SQL({ url: o.sourceUrl, max: 1, connection: { application_name: "network-restore-replay" } });
   const target = new SQL({ url: o.targetUrl, max: 1, connection: { application_name: "network-restore-replay" } });
@@ -36,9 +74,6 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
       return target.begin(async tx => {
         const consent = await copyMissing(src, tx, "consent_events", "id");
         if (consent.length) await tx`select setval(pg_get_serial_sequence('platform.consent_events', 'id'), (select max(id) from platform.consent_events))`;
-        // A copied ban has no projection receipt here: the replay route resumes its projection. A person who
-        // joined after the backup is not in this database: the ban takes that person's phone hash from the
-        // source, which refuses that number.
         const banPeople = (await src`select distinct b.person_id::text as id, p.phone_hash from platform.bans b
           join platform.people p on p.id = b.person_id` as { id: string; phone_hash: string | null }[]);
         const sourceHash = new Map(banPeople.map(r => [r.id, r.phone_hash]));
@@ -56,7 +91,6 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         }
         const suppressions = await copyMissing(src, tx, "suppression", "phone_hash");
 
-        // spec/databaseRestore.md, "An erasure after the backup is replayed": a ledger row the restored database lacks.
         const ledgerHere = new Set((await tx`select id::text from platform.erasure_ledger` as { id: string }[]).map(r => r.id));
         const erasedAfter = [...new Set((await src`select id::text, person_id::text from platform.erasure_ledger order by id` as { id: string; person_id: string }[])
           .filter(r => replaysSourceRow(ledgerHere.has(r.id))).map(r => r.person_id))];
@@ -67,13 +101,11 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         const before = await src<MembershipRow[]>`select person_id::text, app_id, member_id, state from platform.memberships
           where person_id = any(${[...new Set(live.map(m => m.person_id))]}::uuid[])`;
         const sourceOf = new Map(before.map(m => [`${m.person_id}/${m.app_id}`, m]));
-        // spec/databaseRestore.md, "A leave after the backup is replayed"
         const leave = live.filter(m => {
           const was = sourceOf.get(`${m.person_id}/${m.app_id}`);
           return replaysLeave(true, !!was, was?.state !== "removed", was?.member_id === m.member_id);
         });
 
-        // spec/databaseRestore.md, "A STOP after the backup is replayed on each membership it still covers"
         const stop: MembershipRow[] = [];
         for (const e164 of new Set(consent.filter(e => e.state === "opted_out").map(e => String(e.e164)))) {
           const scopes = new Set(consent.filter(e => e.state === "opted_out" && e.e164 === e164).map(e => (e.app_id ?? null) as string | null));
@@ -105,7 +137,8 @@ export async function replayPrivacy(o: { sourceUrl: string; targetUrl: string; q
         ];
         for (const q of queue) await tx`insert into platform.privacy_replay (kind, person_id, app_id, member_id, queued_at)
           values (${q.kind}, ${q.person_id}::uuid, ${q.app_id}, ${q.member_id}, ${o.queuedAt}) on conflict do nothing`;
-        return { consentEvents: consent.length, bans: bans.length, suppressions: suppressions.length, erasures: erase.length, leaves: leave.length, stops: stop.length };
+        const texts = await settleRestoredTexts(tx, src, o.queuedAt);
+        return { consentEvents: consent.length, bans: bans.length, suppressions: suppressions.length, erasures: erase.length, leaves: leave.length, stops: stop.length, ...texts };
       });
     });
   } finally {

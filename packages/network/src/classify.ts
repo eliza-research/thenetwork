@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { parseReply, type Category } from "@thenetwork/core";
+import { isMinor, parseReply, validAge, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
@@ -150,7 +150,7 @@ export function classify(body: string): Classified {
   hit(RX.harassment, "harassment", 3);
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);
   const { age, explicit } = agesStated(t);
-  const minorSignal = minorSignOf(low) || (age !== undefined && age < 18);
+  const minorSignal = minorSignOf(low) || (validAge(age) && isMinor(age));
   const out: Classified = { kind: "other", abuse, risk, minorSignal, statedAge: age, explicitAge: explicit, tags: [], text: t };
   if (disclosed.length) out.disclosure = disclosed;
   const other = otherAgeStated(t);
@@ -400,7 +400,7 @@ export function otherAgeStated(body: string): number | undefined {
   for (const { rx, age } of OTHER_AGE_RX) {
     for (const m of allMatches(rx, t)) {
       const a = age(m);
-      if (Number.isFinite(a) && a < 18 && a > 0 && (best === undefined || a < best)) best = a;
+      if (a > 0 && validAge(a) && isMinor(a) && (best === undefined || a < best)) best = a;
     }
   }
   return best;

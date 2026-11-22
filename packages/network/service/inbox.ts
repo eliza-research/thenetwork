@@ -238,6 +238,12 @@ export class Inbox {
   }
 
 
+  async answerOpenReplay(tx: SQL, id: string, reply: CollectedReply, response: TurnResponse): Promise<boolean> {
+    const rows = await tx`update platform.inbound set response=${response}::jsonb,replies=(${{items: [reply]}}::jsonb->'items')
+      where id=${id} and status='done' and response->>'outcome'='open' and replies='[]'::jsonb returning id`;
+    return rows.length === 1;
+  }
+
   /** Store one inbound message and handle what waits for its sender. Returns this message's outcome, "duplicate", or "retry_later". */
   async receive(ev: InboundMessage, app?: string): Promise<string> {
     const id = `msg:${ev.channel}:${ev.messageId}`;
@@ -271,8 +277,7 @@ export class Inbox {
       sender=null,event=null,sender_hash=null,member_id=null,app_id=null
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
-    // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
-    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
+    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and sender_hash is null and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
     return sealed.length + removed.length + tombstones.length;
   }
 

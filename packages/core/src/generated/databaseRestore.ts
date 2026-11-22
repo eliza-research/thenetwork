@@ -11,6 +11,10 @@ export interface Restore { phase: RestorePhase; reason: RestoreReason; runRoles:
 export interface ManifestFacts { sourceKnown: boolean; sameServer: boolean; ownDatabase: boolean; rolesRequested: boolean; encrypted: boolean; dumpPresent: boolean; keepPrivileges: boolean; replaySource: boolean; sourceLost: boolean }
 /** Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds (spec/databaseRestore.md) */
 export type ReplayOutcome = "ReplayApplied" | "ReplayAlreadyApplied" | "ReplayTargetHeld" | "ReplayTargetWithoutPhone" | "ReplayRefused";
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+export type RestoredText = "KeepRestoredText" | "TakeSourceText" | "EndRestoredText";
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+export type RestoredTextStatus = "SettledText" | "WaitingText" | "ParkedText" | "InDoubtText";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -322,6 +326,47 @@ export function lawDoneItemRunsOnce(claimedByOther: boolean): boolean {
 export function lawSkippedItemStaysOpen(result: ReplayOutcome): boolean {
   //@ ensures \result === true
   return !(result === "ReplayTargetHeld" || result === "ReplayTargetWithoutPhone" || result === "ReplayRefused") || !replayItemDone(result);
+}
+
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+//@ pure
+export function restoredText(status: RestoredTextStatus, sourceRead: boolean, sourceHasText: boolean): RestoredText {
+  return status === "SettledText" ? "KeepRestoredText" : (sourceRead && sourceHasText ? "TakeSourceText" : (status === "InDoubtText" ? "KeepRestoredText" : "EndRestoredText"));
+}
+
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+//@ pure
+export function lawWaitingTextNeverStaysAsRestored(sourceRead: boolean, sourceHasText: boolean): boolean {
+  //@ ensures \result === true
+  return restoredText("WaitingText", sourceRead, sourceHasText) !== "KeepRestoredText" && restoredText("ParkedText", sourceRead, sourceHasText) !== "KeepRestoredText";
+}
+
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+//@ pure
+export function lawLostSourceEndsWaitingText(sourceHasText: boolean): boolean {
+  //@ ensures \result === true
+  return restoredText("WaitingText", false, sourceHasText) === "EndRestoredText" && restoredText("ParkedText", false, sourceHasText) === "EndRestoredText";
+}
+
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+//@ pure
+export function lawSettledTextKeepsItsState(sourceRead: boolean, sourceHasText: boolean): boolean {
+  //@ ensures \result === true
+  return restoredText("SettledText", sourceRead, sourceHasText) === "KeepRestoredText";
+}
+
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+//@ pure
+export function lawSourceOutcomeWins(status: RestoredTextStatus): boolean {
+  //@ ensures \result === true
+  return !(status !== "SettledText") || restoredText(status, true, true) === "TakeSourceText";
+}
+
+/** Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends (spec/databaseRestore.md) */
+//@ pure
+export function lawInDoubtTextNeverEnds(sourceRead: boolean, sourceHasText: boolean): boolean {
+  //@ ensures \result === true
+  return restoredText("InDoubtText", sourceRead, sourceHasText) !== "EndRestoredText";
 }
 
 /** Do the rules allow this event in this state? */

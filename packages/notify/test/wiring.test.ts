@@ -10,7 +10,7 @@ import { pgAvailable } from "../../observatory/test/pg.ts";
 import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
-import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+import { buttonPageLink, Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
 import { deliveryIdFor } from "../src/scheduler.ts";
 
 import { PgNotifyStore } from "../src/pg-store.ts";
@@ -153,8 +153,8 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     const itemSets = [items.slice(0, 2), items.slice(1)];
     const ids = itemSets.map(set => deliveryIdFor(r.personId, set));
     const recorded = await Promise.all(itemSets.map((itemIds, index) => store.recordDelivery({
-      deliveryId: ids[index]!, personId: r.personId, itemIds, target: "imessage", countsTowardCap: true, sentAt: now(), weeklyCap: 2,
-    })));
+      deliveryId: ids[index]!, personId: r.personId, itemIds, target: "imessage", countsTowardCap: true, sentAt: now(),
+    }, 2)));
 
     expect(recorded.filter(Boolean)).toHaveLength(1);
     const [first, shared, last] = await store.getItems(items);
@@ -243,6 +243,18 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     const next = await send("u4");
     expect(next.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
     expect(next.text).toContain("https://claude.ai/new?q=");
+  });
+
+  test("an SMS member with a linked assistant gets the button page, not the assistant's own link", async () => {
+    const { now, notifier, sink, r } = await setup({ channel: "sms", explicit: "claude" });
+    notifier.setAssistantUpdatesLookup(async (personId, app) => personId === r.personId && app === "friends" ? ["claude"] : []);
+    await notifier.setActive(r.personId, "claude", true);
+    await notifier.add(req(r.personId, "sms-linked"), now());
+    const { sent } = await notifier.dispatch(now(), sink);
+    expect(sent).toEqual([expect.objectContaining({ delivery: { mode: "button_page", assistants: ["claude"], reason: "explicit" }, token: expect.any(String) })]);
+    const plan = sent[0]!;
+    expect(plan.text.endsWith(`\n${buttonPageLink(plan.token!)}`)).toBe(true);
+    expect(plan.text).not.toContain("https://claude.ai/");
   });
 
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {

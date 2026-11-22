@@ -5,6 +5,8 @@
 export type ClaimPhase = "Claiming" | "CheckingPrior" | "RunningTurn" | "CheckingRescue" | "PreservingCompliance" | "ReleasingClaim" | "Finished" | "Replayed" | "Busy" | "Conflict" | "Unresolved" | "RetryCompliance";
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export interface SignedInbox { phase: ClaimPhase }
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+export type OpenReplayAnswer = "ReplayCurrentContext" | "ReplayFixedReply" | "ReplayRefused";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -17,10 +19,10 @@ export type Event =
 
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const processingLeaseMs: number = 120000;
-/** Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed (spec/signedInbox.md) */
-export const turnTombstoneKeepMs: number = exact_signedInbox(exact_signedInbox(exact_signedInbox(30 * 24) * 60) * 60000);
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const leaseRenewMs: number = 30000;
+/** Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed (spec/signedInbox.md) */
+export const turnTombstoneKeepMs: number = exact_signedInbox(exact_signedInbox(exact_signedInbox(30 * 24) * 60) * 60000);
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const unresolvedBlockMs: number = 600000;
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
@@ -221,15 +223,29 @@ export function lawNoDirectOrdinaryReplyAfterOptOut(compliance: boolean): boolea
 
 /** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
 //@ pure
-export function openReplayAnswersCurrent(admitted: boolean, sameMember: boolean, contextAvailable: boolean): boolean {
-  return admitted && sameMember && contextAvailable;
+export function openReplayAnswer(admitted: boolean, sameMember: boolean, contextAvailable: boolean): OpenReplayAnswer {
+  return !admitted || !sameMember ? "ReplayRefused" : (contextAvailable ? "ReplayCurrentContext" : "ReplayFixedReply");
 }
 
 /** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
 //@ pure
 export function lawOpenReplayNeedsAdmission(sameMember: boolean, contextAvailable: boolean): boolean {
   //@ ensures \result === true
-  return !openReplayAnswersCurrent(false, sameMember, contextAvailable);
+  return openReplayAnswer(false, sameMember, contextAvailable) === "ReplayRefused";
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function lawAnotherMemberIsRefused(admitted: boolean, contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openReplayAnswer(admitted, false, contextAvailable) === "ReplayRefused";
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function lawAdmittedMemberReplayIsNeverRefused(contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openReplayAnswer(true, true, contextAvailable) !== "ReplayRefused";
 }
 
 /** Story: Handle each signed message once without delaying consent / Every collected reply passes the line's leak guard (spec/signedInbox.md) */

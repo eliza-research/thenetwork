@@ -28,7 +28,7 @@ import {
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
-import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
+import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
@@ -164,11 +164,12 @@ export function parseCookies(header: string | null): Map<string, string> {
 
 export function createPublicApi(o: PublicApiOptions): PublicApi {
   const env = o.env ?? process.env;
-  // Fail closed: only a declared dev environment gets the dev keys, cookies without Secure, localhost hosts, no Turnstile and a trusted X-Forwarded-Host.
   const dev = devShortcutsAllowed(env);
   const hashKey = o.hashKey ?? env.PLATFORM_HASH_KEY ?? (dev ? DEV_HASH_KEY : undefined);
   if (!hashKey) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
-  const sessionSecret = o.sessionSecret ?? env.PLATFORM_SESSION_SECRET ?? (dev ? DEV_SESSION_SECRET : hashKey);
+  const sessionSecret = (o.sessionSecret || undefined) ?? (env.PLATFORM_SESSION_SECRET || undefined) ?? (dev ? DEV_SESSION_SECRET : undefined);
+  if (!sessionSecret) throw new Error("PLATFORM_SESSION_SECRET is required in production and outside PLATFORM_ENV=dev");
+  if (!dev && sessionSecret === hashKey) throw new Error("PLATFORM_SESSION_SECRET must differ from PLATFORM_HASH_KEY outside PLATFORM_ENV=dev");
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
   if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
   // spec/otpLimits.md, "A phone-code-only app skips the browser check only on the Blooio sender, keeps every per-person limit, and has its own coarse address ceiling"
@@ -279,11 +280,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       return parsed && typeof parsed === "object" && parsed.kind === kind ? parsed : null;
     } catch { return null; }
   };
-  // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
-  // this keeps the cookies safe if the gate is ever widened.
   const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
-  // "/phone" is the one-purpose number-change page (spec/phoneChange.md): it signs in on the current number there.
-  const cloudReturnPath = (path: unknown): path is string => path === "/join" || path === "/phone" || oauthReturnPath(path);
+  const sitePageReturnPath = (path: unknown): path is "/join" | "/phone" | "/home-help" => path === "/join" || path === "/phone" || path === "/home-help";
+  const cloudReturnPath = (path: unknown): path is string => sitePageReturnPath(path) || oauthReturnPath(path);
   const startCloudHandoff = async (app: AppId, returnPath: string, prefill?: ReturnType<typeof readJoinPrefill>) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
@@ -401,13 +400,6 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if (!a.rotated) return;
       const age = Math.max(0, Math.floor((a.session.expiresAt - now()) / 1000));
       response.headers.append("set-cookie", cookie(appId, a.token, age));
-      if (a.token.startsWith("cloud.")) {
-        const {kind: _kind, ...identity} = unseal("cloud-identity", cookies.get(identityName(appId)))!;
-        const sessionHash = tokenHash(a.token, sessionSecret);
-        const previousUntil = a.session.rotatedFrom ? validated.get(a.session.rotatedFrom) : undefined;
-        if (!productionCloud && previousUntil !== undefined && previousUntil > now()) publishCloudValidation(sessionHash, previousUntil);
-        response.headers.append("set-cookie", identityCookie(appId, seal("cloud-identity", {...identity, sessionHash}), age));
-      }
     };
     const post = req.method === "POST";
     if (!post && req.method !== "GET") return json(405, { ok: false, error: "method" });
@@ -493,8 +485,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return json(200, {mode: cloud ? "cloud" : "otp"});
       case "POST /api/auth/cloud/start": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
-        const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
-          : b.returnPath === "/phone" ? "/phone" : null;
+        const returnPath = b.returnPath === "/join.html" ? "/join" : sitePageReturnPath(b.returnPath) ? b.returnPath : null;
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
         const handoff=await startCloudHandoff(appId,returnPath,appId === "peon" && returnPath === "/join" ? readJoinPrefill(b.prefill) : undefined);
         if(!handoff)return json(404,{ok:false,error:"not_found"});
@@ -725,24 +716,12 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           }
         });
 
-      case "POST /api/me/share":
-      case "POST /api/me/share/revoke":
-        return withSession(async who => {
-          const fields = Array.isArray(b.fields) && b.fields.every(f => typeof f === "string") ? (b.fields as string[]) : [];
-          if (!isAppId(b.fromApp) || (path.endsWith("/share") && !fields.length)) return json(400, { ok: false, error: "invalid" });
-          // The same answer whether or not a grant was stored or revoked: it must not tell which apps the person uses.
-          if (path.endsWith("/revoke")) await accounts.revokeShare(app, who, b.fromApp);
-          else await accounts.share(app, who, b.fromApp, fields);
-          return json(200, { ok: true });
-        });
-
       case "GET /api/me/export":
         return withSession(async who => (await accounts.held(who.e164))
           ? json(403, { ok: false, error: "review", message: REVIEW_MESSAGE })
           : json(200, await accounts.exportApp(app, who), { "content-disposition": `attachment; filename="${appId}-export.json"` }));
 
       case "POST /api/me/stop":
-        // STOP from the site: every app on this number (PRD 40.3). The leave button is /api/me/delete {scope: "app"}.
         return withSession(async who => { await accounts.stop(app, who); return json(200, { ok: true }); });
 
       case "POST /api/me/phone/start": {

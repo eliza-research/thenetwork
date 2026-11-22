@@ -15,6 +15,7 @@ import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.t
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { Mini, START } from "./mini.ts";
+import { interruptionFeedbackCode } from "../src/interruption-feedback.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -132,4 +133,25 @@ test("an assistant yes while a probe waits is not an answer", async () => {
   expect(x.probed("a")).toBe(true);
   await x.say("a", "Yes, that works for me.");
   expect(opportunity().status).toContainEqual(["a", "available"]);
+});
+
+test("a survey answer in assistant profile text records no interruption feedback; the member's own text does", async () => {
+  const x = new Mini([
+    { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
+    { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
+  ], { review: "human", onboardingRequests: false });
+  await x.onboard("a", "b");
+  await x.say("a", "Find me a climbing partner.");
+  const oppId = x.net.exportState().requests.at(-1)!.oppId!;
+  const now = x.clock.now();
+  const state = x.net.exportState();
+  x.net.importState({ ...state, members: state.members.map(m => m.id === "a" ? { ...m, interruptionSurvey: { opportunityId: oppId, answeredAt: now, sentAt: now } } : m) });
+  const answer = `WORTH YES NTWRK ${interruptionFeedbackCode("ntwrk", "a", oppId)}`;
+  const survey = () => x.net.memberList().find(m => m.id === "a")?.interruptionSurvey;
+  await x.net.onInbound({ id: "assistant-worth", memberId: "a", source: "mcp", channel: "sms", ts: now, body: answer });
+  expect(x.log("interruption_feedback")).toEqual([]);
+  expect(survey()).toEqual({ opportunityId: oppId, answeredAt: now, sentAt: now });
+  await x.say("a", answer);
+  expect(x.log("interruption_feedback").map(l => l.detail)).toEqual([{ worthwhile: true }]);
+  expect(survey()).toBeUndefined();
 });

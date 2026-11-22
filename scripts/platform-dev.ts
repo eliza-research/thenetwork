@@ -87,7 +87,7 @@ async function main() {
     log: s => log.info(s),
   });
   await svc.start();
-  for (const rt of svc.runtimes.values()) console.log(`network ${rt.id}: sends dry-run, review "human", matching ${rt.matchingAllowed ? "allowed (admin switch)" : "not allowed (platform.networks)"}`);
+  for (const rt of svc.runtimes.values()) console.log(`network ${rt.id}: sends dry-run, review "human", matching ${rt.matchingAllowed ? "allowed (admin switch)" : "not allowed (registry row or launch scope)"}`);
   if (!process.env.NETWORK_SERVICE_TOKENS) console.log(`staff tokens (dev only): ${tokens}`);
 
   const devOrigins = Object.fromEntries(SITES.map(s => [s.app, `http://${HOST}:${s.port}`]));

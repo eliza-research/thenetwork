@@ -78,11 +78,11 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
         values ('ntwrk', 'ntwrk:nyc', 'age-view-report-fixture', ${P.a})`;
     });
     expect(await as("network_observatory_slop", tx => tx`select * from platform.matching_ages_slop order by member_id`)).toEqual({ v: [
-      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false },
-      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false },
+      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false, minor_signal_at: null },
+      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false, minor_signal_at: null },
     ] });
     expect(await as("network_observatory", tx => tx`select * from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [
-      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true },
+      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true, minor_signal_at: null },
     ] });
     for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_cross_app"]) {
       expect(await as(role, tx => tx`select * from platform.matching_ages_slop`)).toEqual(denied);
@@ -95,6 +95,7 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
         (tx: SQL) => tx`select * from platform.age_floor`,
         (tx: SQL) => tx`select * from platform.staff_safety_holds`,
         (tx: SQL) => tx`select * from platform.report_safety_carryovers`,
+        (tx: SQL) => tx`select * from platform.person_minor_signals`,
       ]) expect(await as(role, q)).toEqual(denied);
     }
   }, T);

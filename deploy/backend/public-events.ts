@@ -8,12 +8,6 @@ export type PublicEventRefresh =
   | { kind: "not_due" }
   | { kind: "scanned"; published: boolean; events: number };
 
-/**
- * The scheduled public event catalog refresh of the deployed backend. `sql` is the catalog's ingest login
- * (NETWORK_PUBLIC_EVENTS_DATABASE_URL) with room for two connections: one holds the session lease, the
- * importer publishes on the other. A failed scan throws to the tick round, which logs it.
- */
-// spec/publicEventCatalog.md, "The backend scans once a day, at most one process at a time, and waits after a failed attempt"
 export function createPublicEventRefresh(o: { sql: SQL; clock: Clock; request?: typeof fetch }): () => Promise<PublicEventRefresh> {
   let attemptedAt: number | undefined;
   return async () => {

@@ -1,10 +1,5 @@
-// Private member photos (photos.ts) on Postgres (integration; founder decision 4 of 2026-10-09):
-// adults only, consented, metadata stripped by an allowlist, no public URL, short signed staff links,
-// the rater refused for anyone not a rateable adult member, a rating discarded when the person stops
-// being one while the rater runs, each rater try a cost row, and every photo deleted on leave, delete
-// everything or a minor age. PgPeopleStore and PgPhotoStore on a database of its own, a temporary
-// folder for the bytes; no network, no R2 (R2PhotoStorage is not exercised here), no Workers AI.
 import { fileAt, writePath } from "../../core/src/runtime/files.ts";
+import { serveHttp } from "../../core/src/runtime/http.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +8,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import {
-  LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
+  LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, R2PhotoStorage, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
   type PhotoRater, type PhotoRefusal, type PhotoStorage,
 } from "../src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore } from "../src/photo-relay.ts";
@@ -196,8 +191,21 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(plain.ratings).toHaveLength(0);
   }, T);
 
+  test("a selected photo whose bytes are missing ends the rating with no rater call; the rater never scores part of the selection", async () => {
+    let calls = 0;
+    const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; return score; } } });
+    const id = await t.person(30);
+    expect((await up(t.svc, id)).ok).toBe(true);
+    expect((await up(t.svc, id)).ok).toBe(true);
+    const before = calls;
+    const [first] = await t.meta.list(id, "slop");
+    rmSync(join(t.dir, first!.storageKey));
+    t.ratings.length = 0;
+    expect(await t.svc.rate(id, "slop")).toEqual({ rated: false, refused: "not_found" });
+    expect([calls - before, t.ratings.length]).toEqual([0, 0]);
+  }, T);
+
   test("a rating is discarded when the age drops under 18, a ban lands, the member leaves or a rated photo is deleted while the rater runs", async () => {
-    // The rater runs `during` before it answers: what happens in the world while Workers AI thinks.
     let during: (() => Promise<void>) | undefined;
     let calls = 0;
     const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; await during?.(); return score; } } });
@@ -599,4 +607,56 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     now += 16 * 60_000; expect(await relay.approved(selected.itemId)).toBeUndefined();
   }, T);
 
+  test("R2PhotoStorage on an S3-compatible bucket: signed put, get and delete under photos/<key>; a missing key reads as none, another error is raised; leaving the app deletes the object", async () => {
+    const name = "photos-r2-fixture";
+    const objects = new Map<string, { bytes: Uint8Array; type: string | null }>();
+    const fault = { status: 0 };
+    let unsigned = 0;
+    const xmlError = (status: number, code: string) => new Response(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${code}</Message></Error>`, { status, headers: { "content-type": "application/xml" } });
+    const server = await serveHttp({
+      port: 0, hostname: "127.0.0.1",
+      async fetch(req) {
+        const path = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        if (!path.startsWith(`${name}/`)) return xmlError(404, "NoSuchBucket");
+        if (!req.headers.get("authorization")) { unsigned++; return xmlError(403, "AccessDenied"); }
+        if (fault.status) return xmlError(fault.status, "AccessDenied");
+        const key = path.slice(name.length + 1);
+        if (req.method === "PUT") { objects.set(key, { bytes: new Uint8Array(await req.arrayBuffer()), type: req.headers.get("content-type") }); return new Response(null, { status: 200, headers: { etag: '"fixture"' } }); }
+        if (req.method === "DELETE") { objects.delete(key); return new Response(null, { status: 204 }); }
+        if (req.method === "GET") {
+          const o = objects.get(key);
+          return o ? new Response(Buffer.from(o.bytes), { status: 200, headers: { "content-length": String(o.bytes.length), "content-type": o.type ?? "application/octet-stream", etag: '"fixture"' } }) : xmlError(404, "NoSuchKey");
+        }
+        return xmlError(501, "NotImplemented");
+      },
+    });
+    try {
+      const r2 = new R2PhotoStorage({ endpoint: `http://127.0.0.1:${server.port}`, bucket: name, accessKeyId: "fixture-key", secretAccessKey: "fixture-secret" });
+      expect(r2.kind).toBe("r2");
+      const t = setup({ storage: () => r2 });
+      const id = await t.person(30);
+      const uploaded = await up(t.svc, id);
+      if (!uploaded.ok) throw new Error(JSON.stringify(uploaded));
+      const keys = [...objects.keys()];
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toMatch(/^photos\/[a-f0-9]{48}$/);
+      const stored = objects.get(keys[0]!)!;
+      expect(stored.type).toBe("image/jpeg");
+      expect(has(stored.bytes, "GPS")).toBe(false);
+      const [row] = await t.meta.list(id, "slop");
+      expect(row).toMatchObject({ id: uploaded.value.id, bytes: stored.bytes.length, contentType: "image/jpeg" });
+      expect(`photos/${row!.storageKey}`).toBe(keys[0]);
+      expect(await r2.get(row!.storageKey)).toEqual(stored.bytes);
+      expect(await r2.get("0".repeat(48))).toBeUndefined();
+      await expect(r2.get("../" + row!.storageKey)).rejects.toThrow("bad photo key");
+      fault.status = 403;
+      await expect(r2.get(row!.storageKey)).rejects.toThrow();
+      fault.status = 0;
+      expect(unsigned).toBe(0);
+      expect(await t.svc.deleteFor(id, "slop")).toBe(1);
+      expect(objects.size).toBe(0);
+      expect(await rowsOf(id)).toBe(0);
+      expect(await r2.get(row!.storageKey)).toBeUndefined();
+    } finally { await server.stop(true); }
+  }, T);
 });

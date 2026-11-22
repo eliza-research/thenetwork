@@ -1,5 +1,3 @@
-// In-memory observatory state with change tracking. Both data sources write into a Store; the
-// server sends the full state once and then deltas (only what changed since the last take).
 import type { MemberId } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
 import type {
@@ -10,7 +8,6 @@ import type {
 export const FEED_LIMIT = 400;
 const SYMMETRIC = new Set(["knows", "met", "introduced", "enjoyed", "would_interact_again", "group_only", "avoid"]);
 
-/** Stable edge id: symmetric types are keyed on the sorted pair, directed ones on (from, to). */
 export function edgeId(type: string, from: MemberId, to: MemberId): string {
   if (SYMMETRIC.has(type)) return from < to ? `${type}:${from}|${to}` : `${type}:${to}|${from}`;
   return `${type}:${from}>${to}`;
@@ -20,7 +17,6 @@ export function emptyCounters(): ObsMember["counters"] {
   return { msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, accepted: 0, meetings: 0, enjoymentSum: 0, enjoymentN: 0 };
 }
 
-/** Counters that are incremented as records arrive (the rest of ObsStats is derived on demand). */
 export interface RunningCounts {
   messages: number; inbound: number; outbound: number; proactive: number; invites: number; accepts: number; declines: number;
   meetingsScheduled: number; meetingsHeld: number; attended: number; noShows: number; cancelledWithNotice: number;
@@ -28,7 +24,6 @@ export interface RunningCounts {
   invariantViolations: number; errors: number;
 }
 const CLOSED_STATES = new Set(["COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED"]);
-/** An opportunity with its age (hours since created; for a closed one, from creation to its last change). */
 export function withAge(o: ObsOpportunity, now: number): ObsOpportunity {
   const end = CLOSED_STATES.has(o.state) ? o.updatedAt : now;
   return { ...o, ageHours: Math.round(((end - o.createdAt) / HOUR) * 10) / 10 };
@@ -48,17 +43,15 @@ export class Store {
   feed: ObsFeedItem[] = [];
   truth?: Record<MemberId, MemberTruth>;
   counts: RunningCounts = zeroCounts();
-  /** Game only: the judge scorer's counts (set by GameSource). */
   judge?: JudgeStats;
-  /** Health alerts, the PRD 28.2 scorecard and growth (set by the source). */
   health?: { alerts: HealthAlert[]; scorecard: ScoreMetric[]; growth: GrowthStats };
-  /** Member requests, newest first (set by the source). */
   requests: ObsRequest[] = [];
   private requestsDirty = false;
   version = 0;
   private feedSeq = 0;
   private dirtyMembers = new Set<MemberId>();
   private dirtyEdges = new Set<string>();
+  private edgesRemoved = false;
   private dirtyOpps = new Set<string>();
   private removedOpps = new Set<string>();
   private newFeed: ObsFeedItem[] = [];
@@ -73,7 +66,6 @@ export class Store {
   touchMember(id: MemberId) { if (this.members.has(id)) this.dirtyMembers.add(id); }
   member(id: MemberId) { return this.members.get(id); }
 
-  /** Add or strengthen an edge. Returns true if it is new. */
   addEdge(e: Omit<ObsEdge, "id">): boolean {
     const id = edgeId(e.type, e.from, e.to);
     const cur = this.edges.get(id);
@@ -84,6 +76,20 @@ export class Store {
     this.edges.set(id, { id, ...e });
     this.dirtyEdges.add(id);
     return true;
+  }
+
+  setEdges(list: Omit<ObsEdge, "id">[]) {
+    const next = new Map<string, ObsEdge>();
+    for (const e of list) {
+      const id = edgeId(e.type, e.from, e.to);
+      const seen = next.get(id);
+      if (!seen || e.strength > seen.strength) next.set(id, { id, ...e });
+    }
+    for (const id of this.edges.keys()) if (!next.has(id)) { this.edges.delete(id); this.dirtyEdges.delete(id); this.edgesRemoved = true; }
+    for (const [id, e] of next) {
+      const cur = this.edges.get(id);
+      if (!cur || JSON.stringify(cur) !== JSON.stringify(e)) { this.edges.set(id, e); this.dirtyEdges.add(id); }
+    }
   }
 
   upsertOpp(o: ObsOpportunity) { this.opps.set(o.id, o); this.dirtyOpps.add(o.id); this.removedOpps.delete(o.id); }
@@ -137,7 +143,6 @@ export class Store {
       meetingsScheduled: c.meetingsScheduled, meetingsHeld: c.meetingsHeld, attended: c.attended, noShows: c.noShows,
       cancelledWithNotice: c.cancelledWithNotice, enjoymentSum: c.enjoymentSum, enjoymentN: c.enjoymentN,
       blocks: c.blocks, optOuts: c.optOuts, adversarialAttempts: c.adversarialAttempts,
-      // Game mode: the judge's invariant count. Real mode: invariant_violation events.
       invariantViolations: this.judge?.invariants ?? c.invariantViolations, errors: c.errors, compatible, unsafe, oracleJudged, edgesByType,
       ...(this.judge ? { judge: this.judge } : {}),
       ...(this.health ? { alerts: this.health.alerts, scorecard: this.health.scorecard, growth: this.health.growth } : {}),
@@ -153,14 +158,13 @@ export class Store {
   }
 
   hasChanges() {
-    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
+    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.edgesRemoved || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
   }
 
-  /** Everything that changed since the last call (and bump the version). */
   takeDelta(game?: GameState): ObsDelta {
     const changed = this.hasChanges();
     if (changed) this.version++;
-    const d: ObsDelta = { version: this.version, clock: this.clock, game };
+    const d: ObsDelta = { version: this.version, clock: this.clock, game, ...(this.edgesRemoved ? { reset: true } : {}) };
     if (this.envDirty) d.env = this.env;
     if (this.dirtyMembers.size) d.members = [...this.dirtyMembers].map(id => this.members.get(id)!).filter(Boolean);
     if (this.dirtyEdges.size) d.edges = [...this.dirtyEdges].map(id => this.edges.get(id)!).filter(Boolean);
@@ -171,7 +175,7 @@ export class Store {
     if (this.requestsDirty) d.requests = this.requests;
     if (changed) d.stats = this.stats();
     this.dirtyMembers.clear(); this.dirtyEdges.clear(); this.dirtyOpps.clear(); this.removedOpps.clear(); this.newFeed = [];
-    this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false;
+    this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false; this.edgesRemoved = false;
     return d;
   }
 }

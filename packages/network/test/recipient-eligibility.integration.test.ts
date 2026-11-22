@@ -222,6 +222,7 @@ test.skipIf(!pgAvailable)("the persisted queue refuses each ineligible row with 
     await adapter.queue.drain();
     const [stored] = await sql<{ status: string; note: string | null }[]>`select status, note from platform.outbound where id=${ok.id}`;
     expect(["blocked_pair", "other_not_matchable", "minor", "held"]).not.toContain(stored?.note);
+    expect(stored).toEqual({ status: "suppressed_ineligible", note: "reengagement_changed" });
 
     const info = { id: `eligible-info:${eve.id}`, memberId: eve.id, to: eve.e164, kind: "proactive" as const, text: "The climbing gym on Kent Ave opens early on Saturdays." };
     await adapter.queue.enqueue(sql, [{ ...info, city: "nyc" }]);

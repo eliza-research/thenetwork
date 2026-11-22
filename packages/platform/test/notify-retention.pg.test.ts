@@ -43,7 +43,7 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     await people.putMembership({app: "friends", personId: other.id, memberId: "other_fixture", state: "active", review: null, firstName: "Other", profile: {}, joinedAt: now, leftAt: null});
     const add = async (personId: string, app: string, subjectId: string) => (await notify.addItem({personId, app, eventType: "fixture", subjectId, urgency: "normal", summary: `${subjectId} private fixture`}, now)).item;
     const a = await add(person.id, "slop", "app-a"), b = await add(person.id, "friends", "app-b"), outsider = await add(other.id, "friends", "other-person");
-    await notify.recordDelivery({deliveryId: "mixed", personId: person.id, itemIds: [a.id, b.id], target: "chatgpt", countsTowardCap: true, sentAt: now});
+    await notify.recordDelivery({deliveryId: "mixed", personId: person.id, itemIds: [a.id, b.id], target: "chatgpt", countsTowardCap: true, sentAt: now}, 2);
     await notify.insertToken({token: "T-ABCDEF", personId: person.id, itemIds: [a.id, b.id], issuedAt: now, expiresAt: now + 86400000});
     await notify.setActive(person.id, "chatgpt", true);
     await notify.setActive(other.id, "web", true);
@@ -78,7 +78,7 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     expect(await accounts.optedIn("friends", phone)).toBe(false);
     expect(await people.isSuppressed(accounts.phoneHash(phone))).toBe(true);
     await expect(add(person.id, "slop", "late-erased-app")).rejects.toThrow("Notify membership is unavailable");
-    expect(await notify.recordDelivery({deliveryId: "late-a", personId: person.id, itemIds: [a.id], target: "chatgpt", countsTowardCap: false, sentAt: now})).toBe(false);
+    expect(await notify.recordDelivery({deliveryId: "late-a", personId: person.id, itemIds: [a.id], target: "chatgpt", countsTowardCap: false, sentAt: now}, 2)).toBe(false);
     expect(await notify.insertToken({token: "T-GHIJKL", personId: person.id, itemIds: [a.id], issuedAt: now, expiresAt: now + 1000})).toBe(false);
     expect((await notify.getItems([outsider.id])).map(item => item.id)).toEqual([outsider.id]);
     expect(await notify.signals(other.id)).toEqual(otherSignals);

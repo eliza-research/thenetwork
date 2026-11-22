@@ -25,9 +25,9 @@ Production uses [selected-photo consent and review](../photoRelayReview.md) for 
 //   withdrawPhoto calls PhotoRelayService.withdrawable and withdraw).
 //   The pure defs below have the names and the decisions of the generated specs that the shell calls:
 //   spec/photoRelayReview.md (checkSelection, photoReviewable, photoReviewMayProceed, recordReview,
-//   photoHeldForReview, revokeSelection) and spec/photoRelayItem.md (canClaimAction, permitsIntentBinding,
+//   photoHeldForReview, revokeSelection, expireSelection) and spec/photoRelayItem.md (canClaimAction, permitsIntentBinding,
 //   deadlineForDelivery, photoFetchAllowed, photoDeliveryStillLive, photoRelayOfferLive, photoItemWithdrawable). The item state is a
-//   string here: "pending", "approved", "rejected", "revoked" (the shell's storedReview map). Each action is
+//   string here: "pending", "approved", "rejected", "revoked", "expired" (the shell's storedReview map). Each action is
 //   one shell method under the item lock (PhotoRelayStore.locked). `current` is PhotoRelayService.current
 //   (policy version and notice, expiry, not revoked or rejected, parties, photo); the oracle `pair` stands for
 //   both of its outside reads: the parties (authorize: match, adults, no block, no STOP, no hold) and the photo
@@ -43,6 +43,10 @@ Production uses [selected-photo consent and review](../photoRelayReview.md) for 
 //   10 and 20 units; the item lives PHOTO_TTL = 15 (relayItemTtlMs, 15 minutes), the text offer
 //   OFFER_TTL = 15 (photoRelayOfferTtlMs, 15 minutes) and a fetch capability FETCH_TTL = 4
 //   (providerFetchTtlMs, 60 seconds; only the order of the values matters).
+//   PHOTO_TTL is fixed by the Eliza wire contract (RELAY_PHOTO_CONSENT_TTL_MS): a pending item that no
+//   reviewer decides by then expires, and the sender gets at most one notice (expirePending; audit OPP21).
+//   The notice goes through ConsentNetwork.send, whose rules (STOP, the daily cap, a member who left)
+//   can refuse or defer it; the expiry commits anyway. The `told` parameter stands for that outcome.
 //
 // OUTSIDE THE MODEL
 //   The photo bytes, the HMAC signature (an oracle: only the issued exp verifies), SQL and the row
@@ -103,6 +107,8 @@ module photo_relay_item {
     choiceWithoutLiveOffer: bool, // a text choice recorded an item without a live list of the same notice
     choiceOutsideList: bool,      // a text choice recorded an item for a number that is not on the list
     textWithdrawn: bool,          // the member withdrew the item by text
+    expiryNotices: int,           // the notices that an expired item sent to its sender
+    unexpired: bool,              // an expired item left "expired" for a state other than "revoked"
   }
 
   var now: int
@@ -130,7 +136,7 @@ module photo_relay_item {
     photoReviewable(state) and (state == "pending" or not(claimed))
   // The allowed edges of the review machine (recordReview, revokeSelection).
   pure def photoEdge(src: str, dst: str): bool =
-    dst == "revoked" or (src == "pending" and (dst == "approved" or dst == "rejected"))
+    dst == "revoked" or (src == "pending" and (dst == "approved" or dst == "rejected" or dst == "expired"))
 
   // spec/photoRelayItem.md
   pure def canClaimAction(state: str, hasAction: bool, boundAction: str, actionId: str, currentItem: bool): bool =
@@ -171,6 +177,7 @@ module photo_relay_item {
     deadlineChanged: g.deadlineChanged or (i.deliveryExpiresAt != NONE and nxt.deliveryExpiresAt != i.deliveryExpiresAt),
     unrevoked: g.unrevoked or (i.state == "revoked" and nxt.state != "revoked"),
     approvedNotByReview: g.approvedNotByReview or (i.state != "approved" and nxt.state == "approved"),
+    unexpired: g.unexpired or (i.state == "expired" and nxt.state != "expired" and nxt.state != "revoked"),
   }
 
   action init = all {
@@ -184,7 +191,8 @@ module photo_relay_item {
     g' = { fetches: 0, fetchedWithoutConsent: false, fetchedNotApproved: false, fetchedLate: false,
            badEdge: false, actionChanged: false, intentChanged: false, deadlineChanged: false, unrevoked: false,
            approvedNotByReview: false, reviewedSafe: false, revokedClaimed: false,
-           textChoice: false, choiceWithoutLiveOffer: false, choiceOutsideList: false, textWithdrawn: false },
+           textChoice: false, choiceWithoutLiveOffer: false, choiceOutsideList: false, textWithdrawn: false,
+           expiryNotices: 0, unexpired: false },
   }
 
   action frame = all { now' = now, policyVersion' = policyVersion, pair' = pair, offerAt' = offerAt, offerVersion' = offerVersion }
@@ -273,6 +281,20 @@ module photo_relay_item {
     }
   }
 
+  // expirePendingPhotos (photoIntakeRelayChoice.ts), at a tick: a pending item at or after its deadline
+  // expires (expireSelection) in one transaction (the network unit whose completeAction saves the expired
+  // state). told: the send rules admitted the one notice to the sender; when they refuse it, the item
+  // expires with no notice.
+  action expirePending(told: bool): bool = {
+    val nxt = { ...pri, state: "expired" }
+    all {
+      pri.selected, pri.state == "pending", now >= pri.expiresAt,
+      pri' = nxt,
+      g' = { ...ghostFor(pri, nxt), expiryNotices: g.expiryNotices + (if (told) 1 else 0) },
+      frame,
+    }
+  }
+
   // claimForAction, in the completeAction transaction. approvedForParty (photoHeldForReview with no claim)
   // picks the item first, but a retry of the same action reaches claimForAction with a claimed item.
   action claim(actionId: str): bool = {
@@ -356,7 +378,8 @@ module photo_relay_item {
     fetch(e),
     nondet d = Set(1, 10, 20).oneOf()
     tick(d),
-    any { revoke, withdrawByText, policyChange, pairEnds, pairResumes },
+    nondet told = Set(true, false).oneOf()
+    any { revoke, withdrawByText, expirePending(told), policyChange, pairEnds, pairResumes },
   }
 
   // ---------------------------------------------------------------- invariants
@@ -398,11 +421,16 @@ module photo_relay_item {
   val lawChoiceNeedsLiveOffer = not(g.choiceWithoutLiveOffer)
   val lawChoiceStaysInsideTheList = not(g.choiceOutsideList)
 
+  // stepExpiredStaysUndelivered (spec/photoRelayReview.md) across the whole flow, and the expiry notice:
+  // only an expired item tells its sender, and at most once.
+  val stepExpiredStaysUndelivered = not(g.unexpired)
+  val expiredSenderTold = (pri.state == "expired" or g.expiryNotices == 0) and g.expiryNotices <= 1
+
   val safety = and {
     fetchOnlyWithConsent, fetchOnlyApprovedReviewed, edgesOnly, stepOnlyReviewApproves, stepRevocationIsFinal,
     approvedWasReviewed, deadlineInItem, fetchInTime,
     stepAnActionBindingNeverChanges, stepAnIntentBindingNeverChanges, stepAFixedDeadlineNeverChanges,
-    lawChoiceNeedsLiveOffer, lawChoiceStaysInsideTheList,
+    lawChoiceNeedsLiveOffer, lawChoiceStaysInsideTheList, stepExpiredStaysUndelivered, expiredSenderTold,
   }
 
   // ---------------------------------------------------------------- reachability witnesses (expected VIOLATED)
@@ -416,6 +444,8 @@ module photo_relay_item {
   val witness_noTextFetch = not(g.textChoice and g.fetches > 0)
   // A photo chosen by text is withdrawn by text.
   val witness_noTextWithdrawal = not(g.textChoice and g.textWithdrawn)
+  // A pending item expires unreviewed.
+  val witness_noExpiry = pri.state != "expired"
 
   // ---------------------------------------------------------------- traces
   run happyPathTest =
@@ -478,6 +508,31 @@ module photo_relay_item {
       .then(selectPhoto(true, 1))
       .then(tick(20))
       .then(review("safe"))
+      .fail()
+
+  run expiredPendingToldTest =
+    init
+      .then(selectPhoto(true, 1))
+      .then(tick(20))
+      .then(expirePending(true))
+      .then(all { assert(pri.state == "expired" and g.expiryNotices == 1), assert(safety), tick(1) })
+      .then(review("safe"))
+      .fail()
+
+  run expiredNoticeRefusedTest =
+    init
+      .then(selectPhoto(true, 1))
+      .then(tick(20))
+      .then(expirePending(false))
+      .then(all { assert(pri.state == "expired" and g.expiryNotices == 0), assert(safety), tick(1) })
+      .then(review("safe"))
+      .fail()
+
+  run expiryNeedsDeadlineTest =
+    init
+      .then(selectPhoto(true, 1))
+      .then(tick(10))
+      .then(expirePending(true))
       .fail()
 
   run unknownKeepsPendingTest =

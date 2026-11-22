@@ -14,6 +14,8 @@ The browser calls [Observatory snapshot and live updates](../observatorySync.md)
 
 Compared with `vibestack-matching` on 2026-11-18, and again on 2026-11-19 (no change in `store.ts`, `map.ts`, `drawer.tsx` or the generated `observatorySync`; `unreveal`, `loadReveals` and `matchFeed` are as described below). Compared again 2026-11-21 (audit COV08): `store.ts` `load`, `applyDelta` (generated `deltaAction`), `applyData` (`acceptsFeedItem`), `setApp`, `loadReveals` (`reveals = r.data ?? []`, generation check only), `unreveal` (drops the badge whatever the answer) and `matchFeed` (applies Origin) have not changed. No new drift. Two open defects, both in `packages/observatory/web`:
 
+Changed 2026-11-22 (audit STAFF-models-convention): this model now uses the convention of [staff_console](staff_console.md). Before, the code actions were in `step` and the five rules were outside `safety`. Now the intended `grant`, `unreveal`, `otherAnswer`, `revealAnswer` and `shellKeys` are in `step`, and `unrevealRun`, `badgeFollowsGrant`, `revealReadPending`, `tabNonInterference` and `safetyIgnoresOrigin` are in `safety`. The intended page adds one to a reveal generation on each POST or DELETE answer, reads the list again after it, drops a GET answer of an older reveal generation, keeps the list on a failed GET answer, ends the badge only on 200 or 404, and applies no Origin filter on the Safety tab. The `*Code` actions (`grantCode`, `unrevealCode`, `otherAnswerCode`, `revealAnswerCode`, one `*By(code, ...)` body each) and `shellKeysCode` follow the code and are outside `step`; the `*CodeTest` runs show each rule fail after them. The four witnesses of the defects are gone, because the intended design cannot reach them; `witness_badgeKeptOnFailure` and `witness_oldReadDropped` show the intended paths. The two defects below are still open in the web code (frontend agent):
+
 - The PII reveal badge no longer follows the server grant. `store.ts` `unreveal` removes the badge whatever the DELETE answer is (a 403, a 500 or a network error leaves the grant on the server). `loadReveals` sets `reveals = r.data ?? []`, so a failed GET removes the badge, and a GET that the server read before a POST answer replaces the list after it (it checks only the load generation). The earlier fix (`revealGen`, `revealMerge`, `revealReread`, the `badgeEnds` rule) is gone. `unrevealRun`, `badgeFollowsGrant` and `revealReadPending` state the rules; they are not part of `safety`.
 - The Safety tab filters its events with `store.ts` `matchFeed`, which applies the Origin filter. The filter bar dims Origin on that tab (`filterApplies` in [console navigation](../consoleNavigation.md)), so a dimmed filter hides safety events that have no opportunity of that origin. `tabNonInterference` and `safetyIgnoresOrigin` state the rules; they are not part of `safety`.
 
@@ -59,7 +61,9 @@ Compared with `vibestack-matching` on 2026-11-18, and again on 2026-11-19 (no ch
 //   Each witness_<name> must be VIOLATED (the state is reachable). Two data deltas after one load are
 //   replayed by twoDataDeltasTest (random runs reach them only by chance).
 //   badgeFollowsGrant, revealReadPending, unrevealRun, tabNonInterference and safetyIgnoresOrigin are
-//   open defects (2026-11-18) and are not part of safety.
+//   part of safety for the intended actions. The *Code actions and shellKeysCode follow the code of
+//   store.ts (SYNC-REVEAL, SYNC-ORIGIN, open web defects) and are outside step; the *CodeTest runs show
+//   each rule fail after them.
 //   For badgeFollowsGrant and revealReadPending, run also with --step=revealTick (only the loads
 //   and the reveal events): --max-samples=20000 --max-steps=20.
 //
@@ -154,14 +158,19 @@ module observatory_sync {
    * The code (store.ts unreveal) removes the badge on every answer, also when the request threw.
    */
   pure def badgeEndsRule(status: int): bool = status == 200 or status == 404
-  pure def badgeEnds(status: int): bool = true
+  pure def badgeEndsBy(code: bool, status: int): bool = code or badgeEndsRule(status)
 
-  pure def unrevealStep(s: RevealState, status: int): RevealState =
+  pure def unrevealStepBy(code: bool, s: RevealState, status: int): RevealState =
     { server: if (serverEnded(status)) false else s.server,
-      badge: if (badgeEnds(status)) false else s.badge }
+      badge: if (badgeEndsBy(code, status)) false else s.badge }
 
-  /** store.ts loadReveals: a GET answer replaces the list when the load generation that sent it is still current. A failed answer replaces it with an empty list. */
-  pure def revealMerge(syncGen: int, sentGen: int): bool = sentGen == syncGen
+  /**
+   * A GET answer replaces the list. Intended: only when no POST or DELETE answer came after the send
+   * (the reveal generation is the same). Code (store.ts loadReveals): when the load generation that
+   * sent it is still current.
+   */
+  pure def revealMergeBy(code: bool, syncGen: int, sentGen: int, revGen: int, sentRevGen: int): bool =
+    if (code) sentGen == syncGen else sentRevGen == revGen
 
   // ---------------------------------------------------------------- filters.ts (same names)
   type FilterView = { allTime: bool, since: int, borough: str, members: str, origin: str, stateGroup: str }
@@ -208,16 +217,19 @@ module observatory_sync {
   //   requests admin.tsx Requests: matchMember and inRange -> borough, members, range
   //   lab, config, game: no filter
   // The filter bar dims a key for which filterApplies(tab, key) is false (tabKeys).
-  pure def shellKeys(tab: str): Set[str] =
+  // Intended: the Safety tab applies no Origin filter. shellKeysCode is the code (SYNC-ORIGIN).
+  pure def shellKeysBy(code: bool, tab: str): Set[str] =
     if (tab == "review") tabKeys("review")
     else if (tab == "feed") tabKeys("feed")
     else if (tab == "pipeline") ALL_KEYS
     else if (tab == "engine") Set("range")
-    else if (tab == "safety") tabKeys("safety").union(Set("borough", "members", "origin"))
+    else if (tab == "safety") tabKeys("safety").union(if (code) Set("borough", "members", "origin") else Set("borough", "members"))
     else if (tab == "metrics") Set("range").union(ALL_KEYS.exclude(Set("range", "members", "stateGroup"))).union(Set("borough"))
     else if (tab == "requests") Set("borough", "members", "range")
     else Set()
 
+  pure def shellKeys(tab: str): Set[str] = shellKeysBy(false, tab)
+  pure def shellKeysCode(tab: str): Set[str] = shellKeysBy(true, tab)
   pure def shellShows(tab: str, x: FilterRow, f: FilterView): bool = passes(shellKeys(tab), x, f)
 
   pure val ROWS: Set[FilterRow] = Set(
@@ -239,8 +251,8 @@ module observatory_sync {
   type Req = { gen: int, app: str, read: bool, version: int, seq: int }
   /** The server of one app: its version, its feed seq, and the last seq that a delta carried. */
   type Srv = { ver: int, seq: int, sent: int }
-  /** One GET /api/reveal: the app it was for, what the server read, and the load generation at the send. */
-  type RevReq = { id: int, app: str, read: bool, grant: bool, gen: int }
+  /** One GET /api/reveal: the app it was for, what the server read, and the load and reveal generations at the send. */
+  type RevReq = { id: int, app: str, read: bool, grant: bool, gen: int, rgen: int }
 
   /** The shell state of the tab, with ghost fields that only the invariants read. */
   type Ui = {
@@ -322,8 +334,9 @@ module observatory_sync {
   var wire: Set[Msg]
   /**
    * The page: the server grant of the member, the badge, and "the reveal list is not loaded yet, or
-   * a POST answer was lost after it". gen: unused (kept for the record shape). ev: ghost, the last
-   * reveal event. failed: ghost, the last GET answer for this app failed and no GET was sent after it.
+   * a POST answer was lost after it". gen: the reveal generation; the intended page adds one on each
+   * POST or DELETE answer (the code never changes it). ev: ghost, the last reveal event. failed: ghost,
+   * the last GET answer for this app failed and no GET was sent after it.
    */
   var rv: { server: bool, badge: bool, stale: bool, lastStatus: int, gen: int, ev: str, failed: bool }
   /** Ghost: the LemmaScript fold of unrevealRun (grants and DELETE answers only). */
@@ -350,6 +363,10 @@ module observatory_sync {
   }
 
   action keepReveal = all { rv' = rv, rvCore' = rvCore, revReqs' = revReqs }
+  action keepAll = all { ui' = ui, keepEnv, keepReveal, keepFilters }
+  /** The intended page reads the list again after each POST or DELETE answer. */
+  def rereadWith(g: int): Set[RevReq] =
+    revReqs.union(Set({ id: 100 + g, app: ui.sync.app, read: false, grant: false, gen: ui.sync.gen, rgen: g }))
   action keepFilters = all { flt' = flt, prevFlt' = prevFlt, lastKey' = lastKey, tab' = tab }
   action keepEnv = all { srv' = srv, wire' = wire }
 
@@ -416,7 +433,7 @@ module observatory_sync {
     val admitted = admits(ui.sync, r.gen, r.app)
     all {
       ui' = u2,
-      revReqs' = if (admitted) revReqs.union(Set({ id: r.gen, app: r.app, read: false, grant: false, gen: r.gen })) else revReqs,
+      revReqs' = if (admitted) revReqs.union(Set({ id: r.gen, app: r.app, read: false, grant: false, gen: r.gen, rgen: rv.gen })) else revReqs,
       rv' = if (admitted) { ...rv, failed: false } else rv, rvCore' = rvCore, keepEnv, keepFilters,
     }
   }
@@ -451,47 +468,67 @@ module observatory_sync {
   // ---------------------------------------------------------------- reveal events
   /**
    * POST /api/reveal. "ok": the badge shows. "lost": the server made the grant, the answer is lost.
-   * store.ts reveal: with no grant in the answer it shows a toast and does not read the list again.
+   * Intended: every answer adds one to the reveal generation and reads the list again. Code (store.ts
+   * reveal, grantCode): with no grant in the answer it shows a toast and does not read the list again.
    */
-  action grant = {
-    nondet outcome = Set("ok", "lost", "refused").oneOf()
-    val g = rv.gen
+  action grant = { nondet outcome = Set("ok", "lost", "refused").oneOf() grantBy(false, outcome) }
+  action grantCode = { nondet outcome = Set("ok", "lost", "refused").oneOf() grantBy(true, outcome) }
+  action grantBy(code: bool, outcome: str): bool = {
+    val g = if (code) rv.gen else rv.gen + 1
+    val failed = if (code) rv.failed else false
     all {
       ui.sync.app == REVEAL_APP, ui.screenApp == REVEAL_APP,
       not(rv.badge), // RevealControl shows the Reveal button only with no badge.
       rv' = if (outcome == "ok") { ...rv, server: true, badge: true, stale: false, gen: g, ev: "grantOk", failed: false }
-            else if (outcome == "lost") { ...rv, server: true, stale: true, gen: g, ev: "grantLost" }
-            else { ...rv, gen: g, ev: "grantRefused" },
+            else if (outcome == "lost") { ...rv, server: true, stale: true, gen: g, ev: "grantLost", failed: failed }
+            else { ...rv, gen: g, ev: "grantRefused", failed: failed },
       rvCore' = if (outcome == "ok") { server: true, badge: true } else rvCore,
-      revReqs' = revReqs,
+      revReqs' = if (code) revReqs else rereadWith(g),
       ui' = ui, keepEnv, keepFilters,
     }
   }
 
-  /** DELETE /api/reveal (the End button). Status 0: the request threw; the server may have acted. */
+  /**
+   * DELETE /api/reveal (the End button). Status 0: the request threw; the server may have acted.
+   * Intended: the badge goes only on 200 or 404, and the list is read again. Code (store.ts unreveal,
+   * unrevealCode): the badge goes whatever the answer is.
+   */
   action unreveal = {
     nondet status = Set(0, 200, 404, 403, 500).oneOf()
     nondet actedAnyway = Set(true, false).oneOf()
+    unrevealBy(false, status, actedAnyway)
+  }
+  action unrevealCode = {
+    nondet status = Set(0, 200, 404, 403, 500).oneOf()
+    nondet actedAnyway = Set(true, false).oneOf()
+    unrevealBy(true, status, actedAnyway)
+  }
+  action unrevealBy(code: bool, status: int, actedAnyway: bool): bool = {
+    val g = if (code) rv.gen else rv.gen + 1
     all {
       ui.sync.app == REVEAL_APP, rv.badge,
-      // store.ts unreveal: the badge goes whatever the answer is (badgeEnds).
-      val keep = unrevealStep({ server: true, badge: true }, status).badge
       rv' = { ...rv,
               server: if (serverEnded(status) or (status == 0 and actedAnyway)) false else rv.server,
-              badge: if (keep) rv.badge else false, lastStatus: status, ev: "unreveal" },
-      rvCore' = unrevealStep(rvCore, status),
-      revReqs' = revReqs, ui' = ui, keepEnv, keepFilters,
+              badge: if (badgeEndsBy(code, status)) false else rv.badge, lastStatus: status, gen: g, ev: "unreveal",
+              failed: if (code) rv.failed else false },
+      rvCore' = unrevealStepBy(code, rvCore, status),
+      revReqs' = if (code) revReqs else rereadWith(g),
+      ui' = ui, keepEnv, keepFilters,
     }
   }
 
   /**
    * A POST or DELETE answer for another member on the same page. store.ts changes only that member's
-   * entry in the list, so this member does not change.
+   * entry in the list, so this member does not change. The intended page also adds one to the reveal
+   * generation and reads the list again.
    */
-  action otherAnswer = all {
+  action otherAnswer = otherAnswerBy(false)
+  action otherAnswerCode = otherAnswerBy(true)
+  action otherAnswerBy(code: bool): bool = all {
     ui.sync.app == REVEAL_APP, ui.screenApp == REVEAL_APP,
-    rv' = { ...rv, ev: "other" },
-    revReqs' = revReqs, rvCore' = rvCore, ui' = ui, keepEnv, keepFilters,
+    rv' = if (code) { ...rv, ev: "other" } else { ...rv, gen: rv.gen + 1, failed: false, ev: "other" },
+    revReqs' = if (code) revReqs else rereadWith(rv.gen + 1),
+    rvCore' = rvCore, ui' = ui, keepEnv, keepFilters,
   }
 
   /** The grant time ends. Both sides end together (clock skew is outside the model). */
@@ -512,19 +549,34 @@ module observatory_sync {
   }
 
   /**
-   * The GET /api/reveal answer: store.ts loadReveals. An answer of an older load generation is dropped.
-   * Otherwise `reveals = r.data ?? []`: a failed answer empties the list, and an answer that the server
-   * read before a later POST or DELETE answer replaces the list after it.
+   * The GET /api/reveal answer. Intended: an answer with an older reveal generation is dropped, and a
+   * failed answer keeps the list. Code (store.ts loadReveals, revealAnswerCode): an answer of an older
+   * load generation is dropped. Otherwise `reveals = r.data ?? []`: a failed answer empties the list,
+   * and an answer that the server read before a later POST or DELETE answer replaces the list after it.
    */
   action revealAnswer = {
     nondet q = revReqs.filter(q => q.read).oneOf()
     nondet ok = Set(true, false).oneOf()
+    revealAnswerBy(false, q, ok)
+  }
+  action revealAnswerCode = {
+    nondet q = revReqs.filter(q => q.read).oneOf()
+    nondet ok = Set(true, false).oneOf()
+    revealAnswerBy(true, q, ok)
+  }
+  action revealAnswerOf(code: bool, ok: bool): bool = {
+    nondet q = revReqs.filter(q => q.read).oneOf()
+    revealAnswerBy(code, q, ok)
+  }
+  action revealAnswerBy(code: bool, q: RevReq, ok: bool): bool = {
     // ghost: the server grant changed after the server read this GET
     val old = q.app == REVEAL_APP and q.grant != rv.server
     all {
+      revReqs.contains(q), q.read,
       revReqs' = revReqs.exclude(Set(q)),
-      rv' = if (q.app != ui.sync.app or not(revealMerge(ui.sync.gen, q.gen))) rv
-            else if (not(ok)) { ...rv, badge: false, stale: false, failed: true, ev: "answerFailed" }
+      rv' = if (q.app != ui.sync.app or not(revealMergeBy(code, ui.sync.gen, q.gen, rv.gen, q.rgen))) rv
+            else if (not(ok)) (if (code) { ...rv, badge: false, stale: false, failed: true, ev: "answerFailed" }
+                               else { ...rv, failed: true, ev: "answerFailed" })
             else if (q.app == REVEAL_APP) { ...rv, badge: q.grant, stale: false, failed: false, ev: if (old) "answerOld" else "answer" }
             else { ...rv, badge: false, stale: false, failed: false, ev: "answer" },
       rvCore' = rvCore, ui' = ui, keepEnv, keepFilters,
@@ -580,7 +632,7 @@ module observatory_sync {
    * The default step for `pnpm run quint:check`. It allows the same events as `tick`, but it picks the
    * sync-only and reveal-only steps more often, so random runs reach the longer delta and reveal orders.
    * syncTick is listed twice and revealTick three times on purpose: the simulator picks each listed action
-   * with the same chance, and long delta orders and witness_oldReadClears (a long reveal order) need it.
+   * with the same chance, and long delta orders and long reveal orders need it.
    */
   action step = any { tick, syncTick, syncTick, revealTick, revealTick, revealTick }
 
@@ -628,16 +680,15 @@ module observatory_sync {
   // Rule: after a DELETE answer, the badge stays on while the server can still serve the PII (B10).
   // LemmaScript: sync.ts `unrevealRun` (ensures \result.server ==> \result.badge), from
   // `unrevealStep` and `badgeEnds` (ensures \result <==> serverEnded(status)).
-  // OPEN DEFECT, not in safety: store.ts unreveal removes the badge on every answer.
+  // unrevealCode (store.ts unreveal) breaks it: unrevealFailureCodeTest.
   val unrevealRun: bool = rvCore.server implies rvCore.badge
 
   // Rule: the same, for the whole page: while the server holds a grant for a member on screen and
   // the reveal list is loaded, the badge shows (admin-console PII reveal; B10).
   // LemmaScript: sync.ts `revealRun` (ensures \result.known && \result.server ==> \result.badge),
-  // OPEN DEFECT, not in safety: the earlier fix is gone. store.ts loadReveals sets
-  // `reveals = r.data ?? []` (a failed GET, or an answer read before a newer grant, removes the
-  // badge), unreveal removes the badge on any answer, and reveal() does not read the list again
-  // when the POST answer was lost.
+  // The code breaks it: store.ts loadReveals sets `reveals = r.data ?? []` (a failed GET, or an answer
+  // read before a newer grant, removes the badge: failedReadCodeTest, oldReadCodeTest), and unreveal
+  // removes the badge on any answer (unrevealFailureCodeTest).
   val badgeFollowsGrant: bool =
     (ui.sync.app == REVEAL_APP and ui.screenApp == REVEAL_APP and rv.server and not(rv.stale)) implies rv.badge
 
@@ -645,23 +696,20 @@ module observatory_sync {
   // this app is on the way, unless the last one failed (the residual window: the next load reads it).
   // It closes the gap of badgeFollowsGrant, which allows a stale list: an old GET answer dropped
   // after a POST or DELETE answer for another member must not leave the list stale with no GET.
-  // OPEN DEFECT, not in safety: after a lost POST answer no GET is sent until the next load.
+  // grantCode breaks it: after a lost POST answer no GET is sent until the next load (lostGrantCodeTest).
   val revealReadPending: bool =
     (ui.sync.app == REVEAL_APP and ui.screenApp == REVEAL_APP and rv.server and rv.stale and not(rv.failed))
       implies revReqs.exists(q => q.app == REVEAL_APP)
 
   // Rule: a filter that the bar dims does not change what the tab shows (B4, B19), applied to the
-  // keys that the shell code really uses for each tab (shellKeys).
-  // OPEN DEFECT, not in safety: it fails on the Safety tab (Origin).
+  // keys that the intended shell uses for each tab (shellKeys). shellKeysCode breaks it on the Safety
+  // tab (Origin): safetyOriginCodeTest.
   val tabNonInterference: bool =
     (lastKey != "" and not(tabKeys(tab).contains(lastKey)))
       implies ROWS.forall(x => shellShows(tab, x, flt) == shellShows(tab, x, prevFlt))
 
-  // The same rule on every tab but Safety: it holds.
-  val tabNonInterferenceOutsideSafety: bool = tab != "safety" implies tabNonInterference
-
-  // Rule: the Origin filter cannot hide a Safety event (B4).
-  // OPEN DEFECT, not in safety: drawer.tsx Safety calls store.ts matchFeed, which applies Origin.
+  // Rule: the Origin filter cannot hide a Safety event (B4). drawer.tsx Safety calls store.ts
+  // matchFeed, which applies Origin (shellKeysCode).
   val safetyIgnoresOrigin: bool =
     (tab == "safety" and lastKey == "origin") implies ROWS.forall(x => shellShows("safety", x, flt) == shellShows("safety", x, prevFlt))
 
@@ -678,7 +726,8 @@ module observatory_sync {
   /** All invariants that must hold. */
   val safety: bool =
     good and appliedVersions and stepDeltaNoRewind and newerLoadWins and newestLoadCanLand and appendNewSorted
-    and tabNonInterferenceOutsideSafety and reviewIgnoresRange and allHidesNothing
+    and tabNonInterference and reviewIgnoresRange and allHidesNothing
+    and unrevealRun and badgeFollowsGrant and revealReadPending and safetyIgnoresOrigin
 
   // ================================================================ reachability witnesses
   // Each one is EXPECTED to be violated. If one holds, the matching invariant passes in vain.
@@ -706,14 +755,47 @@ module observatory_sync {
   val witness_feedTwoItems: bool = ui.feed.length() < 2
   /** The badge shows the grant that the server made. */
   val witness_badgeShown: bool = not(rv.badge and rv.server and ui.sync.app == REVEAL_APP)
-  /** OPEN DEFECT reachable: a DELETE answer that fails removes the badge while the server keeps the grant. */
-  val witness_badgeDroppedOnFailure: bool = not(rv.lastStatus == 500 and not(rv.badge) and rv.server)
-  /** OPEN DEFECT reachable: a failed GET /api/reveal answer removes the badge while the server holds the grant. */
-  val witness_failedReadClears: bool = not(rv.ev == "answerFailed" and rv.server and not(rv.badge) and ui.sync.app == REVEAL_APP)
-  /** OPEN DEFECT reachable: a GET read before a POST answer replaces the list after it and removes the badge. */
-  val witness_oldReadClears: bool = not(rv.ev == "answerOld" and rv.server and not(rv.badge) and ui.sync.app == REVEAL_APP)
-  /** OPEN DEFECT reachable: a dimmed Origin filter hides a Safety row. */
-  val witness_safetyOriginHides: bool = safetyIgnoresOrigin
+  /** A DELETE answer that fails keeps the badge while the server keeps the grant. */
+  val witness_badgeKeptOnFailure: bool = not(rv.lastStatus == 500 and rv.badge and rv.server)
+  /** A GET answer that the server read before a POST answer is dropped. */
+  val witness_oldReadDropped: bool = not(rv.ev == "grantOk" and revReqs.exists(q => q.read and q.rgen < rv.gen))
+
+  /** The page after its first load landed: the list GET of that load is on the way. */
+  action revealReady = init.then(serverRead).then(land)
+
+  /** Code (SYNC-REVEAL, open): a DELETE that fails with 500 removes the badge; the server keeps the grant. */
+  run unrevealFailureCodeTest = revealReady.then(grantBy(true, "ok")).then(unrevealBy(true, 500, false))
+    .then(all { assert(rv.server and not(rv.badge) and not(unrevealRun) and not(badgeFollowsGrant)), keepAll })
+  /** Intended: the badge stays after the failed DELETE. */
+  run unrevealFailureKeepsBadgeTest = revealReady.then(grantBy(false, "ok")).then(unrevealBy(false, 500, false))
+    .then(all { assert(rv.server and rv.badge and unrevealRun and badgeFollowsGrant and revealReadPending), keepAll })
+  /** Code: a failed GET answer empties the list while the server holds the grant. */
+  run failedReadCodeTest = revealReady.then(grantBy(true, "ok")).then(revealRead).then(revealAnswerOf(true, false))
+    .then(all { assert(rv.server and not(rv.badge) and not(badgeFollowsGrant)), keepAll })
+  /** Intended: a failed GET answer keeps the list. */
+  run failedReadKeepsTest = revealReady.then(grantBy(false, "ok")).then(revealRead).then(revealAnswerOf(false, false))
+    .then(all { assert(rv.server and rv.badge and badgeFollowsGrant), keepAll })
+  /** Code: a GET read before the POST answer replaces the list after it and removes the badge. */
+  run oldReadCodeTest = revealReady.then(revealRead).then(grantBy(true, "ok")).then(revealAnswerOf(true, true))
+    .then(all { assert(rv.server and not(rv.badge) and not(badgeFollowsGrant)), keepAll })
+  /** Intended: that old GET answer is dropped. */
+  run oldReadDroppedTest = revealReady.then(revealRead).then(grantBy(false, "ok")).then(revealAnswerOf(false, true))
+    .then(all { assert(rv.server and rv.badge and badgeFollowsGrant and revealReadPending), keepAll })
+  /** Code: after a lost POST answer no GET is on the way. */
+  run lostGrantCodeTest = revealReady.then(revealRead).then(revealAnswerOf(true, true)).then(grantBy(true, "lost"))
+    .then(all { assert(rv.server and rv.stale and revReqs == Set() and not(revealReadPending)), keepAll })
+  /** Intended: the lost POST answer is followed by a new GET. */
+  run lostGrantRereadTest = revealReady.then(revealRead).then(revealAnswerOf(false, true)).then(grantBy(false, "lost"))
+    .then(all { assert(rv.server and rv.stale and revealReadPending), keepAll })
+  /** Code (SYNC-ORIGIN, open): a dimmed Origin filter hides a Safety row; the intended keys do not. */
+  run safetyOriginCodeTest = {
+    val row = { t: 0, timeless: false, boroughs: Set("bk"), tags: Set("active"), origin: "engine", group: "open" }
+    val f = { ...NO_FILTER, origin: "request" }
+    assert(and {
+      passes(shellKeysCode("safety"), row, NO_FILTER), not(passes(shellKeysCode("safety"), row, f)),
+      passes(shellKeys("safety"), row, f),
+    })
+  }
   /** Two data deltas after one load: each applies once and in order (appliedVersions). */
   run twoDataDeltasTest = {
     val u0 = beginLoad({ sync: initialSync("A"), screenApp: "", feed: List(), buffer: List(), loads: Set(),

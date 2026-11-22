@@ -537,12 +537,9 @@ export class Accounts {
     throw error;
   }
 
-  /** The site's stop button: every app on this number (PRD 40.3), unless PLATFORM_STOP_SCOPE=app. */
   async stop(app: AppInfo, who: Who, source = "web_form"): Promise<void> {
     const scope = stopScope(this.opts.env);
     await this.store.addConsent({ e164: who.e164, app: scope === "global" ? null : app.id, state: "opted_out", source, at: this.now() });
-    // The ledger above is what the send path reads. The hooks pause the person's members: on a global
-    // stop every app's, even when the person has no membership on the app they stopped from.
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
@@ -633,23 +630,12 @@ export class Accounts {
     };
   }
 
-  /** Revoke a base-profile grant into this app (logged in the consent ledger without naming the other app to anyone but staff). */
-  async revokeShare(app: AppInfo, who: Who, fromApp: AppId): Promise<boolean> {
-    const person = await this.personFor(who.e164);
-    if (!person) return false;
-    const g = (await this.store.shareGrants(person.id)).find(x => x.fromApp === fromApp && x.toApp === app.id && x.revokedAt === null);
-    if (!g) return false;
-    await this.store.putShareGrant({ ...g, revokedAt: this.now() });
-    return true;
-  }
-
-  /** A base-profile grant from another app the person is an active member of to this app. */
   async share(app: AppInfo, who: Who, fromApp: AppId, fields: string[]): Promise<boolean> {
     if (fromApp === app.id || !fields.length || fields.some(f => !(SHAREABLE_FIELDS as readonly string[]).includes(f))) return false;
     const person = await this.personFor(who.e164);
     if (!person) return false;
-    // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
     return this.store.withLock(`profile-share:${person.id}`, async () => {
+      // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
       if (await this.banned(who.e164, person)) return false;
       const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
       const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited" && m.state !== "restricted";

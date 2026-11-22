@@ -1,17 +1,11 @@
-// spec/photoRelayItem.md, "A photo request delivers an approved choice, lists the photos, or records the named photo"
-//
-// The conversation step of selected-photo relay (/internal/relay, relay-endpoint.ts). "send them my
-// photo" lists the member's own photos by number with the current notice and keeps that list for the
-// match; "send them my photo 2" records the second listed photo as one pending item through
-// PhotoRelayService.select, which checks the parties, the photo and the notice again. Staff review the
-// item; the existing release path delivers it. The list holds photo ids only, never bytes or links.
+import type { MemberId } from "@thenetwork/core";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { photoRelayEntryFor, photoRelayOfferLive, photoWithdrawalFor, type PhotoRelayEntry, type PhotoWithdrawal } from "../../core/src/generated/photoRelayItem.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { PhotoService } from "../../platform/src/photos.ts";
+import type { NetworkRuntime } from "./runtime.ts";
 
-/** The number a member names in a photo request ("send them my photo 2", "share my photo #3 with her"), or 0. */
 export function photoChoice(text: string): number {
   const m = /\b(?:photo|pic|picture|selfie)\s*(?:#|no\.?|number)?\s*(\d{1,2})\b/i.exec(text ?? "");
   return m ? Number(m[1]) : 0;
@@ -27,6 +21,7 @@ export const PHOTO_CHOICE_TEXT = {
   refused: "I could not choose that photo. Say \"send them my photo\" to see the list again.",
   withdrawn: "Okay, I won't send your photo.",
   noneToWithdraw: "No photo of yours is waiting to go to this match.",
+  expired: "The safety team could not check your photo in time, so I didn't send it. You can choose it again.",
 } as const;
 
 export function photoWithdrawRequest(text: string): boolean {
@@ -55,13 +50,8 @@ export interface PhotoRelayChoiceDeps {
   now: () => number;
 }
 
-/**
- * commit: the writes of a listing, run by the caller in the transaction that completes the relay action
- * (relay-endpoint.ts completeAction), so a unit that fails leaves no list for a reply the member never got.
- */
 export type PhotoChoiceResult = { entry: PhotoRelayEntry; decision: "none" | "hold" | "block"; notice: string; commit?: (tx: SQL) => Promise<void> };
 
-/** The member's photo request when no approved item is ready for this match. */
 export async function choosePhoto(d: PhotoRelayChoiceDeps, input: { app: AppId; personId: string; threadId: string; text: string; requestId: string }): Promise<PhotoChoiceResult> {
   const { app, personId, threadId } = input;
   const at = d.now(), choice = photoChoice(input.text);
@@ -97,4 +87,33 @@ export async function choosePhoto(d: PhotoRelayChoiceDeps, input: { app: AppId; 
     case "PhotoRelayOff": case "DeliverApprovedPhoto": return { entry, decision: "block", notice: PHOTO_CHOICE_TEXT.off };
     default: { const _exhaustive: never = entry; return _exhaustive; }
   }
+}
+
+export interface PhotoExpiryDeps {
+  sql: SQL;
+  relay: PhotoRelayService;
+  runtimeOfMember: (app: AppId, memberId: string) => Promise<NetworkRuntime | undefined>;
+  log: (line: string) => void;
+}
+
+export async function expirePendingPhotos(d: PhotoExpiryDeps, app: AppId): Promise<number> {
+  let expired = 0;
+  for (const item of await d.relay.duePending(app)) {
+    try {
+      const rt = await d.runtimeOfMember(app, item.senderMemberId);
+      const expire = async (tx: SQL) => { if (!(await d.relay.expire(item.id, tx))) throw new Error("Photo item changed before its expiry"); };
+      if (rt) {
+        await rt.unitOfWork(net => {
+          net.photoRelayExpired(item.senderMemberId as MemberId, item.id, PHOTO_CHOICE_TEXT.expired);
+          rt.unit.completeAction = expire;
+        });
+      } else {
+        await d.sql.begin(expire);
+      }
+      expired++;
+    } catch (e) {
+      d.log(`[photo-relay] the expiry of ${item.id} on ${app} waits for the next tick: ${(e as Error).message}`);
+    }
+  }
+  return expired;
 }

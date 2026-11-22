@@ -322,7 +322,7 @@ The flow:
 2. The Review tab lists the items that wait, oldest first, with the SLA countdown. Real mode reads them from `network.review_items`.
 3. The reviewer approves, edits, re-rolls or rejects. The Observatory checks the reviewer role and writes its own audit row, which names the person. Then it calls `POST /review/:oppId` on the service with the console token, the seconds spent, and the person in `X-Network-Staff-Id`.
 4. The service checks the token's role. Under the lock, it loads the newest state and calls `decide()`. The Network runs the checks again. A refusal or an invalidated approval comes back with its reason code (HTTP 409).
-5. The service writes a "requested" row and a "result" row to `network.staff_audit` and logs `review_decision`. The reviewer of record is the service token's id (`token:admin#...`), not the person (6.4 item 2).
+5. The service writes a "requested" row and a "result" row to `network.staff_audit` and logs `review_decision`. The reviewer of record is the person in `X-Network-Staff-Id`, which the service accepts only from a request with the console's own token (`NETWORK_SERVICE_CONSOLE_TOKEN`). The review decision is not a console step in `serviceStaffStep`, so the service does not refuse it from a shared token: a shared token that calls `POST /review/:oppId` is recorded as `token:<role>#...` (6.4 item 2).
 6. The next tick (at most one minute later) sends the first probe in that member's send window ([network.md](network.md) 4.1 and 6.4). Real mode shows it after its next poll.
 
 An item that nobody decides expires at its SLA (12 hours, or 1 hour for a same-day item). Nobody is contacted.
@@ -330,7 +330,7 @@ An item that nobody decides expires at its SLA (12 hours, or 1 hour for a same-d
 ### 6.4 What is missing before review can work on real members
 
 1. Built: the production matcher process and the Network admin API (6.5).
-2. Built: the Observatory calls the admin API (4.4). Missing: the service must record the signed-in person, not its token, as the reviewer of record (it can take `X-Network-Staff-Id` from the console's token only).
+2. Built: the Observatory calls the admin API (4.4). The service records the signed-in person in `X-Network-Staff-Id` as the reviewer of record when the request carries `NETWORK_SERVICE_CONSOLE_TOKEN`. The console staff steps in `serviceStaffStep` refuse a shared token (403 `named_reviewer_required`). Missing: `POST /review/:oppId` and `/safety/lift`, `/safety/close` and `/safety/clear-minor` are not console steps, so a shared token still records itself as the reviewer of record on them.
 3. Built: JWT verification for Cloudflare Access (4.1). Missing: a fresh sign-in before a PII reveal.
 4. **One owner for STOP, START and HELP** on the Blooio line **[FOUNDER]** (6.5, and the warning in `packages/blooio/README.md`). With one shared line for every app (PRD 40.3), the owner must also route the first message by keyword.
 
@@ -357,7 +357,7 @@ curl -H "Authorization: Bearer <any token>" 'http://127.0.0.1:4848/health?app=sl
 
 The service checks that the schemas exist at start. It does not migrate. It reads `platform.networks` and `platform.apps` at start. Options: `--once` (one tick of every network, deliver, exit), `--dry-run` (always the dry-run adapter), `--port N`, `--host H`, `--api-port N`. Without `--once` each network ticks every minute (fixed) and the service serves HTTP.
 
-Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed one line per network (`network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`; ntwrk and friends (then `buddies`) `matching allowed (the admin switch decides)`), warned that `NETWORK_SERVICE_TOKENS` and `BLOOIO_WEBHOOK_SECRET` were not set, and printed `tick done` for all four networks.
+Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed one line per network (`network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`; ntwrk and friends (then `buddies`) `matching allowed (the admin switch decides)`), warned that `NETWORK_SERVICE_TOKENS` and `BLOOIO_WEBHOOK_SECRET` were not set, and printed `tick done` for all four networks. The current service prints `matching not allowed (registry row or launch scope)` for this case.
 
 | Variable | Default | What it does |
 |---|---|---|

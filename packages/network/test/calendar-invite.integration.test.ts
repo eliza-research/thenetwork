@@ -22,6 +22,7 @@ const museumLink = "https://secure.brooklynmuseum.org/";
 const cancelAfterNotice = "a cancellation reaches a booked participant who received the details";
 const cancelBeforeNotice = "a cancellation stays private from a booked participant whose details never sent";
 const cancelWaitingForNotice = "a cancellation waits for a pending signed receipt of booking details";
+const cancelAfterExpiredProviderNotice = "a cancellation is refused at once when the provider booking notice expired unknown";
 const feedbackReception = "post-meeting feedback reaches only a participant who received the booking";
 const feedbackWaitingForNotice = "post-meeting feedback waits for a pending signed receipt of booking details";
 const attendanceRequiresBooking = "attendance records require receipt of the participant's booking";
@@ -29,7 +30,7 @@ const independentMeetingValue = "verified meeting value requires a distinct atte
 const sentimentIsNotMeetingProof = "two positive ratings without attendance confirmation do not establish verified value";
 
 test.skipIf(!pgAvailable).each([
-  calendarJourney, expiredBookingNotice, curatedVenueBooking, staleCuratedVenueBooking, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
+  calendarJourney, expiredBookingNotice, curatedVenueBooking, staleCuratedVenueBooking, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, cancelAfterExpiredProviderNotice, feedbackReception, feedbackWaitingForNotice,
   attendanceRequiresBooking, independentMeetingValue, sentimentIsNotMeetingProof,
 ] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
@@ -240,6 +241,27 @@ test.skipIf(!pgAvailable).each([
         expect((await rt.pg.load())!.reports).toMatchObject([{ reporterId: ids[1], subjectId: ids[0], kind: "harassment", source: "message" }]);
         expect(await feedbackData()).toHaveLength(1);
       }
+      return;
+    }
+    if (scenario === cancelAfterExpiredProviderNotice) {
+      const [notice] = await sql`select queued.id,queued.status,queued.attempts,message.inbound_id from platform.outbound queued
+        join network.messages message on message.app_id=queued.app_id and message.id=queued.id and message.member_id=queued.member_id
+        where message.opportunity_id=${id} and message.type='proposal' and message.member_id=${ids[0]!}`;
+      expect(notice).toMatchObject({ status: "accepted", attempts: 1, inbound_id: null });
+      await sql`update platform.outbound set status='failed_unknown',sent_at=null,provider_message_id=null,
+        note='provider acceptance never resolved',ended_at=${new Date(clock.now())} where id=${notice!.id}`;
+      expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+      const drop = turn("calendar-cancel", "I can't make it.", phones[1]);
+      expect(await (await send(drop)).json()).toMatchObject({ replies: [expect.stringContaining("thanks for the heads up")] });
+      expect(await sql`select state from network.opportunities where id=${id}`).toEqual([{ state: "CANCELLED" }]);
+      const cancellation = `${bookedCancellationPrefix}${id}:${ids[0]!}`;
+      clock.advance(HOUR);
+      expect(clock.now()).toBeLessThan(booked.meetingAt!);
+      await rt.deliver();
+      await rt.deliver();
+      expect({ ...(await sql`select status,attempts from platform.outbound where id=${cancellation}`)[0],
+        providerCalls: delivered.filter(call => call.idempotencyKey === `tn:${cancellation}`).length })
+        .toEqual({ status: "suppressed_ineligible", attempts: 0, providerCalls: 0 });
       return;
     }
     if (scenario === cancelAfterNotice || scenario === cancelBeforeNotice || scenario === cancelWaitingForNotice) {

@@ -47,7 +47,7 @@ Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md)
 //   M-088 store-unit-of-work     packages/network/src/store.ts:53-79, 325-354
 //   M-089 pg-restore-recovery    docs/runbook-real.md 8.3, deploy/backup/restore.ts, deploy/backup/lib.ts
 //   M-140 retention-loop         packages/network/service/service.ts:590-608
-//   M-141 backend-tick-loop      deploy/backend/backend.ts:423-457 (tickSet "backend"), serve.ts:131-149 ("serve")
+//   M-141 backend-tick-loop      deploy/backend/backend.ts:423-457 (tickSet "backend"), serve.ts startTicks ("serve")
 //   M-142 backend-process-lifecycle deploy/backend/backend.ts:459-481, server.ts:132-140
 //   M-143 backend-boot           deploy/backend/server.ts:37-63, backend.ts:486-513
 //   M-144 migration-runner       packages/observatory/db/migrate.ts:78-112
@@ -424,7 +424,11 @@ module runtime_ops {
     s.st.unit.get(r).phase == "idle", s.st.lockHolder == "", s.st.eng.get(r).phase == "idle",
     s' = { ...s, st: { ...s.st, eng: s.st.eng.set(r, { phase: "computing", seen: s.st.committed, view: Set() }) } },
   }
-  /** The commit unit waits for the lock (runStored path, store.ts withLock) and loads the newest state. */
+  /**
+   * The commit unit waits for the lock (runStored path, store.ts withLock) and loads the newest state. Before it
+   * waits, the runtime loads the calendar free/busy view again for this unit (runtime.ts tick, runTick scope), so
+   * the commit never uses the view of the capture unit. The model has no calendar view (abstraction).
+   */
   action tickCommitLoad(r: str): bool = all {
     s.st.eng.get(r).phase == "computing", s.st.lockHolder == "", s.st.unit.get(r).phase == "idle",
     s' = { ...s, st: { ...s.st, lockHolder: r, eng: s.st.eng.set(r, { ...s.st.eng.get(r), phase: "committing", view: s.st.committed }) } },
@@ -495,9 +499,10 @@ module runtime_ops {
   pure def older(age: int): int = if (age < 0) -1 else age + 1
 
   /**
-   * One round of the tick loop. "serve": serve.ts:131-149 runs inboxTick, every rt.tick(), purge, notifyTick.
-   * "backend": backend.ts createBackend tickAll now runs the same steps (SD-003 fix, b862c95): inboxTick, the
-   * network ticks, purge, notifyTick, beside opsTick. tickOk: rt.tick() did not throw.
+   * One round of the tick loop. "serve": serve.ts startTicks runs inboxTick then every rt.tick(), and beside them
+   * purge and notifyTick, each under its own busy key; an error of one worker is logged and does not stop another.
+   * "backend": backend.ts createBackend tickAll runs the same workers under lifecycle tick keys, and also opsTick
+   * and the catalog refresh. tickOk: rt.tick() did not throw.
    */
   action tickRound(tickOk: bool): bool = all {
     s.tk.lastRoundAt < s.now, s.pr.phase == "running",

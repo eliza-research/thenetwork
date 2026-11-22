@@ -71,6 +71,10 @@ test.skipIf(!pgAvailable)("staff approve an exact ordered gathering selection on
     expect((await staff(approval, { revision: 1, memberIds: selected }, "friends-admin")).status).toBe(403);
 
     const outbound = await sql`select id from network.messages where direction='outbound' order by id`;
+    const history = await sql`select id,status,kind from platform.outbound order by id`;
+    expect(history).toHaveLength(8);
+    expect(history.every(row => row.status === "collected")).toBe(true);
+    expect(await sql`select id from platform.outbound except select id from network.messages where direction='outbound' and status='collected'`).toEqual([]);
     const body = { revision: 1, memberIds: selected };
     const approved = await Promise.all([staff(approval, body), staff(approval, body)]);
     expect(approved.map(res => res.status)).toEqual([200, 200]);
@@ -82,7 +86,7 @@ test.skipIf(!pgAvailable)("staff approve an exact ordered gathering selection on
     expect(await sql`select actor,detail from network.staff_audit where target_id=${id} and action='approve_monthly_gathering_invitees'`)
       .toEqual([{ actor: "staff@example.test", detail: { count: 2, revision: 1 } }]);
     expect(await sql`select id from network.messages where direction='outbound' order by id`).toEqual(outbound);
-    expect(await sql`select id from platform.outbound`).toEqual([]);
+    expect(await sql`select id,status,kind from platform.outbound order by id`).toEqual(history);
     expect(await sql`select member_id from network.monthly_gathering_rsvps`).toEqual([]);
     expect((await staff(approval, { revision: 1, memberIds: [selected[0]] })).status).toBe(409);
 

@@ -10,6 +10,7 @@ import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, si
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultScopes, scopeName, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
+import type { PhoneHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -31,10 +32,8 @@ export interface OAuthClient {
   createdAt: number;
 }
 
-/** One authorization request while the person signs in and decides. Deleted when it ends. */
 export interface AuthRequest {
   id: string;
-  /** sha256 of the browser cookie that binds the request to one browser (login CSRF). */
   browserHash: string;
   clientId: string;
   app: McpAppId;
@@ -43,17 +42,16 @@ export interface AuthRequest {
   codeChallenge: string;
   scopes: Scope[];
   resource: string;
-  /** Set by the person on our page (never by the client). */
   e164: string | null;
   personId: string | null;
   step: "phone" | "code" | "consent" | "enrolling" | "enrolled";
+  handoff?: PhoneHandoff;
   createdAt: number;
   expiresAt: number;
 }
 
-export type AuthRequestPage = Pick<AuthRequest, "e164" | "personId" | "step">;
+export type AuthRequestPage = Pick<AuthRequest, "e164" | "personId" | "step" | "handoff">;
 
-/** A later page or a different phone proof supersedes a response still waiting on a provider. */
 export function samePendingAuthPage(observed: AuthRequest, expected: AuthRequest, at: number): boolean {
   return observed.id === expected.id && observed.browserHash === expected.browserHash
     && observed.expiresAt === expected.expiresAt && requestIsLive(at, observed.expiresAt)
@@ -309,7 +307,8 @@ export class MemoryOAuthStore implements OAuthStore {
   async advanceAuthRequest(previous: AuthRequest, next: AuthRequestPage, now: () => number) {
     const saved = this.requests.get(previous.id);
     if (!saved || !samePendingAuthPage(saved, previous, now())) return false;
-    this.requests.set(previous.id, { ...saved, ...next });
+    const { handoff: _replaced, ...kept } = saved;
+    this.requests.set(previous.id, { ...kept, e164: next.e164, personId: next.personId, step: next.step, ...(next.handoff ? { handoff: next.handoff } : {}) });
     return true;
   }
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {

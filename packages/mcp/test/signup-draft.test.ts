@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -76,5 +76,26 @@ describe.skipIf(!pgAvailable)("spec/mcpSignupDraft.md, \"A draft is read only by
     expect(await store.claimSignupDraft(e.accounts.phoneHash(invitedPhone), "ntwrk", invited, e.clock.t)).toEqual({ firstName: "Lu" });
     await e.handler.forgetPerson(invited);
     expect(await store.claimSignupDraft(e.accounts.phoneHash(invitedPhone), "ntwrk", invited, e.clock.t)).toBeUndefined();
+  });
+
+  test("spec/mcpSignupDraft.md, \"A live connection prepares one draft under the age guard\": an age recorded between the check and the insert leaves no draft", async () => {
+    const e = setup({ store });
+    const phone = "+12125550179";
+    const c = await connect(e, "friends.help", phone);
+    const key = e.accounts.phoneHash(phone);
+    const read = e.people.ageFloor.bind(e.people);
+    const floor = vi.spyOn(e.people, "ageFloor").mockImplementationOnce(async hash => {
+      const before = await read(hash);
+      await e.people.noteAgeFloor(key, 12, e.clock.t);
+      return before;
+    });
+    try {
+      const refused = await call(e, "https://friends.help/mcp", "prepare_signup", { firstName: "Ari", homeCity: "sf" }, { token: c.token.access_token });
+      expect(refused.body!.result.isError).toBe(true);
+      expect(floor.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(await store.claimSignupDraft(key, "friends", null, e.clock.t)).toBeUndefined();
+    } finally {
+      floor.mockRestore();
+    }
   });
 });

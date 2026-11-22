@@ -128,6 +128,39 @@ pure def retryCheck(signIn: StaffSignIn): StaffSignIn = { ...signIn, phase: Chec
 pure def sometimesCheckFailed(signIn: StaffSignIn): bool = signIn.phase == CheckFailed
 ```
 
+### The server serves data only to a single sign-on identity with a second factor
+
+The server reads the second factor from the authentication methods that the verified Cloudflare Access assertion names. It answers the identity check for every accepted identity and tells whether a second factor is present. It refuses every other route and the live socket to a single sign-on identity without a second factor. A token identity has no second factor, and the start rule accepts tokens only with data on this machine. This rule is new: before it, the server did not read the second factor, so a single sign-on identity without one got its full roles and the second-factor phase never occurred (audit stories-b-1).
+
+```quint
+pure def identityServed(viaAccess: bool, secondFactorShown: bool): bool = not(viaAccess) or secondFactorShown
+
+pure def lawServedAccessIdentityIsSignedIn(secondFactorShown: bool, grants: int): bool =
+  (grants > 0 and identityServed(true, secondFactorShown)) implies phaseForAnswer(IdentityAccepted, true, secondFactorShown, grants) == SignedIn
+
+pure def lawAccessWithoutSecondFactorGetsNoData(grants: int): bool =
+  not(identityServed(true, false)) and phaseForAnswer(IdentityAccepted, true, false, grants) != SignedIn
+```
+
+### A second factor is the multi-factor method or two distinct methods
+
+The server reads the authentication methods (`amr`) of the verified Cloudflare Access assertion. It counts each distinct method name once, without case. The assertion shows a second factor only when it names the multi-factor method (`mfa`) or at least two distinct methods. One method alone is never a second factor, because one-time code, hardware key, software key and smart card can each be the only method of a sign-in (an emailed one-time PIN gives `otp` alone). This rule is new: before it, the shell decided, and any one of `mfa`, `otp`, `hwk`, `swk` or `sc` counted, so a sign-in with only an emailed code got full staff roles (audit of the stories-b-1 fix).
+
+```quint
+pure val staffSignInDistinctMethodsForSecondFactor = 2
+
+pure def staffSecondFactorShown(multiFactorNamed: bool, distinctMethods: int): bool =
+  multiFactorNamed or distinctMethods >= staffSignInDistinctMethodsForSecondFactor
+
+pure val distinctMethodsValues = Set(-1, 0, 1, 2, 3)
+
+pure def lawOneMethodAloneIsNoSecondFactor(distinctMethods: int): bool =
+  distinctMethods <= 1 implies not(staffSecondFactorShown(false, distinctMethods))
+
+pure def lawMultiFactorMethodIsSecondFactor(distinctMethods: int): bool =
+  staffSecondFactorShown(true, distinctMethods)
+```
+
 ## Story: Keep my session bound to my roles
 
 > As a staff member, I want the console to end my session when my sign-in expires or my roles change, so that I never act on a role that I no longer hold.

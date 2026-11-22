@@ -88,9 +88,22 @@ Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.
 //    (outbound-state-fence.integration.test.ts).
 //  - Q-outbound_queue-4: that repair also reads messages that show collected or send_unknown (GATEWAY_WAIT), so a
 //    reply that the sweep ended while its drain lost the change is repaired (outbound-state-fence).
+//  - 2026-11-22, late turn receipt: collectedReceipt and the turn-receipt handler move a failed_unknown gateway reply
+//    to sent (accepted, with sentAt and the streak count) or refused_gateway (rejected); a late unknown receipt
+//    changes nothing (gatewayReceiptApplies; outbound-queue.test.ts "SD-100", calendar-invite.integration.test.ts).
+//    The expired reply gets its collection time as its send time (gatewayReplySendTime), for sent_at and the streak.
+//  - 2026-11-22, booking link before the leak check: the recipient check refuses a venue booking notice whose link
+//    the current booking no longer approves (calendar-invite "a booking link for a changed venue"). The model's
+//    `recipientOk` is the in-memory recipient check as an oracle and stands for this refusal too.
+//  - 2026-11-22: a permanent refusal in the claim transaction stores its reason as the row's note
+//    (recipient-eligibility.integration.test.ts). The model does not keep notes.
 // Abstraction: the lease owner is not a field. A claim by another worker always increments attempts, so
 // `row.attempts == wk.tries` with `row.lease` stands for lease_owner = this worker (recordClaimedFailure).
 // OPEN (needs a maintainer decision, not a code defect): Q-outbound_queue-5, see `unansweredAtMost`.
+// OPEN (fail-safe, not modelled): runtime.ts drainQueue loads the stored state when its copy is old, but another
+// replica can commit between that reload and the checks. The drain can then end a row by a refusal decided on the old
+// copy. It never sends from that copy, because the claim needs the stored version (spec/outboundAdmission.md, "A claim
+// needs the Network state that its checks read"). The model has one replica copy and no reload step.
 // Not changed in the model: send() also rechecks quiet hours inside the admission transaction, parks an
 // agent-initiated row with an invalid zone (parked_invalid_timezone), and a ClaimedSendWriteError keeps the
 // lease for recover(). The model has no zones and no failing outcome write.
@@ -134,8 +147,10 @@ module outbound_queue {
   pure val STUCK_MSG = WAITING_MSG.union(GATEWAY_WAIT)
   pure val PROVIDER = Set("accepted", "sent", "delivered", "read")
 
+  // failed_unknown ranks with accepted: it may have gone out, and a late turn receipt can still make a gateway reply
+  // sent or refused (spec/outboundReceipt.md, "A gateway reply with no final receipt ends after the receipt deadline").
   pure def rank(st: str): int =
-    if (st == "accepted") 1 else if (st == "sent") 2 else if (st == "delivered") 3 else if (st == "read") 4
+    if (st == "accepted" or st == "failed_unknown") 1 else if (st == "sent") 2 else if (st == "delivered") 3 else if (st == "read") 4
     else if (WAITING.contains(st) or st == "none" or st == "collected" or st == "send_unknown") 0 else 5
   // PROVIDER_RANK (oq:196): rows that did not go out have none.
   pure def providerRank(st: str): int =
@@ -819,13 +834,15 @@ module outbound_queue {
   // POST /internal/turn-receipt. Accepted without history is refused (400) unless the turn is account-free
   // (accountEligible false, SD-131 fix bdd0698). The gateway reports accepted only for what it sent, and Cloud keeps
   // no history for a turn without an account. An accepted reply counts in the line's streak and moves
-  // last_outbound_at (countSend, SD-148 fix cdd106f).
+  // last_outbound_at (countSend, SD-148 fix cdd106f). A receipt that comes after the sweep ended the reply
+  // failed_unknown still applies when it is accepted or rejected (gatewayReceiptApplies); a late unknown one does not.
+  // An expired reply counts its send at its collection time (gatewayReplySendTime), not at the receipt time.
   action gatewayReceipt(r: str, outcome: str, history: bool): bool = {
     val row = rows.get(r)
     val refused = (outcome == "accepted" and not(history) and not(row.acctFree)) or (outcome != "accepted" and history)
     val st = if (outcome == "accepted") "sent" else if (outcome == "unknown") "send_unknown" else "refused_gateway"
     all {
-      row.status == "collected" or row.status == "send_unknown",
+      row.status == "collected" or row.status == "send_unknown" or (row.status == "failed_unknown" and outcome != "unknown"),
       row.turnLive,
       env.turn == "handled",
       outcome == "accepted" implies admitted.contains(r),
@@ -838,7 +855,7 @@ module outbound_queue {
         rows' = rows.set(r, { ...row, status: st, sentAt: row.sentAt or outcome == "accepted" }),
         mirror' = mirror.set(r, st),
         ghost' = bump(ghost, r, st),
-        conv' = if (outcome == "accepted") convAfterAccept(conv, row, false, env.now) else conv,
+        conv' = if (outcome == "accepted") convAfterAccept(conv, row, false, if (row.status == "failed_unknown") row.created else env.now) else conv,
       },
       work' = work, env' = env, views' = views, slots' = slots, admitted' = admitted, hooks' = hooks,
     }
@@ -1443,6 +1460,31 @@ module outbound_queue {
       .then(tick(72)).then(tick(1))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
       .expect(rows.get("r1").status == "failed_unknown" and notSentMeansNotOut and safety)
+
+  // 2026-11-22, the late accepted receipt: the gateway sent the reply, its receipt comes after the sweep, and the
+  // reply becomes sent with a send time. Failed before this change: the receipt found no collected row.
+  run lateGatewayReceiptTest =
+    initWith("cloud", true, false)
+      .then(turnStart(true)).then(collect("r1", "reply", false)).then(turnFinish(true))
+      .then(gatewaySend("r1"))
+      .then(tick(72)).then(tick(1))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
+      .expect(rows.get("r1").status == "failed_unknown" and safety)
+      .then(gatewayReceipt("r1", "accepted", true))
+      .expect(rows.get("r1").status == "sent" and rows.get("r1").sentAt and mirror.get("r1") == "sent" and safety)
+
+  // 2026-11-22, the late accepted receipt after an answer: the member answers before the late receipt comes. The
+  // reply counts its send at its collection time, so the answer keeps the streak at 0. Failed before this change:
+  // the send counted at the receipt time and the streak became 1.
+  run lateGatewayReceiptAnsweredTest =
+    initWith("cloud", true, false)
+      .then(turnStart(true)).then(collect("r1", "reply", false)).then(turnFinish(true))
+      .then(gatewaySend("r1"))
+      .then(tick(72)).then(tick(1))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1"))
+      .then(engaged)
+      .then(gatewayReceipt("r1", "accepted", true))
+      .expect(rows.get("r1").status == "sent" and conv.unanswered == 0 and conv.lastOut == rows.get("r1").created and safety)
 
   // SD-131 (fix bdd0698; "Cloud's accepted receipt with no history is recorded for a reply to a number the service gave
   // no account"). The turn is not account-eligible; Cloud sends the reply and reports history false: the receipt is

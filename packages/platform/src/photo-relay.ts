@@ -1,5 +1,3 @@
-// Voluntary selected-item sharing. Appearance scores and gallery/staff links never enter this path.
-// No production policy is supplied by default: uploading privately does not authorize item review.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { canClaimAction, permitsIntentBinding, photoDeliveryStillLive, photoFetchAllowed, photoItemWithdrawable, providerFetchTtlMs, step as stepPhotoDelivery, type PhotoDelivery } from "../../core/src/generated/photoRelayItem.ts";
@@ -14,6 +12,7 @@ import type { PhotoService, PhotoRow, PhotoType } from "./photos.ts";
 import { readCapped } from "./body.ts";
 
 export const PHOTO_RELAY_TTL = relayItemTtlMs;
+export const PHOTO_EXPIRY_BATCH = 100;
 const opaque = () => { for (;;) { const id = randomBytes(16).toString("hex"); if (!/\d{7}/.test(id)) return id; } };
 export interface PhotoRelayParties {
   threadId: string; senderPersonId: string; recipientPersonId: string;
@@ -22,15 +21,15 @@ export interface PhotoRelayParties {
 export interface PhotoRelayItem extends PhotoRelayParties {
   id: string; app: AppId; photoId: string; sha256: string; bytes: number; contentType: PhotoType;
   consentId: string; consentedAt: number; expiresAt: number; policyVersion: string; policyNotice: string; notice: string;
-  state: "pending" | "approved" | "rejected" | "revoked";
+  state: "pending" | "approved" | "rejected" | "revoked" | "expired";
   reviewId: string | null; reviewedAt: number | null; reviewerId: string | null;
   actionId: string | null; deliveryIntent: string | null; deliveryExpiresAt: number | null;
 }
 const storedReview: Record<ReviewState, PhotoRelayItem["state"]> = {
-  PendingReview: "pending", ApprovedReview: "approved", RejectedReview: "rejected", RevokedReview: "revoked",
+  PendingReview: "pending", ApprovedReview: "approved", RejectedReview: "rejected", RevokedReview: "revoked", ExpiredReview: "expired",
 };
 const reviewFromRow: Record<PhotoRelayItem["state"], ReviewState> = {
-  pending: "PendingReview", approved: "ApprovedReview", rejected: "RejectedReview", revoked: "RevokedReview",
+  pending: "PendingReview", approved: "ApprovedReview", rejected: "RejectedReview", revoked: "RevokedReview", expired: "ExpiredReview",
 };
 function selectionState(item: PhotoRelayItem): PhotoSelection {
   return { phase: "StoredSelection", review: reviewFromRow[item.state] };
@@ -47,7 +46,7 @@ export interface PhotoRelayStore {
   create(item: PhotoRelayItem, requestId: string, requestHash: string, tx?: SQL): Promise<{ item?: PhotoRelayItem; conflict?: true }>;
   owned(app: AppId, personId: string): Promise<PhotoRelayItem[]>;
   list(app: AppId): Promise<PhotoRelayItem[]>;
-  /** Callback and state transition share a durable item lock; throw rolls back. */
+  duePending(app: AppId, at: number, limit: number): Promise<PhotoRelayItem[]>;
   locked<T>(id: string, fn: (item: PhotoRelayItem | undefined, save: (item: PhotoRelayItem) => Promise<void>, tx: SQL) => Promise<T>, tx?: SQL): Promise<T>;
 }
 const itemRow = (r: Record<string, any>): PhotoRelayItem => ({
@@ -89,12 +88,14 @@ export class PgPhotoRelayStore implements PhotoRelayStore {
   async list(app: AppId) {
     return (await this.sql`select * from platform.photo_relay_items where app_id=${app} and state in ('pending','approved') order by consented_at,id`).map(itemRow);
   }
+  async duePending(app: AppId, at: number, limit: number) {
+    return (await this.sql`select * from platform.photo_relay_items where app_id=${app} and state='pending' and expires_at<=${new Date(at)} order by expires_at,id limit ${limit}`).map(itemRow);
+  }
   async locked<T>(id: string, fn: (item: PhotoRelayItem | undefined, save: (item: PhotoRelayItem) => Promise<void>, tx: SQL) => Promise<T>, transaction?: SQL): Promise<T> {
     let result!: T;
     const perform = async (tx: SQL) => {
       const [row] = await tx`select * from platform.photo_relay_items where id=${id} for update`;
       result = await fn(row ? itemRow(row) : undefined, async r => {
-        // Identity/content/consent are immutable. Only a locked review/revocation transition may change.
         if (!row || r.id !== id) throw new Error("photo_relay_missing");
         await tx`update platform.photo_relay_items set state=${r.state},review_id=${r.reviewId},
           reviewed_at=${r.reviewedAt === null ? null : new Date(r.reviewedAt)},reviewer_id=${r.reviewerId},action_id=${r.actionId},delivery_intent=${r.deliveryIntent},delivery_expires_at=${r.deliveryExpiresAt === null ? null : new Date(r.deliveryExpiresAt)} where id=${id}`;
@@ -105,17 +106,13 @@ export class PgPhotoRelayStore implements PhotoRelayStore {
   }
 }
 export interface PhotoRelayPolicy {
-  /** Must identify an actually approved selected-item review policy and its exact human notice. */
   version: string; notice: string;
   authorizeReviewer(reviewerId: string, item: Readonly<PhotoRelayItem>, tx?: SQL): Promise<boolean>;
 }
 export interface PhotoRelayOptions {
   store: PhotoRelayStore; photos: PhotoService; signingKey: string; now?: () => number;
-  /** No policy configured until the specific reviewer purpose/notice/safety path is approved. */
   policy?: PhotoRelayPolicy;
-  /** Canonical RelayDesk check: active mutual match, exact parties, adults, membership, STOP, blocks and holds. */
   authorize(input: { app: AppId; threadId: string; senderPersonId: string }, tx?: SQL): Promise<Omit<PhotoRelayParties, "threadId"> | undefined>;
-  /** Only current authorized threads; returned labels must contain no private profile facts. */
   threads(app: AppId, senderPersonId: string): Promise<{ id: string; label: string }[]>;
 }
 export type PreparedSelection = { item: PhotoRelayItem; requestId: string; requestHash: string; selection: PhotoSelection };
@@ -186,7 +183,6 @@ export class PhotoRelayService {
     for (const id of ids) if (await this.revoke(app, personId, id, { tx, threadId })) withdrawn++;
     return withdrawn;
   }
-  /** The current notice for one of the sender's current threads, as select() renders it (no private profile facts). */
   async noticeFor(app: AppId, senderPersonId: string, threadId: string): Promise<{ version: string; policyNotice: string; notice: string } | undefined> {
     if (!this.enabled) return;
     const thread = (await this.o.threads(app, senderPersonId)).find(t => t.id === threadId);
@@ -204,7 +200,19 @@ export class PhotoRelayService {
       await save({ ...r, state: storedReview[next.review] }); return true;
     }, scope.tx);
   }
-  /** Item-scoped review: never a fabricated report and never an appearance rating. Unknown stays pending. */
+  async duePending(app: AppId): Promise<PhotoRelayItem[]> {
+    return this.o.store.duePending(app, this.now(), PHOTO_EXPIRY_BATCH);
+  }
+  async expire(id: string, tx: SQL): Promise<boolean> {
+    return this.o.store.locked(id, async (r, save) => {
+      if (!r) return false;
+      const selection = selectionState(r);
+      const next = stepPhotoSelection(selection, { type: "expireSelection", now: this.now(), deadline: r.expiresAt });
+      if (next === selection) return false;
+      await save({ ...r, state: storedReview[next.review] });
+      return true;
+    }, tx);
+  }
   async review(id: string, reviewerId: string, decision: "safe" | "unsafe" | "unknown", tx?: SQL): Promise<boolean> {
     return this.o.store.locked(id, async (r, save, context) => {
       if (!r || !this.enabled || r.policyVersion !== this.o.policy!.version || r.policyNotice !== this.o.policy!.notice) return false;
@@ -219,12 +227,10 @@ export class PhotoRelayService {
         type: "recordReview", choice, reviewerAuthorized, currentItem, itemLive: currentItem && !(this.now() >= r.expiresAt),
       });
       if (next === selection) return false;
-      // A safety rejection can revoke even a claimed item; retain its action/intent bindings.
       await save({ ...r, state: storedReview[next.review], reviewId: `prv_${opaque()}`, reviewedAt: this.now(), reviewerId });
       return true;
     }, tx);
   }
-  /** Release/retry authorization, including inside the queue claim transaction. No bytes are read. */
   async reviewAuthorized(id: string, reviewerId: string, tx?: SQL): Promise<boolean> {
     return this.o.store.locked(id, async (r, _save, context) => {
       if (!r) return false;
@@ -237,7 +243,6 @@ export class PhotoRelayService {
       return reviewAuthorizationCurrent(selection, enabled, reviewerAuthorized, itemLive, samePolicy);
     }, tx);
   }
-  /** Called only by the existing authenticated safety console after item-scoped authorization. */
   async reviewBytes(id: string, reviewerId: string) {
     return this.o.store.locked(id, async (r, _save, context) => {
       if (!r) return;
@@ -249,7 +254,6 @@ export class PhotoRelayService {
       return reviewPreviewAllowed(selection, claimed, reviewerAuthorized, r.expiresAt > this.now()) ? bytes : undefined;
     });
   }
-  /** Internal console/queue only; never returned by a member API or the model. */
   async item(id: string) { return this.o.store.locked(id, async r => r); }
   async held(app: AppId) {
     const rows = await this.o.store.list(app), held: { id: string; app: AppId; photoId: string; threadId: string; senderMemberId: string; recipientMemberId: string; createdAt: number }[] = [];
@@ -265,7 +269,6 @@ export class PhotoRelayService {
   async approved(id: string, tx?: SQL): Promise<ApprovedRelayPhoto | undefined> {
     return this.o.store.locked(id, async (r, _save, context) => r && r.state === "approved" && await this.current(r, context) ? descriptor(r) : undefined, tx);
   }
-  /** Runs INSIDE the normal completeAction transaction; one selection can bind only one action. */
   async claimForAction(tx: SQL, id: string, app: AppId, threadId: string, senderMemberId: string, actionId: string): Promise<ApprovedRelayPhoto | undefined> {
     if (!actionId || actionId.length > 200) return;
     return this.o.store.locked(id, async (r, save, context) => {
@@ -278,7 +281,6 @@ export class PhotoRelayService {
       return descriptor(r);
     }, tx);
   }
-  /** Trusted service caller only: a durable claimed action and exact intended member. */
   async issueDelivery(d: ApprovedRelayPhoto, recipientMemberId: string, providerIntentKey: string, origin: string) {
     if (!/^[a-zA-Z0-9:_-]{1,200}$/.test(providerIntentKey)) return;
     const base = new URL(origin);
@@ -287,8 +289,6 @@ export class PhotoRelayService {
       if (!r || recipientMemberId !== r.recipientMemberId) return;
       const item = deliveryState(r);
       if (!permitsIntentBinding(item, providerIntentKey) || !sameDescriptor(d, descriptor(r)) || !(await this.current(r, context))) return;
-      // First resolve fixes the deadline durably. Receipt recovery must precede any retry;
-      // the same intent can neither extend nor resurrect an expired capability.
       const issueAt = item.hasDeadline ? 0 : this.now();
       const next = stepPhotoDelivery(item, { type: "issueDelivery", intentKey: providerIntentKey, currentItem: true, issueAt, checkedAt: this.now() });
       if (next === item) return;
@@ -314,7 +314,6 @@ export class PhotoRelayService {
       return photoDeliveryStillLive(item, exp, this.now()) ? bytes : undefined;
     });
   }
-  /** Provider fetch capability: no browser session or cross-app gallery authority is accepted here. */
   async serveDelivery(req: Request): Promise<Response | undefined> {
     const u = new URL(req.url);
     const match = /^\/api\/relay-photos\/deliver\/(pri_[a-f0-9]{32})$/.exec(u.pathname);
@@ -341,8 +340,6 @@ export class PhotoRelayService {
     const raw = await readCapped(req, 4096); if (raw === "too_large") return json(413, { ok: false, error: "too_large" });
     let b: Record<string, unknown>;
     try { b = JSON.parse(new TextDecoder().decode(raw)); if (!b || typeof b !== "object" || Array.isArray(b)) throw 0; } catch { return json(400, { ok: false, error: "invalid" }); }
-    // Cancellation is an ownership operation, not a new photo/consent action. It remains available
-    // after policy withdrawal, STOP, a hold or loss of photo eligibility.
     if (path === "/api/relay-photos/revoke" && Object.keys(b).length === 1 && typeof b.itemId === "string") return await this.revoke(app, person, b.itemId) ? json(200, { ok: true }) : json(404, { ok: false, error: "not_found" });
     if (!this.enabled) return json(503, { ok: false, error: "photo_relay_off" });
     if (await this.o.photos.mayTake(person, app)) return json(403, { ok: false, error: "unavailable" });

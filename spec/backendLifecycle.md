@@ -1,6 +1,6 @@
 # Backend tick and shutdown lifecycle
 
-The backend process uses this machine for local tick reservations and shutdown progression. The [runtime operations model](models/runtime_ops.md) also follows persisted work, peer processes, and host termination. The backend retains its timer, listener, promise, and database effects. The shell also orders each scheduled round: it attempts inbound redrive before the network ticks, then retention and notifications, and it runs operations and the public event catalog refresh beside that sequence. At shutdown the shell clears its tick interval; the record of when the timer started stays.
+The backend process uses this machine for local tick reservations and shutdown progression. The [runtime operations model](models/runtime_ops.md) also follows persisted work, peer processes, and host termination. The backend retains its timer, listener, promise, and database effects. The shell also orders each scheduled round: it attempts inbound redrive before the network ticks, and it runs retention, notifications, operations and the public event catalog refresh beside that sequence. A notification that a network tick records goes out in a later notify round. At shutdown the shell clears its tick interval; the record of when the timer started stays.
 
 ## Story: Run one tick per worker at a time
 
@@ -8,7 +8,7 @@ The backend process uses this machine for local tick reservations and shutdown p
 
 ### Reserve each tick worker before starting its work
 
-The inbound inbox, each network, retention, notifications, operations, and the public event catalog refresh use separate keys. Changed: the catalog refresh is a new worker with its own key, so a slow feed never holds up the network ticks. While the process is serving, an available worker can reserve its key only if no tick owns it. Release the reservation after the worker settles, including on a failure. The database owns advisory locks across processes.
+The inbound inbox, each network, retention, notifications, operations, and the public event catalog refresh use separate keys. Changed: the catalog refresh is a new worker with its own key, so a slow feed never holds up the network ticks. Changed: retention and notifications no longer wait for the network ticks of their round, because a long engine computation delayed every notification and every retention purge of that round. While the process is serving, an available worker can reserve its key only if no tick owns it. Release the reservation after the worker settles, including on a failure. The database owns advisory locks across processes.
 
 ```quint
 type BackendPhase = Serving | StoppingListeners | WaitingForWork | ClosingClean | ClosingTimedOut | ClosedClean | ClosedTimedOut

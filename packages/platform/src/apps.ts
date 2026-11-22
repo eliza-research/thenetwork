@@ -1,12 +1,3 @@
-// The four apps on one backend (PRD 40; docs/research/2026-10-08-platform-architecture.md). Policy
-// values here are the founder decisions of 2026-10-08 (AGENTS.md "Platform decisions") and match the
-// platform.apps rows (migrations 0003 and 0007). Change them in one place: the database rows for a
-// running server, this file for code that has no database (tests, the simulator).
-//  - Join age 13 on every app; matching 18+ everywhere (minors are single-player).
-//  - One line for every app: the first message routes by keyword (APP_KEYWORDS). With no keyword the
-//    person joins The Network, which asks what they are looking for (LOOKING_FOR).
-//  - STOP on the shared line stops every app; "leave <app>" leaves one.
-
 import { ADULT_AGE, MIN_MEMBER_AGE } from "../../core/src/policy.ts";
 import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
 import { lookingForApps, type LookingForMention, type LookingForReading } from "../../core/src/generated/lineRouting.ts";
@@ -18,7 +9,6 @@ export type JoinMode = "invite" | "open" | "waitlist";
 export interface AppBrand {
   /** How the agent names itself. */
   agentName: string;
-  /** Reply to STOP (the shared line, STOP ALL, the site's stop button): every app on this number stops. */
   stop: string;
   /** Reply to STOP on this app's own line when PLATFORM_STOP_SCOPE=app: this app only. */
   stopApp: string;

@@ -143,10 +143,11 @@ export interface Unit {
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
   ages: StatedAge[];
+  minorSignals: { memberId: MemberId; at: number }[];
   recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
 }
 type StatedAge = { memberId: MemberId; age: number };
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [] });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -270,6 +271,7 @@ export class NetworkRuntime {
           this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined) });
         }
       },
+      onMinorSignal: memberId => { this.unit.minorSignals.push({ memberId, at: this.clock.now() }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
       memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
@@ -1196,6 +1198,12 @@ export class NetworkRuntime {
         if (recorded) u.recordedAges.push({ ...recorded, memberId: observation.memberId });
       }
     }
+    for (const signal of u.minorSignals) {
+      await tx`insert into platform.person_minor_signals (person_id, at)
+        select m.person_id, ${new Date(signal.at)}::timestamptz from network.members m
+        where m.app_id = ${app} and m.id = ${signal.memberId} and m.person_id is not null
+        on conflict (person_id) do update set at = greatest(platform.person_minor_signals.at, excluded.at)`;
+    }
     const personIds = new Map<string, string>();
     if (u.forget.size) {
       const rows = await tx`select person.id,member.id as member_id from platform.people person
@@ -1566,14 +1574,16 @@ export class NetworkRuntime {
         const current = await bridge.load(owner);
         if (current) view.set(owner.memberId, current);
       }));
-    } catch { /* No valid calendar authority is available for this scheduling unit. */ view.clear(); }
+    } catch (e) {
+      this.host.log(`[calendar] no free/busy view for this unit (${this.id}): ${(e as Error).message}`);
+      view.clear();
+    }
     return this.calendarViews.run(view, operation);
   }
 
-  /** One tick (skipped when another holder has the lock); its engine run computes without the lock (store.ts runTick). Then delivery. */
   async tick(): Promise<boolean> {
     const now = this.clock.now();
-    const ran = await this.withSchedulingCalendar({ kind: "tick" }, () => runTick(this.net, this.store, this.clock.now()));
+    const ran = await runTick(this.net, this.store, this.clock.now(), unit => this.withSchedulingCalendar({ kind: "tick" }, unit));
     this.lastTick = { at: now, ran };
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();

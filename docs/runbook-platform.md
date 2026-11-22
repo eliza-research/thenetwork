@@ -44,7 +44,7 @@ PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_
 pnpm run sites:dev                                                              # the four sites only, backend paths proxied to :8790 (unsigned X-Forwarded-Host unless PLATFORM_PROXY_SECRET is set)
 ```
 
-`pnpm run db:migrate` with no `--url` and no `NETWORK_DATABASE_URL` migrates the shared dev `network` database. It refuses a host that is not local. `main.ts --once --dry-run` prints one line per network, for example `network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`, then `slop:nyc: tick done`.
+`pnpm run db:migrate` with no `--url` and no `NETWORK_DATABASE_URL` migrates the shared dev `network` database. It refuses a host that is not local. `main.ts --once --dry-run` prints one line per network, for example `network slop:nyc: sends dry-run, review "human", matching not allowed (registry row or launch scope)`, then `slop:nyc: tick done`.
 
 ## 3. Check the flows with curl
 
@@ -145,7 +145,7 @@ The product specification ([spec/product/README.md](../spec/product/README.md)) 
 - **Founder copy.** The no-keyword question (`LOOKING_FOR_ASK` and `LOOKING_FOR_ASK_MINOR` in `packages/network/service/service.ts`) and the STOP and HELP texts (`packages/platform/src/apps.ts`) change only with founder approval.
 - **Sites.** A web join must send the canonical opt-in text (or its version) that `GET /api/app` returns (`consent`); any other wording gets 400 `consent_wording`.
 - **Demo replay.** `GET /api/demo` answers 404: neither `deploy/backend/server.ts` nor `scripts/platform-dev.ts` supplies a demo.
-- **Share UI.** `POST /api/me/share` stores grants; no site shows it; the text SHARE reply copies interests (spec/baseProfileShare.md).
+- **Share.** The text SHARE reply is the only share path and copies interests (spec/baseProfileShare.md). The sites have no share route.
 - **Carrier lookup.** The OTP path does not check VoIP, landline or recent port.
 - **Invites inside the Network conversation.** The runtime gives the Network no `ctx.invite`, so a member who asks the Network for an invite link gets the "invites are not open" answer (`invitesNotOpen`). Staff invites by phone and the member invitation links (spec/memberInvitation.md) are separate paths.
 - **Network capital.** The service records capital events (`network.capital_events`), but its levers do not read them yet (`packages/network/service/runtime.ts`).

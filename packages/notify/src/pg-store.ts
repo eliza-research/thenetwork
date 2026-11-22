@@ -130,7 +130,7 @@ export class PgNotifyStore implements NotifyStore {
     return rows.map((r: Row) => toId(r.id));
   }
 
-  async recordDelivery(d: DeliveryRecord) {
+  async recordDelivery(d: DeliveryRecord, weeklyCap: number) {
     return this.sql.begin(async tx => {
       const ids = tx.array(numIds(d.itemIds), "int8");
       const sentAt = new Date(d.sentAt);
@@ -143,7 +143,7 @@ export class PgNotifyStore implements NotifyStore {
         if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
         const [counted] = await tx`select count(*)::int as n from notify.deliveries
           where person_id = ${d.personId} and counts_toward_cap and sent_at >= ${new Date(d.sentAt - WEEK_MS + 1)}`;
-        if (!digestWithinWeeklyCap(d.countsTowardCap, Number(counted?.n ?? 0), d.weeklyCap ?? 0)) return false;
+        if (!digestWithinWeeklyCap(d.countsTowardCap, Number(counted?.n ?? 0), weeklyCap)) return false;
       }
       const ins = await tx`
         insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at, assistant_link)

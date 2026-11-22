@@ -19,6 +19,8 @@ export type Event =
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export const cloudClockSkewMs: number = exact_cloudSignIn(30 * 1000);
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export const cloudProofLifeMs: number = exact_cloudSignIn(exact_cloudSignIn(60 * 60) * 1000);
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export const validHandoff: HandoffFacts = { bindingValid: true, pendingLive: true, codeWellFormed: true };
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
@@ -65,6 +67,12 @@ export function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number): boole
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
+export function cloudProofLifeValid(issuedAtMs: number, expiresAtMs: number): boolean {
+  return expiresAtMs <= exact_cloudSignIn(issuedAtMs + cloudProofLifeMs);
+}
+
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
 export function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number {
   return issuedAtMs <= asOf ? issuedAtMs : asOf;
 }
@@ -72,7 +80,7 @@ export function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudIdentityTimesValid(issuedAtMs: number, expiresAtMs: number, asOf: number): boolean {
-  return cloudIssuedAtWithinSkew(issuedAtMs, asOf) && liveBeforeDeadline(asOf, expiresAtMs);
+  return cloudIssuedAtWithinSkew(issuedAtMs, asOf) && liveBeforeDeadline(asOf, expiresAtMs) && cloudProofLifeValid(issuedAtMs, expiresAtMs);
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
@@ -107,6 +115,20 @@ export function checkIdentity(signIn: SignIn, identityAvailable: boolean, identi
   //@ ensures (inv(signIn) && canCheckIdentity(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
   const local_1 = identityAvailable && identityValid;
   return { ...signIn, identityAccepted: local_1, phase: !identityAvailable ? "CloudUnavailable" : (local_1 ? "AwaitingPhone" : "DenySignIn") };
+}
+
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawCloudProofLivesAtMostOneHour(issuedAtMs: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !cloudIdentityTimesValid(issuedAtMs, exact_cloudSignIn(exact_cloudSignIn(issuedAtMs + cloudProofLifeMs) + 1), asOf);
+}
+
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawOneHourProofIsAcceptedWhenIssued(issuedAtMs: number): boolean {
+  //@ ensures \result === true
+  return !(issuedAtMs > 0) || cloudIdentityTimesValid(issuedAtMs, exact_cloudSignIn(issuedAtMs + cloudProofLifeMs), issuedAtMs);
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */

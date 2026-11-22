@@ -129,10 +129,32 @@ pure def lawReceiptOwnerEndsNonMemberRow(phase: ReceiptPhase): bool =
 
 ### A gateway reply with no final receipt ends after the receipt deadline
 
-A reply that the gateway took in a signed turn waits for the turn receipt, as does a reply whose receipt said unknown. The gateway may have sent it, so the queue never sends it. When no accepted or rejected receipt came before the deadline of an unknown acceptance, counted from when the reply was collected, the reply ends as an expired acceptance (failed unknown). It keeps the history of the thread and returns no person-cap slot. Changed 2026-11-21: nothing ended such a reply (SD-100), so a reply whose receipt never came stayed open with no end.
+A reply that the gateway took in a signed turn waits for the turn receipt, as does a reply whose receipt said unknown. The gateway may have sent it, so the queue never sends it. When no accepted or rejected receipt came before the deadline of an unknown acceptance, counted from when the reply was collected, the reply ends as an expired acceptance (failed unknown). It keeps its text and returns no person-cap slot. A turn receipt names only the replies of its own turn, so a receipt that comes after the deadline still records what the gateway did: an accepted receipt makes the expired reply sent, with its send time, its place in the thread history and its count in the unanswered streak, and a rejected receipt makes it refused. An expired reply records its send at the time it was collected, not at the time the late receipt came, because the gateway sends the replies of a turn when the turn ends; the unanswered streak then does not count a reply that the member answered before the receipt came. A late unknown receipt changes nothing. Changed 2026-11-21: nothing ended such a reply (SD-100), so a reply whose receipt never came stayed open with no end. Changed 2026-11-22: the queue dropped a late accepted receipt, so a booking notice that the gateway sent never counted as received, its reminder, cancellation and feedback request were refused, and the leak guard's thread check did not read the text. Changed 2026-11-22: a late accepted receipt recorded the send at the time the receipt came, hours after the real send, so a reply that the member had already answered counted in the unanswered streak.
 
 ```quint
 pure def gatewayReplyPhase(pastLimit: bool): ReceiptPhase = if (pastLimit) AcceptanceExpired else AcceptanceUnknown
+
+pure val replyStatusValues = Set("collected", "send_unknown", "failed_unknown", "sent", "accepted")
+pure val deliveryValues = Set("accepted", "unknown", "rejected")
+
+pure def gatewayReceiptApplies(replyStatus: str, delivery: str): bool =
+  replyStatus == "collected" or replyStatus == "send_unknown" or (replyStatus == "failed_unknown" and delivery != "unknown")
+
+pure def gatewayReplySendTime(replyStatus: str, collectedAt: int, receivedAt: int): int =
+  if (replyStatus == "failed_unknown") collectedAt else receivedAt
+
+pure def lawExpiredReplySendsAtCollection(replyStatus: str, collectedAt: int, receivedAt: int): bool =
+  replyStatus == "failed_unknown" implies gatewayReplySendTime(replyStatus, collectedAt, receivedAt) == collectedAt
+
+pure def lawReplySendTimeNotAfterReceipt(replyStatus: str, collectedAt: int, receivedAt: int): bool =
+  collectedAt <= receivedAt implies gatewayReplySendTime(replyStatus, collectedAt, receivedAt) <= receivedAt
+
+pure def lawLateUnknownReceiptKeepsExpiredReply(replyStatus: str): bool =
+  replyStatus == "failed_unknown" implies not(gatewayReceiptApplies(replyStatus, "unknown"))
+
+pure def lawGatewayReceiptChangesOnlyGatewayReplies(replyStatus: str, delivery: str): bool =
+  gatewayReceiptApplies(replyStatus, delivery) implies
+    (replyStatus == "collected" or replyStatus == "send_unknown" or replyStatus == "failed_unknown")
 
 pure def lawGatewayReplyEndsOnlyPastLimit(pastLimit: bool): bool =
   (gatewayReplyPhase(pastLimit) == AcceptanceExpired) iff pastLimit

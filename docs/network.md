@@ -435,6 +435,9 @@ The policy comes from `packages/core/src/policy.ts` (`MIN_MEMBER_AGE = 13`, `ADU
   - A reply with no age is not asked again. The member stays single-player (treated as a minor).
   - Review refuses approve for a member with an unknown age (`participant_minor`, section 2.1).
 - "I'm in middle school" maps to age 13 (a minor, not declined), because a decline deletes data. A member with a valid attested age of 13 or more is declined only by an explicit "I am N years old" under 13.
+- An explicit age under 13 from a member whose record says adult does not decline: the Network holds the member for staff and deletes nothing (network-service-1).
+- When a message makes a member a minor, the Network first writes the safety record of the adults the member met (`minor_after_contact`), then takes the member out of every open opportunity. On an app for adults only (join age above 13) the member gets no teen copy and no teen service: a case event `age_review` goes to staff.
+- A minor signal or a minor report is a fact about the person. The service stores it in `platform.person_minor_signals`, and it holds every membership of the person until staff clear each membership after the signal time (spec/safetyCase.md).
 
 ### 6.4 Outreach control (PRD 32.9)
 
@@ -484,6 +487,7 @@ The member record can change after the Network first sees the member: a staff ag
 | `age` | Under 18 makes the member a minor (sticky). Under 13 declines at the next message (6.3). |
 | `accountStatus` "paused" or "restricted" | Not matchable, and not reachable except for replies and safety notices (`send_refused` reason `account_paused` or `account_restricted`). Others in an opportunity with them get `other_not_matchable`. |
 | `invitedBy` | Updated. |
+| `minorSignalAt` (person minor signal) | While the signal is after the member's last minor clear, the member is a minor (`minor_signal`, `person: true`) and leaves every open opportunity. |
 
 A member the record now keeps out of matching (a minor, or a paused or restricted account) is dropped from every open opportunity at the start of the next unit, as for an opt-out. The production snapshot (`service/snapshot.ts`) carries `accountStatus`; the simulator's snapshot has none (every account is active).
 

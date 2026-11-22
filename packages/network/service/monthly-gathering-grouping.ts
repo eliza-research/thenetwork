@@ -43,8 +43,6 @@ const PATH = /^\/gatherings\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\/grou
 const FINGERPRINT = /^[0-9a-f]{64}$/;
 const compareIds = (first: string, second: string) => first < second ? -1 : first === second ? 0 : 1;
 const revisionAllowed = (revision: unknown): revision is number => typeof revision === "number" && Number.isInteger(revision) && revision > 0 && revision <= 2_147_483_647;
-
-/** Find compatible triples first so adding a fourth or fifth member cannot crowd out a new group. */
 function suggestGroups(roster: readonly string[], evidence: GatheringGroupingEvidence): string[][] {
   const admitted = new Set(evidence.members);
   const members = roster.filter(id => admitted.has(id)).sort(compareIds);
@@ -164,8 +162,6 @@ async function reviewGrouping(tx: SQL, ctx: GroupingContext, key: GatheringRsvpK
   await auditGrouping(tx, ctx, key, "approve_monthly_gathering_grouping", groups.length, memberCount, now);
   return receipt(key, recorded!, false);
 }
-
-/** Staff-operated grouping. The caller holds the app's runtime lock while current evidence is read. */
 export async function handleMonthlyGatheringGrouping(req: Request, path: string, ctx: GroupingContext): Promise<Response | undefined> {
   const match = PATH.exec(path);
   if (!match) return;

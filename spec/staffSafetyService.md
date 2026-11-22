@@ -8,7 +8,7 @@ The [case and report spec](safetyCase.md) governs decisions inside one Network r
 
 ### Staff act within their resolved scope
 
-Staff with safety authority on every app may act on the person's relevant memberships. An app-scoped action only includes the requested runtime. Discovery skips invited and removed memberships. The requested member remains the fallback target when there is no linked person. The hold audit records the authorized scope without recording a membership count.
+Staff with safety authority on every app may act on the person's relevant memberships. An app-scoped action only includes the requested runtime. Discovery skips invited and removed memberships. The requested member remains the fallback target when there is no linked person. The hold audit records the authorized scope without recording a membership count. The hold and the minor-signal clear answer the staff member with their reach: `all` when the staff member has authority on every app and the member has a linked person, otherwise `app`. The reach comes from the staff member's authority, so it never tells how many apps the person uses. Changed on 2026-11-22 (audit SD-070): before, the service returned no reach, and the console said "on every app" also when it acted on one app only.
 
 ```quint
 pure def staffSafetyMembershipLive(membership: str): bool =
@@ -18,6 +18,12 @@ pure def staffSafetySelectsTarget(everywhere: bool, requestedRuntime: bool): boo
   everywhere or requestedRuntime
 
 pure def staffSafetyAuditScope(targets: int): str = if (targets > 1) "every_app" else "this_app"
+
+pure def staffSafetyActionReach(allAppsAuthority: bool, linkedPerson: bool): str =
+  if (allAppsAuthority and linkedPerson) "all" else "app"
+
+pure def lawAppStaffReachOneApp(linkedPerson: bool): bool =
+  staffSafetyActionReach(false, linkedPerson) == "app"
 
 pure def lawLocalStaffTargetStaysInScope(requestedRuntime: bool): bool =
   staffSafetySelectsTarget(false, requestedRuntime) implies requestedRuntime
@@ -206,7 +212,7 @@ pure def lawBannedEnrollmentCannotCommit(liveOwner: bool, verifiedBinding: bool)
 
 ### An agent signal goes to the decision that owns it
 
-The shared agent sends a signal only inside the member's own open turn, and the service checks that turn and the member's active membership first. A safety concern opens or joins that member's safety case with the reason code `agent_safety_concern` and no evidence text, and it waits for safety staff. An opt-out pauses matching in that app only, with the same setting that the member's "pause matching" command writes. It does not change carrier consent: only STOP on the shared line does that, and the signal response has no consent fence for the gateway. A travel signal stays private context. Changed on 2026-11-17 (audit COV05): before this rule the service stored safety concerns and opt-outs as proposals that no person decided and that changed nothing.
+The shared agent sends a signal only inside the member's own open turn, and the service checks that turn and the member's active membership first. A safety concern opens or joins that member's safety case with the reason code `agent_safety_concern` and no evidence text, and it waits for safety staff. An opt-out pauses matching in that app only, with the same setting that the member's "pause matching" command writes. It does not change carrier consent: only STOP on the shared line does that, and the signal response has no consent fence for the gateway. A travel signal stays private context. Changed on 2026-11-17 (audit COV05): before this rule the service stored safety concerns and opt-outs as proposals that no person decided and that changed nothing. When the work for a safety concern fails, its receipt stays unresolved and the service raises an operations alert that names the app and the member, so a person looks at it. Changed on 2026-11-22 (audit SIG-unresolved-concern): before, the failed concern ended unresolved with no alert and never reached safety staff.
 
 ```quint
 import participationControls as Controls from "./participationControls"
@@ -235,7 +241,7 @@ pure def lawOtherSignalsLeaveParticipation(kind: str, saved: str): bool =
 
 ### Safety staff decide a waiting agent signal once
 
-A signal that waits for staff is listed for reviewer and safety staff in that app. Only a safety staff member in that app can decide it, with a reason, and the service writes the request audit before the decision. The decision marks the signal reviewed or dismissed. A decided signal keeps its decision. The member's safety case stays open until staff use the existing hold, lift or close actions. The operations alert counts only waiting signals. Changed on 2026-11-17 (audit COV05): before this rule no staff action resolved a signal, so its alert could not clear.
+A signal that waits for staff is listed for reviewer and safety staff in that app. Only a safety staff member in that app can decide it, with a reason, and the service writes the request audit before the decision. The decision marks the signal reviewed or dismissed. A decided signal keeps its decision. The member's safety case stays open until staff use the existing hold, lift or close actions. The operations alert counts only waiting signals. Changed on 2026-11-17 (audit COV05): before this rule no staff action resolved a signal, so its alert could not clear. Only a safety concern waits: an opt-out takes effect when it arrives. A migration applied the pause of each opt-out signal that an older version stored as waiting, unless the member changed the setting after it, and marked those signals reviewed. Changed on 2026-11-22 (audit signals-r19-2): before, those old opt-outs stayed listed as waiting and their pause was never applied. The service refuses a staff member without the safety role before it reads the signal, and gives the same role answer to the decision. Changed on 2026-11-22 (audit signals-r19-1): before, the service gave the decision a constant role answer. The evidence of a member who is under 18 or whose age is in doubt is shown only to safety staff, who decide the concern; reviewer staff see that the signal exists and that its evidence is withheld. Changed on 2026-11-22 (audit signals-r19-4): before, every reviewer read a minor's evidence text.
 
 ```quint
 type AgentSignalPhase = SignalWaiting | SignalReviewed | SignalDismissed
@@ -251,4 +257,13 @@ pure def lawDecidedAgentSignalStaysDecided(phase: AgentSignalPhase, safetyRole: 
 
 pure def lawOnlySafetyStaffDecideAgentSignals(phase: AgentSignalPhase, dismiss: bool): bool =
   agentSignalAfterDecision(phase, false, dismiss) == phase
+
+pure def agentSignalEvidenceShown(safetyRole: bool, ageInDoubt: bool): bool =
+  safetyRole or not(ageInDoubt)
+
+pure def lawReviewerNeverReadsMinorEvidence(ageInDoubt: bool): bool =
+  ageInDoubt implies not(agentSignalEvidenceShown(false, ageInDoubt))
+
+pure def lawAdultEvidenceShownToReviewers(safetyRole: bool): bool =
+  agentSignalEvidenceShown(safetyRole, false)
 ```

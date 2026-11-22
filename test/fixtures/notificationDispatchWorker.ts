@@ -128,7 +128,7 @@ await withConformanceDatabase("notification_dispatch_conformance", async sql => 
     flow.deliveryId = event.sameDigest ? id : `ntf_conformance_${flow.personId}`;
     const recorded = await base.recordDelivery({
       deliveryId: flow.deliveryId, personId: flow.personId, itemIds: flow.itemIds, target: "sms", countsTowardCap: true, sentAt: START - HOUR,
-    });
+    }, flow.notifier.cfg.weeklyCap);
     if (!recorded) throw new Error("The queued digest was not recorded");
     flow.armed = new Set(["items"]);
     await progress(flow, () => flow.notifier.stillNeeded(flow.deliveryId!, START).then(needed => { flow.result = { kind: "revalidate", needed }; }));

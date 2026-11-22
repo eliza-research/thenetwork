@@ -27,6 +27,8 @@ export interface UpdateRead { shown: number; tokenLeft: boolean; otherLeft: bool
 export type ConnectorUpdateOutcome = "InboxUpdateShown" | "InboxUpdateRetired" | "InboxUpdateWithheld";
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
 export type ConnectorLimitKey = "AddressLimitKey" | "GrantLimitKey";
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+export type RegisterBucket = "AssistantRegisterBucket" | "AddressRegisterBucket";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -738,21 +740,27 @@ export function lawFailedGateIsNeverShown(stillCurrent: boolean, readerMatchable
 
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
 //@ pure
-export function connectorRegisterLimit(assistantRedirect: boolean): number {
-  return assistantRedirect ? connectorAssistantRegisterPerAddressHour : connectorRegisterPerAddressHour;
-}
-
-/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
-//@ pure
 export function connectorLimitKey(grantVerified: boolean): ConnectorLimitKey {
   return grantVerified ? "GrantLimitKey" : "AddressLimitKey";
 }
 
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
 //@ pure
-export function lawAddressCeilingAboveEachPersonLimit(assistantRedirect: boolean): boolean {
+export function connectorRegisterBucket(assistantRedirect: boolean): RegisterBucket {
+  return assistantRedirect ? "AssistantRegisterBucket" : "AddressRegisterBucket";
+}
+
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function connectorRegisterLimit(bucket: RegisterBucket): number {
+  return bucket === "AssistantRegisterBucket" ? connectorAssistantRegisterPerAddressHour : connectorRegisterPerAddressHour;
+}
+
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function lawAssistantBucketOnlyForAssistantRedirects(assistantRedirect: boolean): boolean {
   //@ ensures \result === true
-  return connectorAddressCeilingMinute >= connectorRequestsPerGrantMinute && connectorAddressCeilingMinute >= connectorAnonymousPerAddressMinute && connectorTokenAddressCeilingMinute >= connectorTokenPerGrantMinute && connectorRegisterLimit(assistantRedirect) >= connectorRegisterPerAddressHour;
+  return (connectorRegisterBucket(assistantRedirect) === "AssistantRegisterBucket") === assistantRedirect;
 }
 
 /** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
@@ -760,6 +768,13 @@ export function lawAddressCeilingAboveEachPersonLimit(assistantRedirect: boolean
 export function lawVerifiedRequestsCountPerGrant(grantVerified: boolean): boolean {
   //@ ensures \result === true
   return (connectorLimitKey(grantVerified) === "GrantLimitKey") === grantVerified;
+}
+
+/** Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling (spec/connectorTools.md) */
+//@ pure
+export function lawAddressCeilingAboveEachPersonLimit(assistantRedirect: boolean): boolean {
+  //@ ensures \result === true
+  return connectorAddressCeilingMinute >= connectorRequestsPerGrantMinute && connectorAddressCeilingMinute >= connectorAnonymousPerAddressMinute && connectorTokenAddressCeilingMinute >= connectorTokenPerGrantMinute && connectorRegisterLimit(connectorRegisterBucket(assistantRedirect)) >= connectorRegisterPerAddressHour;
 }
 
 /** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */

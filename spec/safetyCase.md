@@ -179,3 +179,70 @@ pure def minorClearResult(actorPresent: bool, memberKnown: bool, hasSignal: bool
   else if (statedMinor) StatedMinor
   else AllowedAction
 ```
+
+### A minor signal on one app holds the person on every app until a later clear
+
+A minor report or a minor signal on one app is a fact about the person, so it holds the person out of matching on every app where the person is a member, including an app that the person joins later. The signal stays open on an app until staff clear it there after the signal time. A signal that comes after a clear opens again. Added in this revision: before, a report or a signal marked only the member on the app where it was made, so the person stayed matchable on the other apps (audit ST-D3). The person signal ends, and its row in `platform.person_minor_signals` is deleted, only when every live membership of the person has a clear at or after the signal time; a membership that was never cleared keeps it, so a person who joins a new app after one-app clears on some apps only is still held there. A membership that its app has not loaded yet is loaded from its record when the person signal is open for it, so staff can clear it like any other. The per-app console views (`matching_ages_<app>`) do not show the signal time, because a signal can come from another app and its time would tell one-app staff about an event on that app; only the base view that the service reads has it. Changed in this revision: before, the row was deleted only when one clear call covered every membership, a membership that was not loaded refused the clear, and the per-app views showed the signal time (audit review of ST-D3).
+
+```quint
+pure def personMinorSignalOpen(signalKnown: bool, signalAt: int, clearedKnown: bool, clearedAt: int): bool =
+  signalKnown and (not(clearedKnown) or signalAt > clearedAt)
+
+pure val signalAtValues = Set(-1, 0, 1, 2)
+pure val clearedAtValues = Set(-1, 0, 1, 2)
+
+pure def lawAnUnclearedMinorSignalHoldsThePerson(signalAt: int): bool =
+  personMinorSignalOpen(true, signalAt, false, 0)
+
+pure def lawAClearAtOrAfterTheSignalEndsIt(signalAt: int, clearedAt: int): bool =
+  clearedAt >= signalAt implies not(personMinorSignalOpen(true, signalAt, true, clearedAt))
+
+pure def lawANewSignalAfterAClearHoldsAgain(signalAt: int, clearedAt: int): bool =
+  signalAt > clearedAt implies personMinorSignalOpen(true, signalAt, true, clearedAt)
+
+pure def lawNoSignalHoldsNobody(signalAt: int, clearedKnown: bool, clearedAt: int): bool =
+  not(personMinorSignalOpen(false, signalAt, clearedKnown, clearedAt))
+
+pure def personMinorSignalEndsEverywhere(everyMembershipCleared: bool, signalAt: int, earliestClearAt: int): bool =
+  everyMembershipCleared and not(personMinorSignalOpen(true, signalAt, true, earliestClearAt))
+
+pure val earliestClearAtValues = Set(-1, 0, 1, 2)
+
+pure def lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: int, earliestClearAt: int): bool =
+  not(personMinorSignalEndsEverywhere(false, signalAt, earliestClearAt))
+
+pure def lawASignalAfterTheEarliestClearStays(signalAt: int, earliestClearAt: int): bool =
+  signalAt > earliestClearAt implies not(personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt))
+
+pure def lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: int, earliestClearAt: int): bool =
+  earliestClearAt >= signalAt implies personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt)
+```
+
+### A block or a report about a person closes every open opportunity of the pair
+
+A block, a report, and a check-in report about a person who met the reporter all block the pair. Each open opportunity that has both people on it closes: one in review, one that probes, and one that is booked. The members of a booked opportunity hear that it is off, and the message does not say who acted. A block made on another app reaches this app as a person block, and the next tick closes the open opportunities of that pair here too. A check-in report also counts toward the subject's trust score in the same way as a report in a message from someone who met the subject. Added in this revision: before, only a block in a message on the same app closed the pair's opportunities, so a booked opportunity of two people who blocked each other on another app or in a check-in stayed open, and check-in reports never moved the subject to watch or hold (audit ST-D1, ST-D7, SD-229). A group opportunity closes for all its members too, because a plan that keeps both people of a blocked pair would put them in one meeting, and a plan that drops only one of them would tell the others or the person who is dropped that something happened between them. A friends plan does not seat a member next to a person that the member blocked (`planFriendSeatFits`), so only a block made after the plan formed closes it. The pair's opportunities close before the report is filed, because a report from someone who met the subject can hold the subject, and that hold would otherwise close a shared booking as "participant dropped" with no word to the other person. The cancellation of a booked opportunity goes to every participant except the person who acted, when that person is known (a block or a report in a message, a check-in report); when the tick finds a block from the snapshot, the actor is not known and every participant hears it. Changed in this revision: the law that only repeated the decision is gone, and the cancellation recipient rule is now a checked decision (`pairBlockCancellationGoesTo`) that the network calls.
+
+```quint
+pure def pairOpportunityClosesOnBlock(open: bool, bothOnIt: bool): bool = open and bothOnIt
+
+pure def pairBlockCancellationGoesTo(booked: bool, actorKnown: bool, isActor: bool): bool =
+  booked and (not(actorKnown) or not(isActor))
+
+pure def lawOtherOpportunitiesStay(open: bool, bothOnIt: bool): bool =
+  not(bothOnIt) implies not(pairOpportunityClosesOnBlock(open, bothOnIt))
+
+pure def lawAClosedOpportunityStaysClosed(bothOnIt: bool): bool =
+  not(pairOpportunityClosesOnBlock(false, bothOnIt))
+
+pure def lawTheKnownActorGetsNoCancellation(booked: bool): bool =
+  not(pairBlockCancellationGoesTo(booked, true, true))
+
+pure def lawTheOthersOfABookingHearItIsOff(actorKnown: bool): bool =
+  pairBlockCancellationGoesTo(true, actorKnown, false)
+
+pure def lawWithAnUnknownActorEveryParticipantHears(isActor: bool): bool =
+  pairBlockCancellationGoesTo(true, false, isActor)
+
+pure def lawNoCancellationBeforeABooking(actorKnown: bool, isActor: bool): bool =
+  not(pairBlockCancellationGoesTo(false, actorKnown, isActor))
+```

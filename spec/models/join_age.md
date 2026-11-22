@@ -275,6 +275,11 @@ module join_age {
   // S:957-981 route (one shared line; a whole-message keyword names the app). The apps a text can go to:
   // one app, or (rule 4, the newest open item or the last writer) any of the member's apps, or (a staff
   // invite) any invited app (`find` takes the first row).
+  // 2026-11-22 (spec/lineRouting.md, "A block, a report and the answer to "Who do you mean?" go to the app where
+  // they belong"): a safety claim picks one of the member's apps after the keyword and before rule 3. The model has no
+  // block, report or "Who do you mean?" state, so it never makes a safety claim; a claimed app is always in mine(d).
+  // The code also never lets an answer claim take a join answer with an age (m.age >= 0 with a pending join for an
+  // app not in mine(d)), so pendRoute keeps every reply that rule 3 takes in the model.
   pure def mine(d: Db): Set[str] = APPS.filter(a => d.net.get(a).exists)
   pure def invitedApps(d: Db): Set[str] = APPS.filter(a => d.mstate.get(a) == "invited")
   // Route rule 3: a join the person started takes a reply that reads as a join answer (or any reply of a

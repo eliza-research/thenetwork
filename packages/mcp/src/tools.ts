@@ -118,7 +118,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "prepare_signup", title: "Save my signup draft",
-      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. To finish signup, the person connects again and chooses Finish signup on the connection page, which shows the draft to approve or correct. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. To finish signup, the person connects again, chooses Finish signup on the connection page and enters the approved details there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, next_step: text }),
       annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -287,9 +287,8 @@ function publicInfo(a: McpApp, surface: Surface) {
 
 const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoined", invited: "Invited", onboarding: "Onboarding", active: "Active", stopped: "Stopped", on_hold: "OnHold" };
 
-/** spec/connectorTools.md, "The member status decides which member tool can act": the join path from a live connection. */
 const connectAgain = (a: McpApp) =>
-  `disconnect ${a.name} in your agent's connector settings, then connect it again. On the connection page, choose Finish signup, check your details and the text message terms, then allow access.`;
+  `disconnect ${a.name} in your agent's connector settings, then connect it again. On the connection page, choose Finish signup, enter your details, check the text message terms, then allow access.`;
 const textKeyword = (a: McpApp) => (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : "");
 
 const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
@@ -395,11 +394,15 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const member = stepDraftPreparation(owned, { type: "observeMembership", status });
       if (member.phase !== "WriteDraft") return { kind: "error", message: "This person already has a membership here. Use check_status for the next step." };
       const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: signupDraftDeadline(c.now + signupDraftLifetimeMs, g.expiresAt) }, c.now);
-      const finished = stepDraftPreparation(member, { type: "observeWrite", saved });
+      const written = stepDraftPreparation(member, { type: "observeWrite", saved });
+      if (written.phase !== "RecheckAge") return { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
+      const finished = stepDraftPreparation(written, { type: "observeAgeAfterWrite", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app) });
+      if (finished.phase !== "Prepared") {
+        await store.deleteSignupDrafts(g.phoneKey, g.app);
+        return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
+      }
       const a = c.apps[g.app];
-      return finished.phase === "Prepared"
-        ? { kind: "ok", data: { prepared: true, app: g.app, next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. To finish signup, ${connectAgain(a)} The page shows the saved first name and home city to check.` } }
-        : { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
+      return { kind: "ok", data: { prepared: true, app: g.app, next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. To finish signup, ${connectAgain(a)} On that page, enter the first name and home city that the person approved in this conversation.` } };
     }
     case "check_status": {
       const g = c.grant;

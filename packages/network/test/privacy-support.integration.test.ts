@@ -1,7 +1,8 @@
 // Story F24 through the staff port and a real backup and restore on the dev Postgres (:54339).
 // spec/accountPrivacy.md, "Story: Staff carry out an export or erasure request sent to support"
 // spec/databaseRestore.md, "Story: Carry privacy changes made after the backup into the restored database"
-import { findExecutable } from "../../core/src/runtime/process.ts";
+import { findExecutable, spawnProcess } from "../../core/src/runtime/process.ts";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -26,6 +27,9 @@ const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/p
 const USER = process.env.USER ?? "postgres";
 const DB = `network_privacy_support_test_${process.pid}`;
 const RESTORED = `restore_privacy_${process.pid}`;
+const RESTORED_LOST = `restore_privacy_lost_${process.pid}`;
+const BOOTED = `restore_privacy_boot_${process.pid}`;
+const BOOT_ROLE = `privacy_boot_${process.pid}`;
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 const urlOf = (db: string) => `postgres://${USER}@localhost:${DEV_PG_PORT}/${db}`;
 async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
@@ -82,6 +86,8 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     await devPgUp();
     await admin(`drop database if exists ${DB} with (force)`);
     await admin(`drop database if exists ${RESTORED} with (force)`);
+    await admin(`drop database if exists ${RESTORED_LOST} with (force)`);
+    await admin(`drop database if exists ${BOOTED} with (force)`);
     await admin(`create database ${DB}`);
     sql = new SQL({ url: urlOf(DB), max: 2 });
   }, T);
@@ -90,6 +96,10 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
     await sql?.close();
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
     await admin(`drop database if exists ${RESTORED} with (force)`).catch(() => {});
+    await admin(`drop database if exists ${RESTORED_LOST} with (force)`).catch(() => {});
+    await admin(`drop database if exists ${BOOTED} with (force)`).catch(() => {});
+    await admin(`drop role if exists ${BOOT_ROLE}`).catch(() => {});
+    await admin(`drop role if exists ${BOOT_ROLE}_events`).catch(() => {});
   });
   const fresh = () => applySchema(urlOf(DB), { reset: true, lockTimeout: "5s" });
 
@@ -163,9 +173,22 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
 
     // A queued text of the banned number in the backup: the restore must not keep it.
     await sql`insert into platform.pending_texts (phone_hash, kind, app_id, name, at) values (${s.accounts.phoneHash(banning)}, 'share', 'friends', 'Flo', ${new Date(clock.now())})`;
+    for (const [id, status] of [["restore_text_sent", "pending"], ["restore_text_gone", "pending"], ["restore_text_waiting", "pending"],
+      ["restore_text_parked", "parked_leak_review"], ["restore_text_released", "parked_leak_review"], ["restore_text_doubt", "send_unknown"]] as const) {
+      await sql`insert into platform.outbound (id, app_id, member_id, line, to_address, kind, body, fingerprint, time_zone, status, next_attempt_at, created_at, updated_at)
+        values (${id}, 'slop', null, '+12125550190', ${newPhone()}, 'transactional', 'restore fixture', ${`fixture-${id}`}, 'UTC', ${status},
+          ${new Date(clock.now() + 60 * MINUTE)}, ${new Date(clock.now())}, ${new Date(clock.now())})`;
+    }
     const dir = await mkdtemp(join(tmpdir(), "privacy-restore-"));
     try {
       await backup({ url: urlOf(DB), outDir: dir, roles: false });
+      await sql`update platform.outbound set status = 'sent', attempts = 1, sent_at = ${new Date(clock.now())}, updated_at = ${new Date(clock.now())},
+        provider_message_id = 'restore_fixture_provider_id' where id = 'restore_text_sent'`;
+      await sql`delete from platform.outbound where id = 'restore_text_gone'`;
+      await sql`update platform.outbound set status = 'sent', attempts = 1, sent_at = ${new Date(clock.now())}, updated_at = ${new Date(clock.now())},
+        provider_message_id = 'restore_fixture_released_id', leak_released_by = 'staff:adm' where id = 'restore_text_released'`;
+      await sql`update platform.outbound set status = 'sent', updated_at = ${new Date(clock.now())},
+        provider_message_id = 'restore_fixture_doubt_id' where id = 'restore_text_doubt'`;
 
       expect(await s.accounts.deleteAll({ e164: erasing, personId: erased.id })).toBe(true);
       // An erasure, then a new join of another app by the same number: the join revives the tombstone.
@@ -191,6 +214,16 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       // The leave is an opt-out of friends too: its STOP item finds the membership already left.
       expect(restored.privacy).toMatchObject({ erasures: 2, leaves: 1, stops: 2 });
       expect(restored.privacy!.bans).toBeGreaterThan(0);
+      expect(restored.privacy!.textsEnded).toBeGreaterThanOrEqual(1);
+      const lost = await restore({ serverUrl: ADMIN_URL, db: RESTORED_LOST, dir, keepPrivileges: true, sourceLost: true });
+      expect(lost.texts!.textsEnded).toBeGreaterThanOrEqual(3);
+      const lostSql = new SQL({ url: urlOf(RESTORED_LOST), max: 1 });
+      try {
+        expect(await lostSql`select id, status from platform.outbound where id like 'restore_text_%' order by id`).toEqual([
+          { id: "restore_text_doubt", status: "send_unknown" }, { id: "restore_text_gone", status: "expired" }, { id: "restore_text_parked", status: "expired" },
+          { id: "restore_text_released", status: "expired" }, { id: "restore_text_sent", status: "expired" }, { id: "restore_text_waiting", status: "expired" },
+        ]);
+      } finally { await lostSql.close(); }
     } finally { await rm(dir, { recursive: true, force: true }); }
 
     const { s: back } = service(clock, RESTORED);
@@ -205,6 +238,16 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       // who joined after the backup keeps that person's phone hash.
       expect(await back.accounts.banned(late)).toBe(true);
       expect(await restoredSql`select count(*)::int as n from platform.pending_texts where phone_hash = ${back.accounts.phoneHash(banning)}`).toEqual([{ n: 0 }]);
+      // spec/databaseRestore.md, "A restored text that is not settled takes the source's outcome, or ends"
+      expect(await restoredSql`select id, status, provider_message_id, to_address is null as address_dropped from platform.outbound
+        where id like 'restore_text_%' order by id`).toEqual([
+        { id: "restore_text_doubt", status: "sent", provider_message_id: "restore_fixture_doubt_id", address_dropped: false },
+        { id: "restore_text_gone", status: "expired", provider_message_id: null, address_dropped: true },
+        { id: "restore_text_parked", status: "parked_leak_review", provider_message_id: null, address_dropped: false },
+        { id: "restore_text_released", status: "sent", provider_message_id: "restore_fixture_released_id", address_dropped: false },
+        { id: "restore_text_sent", status: "sent", provider_message_id: "restore_fixture_provider_id", address_dropped: false },
+        { id: "restore_text_waiting", status: "pending", provider_message_id: null, address_dropped: false },
+      ]);
 
       // spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"
       // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
@@ -260,5 +303,76 @@ describe.skipIf(!pgAvailable)("support export and erasure, and the privacy repla
       await (mcp?.store as unknown as { close?(): Promise<void> } | undefined)?.close?.();
       await restoredSql.close();
     }
+  }, T);
+
+  // spec/databaseRestore.md, "The backend runs a queued erasure or leave only after the connector hooks are registered"
+  test("the deployed backend entry registers the connector hooks before the start-up replay removes a restored grant", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const erasing = newPhone();
+    await joinByText(s, clock, erasing, "slop", "Kai");
+    const erased = (await s.accounts.personFor(erasing))!;
+    await sql`insert into oauth.clients (id, redirect_uris, auth_method, app_id, surface, kind, created_at)
+      values ('client_boot', '{https://client.example/callback}', 'none', 'slop', 'full', 'dcr', ${new Date(clock.now())})`;
+    await sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at)
+      values ('grant_boot', 'client_boot', 'slop', ${s.accounts.phoneHash(erasing)}, ${erased.id}, '{membership:read}', 'https://slop.date/mcp',
+        ${new Date(clock.now())}, ${new Date(clock.now() + 30 * 24 * 60 * MINUTE)})`;
+    const dir = await mkdtemp(join(tmpdir(), "privacy-boot-"));
+    try {
+      await backup({ url: urlOf(DB), outDir: dir, roles: false });
+      expect(await s.accounts.deleteAll({ e164: erasing, personId: erased.id })).toBe(true);
+      await s.close();
+      const restored = await restore({ serverUrl: ADMIN_URL, db: BOOTED, dir, keepPrivileges: true, replayFrom: urlOf(DB) });
+      expect(restored.privacy).toMatchObject({ erasures: 1 });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+
+    const owner = new SQL({ url: urlOf(BOOTED), max: 1 });
+    try {
+      await owner.unsafe(`drop role if exists ${BOOT_ROLE}`).catch(() => {});
+      await owner.unsafe(`create role ${BOOT_ROLE} login nosuperuser nobypassrls`);
+      await owner.unsafe(`grant network_service to ${BOOT_ROLE}`);
+      await owner.unsafe(`grant connect on database ${BOOTED} to ${BOOT_ROLE}`);
+      await owner.unsafe(`drop role if exists ${BOOT_ROLE}_events`).catch(() => {});
+      await owner.unsafe(`create role ${BOOT_ROLE}_events login nosuperuser nobypassrls`);
+      await owner.unsafe(`grant network_public_event_ingest to ${BOOT_ROLE}_events`);
+      await owner.unsafe(`grant connect on database ${BOOTED} to ${BOOT_ROLE}_events`);
+      await owner`delete from network.public_event_imports`;
+      await owner`insert into network.public_event_imports (source, checked_at) values ('nyc-parks', now())`;
+      expect(await owner`select count(*)::int as n from oauth.grants where person_id = ${erased.id}`).toEqual([{ n: 1 }]);
+    } finally { await owner.close(); }
+
+    const port = 40000 + (process.pid % 10000);
+    const login = (role: string) => Object.assign(new URL(urlOf(BOOTED)), { username: role }).toString();
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => v !== undefined && k !== "DATABASE_URL" && k !== "PORT" &&
+      !/^(PLATFORM_|NETWORK_|BLOOIO_|OTP_|TWILIO_|TURNSTILE_|LEAK_|SERVICE_|MIGRAT|NTWRK_|ALERT_|BACKEND_|STAFF_|[A-Z]+_LIVE_APPROVED$)/.test(k))) as Record<string, string>;
+    const env: Record<string, string> = {
+      ...inherited, NODE_ENV: "", PLATFORM_ENV: "staging", PLATFORM_DB_ENVIRONMENT_INIT: "1", MIGRATE_ON_BOOT: "0",
+      DATABASE_URL: login(BOOT_ROLE), MIGRATION_DATABASE_URL: urlOf(BOOTED), NETWORK_PUBLIC_EVENTS_DATABASE_URL: login(`${BOOT_ROLE}_events`),
+      PORT: String(port), STAFF_PORT: String(port + 1), TICK_MS: "3600000", BUILD_ID: "privacy-boot",
+      PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "p".repeat(40),
+      TURNSTILE_SECRET_KEY: "fixture", TURNSTILE_SITE_KEY: "fixture-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfixture",
+      TWILIO_AUTH_TOKEN: "fixture", TWILIO_VERIFY_SERVICE_SID: "VAfixture", SERVICE_TURN_SECRET: "t".repeat(40),
+      NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
+    };
+    const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/../../../deploy/backend/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
+    const out = new Response(proc.stdout).text();
+    const err = new Response(proc.stderr).text();
+    const check = new SQL({ url: urlOf(BOOTED), max: 1 });
+    try {
+      let healthy = false;
+      for (let i = 0; i < 900 && !healthy; i++) {
+        await sleep(100);
+        healthy = await fetch(`http://127.0.0.1:${port}/healthz`).then(r => r.status === 200, () => false);
+      }
+      if (!healthy) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").slice(-8).join("\n")}\n${await err}`); }
+      expect(await check`select count(*)::int as n from oauth.grants where person_id = ${erased.id}`).toEqual([{ n: 0 }]);
+      expect(await check`select kind, outcome, replayed_at is not null as done from platform.privacy_replay where kind = 'erase'`).toEqual([{ kind: "erase", outcome: "applied", done: true }]);
+    } finally {
+      proc.kill("SIGTERM");
+      await check.close();
+    }
+    expect(await proc.exited).toBe(0);
+    expect(await out).toMatch(/"msg":"mcp".*"enabled":true/);
   }, T);
 });

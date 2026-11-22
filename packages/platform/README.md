@@ -2,7 +2,11 @@
 
 One backend for four apps: ntwrk (ntwrk.party), slop (slop.date), peon (peon.biz) and friends (friends.help). The plan is `docs/research/2026-10-08-platform-architecture.md`. The scope is PRD Section 40. Local dev for everything: [docs/runbook-platform.md](../../docs/runbook-platform.md).
 
-The founder decisions of 2026-10-08 (AGENTS.md) are in the code: app id `friends` (migration 0007 renames old rows), 13+ to join every app and 18+ to be matched, one line for every app with keyword routing, STOP stops every app and "leave <app>" leaves one.
+The founder decisions of 2026-10-08 ([spec/product/source/founder-decisions.md](../../spec/product/source/founder-decisions.md), "Platform decisions") are in the code: app id `friends` (migration 0007 renames old rows), 13+ to join every app and 18+ to be matched, one line for every app with keyword routing, STOP stops every app and "leave <app>" leaves one.
+
+The policy values in `src/apps.ts` match the `platform.apps` rows (migrations 0003 and 0007). A running server reads the database rows. Code that has no database (the simulator) reads `src/apps.ts`. Change a value in both places.
+
+`Accounts.stop` writes the opt-out to the consent ledger first, because the send path reads the ledger. Then the stop hooks pause the person's members. A global stop pauses the members of every app, also when the person has no membership on the app where the stop started. `POST /api/me/stop` calls `Accounts.stop`; `POST /api/me/delete` with `{scope: "app"}` leaves one app.
 
 This package holds what the apps share: people, verified phones, memberships per app, the consent ledger per app, share grants, blocks, web OTP login, sessions and the public API. The engine tables stay in the `network` schema. A member id belongs to one app.
 
@@ -13,9 +17,9 @@ This package holds what the apps share: people, verified phones, memberships per
 | `src/apps.ts` | The app list, policy defaults, brand texts (STOP, START, HELP), the canonical opt-in wording, the host maps (production; dev adds localhost), the shared-line keywords, "what are you looking for" |
 | `src/age.ts` | `canJoinApp`, `canMatchInApp`, lowest age wins (built on `packages/core/src/policy.ts`) |
 | `src/phone.ts` | E.164 for US and Canadian numbers only (no Caribbean, toll-free or premium codes), masking, keyed hashes |
-| `src/consent.ts` | STOP (and opt-outs in the person's own words, English and Spanish) for every app, `leave <app>` for one, START for one app, `PLATFORM_STOP_SCOPE=app` for an app's own line |
+| `src/consent.ts` | The consent ledger per app: STOP (and opt-outs in the person's own words, English and Spanish) for every app, `leave <app>` for one, START for one app, `PLATFORM_STOP_SCOPE=app` for an app's own line. The ledger reads the last event per (phone, app) and per (phone, every app). A global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it ([spec/carrierConsent.md](../../spec/carrierConsent.md)). |
 | `src/proxy.ts` | The trusted proxy: header classification, signing (HMAC over method, path, host, client IP, time), and signature verification. The deployed router is `deploy/router.ts`. |
-| `src/store.ts`, `src/pg-store.ts` | `PeopleStore`: `MemoryPeopleStore` and `PgPeopleStore` (the `platform` schema) |
+| `src/store.ts`, `src/pg-store.ts` | `PeopleStore`: `MemoryPeopleStore` and `PgPeopleStore` (the `platform` schema). `hit` counts one hit in a fixed window atomically. With a rule, a hit that would pass the limit or come within the gap is refused and not counted (`ok: false`), so a refused hit never extends a lock. It returns the count with this hit (also when refused: the stored count plus one) and the last counted hit before it. |
 | `src/otp.ts` | `OtpService` (3 sends per number per hour, 10 per IP per hour, 30 s gap, 10 min expiry, 5 tries), `TwilioVerifyProvider`, `DevConsoleProvider` |
 | `src/turnstile.ts` | Cloudflare Turnstile check; a dev bypass that refuses production |
 | `src/sessions.ts` | Random 32-byte tokens, only a keyed hash is stored, one app each, 30 days, rotation after a day, 90 days at most from the login, step-up for delete everything |
@@ -46,9 +50,7 @@ Omitted home keeps the legacy runtime default.
 | `POST /api/auth/logout` | `{ok:true}`, cookie cleared |
 | `GET /api/me` | 401, or `{app, phoneMasked, membership, smsOptedIn, canJoin, reason?}` |
 | `POST /api/join {firstName, age, homeCity?, neighborhood?, zip?, interests?, about?, consent: {sms: true, wording?, version?}}` | `{ok:true, membership}` or `400 under_age \| invite_only \| invalid \| consent_wording`. Supply the app's current wording or version from `GET /api/app`. If both are supplied, both must match. |
-| `POST /api/me/share {fromApp, fields}` | Stores a base-profile grant (`first_name`, `city`, `age_band`, `interests`). No site shows it. |
 | `GET /api/me/export` | This app's data only |
-| `POST /api/me/share/revoke {fromApp}` | Revokes a grant. The same answer either way. |
 | `POST /api/me/stop` | Opts out of every app on this number (PRD 40.3) |
 | `POST /api/me/delete {scope: "app" \| "all"}` | Leave this app (the forget path), or delete every membership and the phone (a tombstone, the blocks, the age floor and a suppression hash stay). `all` needs a login in the last 10 minutes (403 `reauth`). |
 | `GET /api/app` | `{id, name, domain, joinMode, minJoinAge, minMatchAge, keywords, poweredBy, consent: {version, text}}` |
@@ -75,12 +77,11 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 
 ## Rules the code keeps
 
-- Nothing crosses apps by default. A share grant names base-profile fields only. Sensitive classes are never shareable.
+- Nothing crosses apps by default. A share grant names base-profile fields only. Sensitive classes are never shareable. The only way to make a grant is the text SHARE reply, which grants `interests` only (spec/baseProfileShare.md). The sites have no share route: the 2026-10-19 correction removed the website account portal.
 - No enumeration: `/api/auth/otp/start` gives the same answer, after at least the same time, for a known and an unknown phone.
 - An under-age join stores nothing for that app. The age goes to the phone's age floor (`platform.age_floor`: a keyed phone hash and an age), so a retry with an older age is refused, also after a delete of everything. `/api/me` does not show the age: `canJoin` stays true until the join is refused.
 - A number not seen for 12 months is put on hold at its next login or message (`phone_identities.hold`). While it is held it has no person: `/api/me` says `reason: "review"`, and export, leave, delete and join are refused. Staff decide with `Accounts.clearHold` (the service's `/holds` route).
 - A delete of everything leaves a suppression hash. A staff invite to that number is refused; a new join by the person lifts it.
-- `/api/me/share` gives the same answer whether or not a grant was stored.
 - OTP: 3 codes per number per hour across every app, 10 per IP, a 30 s gap, a global budget (500 an hour), and 10 code checks per number and 30 per IP an hour.
 - The dev OTP console, the Turnstile bypass, the dev hash key and the trusted `X-Forwarded-Host` run only with `PLATFORM_ENV=dev`.
 - A photo rating is checked before the rater runs, again when it returns and again after it is written: a person whose lowest age drops under 18, who is banned, who leaves, or whose rated photo is deleted meanwhile keeps no rating. Each rater try is a `photo_rating` row in the cost ledger.
@@ -88,11 +89,12 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 
 ## Validation
 
-The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Integration tests on Postgres are allowed (founder decision 4 of 2026-10-09): `test/photos.test.ts` covers the metadata strip corpus, the photo rules and the rating race. Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `pnpm run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `pnpm run sim` (evals/opt-out.jsonl).
+The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Integration tests on Postgres are allowed (founder decision 4 of 2026-10-09): `test/photos.test.ts` covers the metadata strip corpus, the photo rules and the rating race. It checks private member photos on Postgres: adults only, consent to the current wording, metadata stripped by an allowlist, no public URL, short signed staff links, no rater call for a person who is not a rateable adult member, a rating discarded when the person stops being one or a selected photo loses its bytes, one cost row for each rater try, and every photo deleted on leave, on delete everything or on a minor age. It runs PgPeopleStore and PgPhotoStore on a database of its own, a temporary folder for the bytes and R2PhotoStorage on a local S3-compatible bucket, with no Workers AI. Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `pnpm run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `pnpm run sim` (evals/opt-out.jsonl).
 
 ## Known gaps
 
-- Not built: the carrier lookup (VoIP, landline, recent port), Turnstile on the sites, the share UI, an engine view that reads share grants, the demo replay, and the app-specific tables (peon orgs, roles, applications; slop dating preferences; `facets.sensitive_class`).
+- Not built: the carrier lookup (VoIP, landline, recent port), Turnstile on the sites, an engine view that reads share grants, the demo replay, and the app-specific tables (peon orgs, roles, applications; slop dating preferences; `facets.sensitive_class`).
+- A member takes a SHARE back with the text reply UNSHARE on an app. It revokes every live grant that reads from that app or into it (spec/baseProfileShare.md). A ban, leaving one of the two apps (`forgetMembership`) or delete everything also sets `revoked_at` or removes the grant. Interests that a SHARE already copied stay as facts of the joined app.
 - Code imports `@thenetwork/platform` by relative path.
 
 ### Optional Blooio OTP transport

@@ -19,17 +19,11 @@ export interface SuggestionTurnIdentity {
   personId: string; memberId: string; app: AppId; channel: "blooio" | "twilio"; messageId: string;
   action: "preview" | "decide" | "delete" | "collect"; batchId: string; commandSha256: string;
   networkAuthority?: NetworkRouteAuthorityV1;
-  /** Requested retention deadline derived from the validated collection proposal. */
   pendingExpiresAt?: number;
-  /** Validated collection proposal; canonical stored turn remains the authority. */
   collectionProposal?: SuggestionProposal;
 }
-/** Cloud supplies its existing trusted binding lookup, never model-provided identity fields.
- * It must recheck the current user/org/chat binding and revocation using this transaction.
- */
 export type SuggestionIdentityResolver = (turn: SuggestionTurnIdentity, tx: SQL) => Promise<(Pick<SuggestionOwner, "userId" | "organizationId" | "chatId"> & {
   validUntil?: number;
-  /** Server-local transaction fence; never serialized or supplied in the request body. */
   valid?: () => boolean;
 }) | null>;
 
@@ -42,7 +36,6 @@ const json = (value: unknown, status = 200) => Response.json(value, { status, he
 const validId = (v: unknown, max: number): v is string => typeof v === "string" && !!v.trim() && v.length <= max && !/[\u0000-\u001f\u007f]/u.test(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(v);
 
-/** Internal-only review wire. Every store transaction rechecks the canonical turn and Cloud binding. */
 export async function profileSuggestionEndpoint(d: SuggestionEndpointDeps, req: Request): Promise<Response> {
   const url = new URL(req.url), action = url.pathname.slice(SUGGESTION_PATH.length);
   if (!["preview", "decide", "delete", "collect"].includes(action)) return json({ error: "not_found" }, 404);
@@ -68,7 +61,6 @@ export async function profileSuggestionEndpoint(d: SuggestionEndpointDeps, req: 
   const channel = b.channel, messageId = b.messageId, batchId = b.batchId;
   let proofValidUntil: number | undefined;
   let proofValid: (() => boolean) | undefined;
-  // Resolve the person from the signed, completed open turn. Model identity fields are not accepted.
   const resolve = async (tx: SQL): Promise<SuggestionOwner | null> => {
     if (!routeEnvelopeAllowed(d.routePolicy, b.networkAuthority, d.now())) return null;
     const [turn] = await tx`select sender_hash,response,network_authority,arrived_at from platform.inbound where id=${`msg:${channel}:${messageId}`} and status='done'`;
@@ -114,7 +106,6 @@ export async function profileSuggestionEndpoint(d: SuggestionEndpointDeps, req: 
     }
     const denied = () => json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
     const deleted = () => json({ kind: "deleted", reviewText: "Deleted these suggestions and their linked saved facts." });
-    // spec/profileSuggestionReview.md, "A retried review command returns its stored result"
     const claim = { turnId: `msg:${channel}:${messageId}`, requestSha256: createHash("sha256").update(raw).digest("hex") };
     const reply = (result: StoredReviewResult | null | undefined) => {
       if (!result || result.kind === "denied") return denied();
@@ -136,12 +127,10 @@ export async function profileSuggestionEndpoint(d: SuggestionEndpointDeps, req: 
     if (!batch || !reviewText) return json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
     return json({ kind: "preview", batch, reviewText });
   } catch {
-    // No source text, connection details, or database error crosses the internal wire.
     return json({ error: "review_unavailable" }, 503);
   }
 }
 
-/** The internal collection wire accepts only bounded minimal suggestions, never raw source objects. */
 function parseCollectionProposal(value: unknown): SuggestionProposal | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const p = value as Record<string, unknown>;

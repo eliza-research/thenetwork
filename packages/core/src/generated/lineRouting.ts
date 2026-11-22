@@ -1,7 +1,7 @@
 // GENERATED from spec/lineRouting.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 import { minMemberAge as memberAge_minMemberAge, maxAge as memberAge_maxAge, adultAge as memberAge_adultAge, ageInRange as memberAge_ageInRange, lowerAge as memberAge_lowerAge, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, joinableAge as memberAge_joinableAge, matchableAge as memberAge_matchableAge, confirmedUnderage as memberAge_confirmedUnderage, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
-import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, holdSubjectKnown as safetyCase_holdSubjectKnown, immediateDangerReply as safetyCase_immediateDangerReply, emergencyCheckInReport as safetyCase_emergencyCheckInReport, archivedReportHoldAllowed as safetyCase_archivedReportHoldAllowed, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, liveCase as safetyCase_liveCase, markCaseHeld as safetyCase_markCaseHeld, markCaseLifted as safetyCase_markCaseLifted, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, lawEmergencyReplyRequiresOwnText as safetyCase_lawEmergencyReplyRequiresOwnText, lawEmergencyReplyRequiresCurrentDanger as safetyCase_lawEmergencyReplyRequiresCurrentDanger, initial as safetyCase_initial, lawEmergencyCheckInNeedsReceipt as safetyCase_lawEmergencyCheckInNeedsReceipt, reportAfterDecision as safetyCase_reportAfterDecision, canRecordCaseEvent as safetyCase_canRecordCaseEvent, reportRestrictsMatching as safetyCase_reportRestrictsMatching, lawArchivedHoldRequiresExactSubject as safetyCase_lawArchivedHoldRequiresExactSubject, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, minorClearResult as safetyCase_minorClearResult, recordCaseEvent as safetyCase_recordCaseEvent, canMarkCaseHeld as safetyCase_canMarkCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, canCloseCase as safetyCase_canCloseCase, lawDecidedReportDoesNotRestrictMatching as safetyCase_lawDecidedReportDoesNotRestrictMatching, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, carryReportOnAppLeave as safetyCase_carryReportOnAppLeave, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase, lawOnlyOpenReportsCarry as safetyCase_lawOnlyOpenReportsCarry } from "./safetyCase.ts";
+import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, holdSubjectKnown as safetyCase_holdSubjectKnown, immediateDangerReply as safetyCase_immediateDangerReply, emergencyCheckInReport as safetyCase_emergencyCheckInReport, archivedReportHoldAllowed as safetyCase_archivedReportHoldAllowed, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, personMinorSignalOpen as safetyCase_personMinorSignalOpen, pairOpportunityClosesOnBlock as safetyCase_pairOpportunityClosesOnBlock, pairBlockCancellationGoesTo as safetyCase_pairBlockCancellationGoesTo, liveCase as safetyCase_liveCase, markCaseHeld as safetyCase_markCaseHeld, markCaseLifted as safetyCase_markCaseLifted, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, lawEmergencyReplyRequiresOwnText as safetyCase_lawEmergencyReplyRequiresOwnText, lawEmergencyReplyRequiresCurrentDanger as safetyCase_lawEmergencyReplyRequiresCurrentDanger, initial as safetyCase_initial, lawEmergencyCheckInNeedsReceipt as safetyCase_lawEmergencyCheckInNeedsReceipt, reportAfterDecision as safetyCase_reportAfterDecision, canRecordCaseEvent as safetyCase_canRecordCaseEvent, reportRestrictsMatching as safetyCase_reportRestrictsMatching, lawArchivedHoldRequiresExactSubject as safetyCase_lawArchivedHoldRequiresExactSubject, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, minorClearResult as safetyCase_minorClearResult, lawAnUnclearedMinorSignalHoldsThePerson as safetyCase_lawAnUnclearedMinorSignalHoldsThePerson, lawAClearAtOrAfterTheSignalEndsIt as safetyCase_lawAClearAtOrAfterTheSignalEndsIt, lawANewSignalAfterAClearHoldsAgain as safetyCase_lawANewSignalAfterAClearHoldsAgain, lawNoSignalHoldsNobody as safetyCase_lawNoSignalHoldsNobody, personMinorSignalEndsEverywhere as safetyCase_personMinorSignalEndsEverywhere, recordCaseEvent as safetyCase_recordCaseEvent, lawOtherOpportunitiesStay as safetyCase_lawOtherOpportunitiesStay, lawAClosedOpportunityStaysClosed as safetyCase_lawAClosedOpportunityStaysClosed, lawTheKnownActorGetsNoCancellation as safetyCase_lawTheKnownActorGetsNoCancellation, lawTheOthersOfABookingHearItIsOff as safetyCase_lawTheOthersOfABookingHearItIsOff, lawWithAnUnknownActorEveryParticipantHears as safetyCase_lawWithAnUnknownActorEveryParticipantHears, lawNoCancellationBeforeABooking as safetyCase_lawNoCancellationBeforeABooking, canMarkCaseHeld as safetyCase_canMarkCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, canCloseCase as safetyCase_canCloseCase, lawDecidedReportDoesNotRestrictMatching as safetyCase_lawDecidedReportDoesNotRestrictMatching, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, carryReportOnAppLeave as safetyCase_carryReportOnAppLeave, lawAnUnclearedMembershipKeepsThePersonSignal as safetyCase_lawAnUnclearedMembershipKeepsThePersonSignal, lawASignalAfterTheEarliestClearStays as safetyCase_lawASignalAfterTheEarliestClearStays, lawClearsAtOrAfterTheSignalEverywhereEndIt as safetyCase_lawClearsAtOrAfterTheSignalEverywhereEndIt, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase, lawOnlyOpenReportsCarry as safetyCase_lawOnlyOpenReportsCarry } from "./safetyCase.ts";
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 export type LineGatePhase = "LineAwaitingCommand" | "LineAwaitingBan" | "LineAwaitingAge" | "LineAwaitingInviteDecline" | "LineAwaitingNumberHold" | "LineStopped" | "LineBannedIgnored" | "LineBannedHelp" | "LineAgeDeclined" | "LineUnderageHelp" | "LineInviteDeclined" | "LineNumberHeld" | "LineContinue";
@@ -24,6 +24,8 @@ export type Event =
   | { type: "checkLineInviteDecline"; declines: boolean }
   | { type: "checkLineNumberHold"; held: boolean };
 
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+export const maxWhoAnswerWords: number = 4;
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 export const initial: LineGate = { phase: "LineAwaitingCommand", command: "LineNoCommand", leaveNamed: false, banned: false, underage: false };
 
@@ -301,6 +303,127 @@ export function lawRefusedDatingNeverEnrollsSlop(friends: LookingForMention, wor
 export function lawEverythingAddsUnrefusedApps(friends: LookingForMention, dating: LookingForMention, work: LookingForMention): boolean {
   //@ ensures \result === true
   return !(friends !== "MentionRefused" && dating !== "MentionRefused" && work !== "MentionRefused") || equal_lineRouting(lookingForApps(({ friends: friends, dating: dating, work: work, everything: true } as LookingForReading)), (["friends", "slop", "peon"] as string[]));
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function safetyRouteReadNeeded(memberApps: number, safetyCommand: boolean, words: number): boolean {
+  return memberApps > 1 && (safetyCommand || words <= maxWhoAnswerWords);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function safetyAppReadNeeded(safetyCommand: boolean, questionStored: boolean): boolean {
+  return safetyCommand || questionStored;
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function safetyCommandClaims(meetingAt: number): boolean {
+  return meetingAt >= 0;
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function safetyAnswerClaims(pendingSafetyAt: number, newestOtherMessageAt: number, joinAnswerWithAge: boolean): boolean {
+  return pendingSafetyAt >= 0 && pendingSafetyAt >= newestOtherMessageAt && !joinAnswerWithAge;
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function safetyClaimLeads(claims: boolean, at: number, leadAt: number): boolean {
+  return claims && at > leadAt;
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawLongTextIsNoWhoAnswer(memberApps: number, words: number): boolean {
+  //@ ensures \result === true
+  return !(words > maxWhoAnswerWords) || !safetyRouteReadNeeded(memberApps, false, words);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawCommandIsReadForSeveralApps(memberApps: number, words: number): boolean {
+  //@ ensures \result === true
+  return !(memberApps > 1) || safetyRouteReadNeeded(memberApps, true, words);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawCommandReadsEveryApp(questionStored: boolean): boolean {
+  //@ ensures \result === true
+  return safetyAppReadNeeded(true, questionStored);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawNoStoredQuestionNoAnswerRead(questionStored: boolean): boolean {
+  //@ ensures \result === true
+  return !(!questionStored) || !safetyAppReadNeeded(false, questionStored);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawNoMeetingNoCommandClaim(meetingAt: number): boolean {
+  //@ ensures \result === true
+  return !(meetingAt < 0) || !safetyCommandClaims(meetingAt);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawNoQuestionNoAnswerClaim(newestOtherMessageAt: number, joinAnswerWithAge: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyAnswerClaims(-1, newestOtherMessageAt, joinAnswerWithAge);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawNewerMessageElsewhereKeepsTheAnswer(pendingSafetyAt: number, newestOtherMessageAt: number, joinAnswerWithAge: boolean): boolean {
+  //@ ensures \result === true
+  return !(newestOtherMessageAt > pendingSafetyAt) || !safetyAnswerClaims(pendingSafetyAt, newestOtherMessageAt, joinAnswerWithAge);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawJoinAnswerWithAgeKeepsTheAnswer(pendingSafetyAt: number, newestOtherMessageAt: number): boolean {
+  //@ ensures \result === true
+  return !safetyAnswerClaims(pendingSafetyAt, newestOtherMessageAt, true);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawQuestionAfterEveryMessageClaims(pendingSafetyAt: number, newestOtherMessageAt: number): boolean {
+  //@ ensures \result === true
+  return !(pendingSafetyAt >= 0 && newestOtherMessageAt <= pendingSafetyAt) || safetyAnswerClaims(pendingSafetyAt, newestOtherMessageAt, false);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawNoClaimNeverLeads(at: number, leadAt: number): boolean {
+  //@ ensures \result === true
+  return !safetyClaimLeads(false, at, leadAt);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawFirstClaimLeads(at: number): boolean {
+  //@ ensures \result === true
+  return !(at >= 0) || safetyClaimLeads(true, at, -1);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawEqualTimeKeepsTheLead(at: number): boolean {
+  //@ ensures \result === true
+  return !safetyClaimLeads(true, at, at);
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawOneAppNeedsNoSafetyRead(safetyCommand: boolean, words: number): boolean {
+  //@ ensures \result === true
+  return !safetyRouteReadNeeded(1, safetyCommand, words);
 }
 
 /** Do the rules allow this event in this state? */

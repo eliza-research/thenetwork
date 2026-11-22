@@ -5,6 +5,7 @@ import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
+import { gatheringRsvpReference } from "../service/monthly-gathering-rsvp.ts";
 import { NetworkService } from "../service/service.ts";
 
 test.skipIf(!pgAvailable)("staff grouping review follows current private RSVPs and refuses a stale or blocked grouping", async () => {
@@ -75,6 +76,11 @@ test.skipIf(!pgAvailable)("staff grouping review follows current private RSVPs a
     }
     expect(await preview()).toEqual(current);
     const outbound = await sql`select id from network.messages where direction='outbound' order by id`;
+    const history = await sql`select id,status,kind from platform.outbound order by id`;
+    expect(history).toHaveLength(12);
+    expect(history.every(row => row.status === "collected")).toBe(true);
+    expect(await sql`select id from platform.outbound except select id from network.messages where direction='outbound' and status='collected'`).toEqual([]);
+    expect(await sql`select id from platform.outbound where position(${id} in lower(body)) > 0 or position(${gatheringRsvpReference(id)} in lower(body)) > 0`).toEqual([]);
     const toReview = { revision: 1, fingerprint: current.fingerprint };
     const results = await Promise.all([staff(review, toReview), staff(review, toReview)]);
     expect(results.map(res => res.status)).toEqual([200, 200]);
@@ -100,7 +106,7 @@ test.skipIf(!pgAvailable)("staff grouping review follows current private RSVPs a
     expect(await sql`select actor from network.staff_audit where target_id=${id} and action='approve_monthly_gathering_grouping'`)
       .toEqual([{ actor: "operator@example.test" }, { actor: "operator@example.test" }]);
     expect(await sql`select id from network.messages where direction='outbound' order by id`).toEqual(outbound);
-    expect(await sql`select id from platform.outbound`).toEqual([]);
+    expect(await sql`select id,status,kind from platform.outbound order by id`).toEqual(history);
 
     const withdrawing = people.find(person => person.memberId === repaired.groups[0]![0])!;
     expect((await turn(withdrawing.phone, `WITHDRAW GATHERING ${id} 1`)).status).toBe(200);

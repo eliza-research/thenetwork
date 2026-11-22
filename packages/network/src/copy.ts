@@ -191,7 +191,8 @@ export function copyFor(b: CopyBrand) {
   joinNeedName: "Thanks. And your first name?",
   /** A person who already uses another app with this number joined this one. It never names the other app. */
   linkNotice: "You've used this number with us before. Nothing is shared between apps unless you say so. Reply SHARE to reuse the interests you confirmed before.",
-  shareDone: "Done. I'll reuse the interests you confirmed before. Nothing else is shared.",
+  shareDone: "Done. I'll reuse the interests you confirmed before. Nothing else is shared. Reply UNSHARE to stop sharing from now on.",
+  unshareDone: "Done. Nothing is shared between this app and your other apps now. Interests I already copied stay here until you ask me to remove them.",
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
   notInApp: `You're not in ${b.name}, so there is nothing to leave and nothing changed. Other apps you use with this number are not affected.`,

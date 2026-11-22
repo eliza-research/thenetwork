@@ -271,7 +271,6 @@ function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonl
     out.controls.n++; if (okMsg.photos.length === 1 && okMsg.text.includes(SLOP_PROBE_PHOTO_LINE)) out.controls.ok++;
     const m = minors.length ? minors[i % minors.length]! : undefined;
     const cases: [keyof typeof out.stats, string, Parameters<typeof probePhotoRefs>[0], { age: number | undefined }, Partial<RelayParty>, Partial<RelayParty>][] = [
-      // The live path (network/service/packs.ts) passes photoConsent: SLOP_PROBE_PHOTOS (false) and no ids until a consent text exists.
       ["flagOff", "flag off", { ...sub, photoConsent: false, photoIds: [] }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
       ["noConsent", "no consent", { ...sub, photoConsent: false }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
       ["minor", "minor subject (age slip)", { ...sub, age: 16 }, { age: v.stated.claimedAge }, { age: 16 }, {}],

@@ -73,8 +73,6 @@ async function recipientCurrent(tx: SQL, accounts: GatheringAccounts, app: AppIn
   const current = !!member && await currentGatheringMember(tx, accounts, { app, memberId, e164: address }, event.city, now);
   return gatheringInvitationRecipientCurrent(current, trustedActive, gatheringEventPreference(member?.prefs), event.has_rsvp, event.reserved < event.capacity);
 }
-
-/** The live NYC runtime owns outbound staging; review alone never creates an outbound row. */
 export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, accountsFor: (tx: SQL) => GatheringAccounts, now: () => number): Promise<void> {
   const { app, adapter } = rt;
   if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter) || !adapter.live) return;
@@ -106,8 +104,6 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
     }
   });
 }
-
-/** Match the Network save lock order before serializing with the RSVP and member fences. */
 export async function lockGatheringAdmission(tx: SQL, app: string, runtimeId: string, row: QueueRow, prefix = monthlyGatheringInvitePrefix): Promise<void> {
   const key = gatheringDeliveryEvent(row, prefix);
   if (app !== "ntwrk" || row.app !== app || !key) return;
@@ -115,8 +111,6 @@ export async function lockGatheringAdmission(tx: SQL, app: string, runtimeId: st
   const [event] = await tx<{ venue_kind: string }[]>`select venue_kind from network.monthly_gatherings where app_id=${app} and id=${key.id} for share`;
   if (event?.venue_kind === "listing") await lockPublicEventCatalog(tx);
 }
-
-/** Last app-owned check, inside the persisted outbound claim after the shared send gates. */
 export async function gatheringInvitationAdmission(tx: SQL, app: AppInfo, runtimeId: string, accounts: GatheringAccounts,
   row: QueueRow, now: number): Promise<RecipientCheck> {
   const refused: RecipientCheck = { ok: false, reason: "gathering_invitation_changed" };

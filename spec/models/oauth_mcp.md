@@ -14,6 +14,15 @@ The [signup draft rules](../mcpSignupDraft.md) drive draft preparation, the read
 Finish signup step of the connection page, the deletion after signup, and expiry. A revocation
 no longer erases the draft; it lives at most ten minutes. This model keeps no draft state yet:
 its draft machine left with the retired tool, and the next model pass adds it again.
+A staff ban also deletes the signup drafts of every banned number; because the model keeps no
+draft state, its `ban` action still writes no grant, token or request state.
+The Finish signup enrollment and its stored handoff state ([signup handoff](../agentPhoneHandoff.md))
+are also outside this model; `tests/e2e/connector-signup.e2e.test.ts` covers them.
+
+`witness_minorReadsOwn` is reachable: `minorIntroTest` reaches it in four steps after a connection.
+Random simulation did not reach it within the model's bounds, because `becomeMinor` and an "own"
+`produceItem` were one environment branch among many. `step` now lists them once more as their own
+branch. Like the doubled progress families, this changes only how often the simulator picks them.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -128,7 +137,7 @@ module oauth_mcp {
   def login(p: Platform, n: str): str =
     if (p.holdNum.contains(n) or p.banned.contains(p.owner.get(n))) "held" else p.owner.get(n)
   /**
-   * K:179-186 status -> publicStatus (decisions.ts:27-39). SD-428 fix (K:183-185, serve.ts:91-94): an active
+   * K:179-186 status -> publicStatus (packages/mcp/src/hooks.ts publicStatus). SD-428 fix (K:183-185, serve.ts:91-94): an active
    * member that the app's Network holds reads on_hold.
    */
   def statusOf(p: Platform, person: str, app: str): str =
@@ -138,7 +147,7 @@ module oauth_mcp {
       else if (m == "paused") "stopped" else if (m == "restricted") "on_hold"
       else if (m == "invited") "invited" else "not_joined"
     }
-  /** decisions.ts:18-20 grantStillTheirs. */
+  /** spec/connectorTools.md decideGrantOwner, called by packages/mcp/src/tools.ts checkGrantOwner (samePerson). */
   pure def stillTheirs(atConsent: str, now: str): bool = if (atConsent == NONE) now == NONE else now == atConsent
   def liveG(o: OAuth, g: int): bool = o.grants.get(g).st == "live" and not(o.grants.get(g).expired)
   /** K:159-161 banned(phoneKey, personId): the grant's person, else the number's owner now. */
@@ -397,7 +406,7 @@ module oauth_mcp {
   }
   /**
    * H:614-622 and H:643: a client presents a used code. The grant is revoked as a replay. codeVerdict
-   * (decisions.ts:76-79) reads "used" before "expired": a used code is a replay until the sweep deletes
+   * (spec/oauthTokenLifecycle.md readCode, called by the token route in packages/mcp/src/handler.ts) reads "used" before "expired": a used code is a replay until the sweep deletes
    * its row, also after it expired.
    * Model ghost: the replay is "true" when an earlier exchange of this code completed; "dead" when the
    * grant was not usable before (revoked, expired, or its one code used with no token issued: the
@@ -637,7 +646,7 @@ module oauth_mcp {
   }
 
   // ---------------------------------------------------------------- platform and network actors
-  /** SVC ban: ban rows, suppression, memberships restricted. No OAuth write: the OAuth checks read the ban. */
+  /** SVC ban: ban rows, suppression, memberships restricted. No grant, token or request write: the OAuth checks read the ban. */
   action ban(p: str): bool = all {
     not(pf.banned.contains(p)), phonesOf(pf, p).size() > 0,
     pf' = { ...pf, banned: pf.banned.union(Set(p)),
@@ -830,6 +839,7 @@ module oauth_mcp {
     any {
       flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
       flowFamily(r, c, n, b, b2), clientFamily(r, t), toolFamily(t),
+      any { produceItem(i, p, a, "own", b), becomeMinor(p) },
       // the environment: the person cancels or revokes, a process stops, clocks and the sweep,
       // the network and its inbox, staff and account changes
       any {
@@ -889,7 +899,7 @@ module oauth_mcp {
   val revokedTerminal = gh.revokedEver.forall(g => oa.grants.get(g).st != "live")
 
   /**
-   * INV-G2, INV-OB1 (tools.ts:249, decisions.ts:11-20, README "New owner"): a tool serves data only on a live grant, and only
+   * INV-G2, INV-OB1 (tools.ts checkGrantOwner, spec/connectorTools.md decideGrantOwner, README "New owner"): a tool serves data only on a live grant, and only
    * about the person who consented.
    */
   val servedOnLiveOwnGrant =
@@ -943,7 +953,7 @@ module oauth_mcp {
       and oa.grants.get(g).phone == na._1 and oa.grants.get(g).app == na._2)))
 
   /**
-   * SD-428. T:310 "the profile never reaches a stopped or held one"; decisions.ts:27-39 and K:183-185 a held member reads
+   * SD-428. T:310 "the profile never reaches a stopped or held one"; hooks.ts publicStatus and K:183-185 a held member reads
    * on_hold. A staff hold must not read "active" nor accept a profile.
    */
   val heldIsHeld =

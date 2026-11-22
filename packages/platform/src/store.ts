@@ -165,11 +165,6 @@ export interface PeopleStore {
   attachPerson(e164: string, personId: string, joiningSession: string | null, at: number): Promise<void>;
   endUnboundAccess(e164: string, phoneHash: string, at: number): Promise<void>;
 
-  /**
-   * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
-   * within the gap is refused and not counted (ok false), so refused hits never extend a lock.
-   * Returns the count with this hit (or the count so far when refused) and the last counted hit before it.
-   */
   hit(bucket: string, windowMs: number, at: number, rule?: HitRule): Promise<HitResult>;
   hitAll<T>(buckets: readonly RateBucket[], at: number, decide: (seen: RateBucketRead[]) => { count: boolean; value: T }): Promise<T>;
 
