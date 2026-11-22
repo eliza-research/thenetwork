@@ -279,3 +279,31 @@
 {"text":"I am 12 and my team won.","teen":true,"age":12}
 {"text":"If I just turned 12 and we won, I would be happy.","teen":false}
 {"text":"She said \"I just turned 12 and we won.\"","teen":false}
+{"text":"I'm 17 and a half and want a gf","teen":true,"age":17}
+{"text":"i'm 16 and a half now","teen":true,"age":16}
+{"text":"I'm 17 and a half too","teen":true,"age":17}
+{"text":"i'm 17.5 now","teen":true,"age":17}
+{"text":"I'm 16.5 and bored","teen":true,"age":16}
+{"text":"I'm 15 and 3 months","teen":true,"age":15}
+{"text":"I'm 17 and 11 months","teen":true,"age":17}
+{"text":"I'm 17 and 3/4","teen":true,"age":17}
+{"text":"I'm 5.5","teen":false}
+{"text":"I'm 5 1/2, slim","teen":false}
+{"text":"I'm 15 and a half minutes away","teen":false}
+{"text":"I'm 13.5 miles away","teen":false}
+{"text":"I'm 7.5 years old.","teen":true,"age":7}
+{"text":"I'm 5 1/2 years old.","teen":true,"age":5}
+{"text":"I'm 12 and 3 months old.","teen":true,"age":12}
+{"text":"I'm 12 years and 3 months old.","teen":true,"age":12}
+{"text":"I'm 17 years and 3 months old.","teen":true,"age":17}
+{"text":"I'm 14 and a quarter.","teen":true,"age":14}
+{"text":"I'm 16y.o. I live in NYC.","teen":true,"age":16}
+{"text":"I'm 16y.o., in two years.","teen":false}
+{"text":"I'm 5.5 feet tall.","teen":false}
+{"text":"I'm 12 and 3 months.","teen":false}
+{"text":"I'm 12 and 3 months sober.","teen":false}
+{"text":"I'm 12 years and 3 months sober.","teen":false}
+{"text":"I'm 12 and 3 months old, in two years.","teen":false}
+{"text":"I'm 12 years and 3 months old in two years.","teen":false}
+{"text":"He said \"I am 17 and 3 months old\".","teen":false}
+{"text":"When I turned 12 and 3 months old, I moved.","teen":false}

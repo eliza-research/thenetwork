@@ -121,27 +121,41 @@ pure def lawBeforeAnEighteenthBirthdayIsNotAdult(nextAge: int): bool =
 
 ### A half age needs age wording to confirm an under-13 refusal
 
-Use the whole number in a current age stated as a decimal half, a slash half, or “and a half.” When the words “years old” or an accepted equivalent follow the half, the reading is explicit. A standalone half age or one followed by a separate clause can supply an age without confirming an under-13 refusal. A measurement or a future milestone supplies no current age. A small number used as a sports score or record supplies no age. A first-person birthday before a sports clause supplies the stated age. A team result can follow a self-age of 10 or older. For a lower age in a team result clause, require direct birthday or age wording. An under-13 conjunction reading needs explicit age wording before it can confirm a refusal. An attested adult's under-13 contradiction goes to staff and keeps the member's data.
+Use the whole years in a current age stated with a half, a quarter, or up to eleven additional months. “Years old” and its accepted equivalents mark the reading as explicit. “Old” after the months or quarters also marks it as explicit. A bare decimal or slash half below eight can be a height. Require explicit age words for that reading. Require explicit age words for a month or quarter reading below 13. A half age at the end of a clause can supply an age without confirming an under-13 refusal. A measurement or a future milestone supplies no current age.
+
+A small number used as a sports score or record supplies no age. A first-person birthday before a sports clause supplies the stated age. A team result can follow a self-age of 10 or older. For a lower age in a team result clause, require direct birthday or age wording. An under-13 conjunction reading needs explicit age wording before it can confirm a refusal. An attested adult's under-13 contradiction goes to staff and keeps the member's data.
 
 ```quint
-type HalfAgeEvidence = HalfAgeUnknown | HalfAgeLoose | HalfAgeExplicit
+type FractionalAgeEvidence = FractionalAgeUnknown | FractionalAgeLoose | FractionalAgeExplicit
 
-pure def halfAgeEvidence(writtenAsAge: bool, atClauseEnd: bool, future: bool): HalfAgeEvidence =
-  if (future) HalfAgeUnknown
-  else if (writtenAsAge) HalfAgeExplicit
-  else if (atClauseEnd) HalfAgeLoose
-  else HalfAgeUnknown
+pure val minLooseHeightAge: int = 8
+
+pure def fractionalAgeEvidence(age: int, possibleHeight: bool, monthsOrQuarter: bool, writtenAsAge: bool, atClauseEnd: bool, atAgeTail: bool, future: bool): FractionalAgeEvidence =
+  if (future) FractionalAgeUnknown
+  else if (writtenAsAge) FractionalAgeExplicit
+  else if (possibleHeight and age < minLooseHeightAge) FractionalAgeUnknown
+  else if ((not(monthsOrQuarter) and atClauseEnd) or (joinableAge(age) and atAgeTail)) FractionalAgeLoose
+  else FractionalAgeUnknown
 
 pure val minLooseTeamAge: int = 10
 
 pure def ageConjunctionAllowed(age: int, statedBirthday: bool, sportsRecord: bool, teamResult: bool): bool =
   statedBirthday or age >= minMemberAge or (not(sportsRecord) and (not(teamResult) or age >= minLooseTeamAge))
 
-pure def lawAnUpcomingHalfAgeSuppliesNoCurrentAge(writtenAsAge: bool, atClauseEnd: bool): bool =
-  halfAgeEvidence(writtenAsAge, atClauseEnd, true) == HalfAgeUnknown
+pure def lawAnUpcomingFractionalAgeSuppliesNoCurrentAge(age: int, possibleHeight: bool, monthsOrQuarter: bool, writtenAsAge: bool, atClauseEnd: bool, atAgeTail: bool): bool =
+  fractionalAgeEvidence(age, possibleHeight, monthsOrQuarter, writtenAsAge, atClauseEnd, atAgeTail, true) == FractionalAgeUnknown
 
-pure def lawAHalfAgeNeedsAgeWordsToBeExplicit(atClauseEnd: bool, future: bool): bool =
-  halfAgeEvidence(false, atClauseEnd, future) != HalfAgeExplicit
+pure def lawAFractionalAgeNeedsAgeWordsToBeExplicit(age: int, possibleHeight: bool, monthsOrQuarter: bool, atClauseEnd: bool, atAgeTail: bool, future: bool): bool =
+  fractionalAgeEvidence(age, possibleHeight, monthsOrQuarter, false, atClauseEnd, atAgeTail, future) != FractionalAgeExplicit
+
+pure def lawPossibleHeightRequiresAgeWords(age: int, atClauseEnd: bool, atAgeTail: bool): bool =
+  age < minLooseHeightAge implies fractionalAgeEvidence(age, true, false, false, atClauseEnd, atAgeTail, false) == FractionalAgeUnknown
+
+pure def lawExplicitCurrentFractionalAgeIsAccepted(age: int, possibleHeight: bool, monthsOrQuarter: bool, atClauseEnd: bool, atAgeTail: bool): bool =
+  fractionalAgeEvidence(age, possibleHeight, monthsOrQuarter, true, atClauseEnd, atAgeTail, false) == FractionalAgeExplicit
+
+pure def lawUnderageMonthOrQuarterNeedsAgeWords(age: int, atClauseEnd: bool, atAgeTail: bool): bool =
+  age < minMemberAge implies fractionalAgeEvidence(age, false, true, false, atClauseEnd, atAgeTail, false) == FractionalAgeUnknown
 
 pure def lawSmallSportsRecordsDoNotSupplyAge(age: int): bool =
   age < minMemberAge implies not(ageConjunctionAllowed(age, false, true, false))

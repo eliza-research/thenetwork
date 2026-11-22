@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, halfAgeEvidenceOf, quoteStillOpen, canJoin, directAgreementIdiom, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canJoin, directAgreementIdiom, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { OR_ELSE_THREAT } from "../../core/src/abuse.ts";
@@ -264,11 +264,11 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
 /** A clause break. The words before it do not apply to an age after it. */
 const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
-type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean; reading?: "half" | "conjunction" };
+type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean; reading?: "part" | "conjunction" };
 const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}${SAME}`;
 const STATED_AGE = `(?:${SELF_CURRENT_AGE}|${AGE_STATED_BIRTHDAY})`;
 const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
-const HALF_CLAUSE_END = new RegExp(`^(?:${AGE_END}|${AGE_AND_CLAUSE})`);
+const PART_CLAUSE_END = new RegExp(`^(?:${AGE_END}|${AGE_AND_CLAUSE})`);
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
 
 const AGE_RX: AgeRule[] = [
@@ -280,7 +280,7 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${NOT_UPCOMING_AGE}${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
-  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${AGE_HALF}`), age: m => ageNumber(m[1] ?? ""), reading: "half" },
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(${AGE_PART})`), age: m => ageNumber(m[1] ?? ""), reading: "part" },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_AND_CLAUSE}`), age: m => ageNumber(m[1] ?? ""), reading: "conjunction" },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_END}`), age: m => ageNumber(m[1] ?? "") },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
@@ -378,10 +378,10 @@ export function agesStated(body: string, { directOnly = false } = {}): { age?: n
       for (const m of allMatches(rx, s.text)) {
         if (notNowBefore(t, s.at + m.index)) continue;
         const after = s.text.slice(m.index + m[0].length);
-        const half = reading === "half" ? halfAgeEvidenceOf(after, HALF_CLAUSE_END.test(after)) : undefined;
-        if (half === "HalfAgeUnknown") continue;
-        const exact = explicit === true || half === "HalfAgeExplicit";
         const rawAge = age(m);
+        const part = reading === "part" ? agePartEvidenceOf(rawAge, m[2]!, after, PART_CLAUSE_END.test(after)) : undefined;
+        if (part === "FractionalAgeUnknown") continue;
+        const exact = explicit === true || part === "FractionalAgeExplicit";
         const a = reading === "conjunction" ? ageBeforeConjunction(rawAge, m) : rawAge;
         if (!Number.isFinite(a) || (directOnly && !exact && !canJoin(a) && reading !== undefined)) continue;
         if (out.age === undefined || a < out.age) out.age = a;

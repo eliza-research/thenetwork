@@ -9,7 +9,7 @@ name: ci
 on:
   # Pull requests cover feature commits; pushes validate both maintained branches.
   push:
-    branches: [main, vibestack]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 

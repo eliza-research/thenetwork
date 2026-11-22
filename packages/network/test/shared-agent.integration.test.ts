@@ -1309,3 +1309,61 @@ test("a signed current half-age requires explicit age wording before removing a 
   expect((await post(turn("signed-explicit-half-age", phone, "I'm 12.5 years old", "friends"))).status).toBe(200);
   expect(await current()).toEqual({ floor: 12, state: "removed" });
 }, 60_000);
+
+// spec/memberAge.md, "Commit a stated age before projecting it across apps".
+test("signed fractional ages distinguish an explicit current age from a height or future birthday", async () => {
+  const cases = [
+    ["+12125550191", "I'm 7.5 years old", 7],
+    ["+12125550192", "I'm 5 1/2 years old", 5],
+    ["+12125550193", "I'm 12 and 3 months old", 12],
+    ["+12125550195", "I'm 12 years and 3 months old", 12],
+  ] as const;
+  const app = APPS.friends;
+  for (const [phone, disclosure, age] of cases) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 17, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+
+    const state = async () => {
+      const [membership] = await sql`select state from platform.memberships where person_id=${person.id} and app_id='friends'`;
+      return membership?.state;
+    };
+    const controls = ["I'm 5.5", "I'm 5 1/2, slim", "I'm 12 and 3 months sober",
+      "I'm 12 and 3 months old, in two years", `She said "${disclosure}."`];
+    for (const [i, text] of controls.entries()) {
+      clock.advance(MINUTE);
+      expect((await post(turn(`fraction-age-control-${phone}-${i}`, phone, text, "friends"))).status).toBe(200);
+      expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+      expect(await state()).toBe("active");
+    }
+
+    clock.advance(MINUTE);
+    const message = turn(`fraction-age-disclosure-${phone}`, phone, disclosure, "friends");
+    expect((await post(message)).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(age);
+    expect(await state()).toBe("removed");
+    expect((await post(message)).status).toBe(200);
+    expect(await service.accounts.lowestAge(phone, person)).toBe(age);
+  }
+}, 60_000);
+
+test("a signed age with months projects the minor's age to other app memberships", async () => {
+  const phone = "+12125550197";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const person = (await service.accounts.personFor(phone))!;
+  const age = turn("fraction-age-across-apps", phone, "I'm 17 years and 3 months old.", "friends");
+  expect((await post(age)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(17);
+  const stored = await sql`select app_id as app, age from network.members where person_id=${person.id} order by app_id`;
+  expect(stored).toEqual([{ app: "friends", age: 17 }, { app: "slop", age: 17 }]);
+}, 60_000);

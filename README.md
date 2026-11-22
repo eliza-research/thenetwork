@@ -245,7 +245,7 @@ This repository is a [Slop](https://slop.cash) bounty repository with a monthly 
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before you start. Star and fork this
 repository with your own GitHub account. Open every PR from your fork into
-`vibestack`, the repository's main branch.
+`develop`, the repository's main branch.
 
 - Follow the [top-level stories](spec/product/stories.md), executable
   rules, and [flow models](spec/models/README.md) exactly. Verify that the
