@@ -32,7 +32,7 @@ import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } fr
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type Intent, type MemberId } from "@thenetwork/core";
-import { storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
+import { pendingReportReplyName, storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
@@ -76,7 +76,7 @@ import {
   namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
-import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
+import { inboundAllowedAfterBan, sharedReportRoute } from "../../core/src/generated/safetyCase.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
@@ -310,7 +310,9 @@ export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
   | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events" | "contribution_history" | AtomicReplyReason;
 
-interface Route { app: AppId; shared: boolean }
+interface SharedReportChoiceOwner { app: AppId; personId: string; memberId: MemberId; choice: PendingReportChoice }
+type SharedReportReply = SharedReportChoiceOwner | "ambiguous";
+interface Route { app: AppId; shared: boolean; reportReply?: SharedReportReply }
 
 const lower = (s: string) => s.normalize("NFKC").toLowerCase();
 /** Words that are never a first name in a join answer. */
@@ -1676,14 +1678,15 @@ export class NetworkService implements RuntimeHost {
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
    *  2. a saved-profile read, an invitation feedback reply, or an explicit app choice;
-   *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
+   *  3. a unique exact reply to a signed report question returns to the question's app;
+   *  4. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
+   *  5. a member: the app with the newest open item (a probe, a plan they have not answered), else the
    *     app that wrote to them last;
-   *  5. otherwise The Network (a stranger joins it).
+   *  6. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
    */
-  private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId, threadRead = false): Promise<Route> {
+  private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId, threadRead = false, reportReply = false): Promise<Route> {
     let dedicated = forced;
     if (!dedicated && ev.to) {
       const line = normalizeAddress(ev.to);
@@ -1711,6 +1714,9 @@ export class NetworkService implements RuntimeHost {
       }
       return { app: "ntwrk", shared: true };
     }
+    const safety = reportReply && e164 ? await this.sharedReportReply(e164, ev, mine) : undefined;
+    if (safety && safety !== "ambiguous") return { app: safety.app, shared: true, reportReply: safety };
+    const shared = (app: AppId): Route => ({ app, shared: true, ...(safety === "ambiguous" ? { reportReply: safety } : {}) });
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     const alreadyInPendingApp = !!pending && mine.some(x => pendingMatchesApp(pending.app, x.app));
     const hasMembership = mine.length > 0;
@@ -1720,17 +1726,37 @@ export class NetworkService implements RuntimeHost {
       hasPendingJoin: !!pending, alreadyInPendingApp, hasMembership, answerHasAge,
       hasOpenItem: mine.some(x => x.lastItem !== null),
     });
-    if (fallback.phase === "PendingJoinRoute" && pending) return { app: pending.app, shared: true };
+    if (fallback.phase === "PendingJoinRoute" && pending) return shared(pending.app);
     if (fallback.phase === "OpenItemRoute") {
       const open = mine.filter(x => x.lastItem !== null).sort((a, b) => b.lastItem! - a.lastItem!)[0]!;
-      return { app: open.app, shared: true };
+      return shared(open.app);
     }
     if (fallback.phase === "RecentAppRoute") {
       // Several apps: the reply goes to the app that wrote to this person last.
       const last = [...mine].sort((a, b) => (b.lastOut ?? 0) - (a.lastOut ?? 0))[0]!;
-      return { app: last.app, shared: true };
+      return shared(last.app);
     }
-    return { app: "ntwrk", shared: true };
+    return shared("ntwrk");
+  }
+
+  private async sharedReportReply(e164: string, ev: Extract<ChannelEvent, { kind: "message" }>,
+    memberships: readonly { app: AppId; memberId: MemberId }[]): Promise<SharedReportReply | undefined> {
+    const name = memberships.length > 1 ? pendingReportReplyName(ev.text) : undefined;
+    if (!name || this.inboundTurn()?.from !== e164) return;
+    const person = await this.accounts.personFor(e164);
+    if (!person) return;
+    const matches = (await Promise.all(memberships.map(async ({ app, memberId }) => {
+      const membership = await this.people.getMembership(person.id, app);
+      if (membership?.memberId !== memberId || membership.state !== "active" || membership.review !== null) return [];
+      const rt = await this.runtimeOfMember(app, memberId);
+      const choices = await rt?.readState(net => net.pendingReportChoices(memberId, name, ev.receivedAt)) ?? [];
+      return choices.map(choice => ({ app, personId: person.id, memberId, choice }));
+    }))).flat();
+    switch (sharedReportRoute(true, matches.length)) {
+      case "UniqueReportRoute": return matches[0];
+      case "AmbiguousReportRoute": return "ambiguous";
+      case "NoReportRoute": return;
+    }
   }
 
   /** The apps this address is a joined member of, across apps (platform.member_apps: ids and times only). */
@@ -1802,7 +1828,10 @@ export class NetworkService implements RuntimeHost {
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
     const legacyEngagement = !banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar && !gatheringRsvp && !gatheringFollowup;
-    const route = await this.route(ev, o.app, threadRead && !!this.inboundTurn() && !banned);
+    const signed = !!this.inboundTurn() && !banned;
+    const reportReply = signed && !kw && !factCommand && !intentCommand && !controls && !calendar
+      && !gatheringRsvp && !gatheringFollowup && !surveyAnswer && !travel && !soloEvents && contributionPage === undefined;
+    const route = await this.route(ev, o.app, threadRead && signed, reportReply);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
     let rt = joinedMember && await this.runtimeOfMember(route.app, joinedMember.memberId);
@@ -1947,6 +1976,7 @@ export class NetworkService implements RuntimeHost {
       if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
     }
 
+    if (route.reportReply === "ambiguous") return "handled";
     if (memberId) {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
@@ -1958,7 +1988,7 @@ export class NetworkService implements RuntimeHost {
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
       if (!kw && e164 && !controls && !calendar && !surveyAnswer && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
-      const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
+      const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply, true, route.reportReply);
       if (e164) await rt.projectRecordedAges(memberId);
       return out;
     }
@@ -2055,9 +2085,9 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
-  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true): Promise<InboundOutcome> {
+  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
-    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
+    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply);
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
     if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review" || out === "member_invitation_delivery" || out === "bounded_home_help")
       && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
@@ -2067,7 +2097,7 @@ export class NetworkService implements RuntimeHost {
     return out;
   }
 
-  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false): Promise<InboundOutcome> {
+  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
     const keyword = kw === "stop" || kw === "stop_all" ? "STOP" : kw === "start" ? "START" : kw === "help" ? "HELP" : undefined;
     return rt.unitOfWork(async n => {
       // Under the lock, so a provider retry or a second subscription is handled once.
@@ -2080,6 +2110,13 @@ export class NetworkService implements RuntimeHost {
         body: surveyAnswer ? "Private invitation feedback." : ev.text, status: "received",
         type: surveyAnswer ? "interruption_feedback" : null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      if (reportReply) {
+        if (!signedDirect || reportReply.memberId !== memberId || !rt.signedMemberTurn(memberId, rowId)) return "ignored";
+        const person = await this.accounts.personFor(signedDirect.from);
+        if (person?.id !== reportReply.personId || await this.accounts.banned(signedDirect.from, person)) return "ignored";
+        const membership = await this.people.getMembership(person.id, rt.app.id);
+        if (membership?.memberId !== memberId || membership.state !== "active" || membership.review !== null) return "ignored";
+      }
       const peonSearch = !keyword && rt.app.id === "peon" && peonSearchCommand(ev.text);
       if (peonSearch) {
         const reason = "peon_candidate_search" as const;
@@ -2275,7 +2312,7 @@ export class NetworkService implements RuntimeHost {
       try {
         disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: signedDirect ? Math.min(t, ev.receivedAt) : t, channel,
           ...(signedDirect ? { signedReceivedAt: ev.receivedAt } : {}),
-          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent);
+          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent, reportReply?.choice);
       } finally { rt.replyingTo = undefined; }
       if (rt.unit.memberCommand) return "cofounder_intent" as const;
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
