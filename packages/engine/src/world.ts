@@ -4,6 +4,7 @@
 import { MatchRun } from "./match/run.ts";
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
+import { mayFollowMemberAlias } from "../../core/src/generated/datingRadius.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
@@ -15,6 +16,22 @@ import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, Rece
 import type { Interval } from "./interval.ts";
 export type { Interval };
 export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+export type MemberIdResolver = (id: MemberId) => MemberId;
+
+/** Follow the aliases from this input and give a current member ID priority. */
+export function memberIdResolver(memberIds: ReadonlySet<MemberId>,
+  aliases: Readonly<Record<MemberId, MemberId>> = {}): MemberIdResolver {
+  return id => {
+    let current = id;
+    let hops = 0;
+    while (mayFollowMemberAlias(memberIds.has(current), aliases[current] !== undefined, hops)) {
+      current = aliases[current]!;
+      hops++;
+    }
+    return current;
+  };
+}
 
 const BLOCKING_EDGES: ReadonlySet<EdgeType> = new Set<EdgeType>(["blocked", "avoid"]);
 const CAP_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
@@ -98,14 +115,8 @@ export class World {
     this.pack = pack;
     this.now = input.now;
     this.embed = embed;
-    const aliases = input.idAliases ?? {};
     const memberIds = new Set(input.members.map(m => m.id));
-    // Resolve alias chains; unknown ids are kept as-is (they simply never match a member).
-    this.canonical = (id: MemberId) => {
-      let cur = id; let hops = 0;
-      while (!memberIds.has(cur) && aliases[cur] !== undefined && hops++ < 8) cur = aliases[cur]!;
-      return cur;
-    };
+    this.canonical = memberIdResolver(memberIds, input.idAliases);
     const C = this.canonical;
     this.dim = embed("dimension probe").length;
     const now = this.now;

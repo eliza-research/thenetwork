@@ -21,6 +21,8 @@ evidence, judgment views, probe order, and cached matching profiles. The [repeat
 
 [Booked meeting settlement](../meetingSettlement.md#a-liked-date-paces-new-proposals-from-its-booked-start) supplies the date for Slop's proposal pause. The model records the date at the meeting transition and associates accepted feedback with its exact opportunity. It uses one opportunity per pair. The backend regression covers the fallback for older feedback without an opportunity ID.
 
+[Dating radius](../datingRadius.md#date-planning-uses-the-matched-members-canonical-profiles) gives matching and the standalone planner the same bounded member-alias rules. The reference trace covers the lookup. The seeded engine test covers cache order and verifies identical plans.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -75,6 +77,9 @@ module matching_engine {
   // ------------------------------------------------------------------ constants
   pure val NONE = -1000
   pure val SLOP_MEMBERS = Set("a", "b", "c", "k")
+  pure def canonicalMember(known: Set[str], aliases: str -> str, incoming: str): str =
+    0.to(7).fold(incoming, (id, _) => if (known.contains(id) or not(aliases.keys().contains(id))) id else aliases.get(id))
+
   pure val SLOP_ADULTS = Set("a", "b", "c")
   pure val AGE = Map("a" -> 30, "b" -> 28, "c" -> 32, "k" -> 15)
   pure val SMOKERS = Set("b")
@@ -879,6 +884,16 @@ module matching_engine {
   action hardFields(m: str): bool = agentNext(m).then(say(m, "core")).then(say(m, "loc"))
 
   // Onboarding to a confirmed read-back (docs/results/2026-10-09-slop-onboarding.md).
+  run datePlanUsesCanonicalMemberTest =
+    initWith("prod", false, "slop")
+      .expect({
+        val known = Set("a", "b")
+        val aliases = Map("legacy" -> "previous", "previous" -> "a", "a" -> "b", "cycleA" -> "cycleB", "cycleB" -> "cycleA")
+        canonicalMember(known, aliases, "legacy") == "a" and canonicalMember(known, aliases, "a") == "a"
+          and canonicalMember(known, aliases, "cycleA") == "cycleA"
+          and canonicalMember(known, aliases, "unknown") == "unknown"
+      })
+
   run readBackTest = initWith("prod", false, "slop")
     .then(agentNext("a")).then(say("a", "core")).then(say("a", "loc"))
     .expect(slop.awaiting.get("a") == "readback" and slop.ob.get("a").readBacks == 1)

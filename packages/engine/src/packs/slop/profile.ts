@@ -24,7 +24,7 @@ import { completedDateFeedbackMatches, completedDatePacingAt, completedMeetingSl
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput, InteractionRecord } from "../../types.ts";
-import { pairKey } from "../../world.ts";
+import { memberIdResolver, pairKey, type MemberIdResolver } from "../../world.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
@@ -105,17 +105,24 @@ export interface SlopProfile {
   history: History;
 }
 
-const cache = new WeakMap<EngineInput, Map<MemberId, SlopProfile>>();
+type ProfileCache = { defaultProfiles?: Map<MemberId, SlopProfile>; byResolver: WeakMap<MemberIdResolver, Map<MemberId, SlopProfile>> };
+const cache = new WeakMap<EngineInput, ProfileCache>();
 /** An unanswered question older than this counts as silence (SlopPackOptions.silentFallback). */
 export const SILENT_AFTER_DAYS = 7;
 
-/** Typed dating profiles for every member of an engine input (cached per input object). */
-export function slopProfiles(input: EngineInput, canonical: (id: MemberId) => MemberId = x => x): Map<MemberId, SlopProfile> {
-  let out = cache.get(input);
-  if (out) return out;
-  out = buildProfiles(input, canonical);
-  cache.set(input, out);
-  return out;
+/** Typed dating profiles use the input's aliases by default. Each custom resolver has its own cached view. */
+export function slopProfiles(input: EngineInput, canonical?: MemberIdResolver): Map<MemberId, SlopProfile> {
+  let entry = cache.get(input);
+  if (!entry) {
+    entry = { byResolver: new WeakMap() };
+    cache.set(input, entry);
+  }
+  const cached = canonical ? entry.byResolver.get(canonical) : entry.defaultProfiles;
+  if (cached) return cached;
+  const profiles = buildProfiles(input, canonical ?? memberIdResolver(new Set(input.members.map(member => member.id)), input.idAliases));
+  if (canonical) entry.byResolver.set(canonical, profiles);
+  else entry.defaultProfiles = profiles;
+  return profiles;
 }
 
 function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, SlopProfile> {
