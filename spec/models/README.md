@@ -14,7 +14,7 @@ pnpm run quint:check --tangle-only           # write the model blocks to runs/qu
 pnpm run quint:check --verify --jobs 2       # include bounded Apalache checks, requires Java 17+
 ```
 
-A `witness_*` assertion is the negation of an expected reachable state. A witness check passes when the simulator reaches that state and the assertion fails. Random simulation and bounded model checking cover the modeled states within the run bounds.
+A `witness_*` assertion is the negation of an expected reachable state. A witness check passes when the simulator reaches that state and the assertion fails. A witness can also use a named trace declared by `// quint-witness: witness_name runName`. That trace must end with `.expect(not(witness_name))`, and the checker requires the named run to execute and pass. Random simulation and bounded model checking still check safety within the run bounds.
 
 These models use mutable variables, actions, nondeterministic environment steps, or executable traces. Vibespec generates TypeScript from pure definitions and guards in top-level `spec/*.md`. Keep whole-flow checks here while moving pure policy definitions into the Vibespec specs. When a generated policy takes over a production decision, compare its behavior with the corresponding action guard and keep the sequence, failures, and retry behavior in the flow model.
 

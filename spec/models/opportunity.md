@@ -23,6 +23,7 @@ Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md)
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=250 max-samples=8000 verify-steps=3
+// quint-witness: witness_requestFulfilled happyPathTest
 //
 // The opportunity machines of the ConsentNetwork (docs/research/2026-11-07-state-machines.md section 6.6):
 // opportunity-lifecycle, opp-participant-status, review-item, awaiting-slot, yes-hold,
@@ -1199,7 +1200,8 @@ module opportunity {
       .then(answer("a", "fb_good", ALL_OPEN)).then(settled)
       .then(answer("b", "fb_good", ALL_OPEN)).then(settled)
       .then(tick(1, ALL_OPEN)).then(settled)
-      .expect(op(s, "o1").finalized and s.req.outcome == "fulfilled" and safety)
+      .expect(op(s, "o1").finalized and safety)
+      .expect(not(witness_requestFulfilled))
 
   run pastTimeCannotAcceptProbeTest =
     init
