@@ -125,6 +125,28 @@ export function directFeedbackAbsence(text: string, counterpartNames: readonly s
   return subject !== undefined && (DIRECT_COUNTERPART.test(subject) || counterpartNames.some(name => normalize(name) === subject));
 }
 
+/** Read each direct named absence in a group reply. Resolve each name against the booked roster. */
+export function groupFeedbackAbsence(text: string, attendees: readonly { id: MemberId; names: readonly string[] }[]): MemberId[] {
+  const report = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/"[^"]*(?:"|$)/g, "");
+  const clauses = report.split(/(?<=[.!?;:])\s*|[\n—]|\b(?:but|while|whereas|however)\b/i);
+  const missing = new Set<MemberId>();
+  for (const value of clauses) {
+    const clause = value.trim();
+    if (!clause || clause.endsWith("?")) continue;
+    const statement = clause.replace(/[.!;:]$/, "").trim();
+    if (/^(?:nobody|no one) else (?:came|showed(?: up)?|turned up)$/i.test(statement)) return attendees.map(attendee => attendee.id);
+    const [match] = statement.matchAll(ABSENCE_PHRASE);
+    if (!match || !match.index || statement.slice(match.index + match[0].length).trim()) continue;
+    const subjects = statement.slice(0, match.index).trim().toLowerCase().split(/\s*(?:,\s*(?:and\s+)?|\band\b)\s*/i);
+    const ids = subjects.map(subject => {
+      const names = attendees.filter(attendee => attendee.names.some(name => name.normalize("NFKC").trim().toLowerCase() === subject));
+      return names.length === 1 ? names[0]!.id : undefined;
+    });
+    if (ids.every((id): id is MemberId => id !== undefined)) for (const id of ids) missing.add(id);
+  }
+  return [...missing];
+}
+
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
   const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");

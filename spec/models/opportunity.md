@@ -26,6 +26,13 @@ A negative or conditional cancellation uses the same booked-reply guard. Exact l
 
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+At the start of a runtime tick, the settlement rule releases a booked reply
+slot that expired or lost its meeting before any new prompt is sent. An open
+reply slot stays with its booking.
+Group attendance settlement supplies exact named absence evidence to the
+reliability rule. A group report without an identified participant does not
+mark anyone absent or reduce their reliability.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=250 max-samples=8000 verify-steps=3

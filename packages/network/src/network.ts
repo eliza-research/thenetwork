@@ -48,7 +48,7 @@ import {
   memberInviteUsesAllowance, memberInviteVouchWeak, memberInviteWithinBurstWindow, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
-  attendanceBookingReceived, chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
+  attendanceBookingReceived, chooseCheckIn, confirmationChanges, releaseBookingReply, reportedAbsenceIdentifiesMember, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
   deliveredInvitee, feedbackDelayHours, feedbackHistorySeat, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, dayOfReplyAccepted, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, pairedFeedbackAbsence, restoreAttendance,
@@ -156,7 +156,7 @@ import { appTagFacet, type AppHooks, type AppTag, type HookOpp } from "./apphook
 import { confirmPosting, postingDraftCurrent } from "../../core/src/generated/postingPolicy.ts";
 import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { hireSeatCurrent, readHireEvidence, type HireSeat } from "./peon-hire-dispatch.ts";
-import { checkInReport, directFeedbackAbsence, emergencyCheckInReportKind, reportKindOf, statesImmediateDanger, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
+import { checkInReport, directFeedbackAbsence, groupFeedbackAbsence, emergencyCheckInReportKind, reportKindOf, statesImmediateDanger, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind: ReportKind }
 
@@ -656,7 +656,7 @@ interface Opp {
   /** When the booked plan reached each member, who confirmed it in words, and who confirmed by silence (48 h). */
   bookedAt?: Record<MemberId, number>; explicit?: MemberId[]; confirmed?: MemberId[];
   /** Private post-meeting facts and whether the member valued the experience. */
-  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[];
+  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[]; missing?: MemberId[];
     worthwhile?: true; confirmedRoster?: true; repeatProof?: { revision: number; settledBooking?: true } }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
@@ -1774,7 +1774,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
       for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "feedbackPromptedAt", "lateArrivalReported", "settledAttendance", "seatProbeReplies"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
       for (const k of ["explicit", "confirmed", "bookedTold", "dayBeforeReminded", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
-      if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
+      if (o.post) for (const v of Object.values(o.post)) {
+        v.named = v.named.filter(x => x !== id);
+        if (v.missing) v.missing = v.missing.filter(x => x !== id);
+      }
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
       if (o.planRun) { const { [id]: _, ...answers } = o.planRun.answers; o.planRun = { ...o.planRun, plan: this.scrubPlan(o.planRun.plan, id), answers, bench: o.planRun.bench.filter(x => x !== id) }; }
       o.objective = scrub(o.objective); o.detail = scrub(o.detail);
@@ -4101,10 +4104,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     const counterpart = !o.plan && o.kind !== "group" && others.length === 1 ? this.member(others[0]!) : undefined;
     const counterpartAbsence = pairedFeedbackAbsence(attendanceOpen, !!counterpart,
       counterpart ? directFeedbackAbsence(body, [counterpart.first, counterpart.display]) : false);
-    const otherMissing = f.otherNoShow || counterpartAbsence || NOBODY_CAME.test(body);
-    const crewId = attendanceOpen && o.plan ? this.planPost(m, o, body, f) : undefined;
+    const missing = attendanceOpen && others.length > 1 ? groupFeedbackAbsence(body, others.map(id => {
+      const candidate = this.member(id);
+      return { id, names: [candidate.first, candidate.display] };
+    })) : [];
+    const otherMissing = f.otherNoShow || counterpartAbsence || NOBODY_CAME.test(body) || missing.length > 0;
+    const named = otherMissing ? missing : others.filter(id => this.namedIn(body, id));
+    const post = { came: !f.selfNoShow, again: f.again, otherNoShow: otherMissing, named, missing };
+    const crewId = attendanceOpen && o.plan ? this.planPost(m, o, body, post) : undefined;
     if (attendanceOpen) {
-      if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: otherMissing, named: others.filter(x => this.namedIn(body, x)) } };
+      if (!o.plan) o.post = { ...o.post, [m.id]: post };
       const own = o.post?.[m.id];
       if (own?.came && !otherMissing) {
         if (f.sentiment === "positive" || own.again) own.worthwhile = true;
@@ -4369,7 +4378,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const finding = countAttendance({
         saidAttended: reply?.came === true, saidAbsent: reply?.came === false, hasFeedback: !!reply,
         counterpartVerified: vouchers.length > 0, organizerVerified, pairMeeting: going.length === 2,
-        reportedMissing: foundMissing.some(x => x !== p), explicitReply: (o.explicit ?? []).includes(p),
+        reportedMissing: foundMissing.some(x => x !== p && reportedAbsenceIdentifiesMember(going.length === 2, said(x)?.missing?.includes(p) === true)), explicitReply: (o.explicit ?? []).includes(p),
         receivedFeedbackPrompt: promptAt !== undefined && meetingFeedbackWindow(promptAt - o.meetingAt!),
       });
       return { p, vouchers, organizerVerified, finding };
@@ -5129,11 +5138,10 @@ export class ConsentNetwork implements NetworkUnderTest {
    * Attendees who both said yes become would_interact_again edges; >= 3 yes after one plan is a crew
    * offer, made once, in the reply to the answer that completed it (crewOptIn).
    */
-  private planPost(m: MemberState, o: Opp, body: string, f: { selfNoShow: boolean; otherNoShow: boolean }): string | undefined {
+  private planPost(m: MemberState, o: Opp, body: string, post: NonNullable<Opp["post"]>[MemberId]): string | undefined {
     const going = o.participants.filter(p => o.status.get(p) === "yes");
-    const again = planAgainOf(body) === "yes" && !f.selfNoShow;
-    const named = going.filter(x => x !== m.id && this.namedIn(body, x));
-    o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named } };
+    const again = planAgainOf(body) === "yes" && post.came;
+    o.post = { ...o.post, [m.id]: { ...post, again } };
     const now = this.now();
     if (again) for (const x of going) if (x !== m.id && o.post[x]?.again) { this.planAgain.set(pairKey(m.id, x), now); this.dirty = true; }
     return this.crewCheck(m, o, going);
@@ -5303,6 +5311,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) {
       this.syncMember(m);
+      const awaiting = m.awaiting;
+      if (awaiting?.kind === "booked") {
+        const start = this.opps.get(awaiting.oppId ?? "")?.meetingAt;
+        if (releaseBookingReply(now - awaiting.at, start !== undefined, start !== undefined && now >= start)) m.awaiting = undefined;
+      }
       this.refreshUnanswered(m, now);
       if (m.pendingInviteDraft && !memberInviteDraftCurrent(now - m.pendingInviteDraft.at)) m.pendingInviteDraft = undefined;
       if (m.pendingInviteJoins?.length) m.pendingInviteJoins = m.pendingInviteJoins.filter(notice => now - notice.at < inviteJoinNoticeLifetimeMs);
@@ -5346,8 +5359,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const m of this.members.values()) {
       const aw = m.awaiting;
       if (!aw) continue;
-      // A booked plan's opt-out window: 48 hours, or until the meeting (silence = in).
-      if (aw.kind === "booked" ? now - aw.at > OPT_OUT_HOURS * HOUR || now >= (this.opps.get(aw.oppId ?? "")?.meetingAt ?? 0) : aw.kind !== "probe" && now - aw.at > 3 * DAY) m.awaiting = undefined;
+      if (aw.kind !== "probe" && aw.kind !== "booked" && now - aw.at > 3 * DAY) m.awaiting = undefined;
     }
     const p = nyParts(now);
     this.weeklyCheckins(now);

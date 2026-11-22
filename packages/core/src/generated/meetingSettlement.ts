@@ -27,10 +27,16 @@ export type Event =
   | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
   | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
 
-/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
-export const bookingNoticeRetryMs: number = exact_meetingSettlement(5 * 60000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowHours: number = 48;
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+export const bookingNoticeRetryMs: number = exact_meetingSettlement(5 * 60000);
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const feedbackDelayHours: number = 3;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
@@ -39,12 +45,6 @@ export const settlementDelayDays: number = 4;
 export const meetingFeedbackPrefix: string = "meeting-feedback:";
 /** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
 export const meetingFeedbackReplyMs: number = exact_meetingSettlement(7 * 86400000);
-/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
-export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
-/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
-export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
-/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
-export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
@@ -78,6 +78,19 @@ export function silentConfirmationDue(accepted: boolean, bookingDelivered: boole
 export function lawConfirmedDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, explicitReply: boolean): boolean {
   //@ ensures \result === true
   return !confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation;
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Release an expired booking reply before the next prompt (spec/meetingSettlement.md) */
+//@ pure
+export function releaseBookingReply(elapsedMs: number, hasMeeting: boolean, meetingStarted: boolean): boolean {
+  return !hasMeeting || meetingStarted || elapsedMs > confirmationWindowMs;
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Release an expired booking reply before the next prompt (spec/meetingSettlement.md) */
+//@ pure
+export function lawFutureBookingKeepsReply(elapsedMs: number): boolean {
+  //@ ensures \result === true
+  return !(elapsedMs <= confirmationWindowMs) || !releaseBookingReply(elapsedMs, true, false);
 }
 
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
@@ -431,8 +444,21 @@ export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): 
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
+export function reportedAbsenceIdentifiesMember(pairMeeting: boolean, identifiedInGroup: boolean): boolean {
+  return pairMeeting || identifiedInGroup;
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+//@ pure
 export function attendanceBookingReceived(accepted: boolean, exactReceipt: boolean, receiptAt: number, settledAt: number): boolean {
   return deliveredInvitee(accepted, exactReceipt && receiptAt >= 0 && receiptAt <= settledAt);
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+//@ pure
+export function lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: boolean): boolean {
+  //@ ensures \result === true
+  return !(!pairMeeting) || !reportedAbsenceIdentifiesMember(pairMeeting, false);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */

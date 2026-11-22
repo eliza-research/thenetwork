@@ -27,6 +27,21 @@ pure def lawConfirmedDoesNotRepeat(accepted: bool, bookingDelivered: bool, words
   not(confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation)
 ```
 
+### Release an expired booking reply before the next prompt
+
+An operations tick first releases an expired booking reply slot. The slot expires
+when its meeting starts or no longer has a start, or more than 48 hours after
+the booking prompt. Releasing the slot comes before deferred sends and attendance
+prompts. A booking whose reply slot is still open keeps that slot.
+
+```quint
+pure def releaseBookingReply(elapsedMs: int, hasMeeting: bool, meetingStarted: bool): bool =
+  not(hasMeeting) or meetingStarted or elapsedMs > confirmationWindowMs
+
+pure def lawFutureBookingKeepsReply(elapsedMs: int): bool =
+  elapsedMs <= confirmationWindowMs implies not(releaseBookingReply(elapsedMs, true, false))
+```
+
 ## Story: Hear about a booked meeting the day before
 
 > As a booked participant, I want a reminder early enough to plan for the meeting.
@@ -314,7 +329,7 @@ pure def lawFeedbackForAnotherDateCannotPace(feedbackAt: int, meetingAt: int, is
 
 ### Classify each attendee from the available reports
 
-Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply.
+Only participants with an accepted invitation and a delivered booking count as booked. At settlement, use a positive receipt for the participant's exact current booking revision. A queued notice and an unresolved receipt are insufficient. A delayed positive receipt counts if available when attendance settles. A participant who said they did not come is a no-show. Otherwise the Network counts attendance when the participant said they came, a counterpart who came says nobody was missing, or the organizer's check-in counts them. Only an attendee with a reply gets a feedback entry. A booked participant in a pair who received the feedback prompt on time and is reported missing without an explicit confirmation is recorded as ghosted. If that participant explicitly confirmed, the Network records a no-show. In pairs and groups, a missing-participant report can affect an unaccounted participant's reliability only if that participant received the feedback prompt on time and did not reply. In a group, the report also identifies that participant directly or says that nobody else attended. An unnamed report and an older report without an exact attribution give no group reliability penalty. A name from a different clause or a quoted report supplies no attribution.
 
 ```quint
 type AttendanceMark = Attended | Absent | Ghosted | NoFinding
@@ -331,6 +346,12 @@ pure def attendanceBookingReceived(accepted: bool, exactReceipt: bool, receiptAt
 
 pure def lawAttendanceNeedsExactBookingReceipt(accepted: bool, receiptAt: int, settledAt: int): bool =
   not(attendanceBookingReceived(accepted, false, receiptAt, settledAt))
+
+pure def reportedAbsenceIdentifiesMember(pairMeeting: bool, identifiedInGroup: bool): bool =
+  pairMeeting or identifiedInGroup
+
+pure def lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: bool): bool =
+  not(pairMeeting) implies not(reportedAbsenceIdentifiesMember(pairMeeting, false))
 
 pure def countAttendance(evidence: AttendanceEvidence): AttendanceFinding =
   val corroboratedMissing = evidence.reportedMissing and evidence.receivedFeedbackPrompt
