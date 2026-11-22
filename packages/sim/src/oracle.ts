@@ -6,7 +6,7 @@ import { DAY, type City, type MemberId, type OpportunityKind } from "@thenetwork
 import type { Category } from "@thenetwork/core";
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { desireById } from "./taxonomy.ts";
-import { withLiveDesires, type Persona } from "./persona.ts";
+import { desireLive, withLiveDesires, type Persona } from "./persona.ts";
 import { inHourWindow, localParts } from "./time.ts";
 
 export interface OracleProposal {
@@ -312,7 +312,7 @@ export class Oracle {
         let s = 0;
         if (def.category === "romance") s = romanceCompatible(a, b) && romanceCompatible(b, a) ? 0.9 : 0;
         else if (def.needsSkills.some(sk => b.hidden.skills.includes(sk))) s = 1;
-        else if (def.pool && b.hidden.desires.some(o => desireById.get(o.id)?.pool === def.pool)) s = 0.85;
+        else if (def.pool && b.hidden.desires.some(o => (at === undefined || desireLive(o, at)) && desireById.get(o.id)?.pool === def.pool)) s = 0.85;
         else if (def.needsInterests.some(t => b.hidden.interests.includes(t))) s = 0.45;
         best = Math.max(best, s);
       }
