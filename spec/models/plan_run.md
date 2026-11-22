@@ -8,7 +8,7 @@ A member needs a plan to book only after enough eligible people accept.
 
 Check quorum, group size, deadlines, alternatives, and contact eligibility. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
+The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. Its weekly availability input contains windows after named day exclusions have been applied. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
 The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers reviewed options and exact shared consent for weekly one-to-one plans. This model covers group quorum at a single fixed time.
 

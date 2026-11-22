@@ -180,7 +180,8 @@ pure def planStandingWindowCoversSlot(windowStart: int, windowEnd: int, slotStar
 ### The member's latest weekly answer takes precedence
 
 Record this week's windows from the member's own text answer to their weekly
-check-in. A clear answer that the whole week is busy records an empty week.
+check-in. Remove named exclusions from a group of days before storing the
+windows. For example, “weekday evenings, excluding Friday” leaves four evenings. A clear answer that the whole week is busy records an empty week.
 An unclear answer leaves the earlier record in place. A recorded answer applies
 for seven days. A stated weekday and part of day refers to its first remaining
 local occurrence before that period ends. When that period includes the
