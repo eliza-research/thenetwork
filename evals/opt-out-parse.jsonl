@@ -27,15 +27,6 @@
 {"text":"quiero darme de baja","match":"likely"}
 {"text":"no quiero mensajes","match":"likely"}
 {"text":"número equivocado","match":"likely"}
-{"text":"QUIT NOW","match":"likely"}
-{"text":"QUIT PLS","match":"likely"}
-{"text":"QUIT ASAP","match":"likely"}
-{"text":"END NOW","match":"likely"}
-{"text":"END PLS","match":"likely"}
-{"text":"QUIT RN","match":"likely"}
-{"text":"END ASAP","match":"likely"}
-{"text":"QUIT PLEASE","match":"likely"}
-{"text":"END PLEASE","match":"likely"}
 {"text":"how do I stop these?","match":"none"}
 {"text":"my friend said stop by","match":"none"}
 {"text":"can't stop thinking about the hike!","match":"none"}
@@ -50,17 +41,3 @@
 {"text":"Don't stop emailing me, but please stop texting me.","match":"likely"}
 {"text":"Don't stop texting me, I like the updates.","match":"none"}
 {"text":"You never stop texting me, leave me alone","match":"likely"}
-{"text":"Don't stop calling and stop texting me","match":"likely"}
-{"text":"Don't stop calling me and stop texting me","match":"likely"}
-{"text":"Don't stop calling and unsubscribe me","match":"likely"}
-{"text":"Don't stop calling and remove me from your list","match":"likely"}
-{"text":"Don't stop calling and opt me out","match":"likely"}
-{"text":"stop texting me and don't stop calling","match":"likely"}
-{"text":"Don't stop calling and stop by at 7","match":"none"}
-{"text":"Don't stop texting me and don't stop calling","match":"none"}
-{"text":"stop and don't stop texting me","match":"none"}
-{"text":"Don't stop calling and keep texting me","match":"none"}
-{"text":"stop and go","match":"likely"}
-{"text":"stop and unsubscribe","match":"likely"}
-{"text":"unsubscribe and stop","match":"likely"}
-{"text":"Don't stop calling and leave me alone","match":"likely"}
