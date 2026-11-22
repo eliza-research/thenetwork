@@ -58,6 +58,20 @@ pure def stepPublishedOccupancyStaysFixed(before: SeatLedger, after: SeatLedger)
 pure def sometimesPublishedWithCandidate(l: SeatLedger): bool = l.phase == Published and l.occupied.size() > 0
 ```
 
+### Record the time both sides accept a job introduction
+
+When both sides' valid answers commit a reviewed introduction, record that time in the booking. Use it in the accepted interaction so that the engine can read the response before the interview. A restart uses the saved time. For an older booking with no saved acceptance time, use the earliest confirmed receipt for an original introduction notice if it predates the interview. If that evidence is unavailable, use the planned interview time.
+
+```quint
+pure def peonAcceptedHistoryAt(acceptedAt: int, legacyReceiptAt: int, interviewAt: int): int =
+  if (acceptedAt >= 0) acceptedAt
+  else if (legacyReceiptAt >= 0 and legacyReceiptAt < interviewAt) legacyReceiptAt
+  else interviewAt
+
+pure def lawPeonAcceptanceHistoryKeepsRecordedTime(acceptedAt: int, legacyReceiptAt: int, interviewAt: int): bool =
+  acceptedAt >= 0 implies peonAcceptedHistoryAt(acceptedAt, legacyReceiptAt, interviewAt) == acceptedAt
+```
+
 ### The next slate stays within remaining openings
 
 Remaining openings are the posted count minus occupied openings, with a minimum of zero. The engine uses the lower of the planned slate and remaining openings when the snapshot supplies a seat limit. The service closes unbooked items when the posting closes or booked occupancy reaches the posted count. Current booked introductions continue.

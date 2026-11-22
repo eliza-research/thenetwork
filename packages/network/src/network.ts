@@ -76,7 +76,7 @@ import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
-import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
+import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
@@ -624,6 +624,8 @@ interface Opp {
    * yes and the intro only after both yeses. The engine's own views (capacity, pair rules) see the seat.
    */
   seat?: HireSeat;
+  /** The time both sides' agreements committed the reviewed job introduction. */
+  seatAcceptedAt?: number;
 }
 /** A member request. The member's own words are not kept: only what the classifier read from them. */
 interface Request {
@@ -3728,6 +3730,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++;
     if (!o.recorded) { o.recorded = true; this.ctx.recordProposal(this.toProposal(o), o.origin === "engine" ? "engine" : o.origin === "player" ? "player" : "network"); }
     o.stage = STAGE_BY_PHASE[next.phase];
+    if (o.seat) o.seatAcceptedAt = now;
     for (const id of o.participants) o.status.set(id, "yes");
     if (o.requester) {
       const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
@@ -7242,7 +7245,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       const hasMeeting = o.meetingAt !== undefined, closed = o.stage === "closed";
       const hasFeedback = bookedOccupies(hasMeeting, closed) && interactions.some(x => x.id.startsWith(`${o.id}:fb:`));
       if (!bookedNeedsSyntheticAcceptance(hasMeeting, closed, hasFeedback)) continue;
-      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt!, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
+      const receipts = o.seatAcceptedAt === undefined
+        ? o.participants.map(id => this.bookingNoticeReceiptAt(o, id, 0)).filter((at): at is number => at !== undefined && at >= 0 && at <= input.now)
+        : [];
+      const at = peonAcceptedHistoryAt(o.seatAcceptedAt ?? -1, receipts.length ? Math.min(...receipts) : -1, o.meetingAt!);
+      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
     }
     return {
       ...input, interactions,

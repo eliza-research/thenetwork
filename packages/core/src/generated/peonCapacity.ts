@@ -123,6 +123,19 @@ export function lawPendingReviewDoesNotFillOpening(openOpportunity: boolean): bo
   return !bookedRecordOccupies("pending") && seatRecordOccupies(openOpportunity, "pending");
 }
 
+/** Story: Reserve one opening for each candidate still in the hiring flow / Record the time both sides accept a job introduction (spec/peonCapacity.md) */
+//@ pure
+export function peonAcceptedHistoryAt(acceptedAt: number, legacyReceiptAt: number, interviewAt: number): number {
+  return acceptedAt >= 0 ? acceptedAt : (legacyReceiptAt >= 0 && legacyReceiptAt < interviewAt ? legacyReceiptAt : interviewAt);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Record the time both sides accept a job introduction (spec/peonCapacity.md) */
+//@ pure
+export function lawPeonAcceptanceHistoryKeepsRecordedTime(acceptedAt: number, legacyReceiptAt: number, interviewAt: number): boolean {
+  //@ ensures \result === true
+  return !(acceptedAt >= 0) || peonAcceptedHistoryAt(acceptedAt, legacyReceiptAt, interviewAt) === acceptedAt;
+}
+
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
 //@ pure
 export function remainingOpenings(posted: number, occupied: number): number {

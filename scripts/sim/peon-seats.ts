@@ -17,9 +17,13 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
+import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
+import { historyOf } from "../../packages/engine/src/packs/peon/profile.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
+import { World } from "../../packages/engine/src/world.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
 import { appWiring } from "../../packages/network/service/packs.ts";
@@ -150,8 +154,37 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
       expect(await world.runUntil(() => world.probedFor(candidate, first))).toBe(true);
       await world.say(candidate, "yes");
       expect(await world.runUntil(() => world.probedFor("manager", first))).toBe(true);
+      const acceptedAt = world.clock.now();
       await world.say("manager", "yes");
       expect(world.opp(first)?.stage).toBe("scheduled");
+      if (attendance === "completed") {
+        const interviewAt = world.opp(first)!.meetingAt!;
+        expect(interviewAt).toBeGreaterThan(world.clock.now());
+        const readHistory = () => {
+          const input = world.net.packInput(world.clock.now());
+          const matchWorld = new World(input, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+          return {
+            at: input.interactions?.find(record => record.id === first + ":seat")?.at,
+            inFlight: historyOf(matchWorld, candidate).inFlight,
+            employerAnswered: historyOf(matchWorld, seat).answered,
+          };
+        };
+        const accepted = { at: acceptedAt, inFlight: 1, employerAnswered: 1 };
+        expect(readHistory()).toEqual(accepted);
+        world.restart();
+        expect(readHistory()).toEqual(accepted);
+        const current = world.net.exportState();
+        const older = structuredClone(current);
+        const booking = older.opps.find(opp => opp.id === first)!;
+        delete booking.seatAcceptedAt;
+        const sent = world.about(first).find(message => message.meta.booked?.proposalId === first)!;
+        world.net.importState(older);
+        expect(readHistory()).toEqual({ ...accepted, at: sent.t });
+        delete booking.bookedAt;
+        world.net.importState(older);
+        expect(readHistory()).toEqual({ at: interviewAt, inFlight: 0, employerAnswered: 0 });
+        world.net.importState(current);
+      }
       const respondent = attendance === "manager missed" ? "manager" : candidate;
       expect(await world.runUntil(() => world.net.memberList().find(m => m.id === respondent)?.awaiting?.kind === "feedback", 7 * DAY)).toBe(true);
       if (attendance !== "unanswered") await world.say(respondent, attendance === "completed" ? "We both showed up" : "I couldn't make it");
