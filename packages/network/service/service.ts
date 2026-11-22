@@ -73,7 +73,7 @@ import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
   bindTextJoinMember, checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
-  namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
+  namedOtherApp, networkEnrollmentAllowed, openRouteOpportunityStates, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
@@ -1682,7 +1682,7 @@ export class NetworkService implements RuntimeHost {
    *  2. a saved-profile read, an invitation feedback reply, a pending enrollment answer, or an app keyword;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
+   *  4. a member: the app with the newest item whose opportunity still supplies a routing hint, else the
    *     app that wrote to them last;
    *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
@@ -1744,7 +1744,9 @@ export class NetworkService implements RuntimeHost {
 
   /** The apps this address is a joined member of, across apps (platform.member_apps: ids and times only). */
   async memberApps(address: string): Promise<{ app: AppId; memberId: MemberId; lastOut: number | null; lastItem: number | null }[]> {
-    const rows = await this.sql`select app_id, member_id, last_out, last_item from platform.member_apps(${normalizeAddress(address)})`;
+    // spec/textEnrollment.md, "A pending join routes only a possible join answer"
+    const rows = await this.sql`select app_id, member_id, last_out, last_item
+      from platform.member_apps(${normalizeAddress(address)}, ${this.sql.array(openRouteOpportunityStates, "TEXT")})`;
     return (rows as any[]).filter(r => isAppId(r.app_id)).map(r => ({
       app: r.app_id as AppId, memberId: r.member_id, lastOut: r.last_out ? new Date(r.last_out).getTime() : null, lastItem: r.last_item ? new Date(r.last_item).getTime() : null,
     }));
