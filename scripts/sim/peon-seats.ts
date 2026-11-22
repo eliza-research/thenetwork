@@ -129,6 +129,58 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  for (const attendance of ["candidate missed", "manager missed", "completed", "unanswered"] as const) {
+    await b.run(`seat capacity after a booked interview: ${attendance}`, async () => {
+      const world = new SeatWorld();
+      world.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const candidate of CANDIDATES) world.add(candidate, `Cand ${candidate.toUpperCase()}`, 29, { candidate: true });
+      for (const member of world.members) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) {
+        await world.say(member.id, answer);
+      }
+      await world.say("manager", POST.replace("2 openings", "1 opening"));
+      await world.say("manager", "yes");
+      const seat = seatIdOf(world.saved[0]!.id);
+      const queue = () => world.net.reviewQueue().filter(i => world.opp(i.oppId)?.seat?.id === seat);
+      const openings = () => world.net.packInput(world.clock.now()).facets
+        .find(facet => facet.id === `${seat}:openings`)?.tags.find(tag => tag.startsWith("peon:openings:"));
+      expect(await world.runUntil(() => queue().length === 1)).toBe(true);
+      const first = queue()[0]!.oppId;
+      const candidate = world.opp(first)!.participants.find(id => id !== "manager")!;
+      expect(world.net.review(first, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await world.runUntil(() => world.probedFor(candidate, first))).toBe(true);
+      await world.say(candidate, "yes");
+      expect(await world.runUntil(() => world.probedFor("manager", first))).toBe(true);
+      await world.say("manager", "yes");
+      expect(world.opp(first)?.stage).toBe("scheduled");
+      const respondent = attendance === "manager missed" ? "manager" : candidate;
+      expect(await world.runUntil(() => world.net.memberList().find(m => m.id === respondent)?.awaiting?.kind === "feedback", 7 * DAY)).toBe(true);
+      if (attendance !== "unanswered") await world.say(respondent, attendance === "completed" ? "We both showed up" : "I couldn't make it");
+      world.restart();
+      expect(world.opp(first)?.stage).toBe("done");
+      const released = attendance === "candidate missed" || attendance === "manager missed";
+      expect(openings()).toBe(released ? "peon:openings:1" : "peon:openings:0");
+      await world.run(3 * DAY);
+      world.restart();
+      const replacement = queue()[0]?.oppId;
+      const prematureCloses = world.logs.filter(event => event.kind === "seat_ended" && event.detail.reason === "posting filled").length;
+      expect({ queued: queue().length, prematureCloses }).toEqual({ queued: released ? 1 : 0, prematureCloses: 0 });
+      if (replacement) {
+        const next = world.opp(replacement)!.participants.find(id => id !== "manager")!;
+        expect(next).not.toBe(candidate);
+        expect(world.about(replacement)).toEqual([]);
+        expect(openings()).toBe("peon:openings:0");
+        if (attendance === "manager missed") {
+          expect(world.net.review(replacement, "approve", { reviewer: "sim_staff" })).toBe(true);
+          expect(await world.runUntil(() => world.probedFor(next, replacement))).toBe(true);
+          await world.say(next, "yes");
+          expect(await world.runUntil(() => world.probedFor("manager", replacement))).toBe(true);
+          await world.say("manager", "yes");
+          expect(world.opp(replacement)?.stage).toBe("scheduled");
+        }
+      }
+    });
+  }
+
   // A manager may look for work while hiring. Their own seat must not win the sole opening
   // and then disappear in seatRoute, which correctly refuses to route a person to themself.
   const ownerRows = [];

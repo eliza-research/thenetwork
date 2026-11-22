@@ -22,8 +22,8 @@ export function inv(current: SeatLedger): boolean {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
-export function interactionOccupies(disposition: string): boolean {
-  return disposition === "pending" || disposition === "accepted" || disposition === "completed";
+export function bookedRecordOccupies(disposition: string): boolean {
+  return disposition === "accepted" || disposition === "completed";
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
@@ -72,21 +72,14 @@ export function sometimesPublishedWithCandidate(l: SeatLedger): boolean {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
+export function interactionOccupies(disposition: string): boolean {
+  return disposition === "pending" || bookedRecordOccupies(disposition);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
 export function bookedNeedsSyntheticAcceptance(hasMeeting: boolean, closed: boolean, hasFeedback: boolean): boolean {
   return bookedOccupies(hasMeeting, closed) && !hasFeedback;
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function seatRecordOccupies(openOpportunity: boolean, disposition: string): boolean {
-  return openOpportunity || interactionOccupies(disposition);
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function lawEndedInteractionFreesOpening(openOpportunity: boolean): boolean {
-  //@ ensures \result === true
-  return seatRecordOccupies(openOpportunity, "declined") === openOpportunity;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
@@ -98,9 +91,36 @@ export function lawFeedbackReplacesSyntheticAcceptance(hasMeeting: boolean, clos
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
+export function seatRecordOccupies(openOpportunity: boolean, disposition: string): boolean {
+  return openOpportunity || interactionOccupies(disposition);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
 export function lawOpenOpportunityOccupies(disposition: string): boolean {
   //@ ensures \result === true
   return seatRecordOccupies(true, disposition);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function lawEndedInteractionFreesOpening(openOpportunity: boolean): boolean {
+  //@ ensures \result === true
+  return seatRecordOccupies(openOpportunity, "declined") === openOpportunity;
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function lawMissedInterviewDoesNotFillOpening(openOpportunity: boolean): boolean {
+  //@ ensures \result === true
+  return !bookedRecordOccupies("no_show") && seatRecordOccupies(openOpportunity, "no_show") === openOpportunity;
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function lawPendingReviewDoesNotFillOpening(openOpportunity: boolean): boolean {
+  //@ ensures \result === true
+  return !bookedRecordOccupies("pending") && seatRecordOccupies(openOpportunity, "pending");
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
