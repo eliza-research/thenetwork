@@ -74,6 +74,20 @@ export function attendanceAbsences(text: string): { self: boolean; other: boolea
   return { self, other };
 }
 
+const ARRIVAL_LEAD = /^i (?:came|showed up|was there)(?:[,.]\s*|\s+)(?:but\s+)?/i;
+const NOBODY_ARRIVED = /^(?:nobody|no one) (?:came|showed up|turned up)$/i;
+const ABSENT_COUNTERPART = /^(.+?) (?:flaked(?: out)?(?: on (?:me|us))?|bailed on (?:me|us))$/i;
+const DIRECT_COUNTERPART = /^(?:he|she|they|my date|the person i met)$/i;
+
+/** Read a direct absence statement in a receipt-backed check-in about one accepted counterpart. */
+export function directFeedbackAbsence(text: string, counterpartNames: readonly string[]): boolean {
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const statement = normalize(text).replace(/[.!]$/, "").replace(ARRIVAL_LEAD, "");
+  if (NOBODY_ARRIVED.test(statement)) return true;
+  const subject = ABSENT_COUNTERPART.exec(statement)?.[1];
+  return subject !== undefined && (DIRECT_COUNTERPART.test(subject) || counterpartNames.some(name => normalize(name) === subject));
+}
+
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
   const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
