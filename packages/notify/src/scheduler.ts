@@ -16,7 +16,7 @@ import { createHash, randomInt } from "node:crypto";
 import {
   appAllowsInboxItem, canRecordInboxSeen, inboxTokenMayRecordRedemption, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
 } from "../../core/src/generated/notificationAcknowledgement.ts";
-import { assistantDigestCanLink, digestUsesProactiveSlot, inboxDueAt, weeklyDigest } from "../../core/src/generated/notificationDelivery.ts";
+import { assistantDigestCanLink, digestUsesProactiveSlot, inboxDueAt, primaryDigestAssistantIndex, weeklyDigest } from "../../core/src/generated/notificationDelivery.ts";
 import { inboxItemAllowedForRecipient, inboxItemExpired, queuedDigestClaimAllowed } from "../../core/src/generated/notificationDispatch.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
@@ -229,7 +229,8 @@ export class Notifier {
         rebuild: (recipient, items) => this.build(recipient, items, now),
         record: final => this.store.recordDelivery({
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
-          target: final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel,
+          target: final.delivery.mode === "thread" ? final.channel
+            : final.delivery.mode === "deeplink" ? final.delivery.assistant : final.delivery.assistants[primaryDigestAssistantIndex],
           countsTowardCap: final.countsTowardCap, sentAt: now,
           assistantLink: final.assistantLink,
         }),
