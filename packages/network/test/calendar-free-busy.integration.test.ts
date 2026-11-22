@@ -161,7 +161,7 @@ test.each([-1, 0, 1])("the default meeting slot includes the exact search bounda
 });
 
 // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
-test.each(["neither works this week sorry", "Neither."])("an untimed probe keeps %j open for a clear answer", async text => {
+test.each(["neither works this week sorry", "Neither.", "Thursday 7pm works.", "Second works.", "A weeknight works."])("an untimed probe keeps %j open for a clear answer", async text => {
   const ids = ["a", "b"];
   let modelReads = 0;
   const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {

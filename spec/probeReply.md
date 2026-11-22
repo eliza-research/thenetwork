@@ -60,6 +60,32 @@ pure def pickedTimes(chosen: List[str], offered: List[str]): List[str] =
   if (chosen.length() > 0) chosen else offered
 ```
 
+### A direct ordinal selects that position in the offer
+
+Use the order in the member's current message. An affirmative “second works” selects only the second option. A supported series of ordinals can select several positions when it ends with a clear choice. “Last” names the final offered option. A missing position or an unbound phrase such as “later works” leaves the offer open. A statement about the previous meeting does not select the last option.
+
+```quint
+pure def probeOrdinalIndex(ordinal: int, optionCount: int): int =
+  if (ordinal == -1 and optionCount > 0) optionCount - 1
+  else if (ordinal >= 0 and ordinal < optionCount) ordinal
+  else -1
+
+pure def lawSelectedOrdinalIsOffered(ordinal: int, optionCount: int): bool =
+  probeOrdinalIndex(ordinal, optionCount) >= 0 implies probeOrdinalIndex(ordinal, optionCount) < optionCount
+```
+
+### A day group selects only offered slots in that group
+
+A direct choice of weekdays selects Monday through Friday. A weekend choice selects Saturday and Sunday. A weeknight choice also requires the evening part of an offered weekday. When a choice includes a part of the day, apply both restrictions. A day group cannot restore a slot the member excludes. If the group contains no offered choice, ask again before using any other time. A separately selected offered slot can still count.
+
+```quint
+pure def probeGroupIncludes(groupWeekend: bool, offeredWeekend: bool, needsEvening: bool, offeredEvening: bool, namesPart: bool, partMatches: bool): bool =
+  groupWeekend == offeredWeekend and (not(needsEvening) or offeredEvening) and (not(namesPart) or partMatches)
+
+pure def lawProbeGroupDoesNotCrossWeekBoundary(groupWeekend: bool, offeredWeekend: bool, needsEvening: bool, offeredEvening: bool, namesPart: bool, partMatches: bool): bool =
+  probeGroupIncludes(groupWeekend, offeredWeekend, needsEvening, offeredEvening, namesPart, partMatches) implies groupWeekend == offeredWeekend
+```
+
 ### A past time reference leaves the offered time open
 
 A clause that describes a past time or a past option does not select or refuse an offered time. Keep a separate current choice or clear refusal in the same reply. When the reply has only a past time reference and no current choice or clear refusal, ask again. Treat the past time reference as a qualified signal so a model reading cannot select a time for it.
@@ -101,7 +127,7 @@ pure def lawUnboundTimeAloneKeepsTheProbeOpen(modelConsent: str): bool =
 
 ### An untimed probe needs an answer to the opportunity
 
-Rejection of time options keeps an untimed probe open for a clear answer, including when the reply contains affirmative wording. Treat the reply as a qualified time signal and keep it when a model reads it as yes. A clear no to the opportunity still declines it. When the probe offered times, keep the ordinary empty-selection rules.
+A named time, a choice of position, or rejection of time options keeps an untimed probe open for a clear answer, including when the reply contains affirmative wording. Treat the reply as a qualified time signal and keep it when a model reads it as yes. A clear no to the opportunity still declines it. When the probe offered times, keep the ordinary empty-selection rules.
 
 ```quint
 pure def untimedProbeTimeRejectionNeedsClarification(offeredTimes: bool, rejectedTimes: bool, otherwiseUnqualified: bool): bool =

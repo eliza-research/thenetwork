@@ -11,7 +11,7 @@ import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_A
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { historicalProbeTimeClause, mayRetryCounter, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
+import { historicalProbeTimeClause, mayRetryCounter, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearning.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
@@ -848,13 +848,18 @@ function clauseAt(t: string, i: number, len: number): string {
 }
 
 const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
+const PROBE_DAY_GROUP = /\b(?:weekdays?|weekends?|weeknights?|during the week)\b/g;
+const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
 const NAMED_EXCLUSION_RANGE = "(?:any day|any ?time|anything|everything|all|whichever)";
 const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
 const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|except|${NAMED_EXCLUSION_PHRASES})\s+(?:on\s+)?$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
-type TimeMention = { at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening" };
+type TimeMention = {
+  at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening";
+  group?: "weekday" | "weekend"; nightsOnly?: boolean;
+};
 
 function clockMinute(m: RegExpMatchArray): number {
   if (m[4]) return m[4] === "noon" ? 12 * 60 : 0;
@@ -866,7 +871,11 @@ function partOf(minute: number): TimeMention["part"] {
 }
 
 function timeMentions(text: string): TimeMention[] {
-  const days = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
+  const days: TimeMention[] = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
+  for (const m of text.matchAll(PROBE_DAY_GROUP)) {
+    days.push({ at: m.index, end: m.index + m[0].length, group: m[0].startsWith("weekend") ? "weekend" : "weekday", nightsOnly: m[0].startsWith("weeknight") });
+  }
+  days.sort((a, b) => a.at - b.at);
   const times: TimeMention[] = [...text.matchAll(CLOCK_MENTION)].map(m => ({ at: m.index!, end: m.index! + m[0].length, minute: clockMinute(m) }));
   for (const m of text.matchAll(DAYPART_MENTION)) {
     const part = /^morning/.test(m[0]) ? "morning" : /^(?:afternoon|lunch)/.test(m[0]) ? "afternoon" : "evening";
@@ -882,9 +891,11 @@ function timeMentions(text: string): TimeMention[] {
       t.at = Math.min(d.at, t.at);
       t.end = Math.max(d.end, t.end);
       t.day = d.day;
+      t.group = d.group;
+      t.nightsOnly = d.nightsOnly;
     }
   }
-  return [...days, ...times.filter(t => t.day || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
+  return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
 }
 
 const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
@@ -893,6 +904,28 @@ const PROBE_ORDINALS: [RegExp, number][] = [
   [probeOrdinal("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
   [probeOrdinal("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, -1],
 ];
+
+const ORDINAL_POSITION: Readonly<Record<string, number>> = {
+  first: 0, "1st": 0, earlier: 0, earliest: 0,
+  second: 1, "2nd": 1, middle: 1,
+  third: 2, "3rd": 2, fourth: 3, "4th": 3, last: -1, latest: -1,
+};
+const ORDINAL_WORD = String.raw`(?:${Object.keys(ORDINAL_POSITION).join("|")})\b`;
+const ORDINAL_ITEM = String.raw`(?:the\s+)?${ORDINAL_WORD}(?:\s+(?:one|option|slot))?`;
+const ORDINAL_JOIN = String.raw`(?:\s*(?:,\s*(?:and\s+|or\s+)?|\band\b|\bor\b|&|\/)\s*)`;
+const DIRECT_ORDINAL = new RegExp(String.raw`(?:^|[.,;!]\s*|\bbut\s+)\s*(?:the\s+)?(${ORDINAL_ITEM}(?:${ORDINAL_JOIN}${ORDINAL_ITEM})*)\s+(?:works?|will work|is (?:good|fine|great|perfect)|please)(?:\s+for (?:me|us))?(?=\s*(?:$|[.,;!]))`, "g");
+const BARE_LAST = /^\s*(?:the\s+)?(?:last|latest)(?:\s+(?:one|option|slot))?[.!,\s]*$/;
+const VAGUE_ORDINAL_TIME = /^\s*(?:the\s+)?(?:later|last time)\s+(?:works?|will work|is (?:good|fine))\s*[.!]*$/;
+
+function independentOrdinalChoices(text: string): number[][] {
+  if (BARE_LAST.test(text)) return [[-1]];
+  const choices: number[][] = [];
+  for (const item of text.matchAll(DIRECT_ORDINAL)) {
+    if (quoteStillOpen(text.slice(0, item.index))) continue;
+    choices.push([...item[1]!.matchAll(new RegExp(ORDINAL_WORD, "g"))].map(word => ORDINAL_POSITION[word[0]]!));
+  }
+  return choices;
+}
 
 const PAST_PROBE_CUE = /\b(?:was|were|wasn't|weren't|went|came|met|enjoyed|loved|ago)\b/;
 const PAST_RELATIVE_TIME = /\b(?:yesterday|last\s+(?:week|month|year|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))\b/;
@@ -904,7 +937,7 @@ const CURRENT_PROBE_REFUSAL = /^(?:no(?: (?:thanks|thank you))?|(?:neither|none 
 const EXPLICIT_ALTERNATIVE_RANGE = /(?:^|[.,;!]\s*)\s*(?:any day|any ?time|anything|everything|all|whichever)\s+(?:but|except|other than|apart from|aside from|excluding|barring)\b/;
 
 function isIndependentProbeAnswer(clause: string): boolean {
-  return CURRENT_PROBE_REFUSAL.test(clause.trim()) || timeMentions(clause).some(mention =>
+  return CURRENT_PROBE_REFUSAL.test(clause.trim()) || independentOrdinalChoices(clause).length > 0 || timeMentions(clause).some(mention =>
     !clause.slice(0, mention.at).trim() && CURRENT_PROBE_CHOICE.test(clause.slice(mention.end)));
 }
 
@@ -932,7 +965,7 @@ function separatePastProbeTimes(text: string): { current: string; past: boolean 
 }
 
 function hasUnboundProbeTime(text: string): boolean {
-  return UNBOUND_OFFER_DATE.test(text) || UNBOUND_PROBE_WINDOW.test(text) || RELATIVE_PROBE_DURATION.test(text) || PROBE_DURATION_ONLY.test(text);
+  return UNBOUND_OFFER_DATE.test(text) || RELATIVE_DAY_GROUP.test(text) || UNBOUND_PROBE_WINDOW.test(text) || RELATIVE_PROBE_DURATION.test(text) || PROBE_DURATION_ONLY.test(text);
 }
 
 function separateUnboundProbeTimes(text: string): { current: string; unbound: boolean } {
@@ -953,7 +986,7 @@ function separateUnboundProbeTimes(text: string): { current: string; unbound: bo
     }
     const mentions = carryDate ? timeMentions(clause) : [];
     // A clock or part of the day after a comma can continue the unbound date.
-    if (clause.trim() && !(mentions.length && mentions.every(mention => !mention.day))) {
+    if (clause.trim() && !(mentions.length && mentions.every(mention => !mention.day && !mention.group))) {
       current.push(clause + (punctuation ?? ""));
     }
     carryDate = false;
@@ -993,7 +1026,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   const rejectedTimes = OFFERED_TIME_REJECTION.test(t);
   // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
-  if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes, c.why === "affirm" || c.why === "none")) {
+  const namedTimeWithoutOffer = !options.length && (timeMentions(t).length > 0 || independentOrdinalChoices(t).length > 0 || VAGUE_ORDINAL_TIME.test(t));
+  if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes || namedTimeWithoutOffer, c.why === "affirm" || c.why === "none")) {
     return { answer: "unclear", keys: [], why: "slot" };
   }
   if (!options.length && unboundProbeTimeNeedsClarification(unbound, false) && c.answer !== "no" && c.why !== "conditional" && c.why !== "hedged") {
@@ -1004,14 +1038,17 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const yes = c.answer === "yes" || !explicitTimesOnly && c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
     return { answer: c.answer === "no" ? "no" : yes ? "yes" : "unclear", keys: [], why: c.why };
   }
+  if (VAGUE_ORDINAL_TIME.test(t)) return { answer: "unclear", keys: [], why: "slot" };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
+  const individual = new Set<string>(), grouped = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
-  const mark = (keys: string[], i: number, len: number, calendar = false) => {
+  const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
+      (group ? grouped : individual).add(k);
       const cl = clauseAt(t, i, len);
       if ((!unbound || !calendar) && onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
@@ -1028,50 +1065,61 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
   const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
-  if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); individual.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   for (const [re, index] of PROBE_ORDINALS) {
     const option = options.at(index);
     if (option) for (const match of t.matchAll(re)) mark([option.key], match.index!, match[0].length);
   }
-  let namedExclusion = false;
+  const ordinalChoices = independentOrdinalChoices(t);
+  const ordinalKeys = ordinalChoices.flatMap(choices => choices.map(choice => options[probeOrdinalIndex(choice, options.length)]?.key));
+  for (const key of ordinalKeys) {
+    if (key === undefined || neg.has(key)) continue;
+    pos.add(key);
+    strong.add(key);
+    individual.add(key);
+  }
+  const ordinalMissing = ordinalKeys.some(key => key === undefined);
+  let namedExclusion = false, refusedGroup = false;
   const unresolved: TimeMention[] = [];
+
   const offered = options.map(o => {
     const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
-    return { key: o.key, day: o.label.split(" ")[0], minute: clock ? clockMinute(clock) : undefined };
+    const day = o.label.split(" ")[0];
+    const minute = clock ? clockMinute(clock) : undefined;
+    return { key: o.key, day, knownDay: day !== undefined && DAY_WORDS.some(([, name]) => name === day),
+      weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
   });
   for (const m of timeMentions(t)) {
     const matching = offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
-      && (!m.part || o.minute !== undefined && partOf(o.minute) === m.part)).map(o => o.key);
+      && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
+        m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
     const exclusion = NAMED_EXCLUSION.test(t.slice(0, m.at));
     const refused = exclusion || negatedAt(t, m.at, m.end - m.at);
-    if (refused) {
+    if (m.group && (quoteStillOpen(t.slice(0, m.at)) || describesAnotherPerson(clauseAt(t, m.at, m.end - m.at)))) {
+      unresolved.push(m);
+    } else if (refused) {
       namedExclusion ||= exclusion;
+      refusedGroup ||= !!m.group;
       for (const key of matching) neg.add(key);
-    } else if (unbound && !m.day || !matching.length || matching.length > 1 && (explicitTimesOnly || !m.part)
-      || m.part && !m.day && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
+    } else if (unbound && !m.day || !matching.length || !m.group && matching.length > 1 && (explicitTimesOnly || !m.part)
+      || m.part && !m.day && !m.group && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
       // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
       unresolved.push(m);
-    } else mark(matching, m.at, m.end - m.at, true);
-  }
-  // "Weekends work best" names the weekend: it picks the offered Saturday and Sunday options, and with
-  // none offered it names a time the probe did not offer (asked again, never booked).
-  for (const m of t.matchAll(/\bweekends?\b/g)) {
-    const weekend = offered.filter(o => o.day === "Saturday" || o.day === "Sunday").map(o => o.key);
-    if (negatedAt(t, m.index!, m[0].length)) for (const key of weekend) neg.add(key);
-    else if (weekend.length) mark(weekend, m.index!, m[0].length, true);
-    else unresolved.push({ at: m.index!, end: m.index! + m[0].length });
+    } else mark(matching, m.at, m.end - m.at, true, !!m.group);
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
+  residue = residue.replace(PROBE_DAY_GROUP, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
   const addsChoice = /\b(?:also|too|as\s+well)\b/.test(residue)
     && !residue.replace(/\b(?:also|too|as\s+well|first|second|third|last)\b/g, "").trim();
   if ((unbound ? addsChoice : !residue) && !/\?/.test(t)) for (const k of pos) strong.add(k);
-  const picked = all.filter(k => pos.has(k) && (!explicitTimesOnly || !neg.has(k)));
-  const open = all.filter(k => !neg.has(k) || pos.has(k));
+  const isPicked = (key: string) => pos.has(key) && (!neg.has(key) || !explicitTimesOnly && (!grouped.has(key) || individual.has(key)));
+  const picked = all.filter(isPicked);
+  const open = all.filter(key => !neg.has(key) || isPicked(key));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
   const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
@@ -1082,6 +1130,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
     if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
   }
+  if (ordinalMissing) return { ...unclear, why: "slot" };
   if (unbound) {
     const current = picked.filter(key => strong.has(key));
     return unboundProbeTimeNeedsClarification(unbound, current.length > 0)
@@ -1101,7 +1150,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (!explicitTimesOnly && namedExclusion && open.length && (!past || EXPLICIT_ALTERNATIVE_RANGE.test(t))) {
     return { answer: "yes", keys: open, why: c.why };
   }
-  if (past) return { ...unclear, why: "slot" };
+  if (past || refusedGroup && !/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/.test(t)) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.

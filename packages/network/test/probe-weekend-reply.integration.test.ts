@@ -56,3 +56,36 @@ test("a past date reference neither books nor replaces the active time choice", 
   await world.say("sam", "Last Saturday was great and Sunday works.");
   expect(world.meetings).toMatchObject([{ proposalId: id, participants: ids, at: sunday }]);
 });
+
+
+test.each([
+  { first: "weekend mornings work", second: "first works", selected: 1, firstPicks: ["b"], secondKey: "a" },
+  { first: "a weeknight works", second: "first works", selected: 0, firstPicks: ["a"], secondKey: "a" },
+  { first: "Yes.", second: "second works", selected: 1, firstPicks: ["a", "b", "c"], secondKey: "b" },
+  { first: "Yes.", second: "last works", selected: 2, firstPicks: ["a", "b", "c"], secondKey: "c" },
+])("books only the common explicit time for $first and $second", async ({ first, second, selected, firstPicks, secondKey }) => {
+  const ids = ["rae", "sam"];
+  const starts = [Date.UTC(2026, 9, 8, 23), Date.UTC(2026, 9, 10, 15), Date.UTC(2026, 9, 11, 18)];
+  const world = new Mini([
+    { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
+    { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
+  ], { app: "slop", plans: false, growth: false, review: "human", hooks: {
+    timeOptions: () => starts.map(start => ({ start, end: start + HOUR })),
+    venue: () => ({ id: "test-cafe", name: "Cafe", neighborhood: "Downtown", lat: 40.7, lng: -74 }),
+  } });
+  await world.onboard(...ids);
+  const id = world.propose(ids, { category: "romance", objective: "a coffee date" });
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
+  expect(world.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await world.runUntil(() => world.probed("rae"))).toBe(true);
+  await world.say("rae", first);
+  expect(await world.runUntil(() => world.probed("sam"))).toBe(true);
+  await world.say("sam", "Fourth works.");
+  expect(world.probed("sam")).toBe(true);
+  expect(world.meetings).toEqual([]);
+  const offered = world.to("sam").find(send => send.meta.probe?.key === id)?.meta.timeOptions;
+  expect(offered?.find(option => option.key === secondKey)?.start).toBe(starts[selected]);
+  await world.say("sam", second);
+  expect(world.log("probe_answer").map(item => item.detail.picked)).toEqual([firstPicks, [secondKey]]);
+  expect(world.meetings).toMatchObject([{ proposalId: id, participants: ids, at: starts[selected] }]);
+});

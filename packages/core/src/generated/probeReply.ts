@@ -53,6 +53,32 @@ export function pickedTimes(chosen: string[], offered: string[]): string[] {
   return chosen.length > 0 ? chosen : offered;
 }
 
+/** Story: Make a choice about a proposed opportunity / A direct ordinal selects that position in the offer (spec/probeReply.md) */
+//@ pure
+export function probeOrdinalIndex(ordinal: number, optionCount: number): number {
+  return ordinal === -1 && optionCount > 0 ? exact_probeReply(optionCount - 1) : (ordinal >= 0 && ordinal < optionCount ? ordinal : -1);
+}
+
+/** Story: Make a choice about a proposed opportunity / A direct ordinal selects that position in the offer (spec/probeReply.md) */
+//@ pure
+export function lawSelectedOrdinalIsOffered(ordinal: number, optionCount: number): boolean {
+  //@ ensures \result === true
+  return !(probeOrdinalIndex(ordinal, optionCount) >= 0) || probeOrdinalIndex(ordinal, optionCount) < optionCount;
+}
+
+/** Story: Make a choice about a proposed opportunity / A day group selects only offered slots in that group (spec/probeReply.md) */
+//@ pure
+export function probeGroupIncludes(groupWeekend: boolean, offeredWeekend: boolean, needsEvening: boolean, offeredEvening: boolean, namesPart: boolean, partMatches: boolean): boolean {
+  return groupWeekend === offeredWeekend && (!needsEvening || offeredEvening) && (!namesPart || partMatches);
+}
+
+/** Story: Make a choice about a proposed opportunity / A day group selects only offered slots in that group (spec/probeReply.md) */
+//@ pure
+export function lawProbeGroupDoesNotCrossWeekBoundary(groupWeekend: boolean, offeredWeekend: boolean, needsEvening: boolean, offeredEvening: boolean, namesPart: boolean, partMatches: boolean): boolean {
+  //@ ensures \result === true
+  return !probeGroupIncludes(groupWeekend, offeredWeekend, needsEvening, offeredEvening, namesPart, partMatches) || groupWeekend === offeredWeekend;
+}
+
 /** Story: Make a choice about a proposed opportunity / A past time reference leaves the offered time open (spec/probeReply.md) */
 //@ pure
 export function historicalProbeTimeClause(describesPast: boolean, timeReference: boolean): boolean {
@@ -137,4 +163,10 @@ export function lawWeakAcknowledgementNeedsLatestProbe(precedingMessages: number
 export function lawWeakAcknowledgementNeedsUninterruptedTurn(precedingMessages: number, acceptedAt: number, receivedAt: number, now: number): boolean {
   //@ ensures \result === true
   return !weakProbeAcknowledgementAllowed(true, true, false, precedingMessages, true, acceptedAt, receivedAt, now);
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_probeReply(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }
