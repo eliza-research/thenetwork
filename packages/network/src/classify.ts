@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, ageInsideQuote, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, type Category } from "@thenetwork/core";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { historicalProbeTimeClause, mayRetryCounter, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
@@ -345,7 +345,7 @@ function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
  */
 function notNowBefore(text: string, at: number): boolean {
   const before = text.slice(0, at);
-  if (ageInsideQuote(before)) return true;
+  if (quoteStillOpen(before)) return true;
   let from = 0;
   CLAUSE_BREAK.lastIndex = 0;
   for (const m of before.matchAll(CLAUSE_BREAK)) from = m.index! + m[0].length;

@@ -57,7 +57,7 @@ export function normalizeAgeInitialism(text: string): string {
  * (`she said "I'm 15"`, `"I'm 15"`). Apostrophes in "I'm" and "don't", and a foot mark (`5'6`, `5'`),
  * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
  */
-export function ageInsideQuote(prefix: string): boolean {
+export function quoteStillOpen(prefix: string): boolean {
   let double = false, single = false;
   for (let i = 0; i < prefix.length; i++) {
     const c = prefix[i]!;

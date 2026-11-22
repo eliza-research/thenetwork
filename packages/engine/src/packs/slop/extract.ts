@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, ageInsideQuote, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -203,7 +203,7 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
   for (const s of sentences(normalizeAgeInitialism(t))) {
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
-      if (ageInsideQuote(t.slice(0, s.start + m.index + lead)) || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
+      if (quoteStillOpen(t.slice(0, s.start + m.index + lead)) || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
       if (KIN_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
       const a = r.age(m);
       if (!Number.isFinite(a) || a < 1 || a > 99) continue;
