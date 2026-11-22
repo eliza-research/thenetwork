@@ -8,7 +8,7 @@
 // pooled over seeds (mean of each metric); the worst seed is shown where it matters.
 import type { FriendsMetrics } from "./metrics.ts";
 
-import type { GateResult } from "../gates.ts";
+import { minimumObservedRatio, type GateResult } from "../gates.ts";
 export type { GateResult } from "../gates.ts";
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const M = (xs: FriendsMetrics[], f: (m: FriendsMetrics) => number) => mean(xs.map(f));
@@ -17,18 +17,23 @@ const BIG = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
 
 /** Min over boroughs with >= `minN` real members (mean n over seeds) of mean V14(borough) / mean V14. */
 export function boroughRatio(p: FriendsMetrics[], minN: number): { min: number; worst: string; worstSeed: number } {
+  const perSeed = p.flatMap(m => {
+    if (!Number.isFinite(m.v14) || m.v14 <= 0) return [];
+    return BIG.flatMap(b => {
+      const cohort = m.v14ByBorough[b];
+      return cohort && cohort.n >= minN ? [cohort.v14 / m.v14] : [];
+    });
+  });
+  const worstSeed = minimumObservedRatio(perSeed);
   const v = M(p, m => m.v14);
-  let min = Infinity, worst = "";
+  let min = NaN, worst = "";
+  if (!Number.isFinite(v) || v <= 0) return { min, worst, worstSeed };
   for (const b of BIG) {
     if (M(p, m => m.v14ByBorough[b]?.n ?? 0) < minN) continue;
     const r = M(p, m => m.v14ByBorough[b]?.v14 ?? NaN) / v;
-    if (r < min) { min = r; worst = b; }
+    if (Number.isFinite(r) && (Number.isNaN(min) || r < min)) { min = r; worst = b; }
   }
-  const per = p.map(m => { const rs = BIG.filter(b => (m.v14ByBorough[b]?.n ?? 0) >= minN && Number.isFinite(m.v14ByBorough[b]!.v14)).map(b => m.v14ByBorough[b]!.v14 / m.v14); return rs.length ? Math.min(...rs) : NaN; });
-  const finitePer = per.filter(Number.isFinite);
-  // No qualifying borough means the ratio does not exist: report NaN, not
-  // Infinity (an Infinity min passes the >= 0.7 gate with no borough measured).
-  return { min: Number.isFinite(min) ? min : NaN, worst, worstSeed: finitePer.length ? Math.min(...finitePer) : NaN };
+  return { min, worst, worstSeed };
 }
 
 /** Official gates: the founder's adopted replacements (2026-10-08) and the gates that held as proposed. */
