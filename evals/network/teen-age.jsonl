@@ -260,3 +260,15 @@
 {"text":"I just turned twelve and we won the tournament.","teen":true,"age":12}
 {"text":"I'm 12 and a half and I am undefeated.","teen":true,"age":12}
 {"text":"I am 12 and my team won.","teen":true,"age":12}
+{"text":"I'm 17 and a half and want a gf","teen":true,"age":17}
+{"text":"i'm 16 and a half now","teen":true,"age":16}
+{"text":"I'm 17 and a half too","teen":true,"age":17}
+{"text":"i'm 17.5 now","teen":true,"age":17}
+{"text":"I'm 16.5 and bored","teen":true,"age":16}
+{"text":"I'm 15 and 3 months","teen":true,"age":15}
+{"text":"I'm 17 and 11 months","teen":true,"age":17}
+{"text":"I'm 17 and 3/4","teen":true,"age":17}
+{"text":"I'm 5.5","teen":false}
+{"text":"I'm 5 1/2, slim","teen":false}
+{"text":"I'm 15 and a half minutes away","teen":false}
+{"text":"I'm 13.5 miles away","teen":false}

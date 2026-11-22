@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, ageBeforeConjunction, canJoin, parseReply, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, AGE_MONTHS, AGE_PART_TAIL, ARTICLE_AGE_END, ageBeforeConjunction, canJoin, parseReply, type Category } from "@thenetwork/core";
 import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
@@ -250,6 +250,8 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(?:${AGE_HALF}(?:${AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageBeforeConjunction(ageNumber(m[1] ?? ""), m) },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
+  // "I'm 17 and a half and ...", "I'm 16.5 now", "I'm 15 and 3 months": a part of a year, for 13 and up.
+  { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})(?:${AGE_HALF}|${AGE_MONTHS})(?=\\s*(?:${AGE_PART_TAIL}|${YEARS_OLD}))`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
