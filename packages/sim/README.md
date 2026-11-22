@@ -125,6 +125,8 @@ Hidden cards stay inside the simulator process. The Network gets only `ctx.send`
 
 Scenario expectations are checked against the final run log and metrics, not against the transcript. Examples: was a flake notice recorded, were the others notified, was nothing delivered after STOP, was the canary never seen by another member. `runScenarioPassK` and `--k` count a scenario as passed only if it passes on k consecutive seeds. Expectations marked `appliesTo: ["engine"]` are skipped for the stub network. For example, the band pair should be found within 4 days of the second member joining.
 
+Contact checks read the message's participant or relay metadata and the recorded opportunity roster. The no-contact check also looks at alternates on a referenced proposal when the message has no explicit roster. Text can identify a simulator persona by a full name, a first name with a surname initial, or a first name. The name form must belong to one persona and match whole Unicode words. A neutral cancellation after a block can carry the old booking reference.
+
 ### Oracle gap
 
 The oracle gap compares the engine's proposals with a selector that has the full hidden information:

@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, SimClock, type MemberId, type NetworkContext, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -16,7 +16,7 @@ import { baseMember, emptyInput, randomWorld } from "../../packages/engine/src/t
 import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, evaluateExpectations, loadScenario, runScenario as runSimScenario, runScenarioPassK, runWorld, scenarioWorldOptions } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, evaluateExpectations, loadScenario, runScenario as runSimScenario, runScenarioPassK, runWorld, scenarioWorldOptions, type Scenario } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -150,6 +150,94 @@ export async function scenarioAttendanceEvidenceGates(b: Block): Promise<void> {
   });
 }
 
+export async function scenarioContactEvidenceGates(b: Block): Promise<void> {
+  class MessageFixtureNetwork extends StubNetwork {
+    channelContext!: NetworkContext;
+    override init(ctx: NetworkContext) { super.init(ctx); this.channelContext = ctx; }
+  }
+  const seed = 3;
+  const scenario: Scenario = {
+    name: "contact-evidence", description: "Grade received messages and inferred simulated counterparts.",
+    seed, days: 3,
+    personas: [
+      { ref: "recipient", name: "Maya Rivera", age: 29 },
+      { ref: "minor", name: "Noé Reyes", age: 15 },
+      { ref: "blocked", name: "Al Brennan", age: 30 },
+      { ref: "other", name: "Alex Parker", age: 30 },
+      { ref: "shared-one", name: "Rae Vega", age: 29 },
+      { ref: "shared-two", name: "Rae Vance", age: 29 },
+      { ref: "distinct", name: "Rae Young", age: 29 },
+      { ref: "prefixed", name: "Noéline Reyes", age: 29 },
+    ].map(p => ({ ...p, city: "sf", join: { day: 0, hour: 10 }, responsiveness: { ignoreProb: 0, latencyMedianMin: 1, latencySigma: 0 } })),
+    actions: [{ at: { day: 1, hour: 10 }, do: "say", persona: "recipient", text: "block Al Brennan" }],
+    expectations: [{ check: "no_contact", persona: "minor" }, { check: "blocked_pair_kept_apart", personas: ["recipient", "blocked"] }],
+  };
+  const startFixture = async () => {
+    const network = new MessageFixtureNetwork({ seed, randomIntros: false });
+    const sim = new World({ ...scenarioWorldOptions(scenario, { network: () => network }), failureRate: 0 });
+    await sim.begin();
+    await sim.advanceTo(sim.clock.now() + DAY + 22 * HOUR);
+    return { network, sim };
+  };
+  const { network, sim } = await startFixture();
+  const send = (body: string, meta: SimMeta = {}) => network.channelContext.send("recipient", body, { meta: { type: "proposal", ...meta } });
+  const firstName = send("Would you like to meet Noe\u0301 for coffee?");
+  const longerName = send("Would you like to meet Alex for coffee?");
+  const longerMinorName = send("Would you like to meet Noéline for coffee?");
+  const blockedName = send("Would you like to meet Al for coffee?");
+  const metadata = send("Would you like to meet for coffee?", { probe: { key: "exact-minor", category: "social", participants: ["recipient", "minor"] } });
+  const recordedRelay = send("Thanks for checking.", { type: "relay", relayFrom: "blocked" });
+  const neutralCancel = send("That plan is off.", { type: "cancellation", participants: ["recipient", "blocked"] });
+  network.channelContext.recordProposal({
+    id: "scenario-alternates", kind: "intro", participants: ["recipient", "other"], alternates: ["minor", "blocked"],
+    city: "sf", objective: "coffee", category: "social", score: 1, exploration: false,
+    components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 1 },
+    explanations: {}, generator: "scenario", createdAt: sim.clock.now(),
+    window: { start: sim.clock.now(), end: sim.end },
+  }, "scenario");
+  const linkedProposal = send("Would you like to meet for coffee tomorrow?", { proposalId: "scenario-alternates" });
+  const explicitRoster = send("Would you like to meet for coffee on Tuesday?", {
+    proposalId: "scenario-alternates", participants: ["recipient", "other"],
+  });
+  await sim.advanceTo(sim.end);
+  const world = await sim.complete();
+  const grade = (id: string) => evaluateExpectations(scenario, { ...world,
+    records: world.records.filter(r => r.type !== "message" || r.msg.direction !== "outbound" || r.msg.id === id),
+  }, network.name).map(x => x.status);
+
+  await b.run("scenario contact evidence catches a unique first name or exact metadata", () => {
+    expect(world.records.some(r => r.type === "block" && r.from === "recipient" && r.to === "blocked")).toBe(true);
+    expect([grade(firstName.id), grade(longerMinorName.id), grade(metadata.id)]).toEqual([
+      ["fail", "pass"], ["pass", "pass"], ["fail", "pass"],
+    ]);
+  });
+  await b.run("scenario block evidence distinguishes a longer name from the blocked member", () => {
+    expect([grade(longerName.id), grade(blockedName.id), grade(recordedRelay.id), grade(neutralCancel.id)]).toEqual([
+      ["pass", "pass"], ["pass", "fail"], ["pass", "fail"], ["pass", "pass"],
+    ]);
+  });
+  await b.run("scenario grading preserves minor alternates in a referenced proposal", () => {
+    expect([grade(linkedProposal.id), grade(explicitRoster.id)]).toEqual([["fail", "pass"], ["pass", "pass"]]);
+  });
+  await b.run("simulator personas use unique display initials and preserve a recorded roster", async () => {
+    const observed = [];
+    for (const { body, participants } of [
+      { body: "For coffee, would you like to meet Rae Y." },
+      { body: "Would you like to meet Rae V. for coffee?" },
+      { body: "Would you like to meet Rae for coffee?" },
+      { body: "Would you like to meet Rae V.", participants: ["recipient", "shared-two"] },
+    ]) {
+      const { network, sim } = await startFixture();
+      const message = network.channelContext.send("recipient", body, { meta: { type: "proposal", participants } });
+      expect(message.status).toBe("delivered");
+      await sim.advanceTo(sim.end);
+      const result = await sim.complete();
+      observed.push(result.memories.get("recipient")?.proposals[`inferred:${message.id}`]?.others);
+    }
+    expect(observed).toEqual([["distinct"], [], [], ["shared-two"]]);
+  });
+}
+
 export async function humanReviewGate(b: Block): Promise<void> {
   await b.run("human review (PRD 32.8): nothing probed until approved; reject and SLA expiry send nothing", async () => {
     const { w, net, records, start } = await world(3, 3, { review: "human" });
@@ -194,6 +282,7 @@ export async function humanReviewGate(b: Block): Promise<void> {
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
   await scenarioAttendanceEvidenceGates(b);
+  await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
   await vouchPeriodGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
