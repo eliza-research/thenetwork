@@ -74,6 +74,8 @@ export interface SimMeta {
    * only with PolicyOptions.timeAware.
    */
   booked?: { proposalId: string; at: number; optOutHours: number };
+  /** The new start and revision announced by a committed booking update. */
+  bookingUpdate?: { at: number; revision: number };
   /**
    * Outbound only, on a "plan_probe" (and optionally on the plan's "feedback_request"). The plan the
    * probe describes: activity, time window, size, area, and numbered options ("Reply 1, 2 or both").

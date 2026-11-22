@@ -10,7 +10,8 @@
 // ghosts and never written (PRD 34.6).
 import { SQL } from "../../../core/src/runtime/postgres.ts";
 import { heldMeetingMinimum, observatoryMeetingHeld } from "../../../core/src/generated/observatoryRoster.ts";
-import { consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
+import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
+import { confirmationWindowHours } from "../../../core/src/generated/meetingSettlement.ts";
 import {
   DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
@@ -54,8 +55,6 @@ export interface RealOptions {
   service?: ServiceConfig | false;
 }
 
-/** The booked plan's opt-out window (the Network's OPT_OUT_HOURS, which it does not export; game mode reads it from SimMeta.booked). */
-const BOOKED_OPT_OUT_HOURS = 48;
 const HELD = ["COMPLETED", "FEEDBACK_COLLECTED"];
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
 export const HIDDEN_MESSAGE = "[member message hidden]";
@@ -64,6 +63,9 @@ interface MessageEvidenceKey { id: string; member_id: string; direction: string;
 interface DeliveryEvidence {
   app_id: AppId; member_id: string; message_id: string; status: string | null; reason: DeliveryReason | null;
   leak_stopped: boolean; staff_released: boolean; attempted: boolean;
+}
+interface BookingReceiptView {
+  app_id: AppId; opportunity_id: string; member_id: string; booking_at: Date; received_at: Date;
 }
 const guardLabel: Record<ConsoleDeliveryGuard, ObsMessage["guard"]> = {
   DeliveryGuardUnrecorded: undefined, DeliveryGuardBlocked: "blocked", DeliveryGuardReleased: "released", DeliveryGuardChecked: "passed",
@@ -340,8 +342,8 @@ export class RealSource implements DataSource {
       sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated from network.review_items where app_id = ${app}`
         .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at from network.review_items where app_id = ${app}`).catch(() => []),
       this.ageInfo(sql),
-      // The booked plan: when it reached each member (the reveal), and who called it off.
-      sql`select opportunity_id, member_id, min(ts) as ts from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal' and opportunity_id is not null group by 1, 2`,
+      sql.unsafe<BookingReceiptView[]>(`select app_id, opportunity_id, member_id, booking_at, received_at
+        from network.booking_receipts_${app} where app_id=$1`, [app]),
       // The time keys each member picked (the offered labels are in the message text only).
       sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at, id`,
     ]);
@@ -385,8 +387,13 @@ export class RealSource implements DataSource {
     }
     const partsBy = new Map<string, any[]>();
     for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
-    const told = new Map<string, Record<string, number>>(), times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
-    for (const r of bookedMsgs as any[]) told.set(r.opportunity_id, { ...told.get(r.opportunity_id), [r.member_id]: ms(r.ts) ?? 0 });
+    const receipts = new Map<string, BookingReceiptView[]>();
+    for (const receipt of bookedMsgs) {
+      const group = receipts.get(receipt.opportunity_id) ?? [];
+      group.push(receipt);
+      receipts.set(receipt.opportunity_id, group);
+    }
+    const times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
     for (const e of picksEv as any[]) {
       const p = e.payload ?? {}, opp = p.oppId as string | undefined, id = p.memberId as string | undefined;
       if (!opp || !id) continue;
@@ -412,7 +419,16 @@ export class RealSource implements DataSource {
         o.origin = rv.origin ?? undefined;
       }
       if (times.has(r.id)) o.times = times.get(r.id);
-      if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
+      const told: BookedPlan["told"] = {};
+      for (const receipt of receipts.get(o.id) ?? []) {
+        const receivedAt = ms(receipt.received_at) ?? -1;
+        if (consoleBookingReceiptCurrent(receipt.app_id === app && ms(receipt.booking_at) === o.meetingAt,
+          o.participants.includes(receipt.member_id), true, receivedAt, s.clock.now)) told[receipt.member_id] = receivedAt;
+      }
+      const calledOff = cancelled.get(o.id);
+      if (o.meetingAt !== undefined && (Object.keys(told).length || calledOff)) {
+        o.booked = { at: o.meetingAt, optOutHours: confirmationWindowHours, told, cancelled: calledOff ?? {} };
+      }
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
     }
     const dbRuns = (runs as any[]).map(r => r.summary as EngineRunSummary).reverse();

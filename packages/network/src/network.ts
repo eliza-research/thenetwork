@@ -1589,7 +1589,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("meeting_rescheduled", { oppId: o.id, revision: o.scheduleRevision, previousAt: draft.originalAt, at: draft.proposedAt, changedAt: now });
     for (const id of draft.roster) {
       const key = rescheduleUpdateKey(o.id, o.scheduleRevision, id);
-      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt)), { type: "scheduling", proposalId: o.id },
+      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt)), {
+        type: "scheduling", proposalId: o.id, bookingUpdate: { at: draft.proposedAt, revision: o.scheduleRevision },
+      },
         "scheduling", { about: draft.roster, key, hook: { t: "reschedule_updated", oppId: o.id, key } });
     }
   }
