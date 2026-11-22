@@ -16,6 +16,9 @@ The executable [rescheduling rules](../meetingReschedule.md) cover independent c
 
 The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a qualified use of the same words. A direct withdrawal declines the offer. A quoted or negated use and an unbound time keep its current probe open. The first member's accepted slots can narrow and renumber the next member's offer. A valid ordinal or day group acts only on that member's current offer. The reviewed Slop test checks the selected start. This standalone model abstracts the precise slots to all, none, or unresolved.
 
+The same declined action covers a standalone “afraid not,” “not a chance,” or
+“no chance.” A qualified use of those words stays in the unresolved action.
+
 A negative or conditional cancellation uses the same booked-reply guard. Exact local start and date-only selection use the one-booking rule in the executable spec. The standalone state machine uses deterministic traces for the special interpretations and abstracts from a second simultaneous booked reply. A [number-swap withdrawal](../opportunityLifecycle.md#a-number-swap-refusal-does-not-decline-the-booked-meeting) keeps the booking unless the member also refuses attendance. The relay model owns the transfer state. The trace below follows the booked slot and makes sure the counterpart receives cancellation only after the attendance refusal.
 
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.

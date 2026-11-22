@@ -34,6 +34,12 @@ inside a quotation or a reported or negated use of the instruction. Keep
 a separate current answer. If no separate answer appears, ask again and
 keep the qualified reading when a model supplies a different answer.
 
+A standalone “afraid not,” “not a chance,” or “no chance” also refuses the
+offer. A courtesy word does not change the refusal. A bare refusal clause
+beside another statement leaves the offer open until the member gives a
+clear answer. A quotation does not refuse the offer. An independent
+current answer outside that quotation still counts.
+
 ```quint
 type ParticipationWithdrawal = NoWithdrawalWords | DirectWithdrawal | QualifiedWithdrawal
 

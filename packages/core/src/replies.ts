@@ -71,13 +71,24 @@ const DIRECT_WITHDRAWAL = new RegExp(
   WITHDRAWAL_WORDS + String.raw`(?:[\s,.!;:]+(?:please|thanks|thank you|sorry))*[.!]*$`,
 );
 const WITHDRAWAL_QUOTE = /"[^"]*(?:"|$)|(?<![\p{L}\p{N}])'(?:[^']|'(?=[\p{L}\p{N}]))*(?:'(?![\p{L}\p{N}])|$)/gu;
+const SHORT_REFUSAL = /^(?:(?:sorry|thanks|thank you)[\s,]+)*(?:(?:(?:i'm|i am)\s+)?afraid\s+not|not\s+a\s+chance|no\s+chance)(?:[\s,]+(?:thanks|thank you|sorry))*[.!]*$/;
+const SHORT_REFUSAL_CLAUSES = /[.!?,;\n]/;
 
 function readNormalizedWithdrawal(text: string) {
-  const reading = participationWithdrawalReading(WITHDRAWAL_MENTION.test(text), DIRECT_WITHDRAWAL.test(text));
+  const direct = DIRECT_WITHDRAWAL.test(text) || SHORT_REFUSAL.test(text);
+  const hasShortRefusal = (body: string) => body.split(SHORT_REFUSAL_CLAUSES).some(clause => SHORT_REFUSAL.test(clause.trim()));
+  let quotedRefusal = false;
+  const unquoted = text.replace(WITHDRAWAL_QUOTE, quote => {
+    if (!hasShortRefusal(quote.slice(1).replace(/["']$/, ""))) return quote;
+    quotedRefusal = true;
+    return " ".repeat(quote.length);
+  });
+  const shortRefusal = hasShortRefusal(unquoted);
+  const reading = participationWithdrawalReading(WITHDRAWAL_MENTION.test(text) || shortRefusal || quotedRefusal, direct);
   if (reading !== "QualifiedWithdrawal") return { reading, text };
+  if (shortRefusal) return { reading, text: "" };
   const omitMention = (clause: string) => WITHDRAWAL_MENTION.test(clause) ? " ".repeat(clause.length) : clause;
-  const unquoted = text.replace(WITHDRAWAL_QUOTE, omitMention);
-  return { reading, text: unquoted.replace(/[^.!?;\n]+/g, omitMention) };
+  return { reading, text: unquoted.replace(WITHDRAWAL_QUOTE, omitMention).replace(/[^.!?;\n]+/g, omitMention) };
 }
 
 export function readParticipationWithdrawal(text: string) {

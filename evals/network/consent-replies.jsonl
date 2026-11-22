@@ -345,3 +345,6 @@
 {"text":"2 hours works, Saturday 11am","label":"unclear"}
 {"text":"2 hours works, Saturday 11am, Sunday 2pm too","label":"yes","keys":["b","c"]}
 {"text":"7pm works, and this afternoon works too","label":"unclear"}
+{"text":"afraid not","label":"no"}
+{"text":"I'm afraid not","label":"no"}
+{"text":"not a chance","label":"no"}
