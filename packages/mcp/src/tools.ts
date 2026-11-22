@@ -183,11 +183,12 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   ].filter(t => toolListed(connectorApp[host.id], connectorSurface[surface], connectorTool[t.name as ToolName]));
 }
 
-export type ToolOutcome =
+type ToolResponse =
   | { kind: "ok"; data: Record<string, unknown> | Record<string, unknown>[] | { apps: unknown[] } }
   | { kind: "error"; message: string }
   /** The grant no longer matches the person who owns the phone: answer 401 like an invalid token. */
   | GrantRefusal;
+export type ToolOutcome = ToolResponse | { kind: "profile_refusal"; read: () => Promise<ToolResponse> };
 
 type GrantRefusal = { kind: "invalid_grant" } | { kind: "grant_held" } | { kind: "grant_unavailable" };
 
@@ -447,8 +448,21 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
           const accepted = delivery === "accepted";
           const stored = await store.finishProfileSubmission(g.id, fingerprint, accepted);
           if (!accepted) {
-            const status = delivery === "stopped" ? "stopped" : "not_joined";
-            return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
+            if (delivery === "stopped") {
+              return { kind: "ok", data: { app: a.id, submitted: false, status: "stopped", next_step: nextStep("stopped", a) } };
+            }
+            // The handler verifies the current token before this reads membership after the refusal.
+            return { kind: "profile_refusal", read: async () => {
+              try {
+                const current = await c.hooks.status(person, g.app, g.phoneKey);
+                const next = toolAllowedFor("SubmitProfileTool", memberStatus[current])
+                  ? "Profile delivery is unavailable. Check your app status before making changes."
+                  : nextStep(current, a);
+                return { kind: "ok", data: { app: a.id, submitted: false, status: current, next_step: next } };
+              } catch {
+                return { kind: "grant_unavailable" };
+              }
+            } };
           }
           if (!profileSubmissionAccepted(claim, true, stored)) return unresolved;
         }
