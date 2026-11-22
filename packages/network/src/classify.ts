@@ -9,7 +9,7 @@
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
 import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
-import { attendanceAbsences } from "./reports.ts";
+import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { historicalProbeTimeClause, mayRetryCounter, probeGroupIncludes, probeOrdinalIndex, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
@@ -21,6 +21,8 @@ import { NEIGHBORHOODS } from "./geo.ts";
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
   | "people_request" | "plans_request" | "cofounder_goal" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other";
+
+export { otherAgeStated } from "./reports.ts";
 
 export interface Classified {
   kind: InboundKind;
@@ -392,27 +394,6 @@ export function agesStated(body: string, { directOnly = false } = {}): { age?: n
 
 /** The youngest age the sender states about themselves, or undefined. */
 export const statedAge = (body: string): number | undefined => agesStated(body).age;
-
-const KIN = "son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone";
-const OTHER_AGE_RX: AgeRule[] = [
-  { rx: new RegExp(`\\b(?!(?:${KIN}|i|it|that|this|there|which|what|who)\\b)(he|she|they|[a-z][a-z'-]+)(?:'s|'re| is| are)\\s+${SAME}(\\d{1,2})${AGE_END}`), age: m => Number(m[2]) },
-  { rx: new RegExp(`\\b(?!(?:${KIN}|i|it|that|this|there|which|what|who)\\b)(he|she|they|[a-z][a-z'-]+)(?:'s|'re| is| are)\\s+${SAME}(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[2]!]! },
-  { rx: /\b(he|she|they)(?:'s|'re| is| are)\s+(?:still\s+)?(?:a minor|underage|under 18|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a teen(?:ager)?)\b/, age: () => 17 },
-  { rx: /\b(?:he|she|they) (?:said|told me|says|mentioned) (?:he|she|they)(?:'s|'re| is| are| was| were) (?:only |just )?(\d{1,2})\b/, age: m => Number(m[1]) },
-];
-
-/** The youngest age the sender states about someone else ("he's 20. She's 14." is 14). Under 18 only. */
-export function otherAgeStated(body: string): number | undefined {
-  const t = normText(body);
-  let best: number | undefined;
-  for (const { rx, age } of OTHER_AGE_RX) {
-    for (const m of allMatches(rx, t)) {
-      const a = age(m);
-      if (Number.isFinite(a) && a < 18 && a > 0 && (best === undefined || a < best)) best = a;
-    }
-  }
-  return best;
-}
 
 /** Spelled-out ages from 20 to 99 ("thirty", "twenty-five", "forty one"); the teens are in AGE_WORDS. */
 const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };

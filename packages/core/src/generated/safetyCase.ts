@@ -203,6 +203,26 @@ export function lawDeniedEvidenceDoesNotEstablishHarm(casualContact: boolean): b
   return !acceptsReportEvidence(false, casualContact);
 }
 
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function acceptsMinorReportEvidence(eligibleSubject: boolean, minorAgeSignal: boolean, affirmative: boolean): boolean {
+  return eligibleSubject && minorAgeSignal && affirmative;
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function lawMinorReportNeedsAffirmation(eligibleSubject: boolean, minorAgeSignal: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsMinorReportEvidence(eligibleSubject, minorAgeSignal, false);
+}
+
+/** Story: Block or report a person directly / A minor report needs affirmative attributable evidence (spec/safetyCase.md) */
+//@ pure
+export function lawMinorReportNeedsAnEligibleSubject(minorAgeSignal: boolean, affirmative: boolean): boolean {
+  //@ ensures \result === true
+  return !acceptsMinorReportEvidence(false, minorAgeSignal, affirmative);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {

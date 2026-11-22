@@ -3,7 +3,8 @@
 // reporter's words. Urgent kinds (harassment, unsafe, scam, minor) have a 1-hour staff target; the
 // others 24 hours.
 import type { MemberId } from "@thenetwork/core";
-import { acceptsReportEvidence } from "../../core/src/generated/safetyCase.ts";
+import { ADULT_AGE, isMinor, quoteStillOpen, validAge } from "@thenetwork/core";
+import { acceptsMinorReportEvidence, acceptsReportEvidence } from "../../core/src/generated/safetyCase.ts";
 
 export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
 export type ReportStatus = "open" | "held" | "banned" | "dismissed";
@@ -20,8 +21,41 @@ const ABSENCE_PHRASE = new RegExp(`${ABSENCE.source}|${MISSED_MEETING.source}`, 
 const FIRST_PERSON_ABSENCE = /\b(?:i|we)(?:\s+(?:[a-z]+ly|just|still|even|also|both))*(?:\s+(?:was|were)(?:\s+(?:a|the))?)?\s+$/i;
 const IMPLIED_FIRST_PERSON = /^\s*(?:sorry|sadly|unfortunately)?\s*$/i;
 
+const NON_COUNTERPART_SUBJECT = /^(?:i|we|it|you|that|this|there|which|what|who|son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone|team|group|band|club|class|cohort|batch|dinner|coffee|parking|uber|lyft|bill|weather|food|drinks?|meal|lunch|breakfast|table|ticket|cab|taxi|venue|place|restaurant|bar|cafe|hotel|service|film|movie|show|drive|ride|walk|flight|trip|check|order|cost|price|entry|cocktail|beer|wine|tip|admission)$/i;
+const SUBJECT_AGE_WORDS = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen".split(" ");
+const YOUTH_MARKER = "a minor|under\\s*age|under 18|not (?:18|an adult) yet|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a child|a teen(?:ager)?";
+const AGE_REPORT = new RegExp(
+  "\\b(?<subject>my (?:date|match)|(?:the|this) (?:guy|girl|person(?: i met)?|dude|man|woman)|[a-z][a-z'-]+?)"
+  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be)[ \\t]+"
+  + "(?:(?:only|just|actually|literally|barely|like|still)[ \\t]+){0,2}"
+  + "(?:(?:an?[ \\t]+)?(?<age>\\d{1,2}(?!\\d)|(?:" + SUBJECT_AGE_WORDS.join("|") + ")\\b)"
+  + "(?:[ \\t-]*(?:years?[ \\t-]+old|yrs?[ \\t-]+old|y/?o)\\b)?"
+  + "(?=[ \\t]*(?:$|\\.(?!\\d)|[,!?;)\n]|(?:and|but|from|here|tbh|apparently)\\b))"
+  + "|(?<youth>" + YOUTH_MARKER + ")\\b(?![ \\t]+(?:teacher|counselor|coach|principal|nurse|staff|at heart|of a)\\b))",
+  "gi",
+);
+const BARE_MINOR_REPORT = new RegExp("^(?:report[ \\t]+[^:;,]+[:;,][ \\t]*)?(?:" + YOUTH_MARKER + ")[.!]*$", "i");
+const AGE_REPORT_CONDITION = /\b(?:if|unless|suppose|whether|imagine|hypothetically)\b/i;
+
+/** Current or newly discovered counterpart age evidence. Age reports do not write a person's stated age. */
+export function otherAgeStated(body: string): number | undefined {
+  const t = body.normalize("NFKC").replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"');
+  let lowest: number | undefined;
+  for (const match of t.matchAll(AGE_REPORT)) {
+    const { subject, age, youth } = match.groups!;
+    const value = youth ? ADULT_AGE - 1 : age && /^\d/.test(age) ? Number(age) : SUBJECT_AGE_WORDS.indexOf(age?.toLowerCase() ?? "");
+    const eligibleSubject = !!subject && !NON_COUNTERPART_SUBJECT.test(subject);
+    const prefix = reportClauseBefore(t, match.index);
+    const affirmative = !quoteStillOpen(t.slice(0, match.index)) && !ACTIVE_DENIAL.test(prefix)
+      && !AGE_REPORT_CONDITION.test(prefix) && !t.slice(match.index + match[0].length).trimStart().startsWith("?");
+    if (acceptsMinorReportEvidence(eligibleSubject, validAge(value) && isMinor(value), affirmative)) {
+      lowest = lowest === undefined ? value : Math.min(lowest, value);
+    }
+  }
+  return lowest;
+}
+
 const KINDS: [ReportKind, RegExp][] = [
-  ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
   ["unsafe", /\b(unsafe|not safe|scared|afraid|terrified|threat(en(ed|ing)?)?|follow(ed|ing) me|stalk(ed|ing)? me|(?:wouldn'?t|would not|didn'?t|did not|refused to) let me (go|leave|out)|grabbed|touched me|assault(ed)?|hit me(?<casualContact>\s+up\b)?|(?:punched|slapped|shoved|kicked|attacked) me|drugged|spiked|forced|hurt me|violent|(?:pulled|pointed|brandished) (?:out )?(?:a |their |his |her )?(?:knife|gun|weapon))\b/i],
   ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|(?:wouldn'?t|would not|refused to) stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b/i],
   ["scam", /\b(scam(mer|med)?|(?:asked|demanded|requested)(?: me| that i)? (?:for |to (?:send|wire|transfer|buy) |(?:send|wire|transfer|buy) )(?:some |a |the )?(?:money|cash|gift cards?|crypto|bitcoin)|asked to borrow money|wire (?:me|money))\b/i],
@@ -94,9 +128,10 @@ export function directFeedbackAbsence(text: string, counterpartNames: readonly s
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
   const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
+  if (otherAgeStated(t) !== undefined || BARE_MINOR_REPORT.test(t.trim())) return "minor";
   for (const [k, re] of KINDS) {
     const directHarm = k === "unsafe" && DIRECT_CHOKING_REPORT.test(t.trim());
-    if (k === "minor" ? re.test(t) : reportsHarm(t, re) || directHarm || (k === "lying" && CORRECTED_MARRIAGE.test(t))) return k;
+    if (reportsHarm(t, re) || directHarm || (k === "lying" && CORRECTED_MARRIAGE.test(t))) return k;
   }
   if (attendanceAbsences(t).other || reportsHarm(t, /\bghosted me\b/i)) return "no_show";
   return "other";

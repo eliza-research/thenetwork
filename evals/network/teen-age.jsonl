@@ -252,3 +252,19 @@
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
 {"text":"turning 16 next month","teen":true,"age":15}
 {"text":"I'm 12.5 minutes away","teen":false}
+{"text":"he said he's seventeen.","other":17}
+{"text":"he said he's 17.","other":17}
+{"text":"the person I met was sixteen","other":16}
+{"text":"she was a 15-year-old","other":15}
+{"text":"turns out they were 16","other":16}
+{"text":"bob was 15","other":15}
+{"text":"my date was 15yo","other":15}
+{"text":"he's seventeen minutes away","other":null}
+{"text":"he's 17.5","other":null}
+{"text":"he's seventeen years older than me","other":null}
+{"text":"coffee was 6","other":null}
+{"text":"dinner was 10/10","other":null}
+{"text":"great time, we talked about how my son is a 12-year-old","other":null}
+{"text":"she said “he is 15” while reading a novel","other":null}
+{"text":"if he was sixteen, I would have reported it","other":null}
+{"text":"he's a guardian of a child","other":null}

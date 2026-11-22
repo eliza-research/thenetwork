@@ -16,6 +16,11 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 
 [A report keeps its own disposition](../safetyCase.md#a-hold-ban-or-dismissal-updates-the-matching-report). `pendingReportHold` in `packages/network/src/network.ts` reads the open report's subject, encounter, and urgency. [A ban refuses new ordinary text](../safetyCase.md#a-ban-allows-only-carrier-commands-and-app-leave). `NetworkService.inbound` calls `inboundAllowedAfterBan` before the report reaches the runtime.
 
+The report reader supplies an eligible subject and affirmative age evidence
+before the report enters the modeled minor path. The reported age restricts
+the subject in its source app through the report action. The person's own
+age remains an independent input.
+
 The [trust classifier](../trustLevel.md#an-explicit-attempt-to-bypass-contact-consent-triggers-watch) supplies the `abuse` action’s risk. A direct third-party messaging-handle request supplies two points. The classifier leaves a quoted request, a public venue reference, or the member’s own handle outside that action.
 
 [Danger disclosures during a check-in](../safetyCase.md#direct-current-danger-text-gets-immediate-guidance-first) use the [receipt of the exact current feedback prompt](../meetingSettlement.md#a-feedback-reply-needs-receipt-of-its-exact-prompt). The model receives the receipt check and the attributed counterpart as inputs. Unattributed disclosures and disclosures without the exact receipt receive guidance without changing attendance or creating a report. The ordinary member report uses its separate transition.

@@ -491,6 +491,10 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     { scenario: "with a casual contact idiom", answer: "He hit me up after dinner.", safety: true, missing: false, report: undefined },
     { scenario: "with direct disclosure of physical harm", answer: "My date choked me.", safety: true, missing: false, report: "unsafe" },
     { scenario: "with a denial of physical harm", answer: "My date never choked me.", safety: true, missing: false, report: undefined },
+    { scenario: "with a spelled counterpart age", answer: "He said he's seventeen.", safety: true, missing: false, report: "minor" },
+    { scenario: "with a compound counterpart age", answer: "My date was a 16-year-old.", safety: true, missing: false, report: "minor" },
+    { scenario: "with a relative's unrelated age", answer: "We talked about how my son is a 12-year-old.", safety: true, missing: false, report: undefined },
+    { scenario: "with a quoted age in a story", answer: "She said “he is 15” while reading a novel.", safety: true, missing: false, report: undefined },
     { scenario: "with positive sentiment about the finished date", answer: "We hit it off.", missing: false, report: undefined, sentiment: "positive" },
     { scenario: "with neutral sentiment about the finished date", answer: "It was okay.", missing: false, report: undefined, sentiment: "neutral" },
     { scenario: "with quoted sentiment about the finished date", answer: "'We hit it off.'", missing: false, report: undefined, sentiment: "neutral" },
@@ -579,6 +583,12 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       ? [{ reporterId: sam, subjectId: rae, kind: report, opportunityId: id, source: "check_in" }]
       : []);
     expect(afterOther.blocks).toHaveLength(report ? 1 : 0);
+    if (report === "minor") {
+      expect(afterOther.members.find(member => member.id === rae)).toMatchObject({ minorReported: true });
+      const [person] = await sql`select p.lowest_age from platform.people p
+        join platform.phone_identities ph on ph.person_id=p.id where ph.e164=${RAE}`;
+      expect(person?.lowest_age).toBe(30);
+    }
     if (sentiment) {
       const feedback = afterOther.feedback.find(item => item.from === sam && item.opportunityId === id);
       expect(feedback).toMatchObject({ sentiment, wouldMeetAgain: false });

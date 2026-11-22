@@ -133,6 +133,27 @@ pure def lawDeniedEvidenceDoesNotEstablishHarm(casualContact: bool): bool =
   not(acceptsReportEvidence(false, casualContact))
 ```
 
+### A minor report needs affirmative attributable evidence
+
+Use the same age reading for a direct report and a post-meeting check-in.
+A direct statement about a person can use digits, a spelled age, or a
+compound form such as “16-year-old.” “My date was sixteen” can open the
+same review as “he's sixteen.” Ignore times, prices, ages of relatives
+or objects, questions, and qualified or quoted statements. A statement
+that the member reports about a counterpart can place a safety hold in
+the existing app and does not overwrite that person's stated age.
+
+```quint
+pure def acceptsMinorReportEvidence(eligibleSubject: bool, minorAgeSignal: bool, affirmative: bool): bool =
+  eligibleSubject and minorAgeSignal and affirmative
+
+pure def lawMinorReportNeedsAffirmation(eligibleSubject: bool, minorAgeSignal: bool): bool =
+  not(acceptsMinorReportEvidence(eligibleSubject, minorAgeSignal, false))
+
+pure def lawMinorReportNeedsAnEligibleSubject(minorAgeSignal: bool, affirmative: bool): bool =
+  not(acceptsMinorReportEvidence(false, minorAgeSignal, affirmative))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.
