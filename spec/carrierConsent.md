@@ -78,7 +78,7 @@ pure def lawNoAppOptInMeansNoPermission(globalOptedOut: bool, appAt: int, global
 
 ### A spoken domain identifies that one app
 
-An app name can be the exact domain with "dot" spoken or with spaces in place of its dots. In the spaced form, a preceding "the" can make the words refer to something else. An explicit unsubscribe still names the app in that form. The reader preserves the existing exact app, brand and written-domain names.
+An app name can be the exact domain with "dot" spoken or with spaces in place of its dots. In the spaced form, a preceding "the" can make the words refer to something else. An explicit unsubscribe still names the app in that form. The reader preserves the existing exact app, brand and written-domain names. The advisory reader uses the same domain forms when the caller supplies the app's domain.
 
 ```quint
 pure def matchesSpokenAppDomain(label: str, spaced: str, pronounced: str, ambiguousArticle: bool): bool =

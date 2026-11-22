@@ -1,4 +1,4 @@
-import { coordinatedStopClause, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
+import { coordinatedStopClause, matchesSpokenAppDomain, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
 
 // Member reply understanding (audit 2026-10-08 network-consent-2, plugin-prototypes-12).
 // Deterministic, no model. One shared parser for "did the member say yes?" and "does the member
@@ -286,6 +286,31 @@ function readsTextRefusal(clause: string): boolean {
 const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
 const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
 const OPT_OUT_COORDINATION = /\band\b/i;
+const LEAVE_COURTESY = / (?:please|pls|thanks|thank you|now|right now|for now|asap|today|immediately)$/;
+
+interface AppLeaveName {
+  name: string;
+  ambiguousArticle: boolean;
+}
+
+export function readAppLeaveName(text: string): AppLeaveName | undefined {
+  const folded = foldKeywordText(text).toLowerCase().replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  const app = /^(?:please )?(?:leave|quit|exit|stop|cancel|unsubscribe(?: from| me from)?) (.+)$/.exec(folded)?.[1];
+  if (!app) return undefined;
+  const ambiguousArticle = app.startsWith("the ") && !/^(?:please )?unsubscribe\b/.test(folded);
+  let name = app.replace(/^the /, "").trim();
+  for (let i = 0; i < 3; i++) {
+    const next = name.replace(LEAVE_COURTESY, "").trim();
+    if (next === name) break;
+    name = next;
+  }
+  return { name, ambiguousArticle };
+}
+
+export function appLeaveNamesDomain(leave: AppLeaveName, domain: string): boolean {
+  return leave.name === domain || (domain.includes(".") && (leave.name === `www.${domain}`
+    || matchesSpokenAppDomain(leave.name, domain.replaceAll(".", " "), domain.replaceAll(".", " dot "), leave.ambiguousArticle)));
+}
 
 function readStopConjunct(clause: string, startsStop: (clause: string) => boolean): StopConjunct {
   const command = clause.replace(/^(?:please|pls) /, "");
@@ -328,8 +353,14 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   if (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t)) return { match: "none", scope: "all", lang };
   if (/^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
+  const leave = o.apps?.length ? readAppLeaveName(text) : undefined;
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
-  if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
+  if (o.apps?.some(a => {
+    const domain = a.toLowerCase();
+    const id = domain.split(".")[0];
+    return (leave && (appLeaveNamesDomain(leave, domain) || leave.name === id))
+      || (app && (domain === app || id === app.split(".")[0]));
+  })) return { match: "likely", scope: "app", lang };
   const clauses = optOutClauses(text, norm, clause => readsTextRefusal(clause)
     || LIKELY_EN.exec(clause)?.index === 0 || LIKELY_ES.exec(clause)?.index === 0);
   if (clauses.some(clause => readsTextRefusal(clause) || LIKELY_EN.test(clause) || LIKELY_ES.test(clause))) return { match: "likely", scope: "all", lang };
