@@ -17,6 +17,7 @@ import type { Persona } from "./persona.ts";
 import { Rng, hash32 } from "@thenetwork/core";
 import { Scheduler, type RunMode } from "./scheduler.ts";
 import { buildSnapshot, quietHoursOf } from "./snapshot.ts";
+import { simulatedNameMatcher } from "./simulated-names.ts";
 import { nextLocalHour } from "./time.ts";
 import { planEnjoyment, type PlanAgentOptions } from "./plans.ts";
 
@@ -115,7 +116,7 @@ export class World {
   private proposals = new Map<string, Proposal>();
   private meetings = new Map<string, MeetingReport & { id: string }>();
   private notices = new Set<string>(); // `${proposalId}|${memberId}` flake notices given
-  private nameIndex: { re: RegExp; id: MemberId }[] = [];
+  private namesIn: ReturnType<typeof simulatedNameMatcher>;
   private meetingSeq = 0;
   private spawnSeq = 0;
   private ctx?: NetworkContext;
@@ -138,7 +139,7 @@ export class World {
     this.runId = opts.runId ?? `run-${new Date().toISOString().replace(/[:.]/g, "-")}-s${opts.seed}-${opts.network.name}`;
     this.end = this.start + opts.days * DAY;
     for (const p of opts.personas) this.memories.set(p.id, newMemory());
-    this.buildNameIndex();
+    this.namesIn = simulatedNameMatcher(this.personas.values());
   }
 
   // ------------------------------------------------------------------ logging
@@ -149,20 +150,6 @@ export class World {
   }
   private logMessage(m: SimMessage) {
     this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any } });
-  }
-
-  private buildNameIndex() {
-    this.nameIndex = [];
-    const firstCount = new Map<string, number>();
-    for (const p of this.personas.values()) { const f = p.name.split(" ")[0]!; firstCount.set(f, (firstCount.get(f) ?? 0) + 1); }
-    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    for (const p of this.personas.values()) {
-      const [first, last] = p.name.split(" ");
-      const pats = [esc(p.name)];
-      if (last) pats.push(`${esc(first!)} ${esc(last[0]!)}\\.`);
-      if (firstCount.get(first!) === 1) pats.push(esc(first!));
-      this.nameIndex.push({ re: new RegExp(`\\b(${pats.join("|")})\\b`), id: p.id });
-    }
   }
 
   // ------------------------------------------------------------------ network context
@@ -241,7 +228,7 @@ export class World {
       history: this.channel.messagesFor(p.id),
       lookupProposal: id => this.proposals.get(id),
       personaById: id => this.personas.get(id),
-      personasMentioned: text => this.nameIndex.filter(n => n.re.test(text)).map(n => this.personas.get(n.id)!),
+      personasMentioned: text => this.namesIn(text).map(id => this.personas.get(id)!),
     };
   }
 
@@ -282,7 +269,7 @@ export class World {
     this.oracle.addPersona(p);
     // Rebuild: the newcomer gets the unique-first-name pattern too, and a first name they now
     // share stops resolving to the older persona alone (sim-worlds-21).
-    this.buildNameIndex();
+    this.namesIn = simulatedNameMatcher(this.personas.values());
     this.rec({ type: "persona", persona: {
       id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
       joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
