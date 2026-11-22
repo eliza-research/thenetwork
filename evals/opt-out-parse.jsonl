@@ -27,6 +27,15 @@
 {"text":"quiero darme de baja","match":"likely"}
 {"text":"no quiero mensajes","match":"likely"}
 {"text":"número equivocado","match":"likely"}
+{"text":"QUIT NOW","match":"likely"}
+{"text":"QUIT PLS","match":"likely"}
+{"text":"QUIT ASAP","match":"likely"}
+{"text":"END NOW","match":"likely"}
+{"text":"END PLS","match":"likely"}
+{"text":"QUIT RN","match":"likely"}
+{"text":"END ASAP","match":"likely"}
+{"text":"QUIT PLEASE","match":"likely"}
+{"text":"END PLEASE","match":"likely"}
 {"text":"how do I stop these?","match":"none"}
 {"text":"my friend said stop by","match":"none"}
 {"text":"can't stop thinking about the hike!","match":"none"}
