@@ -6,13 +6,16 @@ import { Mini } from "./mini.ts";
 const ids = ["a", "b", "c", "d", "e", "f"];
 const members = ids.map(id => ({ id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Prospect Heights", interests: ["coffee", "climbing"] }));
 
-test("a recurring crew needs the configured number of plans with the same members saying yes", async () => {
+test("a recurring crew needs the configured positive history or a stated recurring want", async () => {
   // spec/planDecision.md, "A crew offer needs enough positive responses"
   const failures = [];
-  for (const seed of [1, 2, 3]) for (const scenario of ["default-one", "two-only-one", "two-complete", "two-insufficient-common"] as const) {
+  for (const seed of [1, 2, 3]) for (const scenario of ["default-one", "two-only-one", "two-complete", "two-insufficient-common", "two-recurring"] as const) {
     const minPlans = scenario === "default-one" ? 1 : 2;
     const rounds = scenario === "two-complete" || scenario === "two-insufficient-common" ? 2 : 1;
-    const w = new Mini(members, { seed, review: "human", plans: true, matchingEnabled: true, plansConfig: { crews: { minPlans } } });
+    const people = scenario === "two-recurring" ? members.map(member => ({
+      ...member, wants: [{ objective: "Find a regular climbing partner", category: "hobby" as const }],
+    })) : members;
+    const w = new Mini(people, { seed, review: "human", plans: true, matchingEnabled: true, plansConfig: { crews: { minPlans } } });
     await w.onboard(...ids);
     const positives: string[][] = [];
     for (let round = 0; round < rounds; round++) {
@@ -39,7 +42,7 @@ test("a recurring crew needs the configured number of plans with the same member
     }
     const common = positives[0]!.filter(id => positives.every(p => p.includes(id))).length;
     const offers = w.log("crew_offered").length;
-    const expected = scenario === "default-one" || scenario === "two-complete" ? 1 : 0;
+    const expected = scenario === "default-one" || scenario === "two-complete" || scenario === "two-recurring" ? 1 : 0;
     if (offers !== expected) failures.push({ seed, scenario, common, offers, expected });
   }
   expect(failures).toEqual([]);

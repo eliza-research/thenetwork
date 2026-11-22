@@ -5008,10 +5008,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   private crewCheck(m: MemberState, o: Opp, going: MemberId[]): string | undefined {
     if (!this.pcfg.crews.enabled || !o.plan || o.plan.crewId) return undefined;
     const post = o.post ?? {};
-    const rec: plans.PlanOutcomeRecord = {
-      planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: o.plan.city, at: o.plan.window.start,
-      attended: going.filter(p => post[p]?.came), positive: going.filter(p => post[p]?.again), recurringWant: [],
-    };
     // Already offered after this plan: a later "yes, again" from another attendee joins that one offer.
     const open = this.crewOffers.find(c => c.planId === o.id);
     if (open) {
@@ -5023,6 +5019,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       return open.crew.id;
     }
     const w = this.planWorld(this.now());
+    const attended = going.filter(id => post[id]?.came);
+    const positive = attended.filter(id => post[id]?.again);
+    const rec: plans.PlanOutcomeRecord = {
+      planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: o.plan.city, at: o.plan.window.start,
+      attended, positive,
+      recurringWant: positive.filter(id => w.get(id)?.intents.some(intent => plans.RECURRING_WANT.test(`${intent.objective} ${intent.details ?? ""}`))),
+    };
     const history = [rec];
     if (this.pcfg.crews.minPlans === 2) for (const prior of this.opps.values()) {
       const p = prior.plan;
