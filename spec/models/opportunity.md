@@ -107,7 +107,7 @@ module opportunity {
     contacted: Set[str], sentAt: str -> int, turnAt: str -> int, timeRetry: Set[str],
     meetingAt: int, bookedTold: Set[str], bookedAt: str -> int, confirmed: Set[str], reminded: Set[str],
     feedbackSent: bool, finalized: bool, post: str -> str, feedbackFrom: Set[str],
-    outcomeRec: str,
+    outcomeRec: str, firstIntroduction: bool,
     // ghosts
     accepted: str -> str, withdrawn: Set[str], saidNo: Set[str], cancelAsked: Set[str],
     revealSent: Set[str], wasTold: Set[str], silent: Set[str], expiredSilent: Set[str],
@@ -151,7 +151,7 @@ module opportunity {
     contacted: Set(), sentAt: zeroMap(-1), turnAt: zeroMap(-1), timeRetry: Set(),
     meetingAt: -1, bookedTold: Set(), bookedAt: zeroMap(-1), confirmed: Set(), reminded: Set(),
     feedbackSent: false, finalized: false, post: strMap(""), feedbackFrom: Set(),
-    outcomeRec: "",
+    outcomeRec: "", firstIntroduction: false,
     accepted: strMap(""), withdrawn: Set(), saidNo: Set(), cancelAsked: Set(),
     revealSent: Set(), wasTold: Set(), silent: Set(), expiredSilent: Set(),
     released: Set(), cancelHeard: Set(), droppedBy: Set(), noShowCount: zeroMap(0),
@@ -435,12 +435,23 @@ module opportunity {
     }
   }
 
+  // The Slop history projects only the exact named pair. The queue is the oracle for valid original
+  // receipts, so delivered reveals are distinct from collected reveals and anonymous probes.
+  pure def observeSlopIntroductions(s: S): S =
+    OPPS.fold(s, (acc, o) => {
+      val x = op(acc, o)
+      if (x.firstIntroduction or x.parts.size() != 2 or x.review.decision != "approve"
+        or not(x.stage == "scheduled" or x.stage == "done" or x.closedFrom == "scheduled")
+        or not(x.parts.forall(p => x.revealQ.get(p) == "delivered"))) acc
+      else putO(acc, o, { ...x, firstIntroduction: true })
+    })
+
   // heardFrom (N:639): any inbound resets the pause rules. The queue releases messages held for an answer
   // (outbound-queue.ts:636-643).
   pure def unhold(q: str): str = if (q == "held") "pending" else q
   pure def heardFrom(s: S, m: str): S = {
     val x = mm(s, m)
-    val s1 = putM(s, m, { ...x, initialInvites: Set(), outbound: 0, onlyWhenAsked: false })
+    val s1 = putM(observeSlopIntroductions(s), m, { ...x, initialInvites: Set(), outbound: 0, onlyWhenAsked: false })
     OPP_ORDER.foldl(s1, (acc, o) => putO(acc, o, { ...op(acc, o),
       probeQ: op(acc, o).probeQ.set(m, unhold(op(acc, o).probeQ.get(m))),
       revealQ: op(acc, o).revealQ.set(m, unhold(op(acc, o).revealQ.get(m))) }))
@@ -843,7 +854,7 @@ module opportunity {
   pure def forgetRest(s3: S, m: str): S = {
     val s4 = OPP_ORDER.foldl(s3, (acc, o) => {
       val y = op(acc, o)
-      if (y.stage != "absent" and (y.parts.contains(m) or y.requester == m)) putO(acc, o, { ...y, stage: "gone", everTerminal: true })
+      if (y.stage != "absent" and (y.parts.contains(m) or y.requester == m)) putO(acc, o, { ...y, stage: "gone", firstIntroduction: false, everTerminal: true })
       else putO(acc, o, { ...y, alts: y.alts.exclude(Set(m)) })
     })
     // N:940-948: slots on a deleted opportunity end; the member state goes; deferred sends to them, or about
@@ -921,7 +932,7 @@ module opportunity {
     if (s.toDeliver == Set()) s' = popped
     else { nondet d = s.toDeliver.oneOf() s' = deliverOne(popped, d, s.jobEnv) },
   }
-  action runRefresh = all { jobIs("refresh"), s' = refreshUnanswered(popped) }
+  action runRefresh = all { jobIs("refresh"), s' = refreshUnanswered(observeSlopIntroductions(popped)) }
   action runAdv = all { jobIs("adv"), s' = advance(popped, job.o, s.jobEnv) }
   action runExp = all { jobIs("exp"), s' = expireProbe(popped, job.o, job.m) }
   action runExpire = all { jobIs("expire"), s' = expireSlots(popped) }
@@ -1090,11 +1101,17 @@ module opportunity {
   val pauseNeedsUnansweredInvitations = MEMBERS.forall(m =>
     mm(s, m).onlyWhenAsked implies unansweredInvitations(s, m).size() >= UNANSWERED_LIMIT)
 
+  val slopIntroductionNeedsTwoReceipts = OPPS.forall(o => {
+    val x = op(s, o)
+    x.firstIntroduction implies
+      (x.parts.size() == 2 and x.review.decision == "approve" and x.parts.forall(p => x.revealQ.get(p) == "delivered"))
+  })
+
   // The invariants hold between two units (`idle`); inside a unit, jobs are still to run.
   val safety = idle implies and {
     reviewGate, decidedBeforeDeadline, namesAfterAllYes, counterIsNotYes, slotOwnerAlive, noLostAnswer,
     minorNever, stopWins, terminalStable, requestNotStuck, cancelReachesTold, partialAcceptReleased,
-    noShowOnce, bookedMembersTold, bookedSlotAlive, pauseNeedsUnansweredInvitations,
+    noShowOnce, bookedMembersTold, bookedSlotAlive, pauseNeedsUnansweredInvitations, slopIntroductionNeedsTwoReceipts,
   }
 
   // ---------------------------------------------------------------- known open (not in safety)
@@ -1184,6 +1201,23 @@ module opportunity {
         and op(s, "o1").revealSent == Set() and mm(s, "b").aw.kind == "probe" and safety)
       .then(answer("b", "yes", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "scheduled" and op(s, "o1").revealSent == Set("a", "b") and safety)
+
+  run mutualNamedIntroductionSurvivesCancellationTest =
+    init
+      .then(submit("o1")).then(settled)
+      .then(approve("o1", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(queueDecide("probe", "o1", "a", "delivered")).then(settled)
+      .expect(not(op(s, "o1").firstIntroduction))
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .then(queueDecide("reveal", "o1", "a", "delivered")).then(settled)
+      .then(tick(1, ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "scheduled" and not(op(s, "o1").firstIntroduction))
+      .then(queueDecide("reveal", "o1", "b", "delivered")).then(settled)
+      .then(answer("a", "cancel", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "closed" and op(s, "o1").firstIntroduction and slopIntroductionNeedsTwoReceipts)
 
   // A reject closes the item and nobody is contacted (decide, reject).
   run rejectTest =

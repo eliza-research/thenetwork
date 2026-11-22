@@ -59,7 +59,7 @@ import { isLateArrivalPairBooking, isLateArrivalReport, lateArrivalDeliveryId, t
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
-import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
+import { slopFirstIntroductionAt, slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { bookingNoticeRosterCurrent, rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
@@ -709,6 +709,23 @@ const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 const BOOKED_REMINDER_KINDS = ["day-before-reminder", "near-meeting-reminder", "day-of-checkin"] as const;
 export const meetingFeedbackKey = (oppId: string, memberId: MemberId, revision = 0): string => `${meetingFeedbackPrefix}${oppId}:r${revision}:${memberId}`;
 /** In-memory lookup for an exact booking notice. This key is never sent. */
+type SlopIntroduction = Pick<Opp, "id" | "kind" | "category" | "participants" | "meetingAt" | "stage" |
+  "closedFrom" | "origin" | "plan" | "bookedAt" | "review">;
+const slopIntroductionId = (oppId: string): string => `${oppId}:introduced`;
+
+export function pendingSlopIntroductions<T extends SlopIntroduction>(opportunities: Iterable<T>,
+  interactions: readonly InteractionRecord[]): T[] {
+  const recorded = new Set(interactions.filter(item => item.outcome === "accepted").map(item => item.id));
+  return [...opportunities].filter(opp => {
+    const [first, second] = opp.participants;
+    return opp.kind === "intro" && opp.category === "romance" && !opp.plan && opp.origin !== "second_encounter"
+      && opp.participants.length === 2 && first !== undefined && second !== undefined && first !== second
+      && opp.meetingAt !== undefined && (opp.stage === "scheduled" || opp.stage === "done" || opp.closedFrom === "scheduled")
+      && opp.review?.decision === "approve" && opp.bookedAt?.[first] !== undefined && opp.bookedAt?.[second] !== undefined
+      && !recorded.has(slopIntroductionId(opp.id));
+  });
+}
+
 export const bookingNoticeReceiptKey = (oppId: string, memberId: MemberId, revision = 0): string =>
   `booking-notice-receipt:${[oppId, revision, memberId].map(encodeURIComponent).join(":")}`;
 export type BookedReminderKind = typeof BOOKED_REMINDER_KINDS[number];
@@ -1017,12 +1034,27 @@ export class ConsentNetwork implements NetworkUnderTest {
     return lateArrivalBookingReceiptCurrent(receivedAt !== undefined, receivedAt ?? -1, at);
   }
 
-  private bookingNoticeReceiptAt(opp: Pick<Opp, "id" | "scheduleRevision" | "bookedAt">, id: MemberId): number | undefined {
+  private bookingNoticeReceiptAt(opp: Pick<Opp, "id" | "scheduleRevision" | "bookedAt">, id: MemberId,
+    revision = opp.scheduleRevision ?? 0): number | undefined {
     if (!this.ctx.initialInviteReceipt) return opp.bookedAt?.[id];
-    const receipt = this.ctx.initialInviteReceipt(bookingNoticeReceiptKey(opp.id, id, opp.scheduleRevision));
+    const receipt = this.ctx.initialInviteReceipt(bookingNoticeReceiptKey(opp.id, id, revision));
     return receipt?.kind === "accepted" ? receipt.at : undefined;
   }
 
+
+  private captureSlopIntroductions(opportunities: Iterable<Opp>) {
+    if (this.app.id !== "slop" || !this.ctx) return;
+    const now = this.now();
+    for (const opp of pendingSlopIntroductions(opportunities, this.interactions)) {
+      const [first, second] = opp.participants as [MemberId, MemberId];
+      const firstAt = this.bookingNoticeReceiptAt(opp, first, 0) ?? -1;
+      const secondAt = this.bookingNoticeReceiptAt(opp, second, 0) ?? -1;
+      const at = slopFirstIntroductionAt(opp.bookedAt?.[first] ?? -1, firstAt, opp.bookedAt?.[second] ?? -1, secondAt, now);
+      if (at < 0) continue;
+      this.interactions.push({ id: slopIntroductionId(opp.id), opportunityId: opp.id, kind: opp.kind,
+        category: opp.category, participants: [first, second], outcome: "accepted", at });
+    }
+  }
 
   /** What the LLM reader made of the message being handled (undefined without a reader, or when it failed). */
   private understood?: Understood;
@@ -6707,6 +6739,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           o.bookedTold = [...(o.bookedTold ?? []), h.id]; this.counters.reveals++;
           // The member accepted a plan at this time (NC plan_accepted; silence for 48 hours confirms it).
           o.bookedAt = { ...o.bookedAt, [h.id]: now() };
+          if (!this.ctx.initialInviteReceipt) this.captureSlopIntroductions([o]);
           this.emit({ type: "plan_accepted", member: h.id, planId: o.id, kind: this.planKind(o), startsAt: o.meetingAt ?? now() }, `${o.id}:${h.id}`);
           if (!m.offerMade && !m.minor) { m.offerMade = true; this.ctx.log("availability_offer", { memberId: m.id }); }
         },
@@ -7400,6 +7433,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.declinedIds = new Set(st.declinedIds); this.blocks = new Set(st.blocks); this.avoid = new Set(st.avoid); this.declined = new Map(st.declined);
     this.feedback = st.feedback;
     this.interactions = st.interactions.map(record => this.restoreFeedbackInteraction(record));
+    this.captureSlopIntroductions(this.opps.values());
     this.vouchedSkills = new Map(st.vouchedSkills.map(([k, v]) => [k, new Set(v)]));
     this.invitedIds.clear(); for (const id of st.invitedIds) this.invitedIds.add(id);
     this.trust.importState(st.trust);
