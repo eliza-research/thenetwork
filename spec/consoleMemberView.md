@@ -72,6 +72,18 @@ pure def lawRecordedLeakStopWithholdsPreparedBody(guardResult: ConsoleDeliveryGu
   consolePreparedBodyWithheld(guardResult, true)
 ```
 
+### A booked plan shows only receipts for its current notice
+
+Start the displayed receipt clock only after a positive provider or signed gateway receipt for the exact app, opportunity, recipient and current schedule revision. Use the receipt time. A missing, queued, refused, stale or future receipt leaves the recipient without a confirmed delivery time. Each app reader can read only its own receipt metadata. The game uses the simulator's delivered notice for that same booking. A game export records the synthetic evidence explicitly. A dry run or an old exported message alone supplies no evidence of actual delivery.
+
+```quint
+pure def consoleBookingReceiptCurrent(exactBooking: bool, recipientOnRoster: bool, delivered: bool, receivedAt: int, asOf: int): bool =
+  exactBooking and recipientOnRoster and delivered and receivedAt >= 0 and receivedAt <= asOf
+
+pure def lawUnreceivedBookingHasNoClock(exactBooking: bool, recipientOnRoster: bool, receivedAt: int, asOf: int): bool =
+  not(consoleBookingReceiptCurrent(exactBooking, recipientOnRoster, false, receivedAt, asOf))
+```
+
 ## Story: Open Slop photos for a verified adult
 
 > As an authorized staff member, I want to see photos for a verified adult after giving the logged reason.

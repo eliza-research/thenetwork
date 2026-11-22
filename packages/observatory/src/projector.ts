@@ -2,7 +2,9 @@
 // state. Opportunities follow the PRD 32.10 state machine as far as the records reveal it; the
 // edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/core";
+import type { RunRecord, SimMeta } from "@thenetwork/core";
+import { consoleBookingReceiptCurrent } from "../../core/src/generated/consoleMemberView.ts";
+import { confirmationWindowHours } from "../../core/src/generated/meetingSettlement.ts";
 import { currentConsentViewChanges } from "../../core/src/generated/observatoryMemberConsent.ts";
 import { closedProbeUpdate, observatoryMeetingHeld, replacementRosterMode } from "../../core/src/generated/observatoryRoster.ts";
 import { requestLabel } from "./events.ts";
@@ -45,6 +47,7 @@ export class Projector {
   private counted = new Set<string>();
   /** Booked-plan messages (SimMeta.booked): the plan is booked when it reaches the member; only a typed "can't" or no undoes it. */
   private booked = new Set<string>();
+  private bookingRevision = new Map<string, number>();
   /** The last times offered to each member (a requester's time question names no opportunity; its answer does). */
   private lastOptions = new Map<MemberId, TimeChoice[]>();
   constructor(private store: Store, private opts: ProjectorOptions = {}) {}
@@ -116,7 +119,6 @@ export class Projector {
         if (k) k.msgsOut++;
         if (msg.body === UNDER_MIN_AGE_DECLINE) this.declineTo = msg.memberId;
         if (msg.meta?.proactive && msg.status === "delivered") { c.proactive++; if (k) k.proactive++; }
-        if (msg.meta?.booked) this.booked.add(msg.id);
         this.timesAndBooking(msg, r);
         const pid = msg.meta?.proposalId;
         const o = pid ? s.opps.get(pid) : undefined;
@@ -186,6 +188,9 @@ export class Projector {
         if (!this.meetings.has(r.meetingId)) { c.meetingsScheduled++; this.meetings.set(r.meetingId, r.proposalId); }
         if (!o) return;
         this.setState(o, "SCHEDULED");
+        if (o.booked && o.booked.at !== r.at) {
+          o.booked = Object.keys(o.booked.cancelled).length ? { ...o.booked, at: r.at, told: {} } : undefined;
+        }
         o.meetingAt = r.at;
         for (const id of r.participants) {
           // The booking establishes the roster. A late addition can emit another record for the same meeting.
@@ -301,6 +306,9 @@ export class Projector {
   private consentLog(r: Extract<RunRecord, { type: "network_log" }>): boolean {
     const s = this.store, d = r.detail as Record<string, any>;
     switch (r.kind) {
+      case "meeting_rescheduled":
+        this.bookingRevision.set(d.oppId, d.revision);
+        return true;
       case "review_queued": {
         // PRD 32.8: the opportunity waits for a reviewer; no member has heard about it yet.
         const p = d.proposal as Proposal;
@@ -424,7 +432,11 @@ export class Projector {
       }
       case "booked_cancelled": {
         const o = s.opps.get(d.oppId);
-        if (o?.booked) { o.booked = { ...o.booked, cancelled: { ...o.booked.cancelled, [d.memberId]: { at: r.t, told: !!d.told } } }; this.changed(o, r); }
+        if (o?.meetingAt !== undefined) {
+          const prior = o.booked ?? { at: o.meetingAt, optOutHours: confirmationWindowHours, told: {}, cancelled: {} };
+          o.booked = { ...prior, cancelled: { ...prior.cancelled, [d.memberId]: { at: r.t, told: !!d.told } } };
+          this.changed(o, r);
+        }
         s.pushFeed({ t: r.t, kind: "decline", text: `${this.name(d.memberId)} called off a booked plan${d.told ? "" : " (silently)"}`, members: [d.memberId], opportunityId: d.oppId, severity: "warn" });
         return true;
       }
@@ -528,19 +540,23 @@ export class Projector {
    * "neither") and the booked plan it carries (SimMeta.timeOptions, SimMeta.booked).
    */
   private timesAndBooking(msg: Extract<RunRecord, { type: "message" }>["msg"], r: RunRecord) {
-    const meta = (msg.meta ?? {}) as { timeOptions?: { key: string; label: string; start: number }[]; probe?: { key?: string }; proposalId?: string; booked?: { proposalId: string; at: number; optOutHours: number } };
+    const meta = (msg.meta ?? {}) as SimMeta;
     if (meta.timeOptions?.length) {
       const offered = meta.timeOptions.map(x => ({ key: x.key, label: x.label, start: x.start }));
       this.lastOptions.set(msg.memberId, offered);
       const o = this.store.opps.get(meta.probe?.key ?? meta.proposalId ?? "");
       if (o) { o.times = { ...o.times, [msg.memberId]: { offered } }; this.changed(o, r); }
     }
-    const b = meta.booked;
-    const o = b ? this.store.opps.get(b.proposalId) : undefined;
-    if (b && o) {
-      o.booked = { at: b.at, optOutHours: b.optOutHours, told: { ...o.booked?.told, [msg.memberId]: msg.ts }, cancelled: { ...o.booked?.cancelled } };
-      this.changed(o, r);
-    }
+    const notice = meta.bookingUpdate ?? (meta.booked && { at: meta.booked.at, revision: 0 });
+    const o = this.store.opps.get(meta.proposalId ?? meta.booked?.proposalId ?? "");
+    if (!notice || !o || !consoleBookingReceiptCurrent(
+      notice.at === o.meetingAt && notice.revision === (this.bookingRevision.get(o.id) ?? 0),
+      o.participants.includes(msg.memberId), msg.status === "delivered", msg.ts, r.t,
+    )) return;
+    if (meta.booked) this.booked.add(msg.id);
+    o.booked = { at: notice.at, optOutHours: meta.booked?.optOutHours ?? confirmationWindowHours,
+      told: { ...o.booked?.told, [msg.memberId]: msg.ts }, cancelled: { ...o.booked?.cancelled } };
+    this.changed(o, r);
   }
 
   /** A consent-network opportunity from its proposal (state and statuses set by the caller). */
