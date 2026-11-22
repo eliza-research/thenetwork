@@ -223,6 +223,40 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const cfg = (seed: number) => ({ ...SLOP_ENGINE_CONFIG, seed });
   const run = (input: EngineInput, seed = 1, p = slopPack) => runEngine(input, cfg(seed), { pack: p });
   const SEEDS = [1, 2, 3];
+  await b.run("conformance slop: multi-city proposals need presence in a market within both distance limits", async () => {
+    const now = Date.UTC(2026, 9, 5, 16), ids = ["alex", "sam"];
+    for (const seed of SEEDS) for (const reverse of [false, true]) {
+      for (const scenario of ["no_trip", "shared_trip", "disjoint_trips", "valid_fallback", "outside_scope"] as const) {
+        const input: EngineInput = {
+          now,
+          members: ids.map(id => ({ id, name: id, age: 30, homeCity: "nyc", state: "normal", joinedAt: now - 60 * DAY, unansweredProactive: 0,
+            prefs: { categoriesOptIn: ["romance"], romanceOptIn: true, formats: ["one_to_one"], maxTravelMinutes: 60, onlyWhenAsked: false, quietHours: [22, 8] } })),
+          facets: ids.flatMap((id, i) => [
+            { id: `${id}:prefs`, memberId: id, kind: "preference", value: "dating preferences", tags: [
+              "romance:is:nonbinary", "romance:seeks:nonbinary", "romance:age:25-35", "slop:goal:long_term",
+              `slop:scope:multi:${scenario === "outside_scope" ? "sf" : "nyc,sf"}`,
+              `slop:max_miles:${scenario === "valid_fallback" ? 25 : 2}`,
+              `slop:zip:${i && scenario !== "outside_scope" ? "10463" : "10002"}`,
+            ], scope: "agent_private", provenance: "said", confidence: 1 },
+            { id: `${id}:interest`, memberId: id, kind: "interest", value: "museums", tags: ["museums"], scope: "shareable", provenance: "said", confidence: 1 },
+          ]),
+          intents: ids.map(id => ({ id: `${id}:date`, memberId: id, objective: "find a date", category: "romance", horizonDays: 30, status: "active", createdAt: now - DAY })),
+          presence: ids.flatMap((id, i): EngineInput["presence"] => [
+            { memberId: id, city: "nyc", type: "home", areas: [] },
+            ...(scenario === "shared_trip" || scenario === "disjoint_trips" ? [{ memberId: id, city: "sf" as const, type: "temporary" as const, areas: [],
+              from: now + (scenario === "disjoint_trips" ? 1 + 2 * i : 1) * DAY,
+              to: now + (scenario === "disjoint_trips" ? 2 + 2 * i : 4) * DAY }] : []),
+          ]),
+          edges: [], recentProposals: [],
+        };
+        if (reverse) { input.members.reverse(); input.facets.reverse(); input.presence.reverse(); input.intents.reverse(); }
+        const proposals = (await run(input, seed)).proposals;
+        const expected = scenario === "shared_trip" ? ["sf"] : scenario === "valid_fallback" ? ["nyc"] : [];
+        expect({ scenario, cities: proposals.map(p => p.city) }).toEqual({ scenario, cities: expected });
+        if (scenario === "shared_trip") expect(proposals[0]!.window).toEqual({ start: now + DAY, end: now + 4 * DAY });
+      }
+    }
+  });
   const inputs = new Map(SEEDS.map(s => [s, slopWorld(s, { perCity: 60 })]));
   const results = new Map<number, Promise<EngineResult>>();
   const result = (s: number) => { if (!results.has(s)) results.set(s, run(inputs.get(s)!, s)); return results.get(s)!; };

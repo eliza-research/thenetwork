@@ -17,7 +17,7 @@ pure def sharedDatingMarket(inFirst: bool, inSecond: bool, listed: bool): bool =
 
 ### The distance and margin must fit both members' limits
 
-The engine adds the privacy margin to the distance between the two coarse cells. Equality with either limit is allowed. The engine handles an unknown limit separately and orders eligible markets by distance.
+The engine adds the privacy margin to the distance between the two coarse cells. Equality with either limit is allowed. The engine handles an unknown limit separately and orders eligible markets by distance. When resolving the proposal's time window, search only markets that fit both limits. The preferred market can fall back to another eligible market with enough shared presence. A market outside either limit cannot supply that presence.
 
 ```quint
 pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =

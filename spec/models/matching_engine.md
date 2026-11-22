@@ -41,7 +41,9 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README
 //     (slopGenerators: w.match.edges). A pair has a value only through match/pair.ts pairValueOf: the pack
 //     pair rules (packs/slop/rules.ts slopPairRules, the radius in geo.ts), both compatibility estimates at
 //     the lane floor and the private rating standings within the band plus the uncertainties. Screening
-//     refuses a candidate without a lane or a pair value (filters.ts laneReason). slopAssign
+//     refuses a candidate without a lane or a pair value (filters.ts laneReason). Presence search
+//     only checks markets that pass both distance limits, and can fall back within that set
+//     (packs/slop/geo.ts overlap, geo.ts overlapInMarkets). slopAssign
 //     (packs/slop/assign.ts) opens round 1 with the exposure floor (policy.ts exposureFloor: floor
 //     members, highest carried debt first, each reserve their best edge that fits, up to the floor cap),
 //     then runs one greedy pass per round over the edges (scarce members first, then value order), each

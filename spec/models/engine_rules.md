@@ -55,7 +55,8 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 //     the same way, over the budget window of the member's state; here there is one state).
 //   - Of the core pair prefix (filters.ts pairReason: duplicate, underage, blocked), the model keeps
 //     duplicate and underage. Blocks are in candidate_pool.
-//   - One market: the shared dating market is the one market, so the radius decision is
+//   - The state trace uses one market. A separate two-market trace covers the overlap filter.
+//     In the state trace, the shared dating market is the one market, so the radius decision is
 //     sharedDatingMarket and withinAdjustedRadius. Both members are known and have a limit (the geo
 //     pairReason results unknown_member and distance_unknown are not here).
 //   - A pair decline stands for every cooling outcome of the pair (pairInteractionCooling: declined,
@@ -101,6 +102,11 @@ module engine_rules {
   pure def sharedDatingMarket(inFirst: bool, inSecond: bool, listed: bool): bool = inFirst and inSecond and listed
   pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
     adjustedMiles <= firstLimit and adjustedMiles <= secondLimit
+
+  // packs/slop/geo.ts passes only eligible markets to geo.ts overlapInMarkets.
+  // An eligible market still needs enough shared presence before the engine can use it.
+  pure def availableDatingMarkets(radiusEligible: Set[str], sharedPresence: Set[str]): Set[str] =
+    radiusEligible.intersect(sharedPresence)
 
   pure def absDiff(x: int, y: int): int = if (x >= y) x - y else y - x
   pure def samePair(a1: str, b1: str, a2: str, b2: str): bool = (a1 == a2 and b1 == b2) or (a1 == b2 and b1 == a2)
@@ -264,6 +270,11 @@ module engine_rules {
   pure val ALL_ADMIT = tuples(Set("A", "B", "K"), Set("A", "B", "K")).mapBy(t => true)
   pure val NEAR = Set("A", "B", "K").mapBy(m => 0)
   pure val WIDE = Set("A", "B", "K").mapBy(m => 4)
+
+  run datingMarketPresenceTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)
+    .expect(availableDatingMarkets(Set("sf"), Set("nyc")) == Set())
+    .expect(availableDatingMarkets(Set("sf"), Set("sf", "nyc")) == Set("sf"))
+    .expect(availableDatingMarkets(Set("sf", "nyc"), Set("nyc")) == Set("nyc"))
 
   // The third send in the window is refused; after the window it is allowed again.
   run budgetTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)
