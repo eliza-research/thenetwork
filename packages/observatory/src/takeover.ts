@@ -4,12 +4,11 @@
 import { MINUTE, type MemberId } from "@thenetwork/core";
 import { decide, type AgentReply, type PersonaAgent, type PersonaContext, type SimMessage } from "@thenetwork/sim";
 // The Network's own reader (refusal first): the simulator's parseYesNo read "absolutely not" as yes.
-import { parseYesNo } from "@thenetwork/network";
+import { explicitBookingCancellation, parseYesNo, sentencesOf } from "@thenetwork/network";
 import type { PlayerPrompt } from "./types.ts";
 
 interface Pending { prompt: PlayerPrompt; ctx: PersonaContext; msg: SimMessage; resolve: (r: AgentReply) => void }
 
-const CANT_MAKE_IT = /can'?t make it|have to bail|can'?t come|cancel/i;
 const NO_REPLY_NEEDED = new Set(["info", "confirmation", "cancellation", "system", "concierge"]);
 
 export class TakeoverAgent implements PersonaAgent {
@@ -62,19 +61,23 @@ export class TakeoverAgent implements PersonaAgent {
     const mem = ctx.memory;
     const pid = msg.meta?.proposalId ?? d.proposalId;
     const base: AgentReply = { ...d, action: "reply", text, delayMs: 2 * MINUTE, proposalId: pid };
-    if (CANT_MAKE_IT.test(text)) {
-      const upcoming = Object.entries(mem.proposals).find(([, pr]) => pr.decision !== "decline" && pr.at && pr.at > ctx.now)?.[0] ?? pid;
+    const answer = parseYesNo(text);
+    const booked = msg.meta?.booked;
+    const cancels = sentencesOf(text).some(({ text: clause }) => {
+      const request = explicitBookingCancellation(clause.replace(/;\s*$/, ""));
+      return request !== undefined && request.localStart === undefined;
+    });
+    if (cancels || (booked && answer === "no")) {
+      const upcoming = booked?.proposalId
+        ?? Object.entries(mem.proposals).find(([, pr]) => pr.decision !== "decline" && pr.at && pr.at > ctx.now)?.[0] ?? pid;
       if (upcoming && mem.proposals[upcoming]) mem.proposals[upcoming]!.plannedShow = false;
       return { ...base, intent: "flake_notice", decision: "none", proposalId: upcoming };
     }
-    if (d.messageType === "proposal" && pid) {
-      const yn = parseYesNo(text);
-      if (yn !== "unclear") {
-        const decision = yn === "no" ? "decline" : yn === "counter" ? "counter" : "accept";
-        const pr = mem.proposals[pid] ?? { decision, plannedShow: false, enjoyment: 0, others: d.participants?.filter(x => x !== ctx.persona.id) ?? [] };
-        mem.proposals[pid] = { ...pr, decision, plannedShow: decision !== "decline" };
-        return { ...base, intent: decision, decision };
-      }
+    if (d.messageType === "proposal" && pid && answer !== "unclear") {
+      const decision = answer === "no" ? "decline" : answer === "counter" ? "counter" : "accept";
+      const pr = mem.proposals[pid] ?? { decision, plannedShow: false, enjoyment: 0, others: d.participants?.filter(x => x !== ctx.persona.id) ?? [] };
+      mem.proposals[pid] = { ...pr, decision, plannedShow: decision !== "decline" };
+      return { ...base, intent: decision, decision };
     }
     if (d.messageType === "onboarding" || d.messageType === "question") { mem.questionsAnswered++; return { ...base, intent: "answer_question" }; }
     if (d.messageType === "feedback_request") return { ...base, intent: "feedback" };
