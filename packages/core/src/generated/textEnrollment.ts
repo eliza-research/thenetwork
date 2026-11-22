@@ -29,6 +29,8 @@ export type Event =
 
 /** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
 export const preparedPeonTextHeader: string = "join peon";
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
+export const openRouteOpportunityStates: string[] = ["PROPOSED", "SCHEDULED", "COMPLETED"];
 /** Story: Text the Network to join an app / Confirm age before creating a member (spec/textEnrollment.md) */
 export const completedAnswer: JoinAnswerFacts = { hasAge: true, hasName: true, invalidHome: false };
 /** Story: Text the Network to join an app / A join needs permission to enter this app (spec/textEnrollment.md) */
@@ -87,6 +89,13 @@ export function preparedPeonTextNamesApp(header: string, profilePresent: boolean
 export function lawPreparedPeonTextRequiresExplicitHeader(header: string, profilePresent: boolean): boolean {
   //@ ensures \result === true
   return preparedPeonTextNamesApp(header, profilePresent) === (header === preparedPeonTextHeader && profilePresent);
+}
+
+/** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
+//@ pure
+export function lawClosedOpportunityCannotSupplyRoute(opportunityState: string): boolean {
+  //@ ensures \result === true
+  return !(opportunityState === "CANCELLED" || opportunityState === "SKIPPED") || !openRouteOpportunityStates.includes(opportunityState);
 }
 
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
@@ -273,16 +282,16 @@ export function firstContactNoticeAllowed(signedTurn: boolean, nonMember: boolea
 
 /** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
 //@ pure
-export function lawFirstContactNoticeRequiresEligibleNumber(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+export function lawMemberOrBannedGetsNoNotice(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
   //@ ensures \result === true
-  return !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed) || (signedTurn && nonMember && !banned && joinAgeAllowed && ageFloorAllowed);
+  return !(!nonMember || banned || !signedTurn) || !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed);
 }
 
 /** Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment (spec/textEnrollment.md) */
 //@ pure
-export function lawMemberOrBannedGetsNoNotice(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
+export function lawFirstContactNoticeRequiresEligibleNumber(signedTurn: boolean, nonMember: boolean, banned: boolean, joinAgeAllowed: boolean, ageFloorAllowed: boolean): boolean {
   //@ ensures \result === true
-  return !(!nonMember || banned || !signedTurn) || !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed);
+  return !firstContactNoticeAllowed(signedTurn, nonMember, banned, joinAgeAllowed, ageFloorAllowed) || (signedTurn && nonMember && !banned && joinAgeAllowed && ageFloorAllowed);
 }
 
 /** Do the rules allow this event in this state? */

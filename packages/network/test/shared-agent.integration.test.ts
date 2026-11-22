@@ -465,6 +465,39 @@ test("a bare Friends answer to the pending shared-line question enrolls the curr
     .toEqual([{ app_id: "friends" }]);
 }, 60_000);
 
+// spec/textEnrollment.md, "A pending join routes only a possible join answer"
+test("an expired probe cannot route a signed shared-line reply away from the app that wrote last", async () => {
+  const phone = "+12125550138";
+  const created = await Promise.all([APPS.slop, APPS.friends].map(app => service.accounts.join(
+    app, { e164: phone, personId: null }, {
+      firstName: "Ren", age: 32, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    },
+  )));
+  const [slop, friends] = created;
+  if (!slop.ok || !friends.ok) throw new Error("Could not join both fixture apps");
+  const expired = "shared-route-expired-probe", at = new Date(clock.now() - 3 * DAY), recent = new Date(clock.now() + MINUTE);
+  await sql`insert into network.opportunities (app_id,id,kind,state,city,objective,created_at,updated_at)
+    values ('slop',${expired},'intro','SKIPPED','nyc','A meeting',${at},${at})`;
+  await sql`insert into network.messages (app_id,id,member_id,direction,channel,body,status,opportunity_id,type,ts)
+    values ('slop','shared-route-expired-message',${slop.membership.memberId},'outbound','imessage','Would you like to meet?','dry_run',${expired},'probe',${at}),
+      ('friends','shared-route-recent-message',${friends.membership.memberId},'outbound','imessage','How was your weekend?','dry_run',null,'info',${recent})`;
+  clock.advance(2 * MINUTE);
+  const response = await post(turn("enrollment-route-expired-probe", phone, "Thanks, my weekend was nice"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ app: "friends", memberId: friends.membership.memberId });
+  expect(await sql`select app_id from network.messages where id='in:blooio:enrollment-route-expired-probe'`).toEqual([{ app_id: "friends" }]);
+
+  const current = "shared-route-current-probe", probeAt = new Date(clock.now() - 2 * MINUTE);
+  await sql`insert into network.opportunities (app_id,id,kind,state,city,objective,created_at,updated_at)
+    values ('slop',${current},'intro','PROPOSED','nyc','A meeting',${probeAt},${probeAt})`;
+  await sql`insert into network.messages (app_id,id,member_id,direction,channel,body,status,opportunity_id,type,ts)
+    values ('slop','shared-route-current-message',${slop.membership.memberId},'outbound','imessage','Would you like to meet?','dry_run',${current},'probe',${probeAt})`;
+  clock.advance(MINUTE);
+  const active = await post(turn("enrollment-route-current-probe", phone, "Yes, please"));
+  expect(active.status).toBe(200);
+  expect(await active.json()).toMatchObject({ app: "slop", memberId: slop.membership.memberId });
+}, 60_000);
+
 test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;
   const first=await post(turn("friends-join-start",phone,"friends.help","friends"));expect(first.status).toBe(200);
