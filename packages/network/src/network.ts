@@ -49,7 +49,7 @@ import {
 } from "../../core/src/generated/memberInvitation.ts";
 import {
   attendanceBookingReceived, chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance, meetingFeedbackPrefix,
-  deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
+  deliveredInvitee, feedbackDelayHours, feedbackHistorySeat, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, dayOfReplyAccepted, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
   settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement, type AttendanceMark, verifiedMeetingValueAllowed,
@@ -3899,20 +3899,26 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { at: o.meetingAt, timeZone: o.meetingTimeZone ?? (o.plan ? CITY_TZ[o.plan.city] : NY) };
   }
 
-  private restoreSlopInteraction(record: InteractionRecord): InteractionRecord {
-    if (record.outcome !== "completed" && record.outcome !== "no_show") return record;
+  private restoreFeedbackInteraction(record: InteractionRecord): InteractionRecord {
+    const slop = this.app.id === "slop", group = record.kind === "group";
+    if ((!slop && !group) || (record.outcome !== "completed" && record.outcome !== "no_show")) return record;
     const marker = record.id.lastIndexOf(":fb:");
     if (marker < 0) return record;
     const opportunity = this.opps.get(record.id.slice(0, marker));
     const author = record.id.slice(marker + 4);
-    const ownReply = opportunity && (record.opportunityId === undefined || record.opportunityId === opportunity.id)
-      && opportunity.feedbackFrom.has(author) && opportunity.participants.includes(author) && record.participants.includes(author);
+    const ownReply = opportunity?.stage === "done" && (record.opportunityId === undefined || record.opportunityId === opportunity.id)
+      && opportunity.feedbackFrom.has(author) && opportunity.participants.includes(author) && record.participants.includes(author)
+      && feedbackHistorySeat(opportunity.status.get(author) ?? "");
     return {
       ...record,
-      ...(ownReply && record.opportunityId === undefined ? { opportunityId: opportunity.id } : {}),
-      ...(record.outcome === "completed" && record.bookedMeeting === undefined
+      ...(group && ownReply && opportunity.kind === "group" ? {
+        participants: record.participants.filter(id => opportunity.participants.includes(id)
+          && feedbackHistorySeat(opportunity.status.get(id) ?? "")),
+      } : {}),
+      ...(slop && ownReply && record.opportunityId === undefined ? { opportunityId: opportunity.id } : {}),
+      ...(slop && record.outcome === "completed" && record.bookedMeeting === undefined
         ? { bookedMeeting: ownReply ? this.bookedMeeting(opportunity) : null } : {}),
-      ...(record.outcome === "no_show" && record.noShowBy === undefined && ownReply
+      ...(slop && record.outcome === "no_show" && record.noShowBy === undefined && ownReply
         && opportunity.post?.[author]?.came === false ? { noShowBy: [author] } : {}),
     };
   }
@@ -3922,7 +3928,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The world turns this into its "feedback" run record (flags only: the text is not kept).
     // Privacy (network-consent-25): what the answer said, as flags; never the member's words.
     this.ctx.log("feedback", { memberId: m.id, proposalId: o.id, sentiment: f.sentiment, selfNoShow: f.selfNoShow, otherNoShow: f.otherNoShow, again: f.again });
-    const others = o.participants.filter(p => p !== m.id && o.status.get(p) === "yes");
+    const going = o.participants.filter(id => feedbackHistorySeat(o.status.get(id) ?? ""));
+    const others = going.filter(id => id !== m.id);
     // The post-meeting answer is the attendance check-in (NC: mutual check-in; the host's check-in list).
     // Plans also ask "would you do it again with this group?" (would_interact_again edges, crews).
     const otherMissing = f.otherNoShow || NOBODY_CAME.test(body);
@@ -3939,7 +3946,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
       else m.completedSinceNoShow++;
       this.interactions.push({
-        id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants],
+        id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: going,
         at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
         ...(this.app.id === "slop" ? {
           opportunityId: o.id,
@@ -7315,7 +7322,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.queued = st.queued; this.deferred = st.deferred;
     this.declinedIds = new Set(st.declinedIds); this.blocks = new Set(st.blocks); this.avoid = new Set(st.avoid); this.declined = new Map(st.declined);
     this.feedback = st.feedback;
-    this.interactions = this.app.id === "slop" ? st.interactions.map(record => this.restoreSlopInteraction(record)) : st.interactions;
+    this.interactions = st.interactions.map(record => this.restoreFeedbackInteraction(record));
     this.vouchedSkills = new Map(st.vouchedSkills.map(([k, v]) => [k, new Set(v)]));
     this.invitedIds.clear(); for (const id of st.invitedIds) this.invitedIds.add(id);
     this.trust.importState(st.trust);

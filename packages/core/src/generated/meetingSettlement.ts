@@ -325,6 +325,19 @@ export function lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: number
   return !meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs);
 }
 
+/** Story: Ask for feedback and close attendance once / Use the active roster in interaction history (spec/meetingSettlement.md) */
+//@ pure
+export function feedbackHistorySeat(status: string): boolean {
+  return status === "yes";
+}
+
+/** Story: Ask for feedback and close attendance once / Use the active roster in interaction history (spec/meetingSettlement.md) */
+//@ pure
+export function lawWithdrawnSeatCannotEnterFeedbackHistory(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "dropped") || !feedbackHistorySeat(status);
+}
+
 /** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
 //@ pure
 export function completedMeetingSlot(localWeekday: number, localHour: number): number {

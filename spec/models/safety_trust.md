@@ -617,7 +617,7 @@ module safety_trust {
 
   // Feedback keeps its receipt day. The dating slot comes from the booked meeting's local day and hour.
   pure def recordOf(k: str, o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
-    { opportunityId: k, parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
+    { opportunityId: k, parts: o.going, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
       hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour) }
 
   // The answer to the check-in after a meeting (onFeedback 2636). `intent`: what the member means ("fine",
@@ -1172,7 +1172,10 @@ module safety_trust {
       s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted")))
   val attendanceCountsOncePerBooking = ALL_MIDS.forall(m =>
     dates(s, m) + noShows(s, m) <= OPP_IDS.filter(k =>
-      s.opps.get(k).stage == "done" and s.opps.get(k).told.contains(m)).size())
+      s.opps.get(k).stage == "done" and s.opps.get(k).going.contains(m)).size())
+  // Recorded interactions use the participants who remained accepted. Booking evidence may retain earlier seats.
+  val feedbackHistoryUsesActiveRoster = s.inters.forall(i =>
+    i.parts == s.opps.get(i.opportunityId).going)
 
   // The Slop profile reads completed attendance using the booked meeting time in its local zone.
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
@@ -1222,6 +1225,7 @@ module safety_trust {
     watchLasts14Days,
     noShowCountsAbsentOnly,
     attendanceCountsOncePerBooking,
+    feedbackHistoryUsesActiveRoster,
     slotFromMeeting,
     everyMetReportFiled,
     relayBlockReachesSafety,
@@ -1549,6 +1553,25 @@ module safety_trust {
       .then(meet("o1", Set(BEN_S)))
       .then(s' = { ...s, inters: Set(recordOf("o1", s.opps.get("o1"), NOBODY, true, s.now)) })
       .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
+
+  // The trace adds a fourth accepted seat to the usual three-person fixture, then drops it before feedback.
+  run groupFeedbackUsesActiveRosterTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(all {
+        val other = { app: "slop", p: "fourth", g: 0 }
+        val o = s.opps.get("o1")
+        val booked = o.parts.union(Set(other))
+        val allBooked = { ...o, parts: booked, going: booked, told: booked }
+        s' = { ...s, opps: dropOpps(s.opps.set("o1", allBooked), other) }
+      })
+      .expect(s.opps.get("o1").stage == "scheduled" and s.opps.get("o1").told.size() == 4
+        and s.opps.get("o1").going.size() == 3)
+      .then(meet("o1", Set(BEN_S)))
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
+      .expect(feedbackHistoryUsesActiveRoster and s.inters.size() == 2 and s.inters.forall(i => i.parts.size() == 3)
+        and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
 
   // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =
