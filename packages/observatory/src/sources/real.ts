@@ -18,6 +18,7 @@ import {
 import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
+import { confirmedProactiveDeliveryStatuses } from "../../../core/src/generated/consolePanels.ts";
 import { runEngineSummarized } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
@@ -304,7 +305,7 @@ export class RealSource implements DataSource {
     const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv] = await Promise.all([
       sql`select id, name, home_city, home_area, account_status, participation_state, opted_out, age, invited_by, community, occupation, joined_at from network.members where app_id = ${app}`,
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
-            count(*) filter (where direction = 'outbound' and proactive and status = 'delivered')::int as proactive
+            count(*) filter (where direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive
           from network.messages where app_id = ${app} and not system group by member_id`,
       sql`with held as (
             select o.id from network.opportunities o
@@ -330,7 +331,7 @@ export class RealSource implements DataSource {
             (select count(*) from network.messages where app_id = ${app} and not system)::int as messages,
             (select count(*) from network.messages where app_id = ${app} and not system and direction = 'inbound')::int as inbound,
             (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound')::int as outbound,
-            (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound' and proactive and status = 'delivered')::int as proactive,
+            (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive,
             (select count(*) from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal')::int as invites,
             (select count(*) from network.opportunities where app_id = ${app} and meeting_at is not null)::int as meetings_scheduled,
             (select count(*) from network.events where app_id = ${app} and type = 'member_blocked')::int as blocks,
@@ -530,7 +531,7 @@ export class RealSource implements DataSource {
       sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
       sql`select type, payload->>'reason' as reason, count(*)::int as n from network.events where app_id = ${app} and at >= ${since} and type in ('send_refused', 'guard_blocked') group by 1, 2`,
       sql`select type, actor_id, at, payload->>'from' as inviter, payload->>'newMemberId' as invitee, payload->>'rule' as rule from network.events
-          where app_id = ${app} and type in ('member_opted_out', 'invite', 'growth_ask', 'invariant_violation')`,
+          where app_id = ${app} and type in ('invite', 'growth_ask', 'invariant_violation')`,
       // Messages about an opportunity that went out (or would have, dry-run): not refused, held or blocked.
       // Every message that went out (or would have, dry-run): not refused, held or blocked. The text is read
       // here only to apply the judge's connection-offer rule; it never leaves this function.
@@ -595,15 +596,13 @@ export class RealSource implements DataSource {
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
     // Scorecard and growth.
-    const optOutAt = new Map<string, number>();
-    for (const e of all) if (e.type === "member_opted_out" && e.actor_id) optOutAt.set(e.actor_id, ms(e.at) ?? 0);
     const inviteRows = all.filter(e => e.type === "invite");
     const inviters = new Set(inviteRows.map(e => e.inviter).filter(Boolean)).size;
     const invitees = new Set<string>(inviteRows.length ? inviteRows.map(e => e.invitee).filter(Boolean) : [...s.members.values()].filter(m => m.invitedBy).map(m => m.id));
     const members = [...s.members.values()];
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
-      now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
+      now, start: this.store.clock.start, members, opps, messages, requests, invites: s.counts.invites, accepts: s.counts.accepts,
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
       inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });

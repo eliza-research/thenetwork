@@ -4,6 +4,7 @@ import { observatoryCompletionBooking, observatoryMeetingHeld } from "../../core
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
 import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearReviewDeadline, safetyDueAt, safetyOverdue, waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import { confirmsProactiveDelivery, interruptionProxyWindowMs, stopRejectsInterruption } from "../../core/src/generated/consolePanels.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
@@ -88,8 +89,8 @@ export interface MsgMeta { memberId: MemberId; ts: number; direction: "inbound" 
 export interface ScoreInput {
   now: number; start: number;
   members: ObsMember[]; opps: ObsOpportunity[]; messages: MsgMeta[]; requests: ObsRequest[];
-  /** When each member opted out. */
-  optOutAt: Map<MemberId, number>;
+  /** Canonical STOP transitions for the simulated interruption proxy. */
+  stopHistory?: ReadonlyMap<MemberId, readonly number[]>;
   /** Current app's recorded yes/no survey responses, when the source measures them. */
   worthwhileAnswers?: { yes: number; total: number };
   invites: number; accepts: number;
@@ -100,7 +101,6 @@ export interface ScoreInput {
 }
 
 const HELD = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
-const ANSWER_WINDOW = 72 * HOUR;
 const FIRST_VALUE_DAYS = 14;
 const REPEAT_DAYS = 60;
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -137,13 +137,13 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   for (const [id, ms] of byMember) {
     ms.sort((a, b) => a.ts - b.ts);
     const inbound = ms.filter(m => m.direction === "inbound").map(m => m.ts);
-    const stop = x.optOutAt.get(id);
+    const stops = x.stopHistory?.get(id) ?? [];
     for (const m of ms) {
-      if (m.direction !== "outbound" || !m.proactive || m.status !== "delivered") continue;
-      if (x.now - m.ts < ANSWER_WINDOW && !inbound.some(t => t > m.ts)) continue; // still inside its window
+      if (m.direction !== "outbound" || !m.proactive || !confirmsProactiveDelivery(m.status)) continue;
+      if (x.now - m.ts < interruptionProxyWindowMs && !inbound.some(t => t > m.ts)) continue; // still inside its window
       proactive++;
-      const answered = inbound.some(t => t > m.ts && t - m.ts <= ANSWER_WINDOW);
-      const stopped = stop !== undefined && stop >= m.ts && stop - m.ts <= ANSWER_WINDOW;
+      const answered = inbound.some(t => t > m.ts && t - m.ts <= interruptionProxyWindowMs);
+      const stopped = stops.some(stopAt => stopRejectsInterruption(m.ts, stopAt));
       if (answered && !stopped) worthwhile++;
     }
   }
@@ -176,7 +176,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
   const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
-  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && m.status === "delivered").length;
+  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && confirmsProactiveDelivery(m.status)).length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
   return [

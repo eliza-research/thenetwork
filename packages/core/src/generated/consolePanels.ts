@@ -71,6 +71,10 @@ export const biasAlertBelow: number = 80;
 export const maxProactiveHundredths: number = 200;
 /** Story: Read the health numbers of an app / The proactive rate and the inviter share show their targets (spec/consolePanels.md) */
 export const inviterTargetPercent: number = 30;
+/** Story: Read the health numbers of an app / Confirmed proactive delivery contributes to the staff rate (spec/consolePanels.md) */
+export const confirmedProactiveDeliveryStatuses: string[] = ["delivered", "read"];
+/** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
+export const interruptionProxyWindowMs: number = exact_consolePanels(72 * 3600000);
 /** Story: Follow events in the feed and the pipeline / The feed segments group the event kinds (spec/consolePanels.md) */
 export const joinsHiddenFrom: number = 60;
 /** Story: Run simulation experiments in the lab / A lab run starts only in the simulated world with a valid request (spec/consolePanels.md) */
@@ -642,6 +646,32 @@ export function inviterMark(known: boolean, sharePercent: number): ShareMark {
 export function lawTwoMessagesAWeekDoNotWarn(rateHundredths: number): boolean {
   //@ ensures \result === true
   return !(rateHundredths <= 200) || !proactiveWarns(rateHundredths);
+}
+
+/** Story: Read the health numbers of an app / Confirmed proactive delivery contributes to the staff rate (spec/consolePanels.md) */
+//@ pure
+export function confirmsProactiveDelivery(status: string): boolean {
+  return confirmedProactiveDeliveryStatuses.reduce((confirmed: boolean, candidate: string) => confirmed || status === candidate, false);
+}
+
+/** Story: Read the health numbers of an app / Confirmed proactive delivery contributes to the staff rate (spec/consolePanels.md) */
+//@ pure
+export function lawAcceptedProactiveDeliveryIsUnconfirmed(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "queued" || status === "accepted" || status === "sent") || !confirmsProactiveDelivery(status);
+}
+
+/** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
+//@ pure
+export function stopRejectsInterruption(sentAt: number, stopAt: number): boolean {
+  return sentAt <= stopAt && exact_consolePanels(stopAt - sentAt) <= interruptionProxyWindowMs;
+}
+
+/** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
+//@ pure
+export function lawStopOutsideInterruptionWindowDoesNotReject(sentAt: number, stopAt: number): boolean {
+  //@ ensures \result === true
+  return !(stopAt < sentAt || exact_consolePanels(stopAt - sentAt) > interruptionProxyWindowMs) || !stopRejectsInterruption(sentAt, stopAt);
 }
 
 /** Story: Follow events in the feed and the pipeline / The feed segments group the event kinds (spec/consolePanels.md) */

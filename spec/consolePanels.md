@@ -354,6 +354,34 @@ pure def inviterMark(known: bool, sharePercent: int): ShareMark =
 pure def lawTwoMessagesAWeekDoNotWarn(rateHundredths: int): bool = rateHundredths <= 200 implies not(proactiveWarns(rateHundredths))
 ```
 
+### Confirmed proactive delivery contributes to the staff rate
+
+Use the [provider receipt lifecycle](outboundReceipt.md) for proactive delivery evidence. Count each delivered message once, including when its status advances to read. An accepted or sent status alone does not establish delivery. Use the same status set for member counters, app totals, and the attention score.
+
+```quint
+pure val confirmedProactiveDeliveryStatuses: List[str] = List("delivered", "read")
+
+pure def confirmsProactiveDelivery(status: str): bool =
+  confirmedProactiveDeliveryStatuses.foldl(false, (confirmed, candidate) => confirmed or status == candidate)
+
+pure def lawAcceptedProactiveDeliveryIsUnconfirmed(status: str): bool =
+  (status == "queued" or status == "accepted" or status == "sent") implies not(confirmsProactiveDelivery(status))
+```
+
+### The simulated interruption proxy keeps each STOP window
+
+For the simulated interruption proxy, keep each recorded STOP transition. A confirmed proactive message is rejected if a STOP for the same member occurs from its send time through 72 hours later. Later resumption and later STOP transitions preserve the earlier evidence. Real metrics use recorded interruption survey answers.
+
+```quint
+pure val interruptionProxyWindowMs: int = 72 * 3600000
+
+pure def stopRejectsInterruption(sentAt: int, stopAt: int): bool =
+  sentAt <= stopAt and stopAt - sentAt <= interruptionProxyWindowMs
+
+pure def lawStopOutsideInterruptionWindowDoesNotReject(sentAt: int, stopAt: int): bool =
+  (stopAt < sentAt or stopAt - sentAt > interruptionProxyWindowMs) implies not(stopRejectsInterruption(sentAt, stopAt))
+```
+
 ## Story: Follow events in the feed and the pipeline
 
 > As a staff member, I want to filter the feed by kind of event and see the pipeline by state, so that I find the events and the opportunities that need me.
