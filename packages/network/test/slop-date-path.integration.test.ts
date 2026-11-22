@@ -435,7 +435,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const rt = () => s.runtimeFor("slop")!;
     await rt().unitOfWork(net => net.importState({ ...net.exportState(), members: seed.members, opps: [booked] }));
 
-    const queue = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+    const queue = new OutboundQueue({ recipientWindowKey: s.outboundRecipientKey, sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
       provider: { kind: "sim", send: async () => { throw new Error("Fixture only records receipts"); } } });
     const first = { id: "slop-introduction-first", to: people[0]!.e164, memberId: people[0]!.id, type: "proposal", text: "You're both in: a first date with Sam." };
     const second = { id: "slop-introduction-second", to: people[1]!.e164, memberId: people[1]!.id, type: "proposal", text: "You're both in: a first date with Rae." };

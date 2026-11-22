@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR, SimClock } from "@thenetwork/core";
-import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { currentBookingReceipt } from "../../network/service/channel.ts";
 import { ConsentNetwork } from "../../network/src/network.ts";
@@ -23,6 +23,7 @@ test.skipIf(!pgAvailable)("a booking receipt is current only for the exact recip
   const body = "A public walk is booked.";
   const queue = new OutboundQueue({
     sql, app: "ntwrk", clock, line: "fixture-line", checks: { live: () => false },
+    recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"),
     provider: { kind: "sim", async send() { throw Error("Use collected receipts"); } },
   });
   async function saveBooking(meetingAt: number, scheduleRevision: number) {
