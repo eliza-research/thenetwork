@@ -368,6 +368,28 @@ pure def lawAcceptedProactiveDeliveryIsUnconfirmed(status: str): bool =
   (status == "queued" or status == "accepted" or status == "sent") implies not(confirmsProactiveDelivery(status))
 ```
 
+### Proactive load uses observed member time
+
+Divide confirmed proactive messages by observed member weeks. Count each
+joined member from their recorded join time or the start of the report
+period, whichever is later. If an older joined record has no join time,
+use the start of the report period. A join after the report ends adds zero.
+The metrics panel and the headless report use the same score.
+
+```quint
+pure def observedMembershipMs(start: int, end: int, joinedAt: int): int =
+  if (end < start or end < joinedAt) 0
+  else if (start < joinedAt) end - joinedAt
+  else end - start
+
+pure def lawFutureJoinAddsNoMemberTime(start: int, end: int, joinedAt: int): bool =
+  end < joinedAt implies observedMembershipMs(start, end, joinedAt) == 0
+
+pure def lawMembershipTimeIsWithinTheReport(start: int, end: int, joinedAt: int): bool =
+  observedMembershipMs(start, end, joinedAt) >= 0 and
+    (start <= end implies observedMembershipMs(start, end, joinedAt) <= end - start)
+```
+
 ### The simulated interruption proxy keeps each STOP window
 
 For the simulated interruption proxy, keep each recorded STOP transition. A confirmed proactive message is rejected if a STOP for the same member occurs from its send time through 72 hours later. Later resumption and later STOP transitions preserve the earlier evidence. Real metrics use recorded interruption survey answers.

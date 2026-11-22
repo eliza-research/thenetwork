@@ -46,6 +46,7 @@ const count = <T>(xs: T[], f: (x: T) => string | undefined) => xs.reduce<Record<
 const opps = s.opportunities.filter(o => o.source !== "shadow");
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const unsafe = opps.filter(o => o.oracle?.unsafe);
+const proactivePerMemberWeek = s.stats.scorecard?.find(m => m.key === "attention_burden")?.value ?? 0;
 const report = {
   world: { seed, days, engine, network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
   review: s.network?.review,
@@ -61,7 +62,7 @@ const report = {
     showRate: r3(s.stats.attended / Math.max(1, s.stats.attended + s.stats.noShows + s.stats.cancelledWithNotice)),
     meanEnjoyment: r3(s.stats.enjoymentSum / Math.max(1, s.stats.enjoymentN)),
     membersWhoMet: s.members.filter(m => m.counters.meetings > 0).length,
-    proactivePerMemberPerWeek: r3(s.stats.proactive / Math.max(1, s.stats.joined) / (days / 7)),
+    proactivePerMemberPerWeek: r3(proactivePerMemberWeek),
     optOuts: s.stats.optOuts, blocks: s.stats.blocks, safetyFlags: s.stats.adversarialAttempts, invariantViolations: s.stats.invariantViolations,
   },
   engineRunsByDay: s.engineRuns.map(r => ({ day: Math.floor((r.at - s.clock.start) / DAY) + 1, city: r.city, candidates: r.funnel.generated, eligible: r.funnel.eligible, budgetSkips: r.funnel.budgetSkips, proposals: r.proposals, gini: r3(r.fairness.gini), zeroExposure: r3(r.fairness.zeroExposureShare) })),

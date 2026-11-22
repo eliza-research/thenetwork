@@ -661,6 +661,26 @@ export function lawAcceptedProactiveDeliveryIsUnconfirmed(status: string): boole
   return !(status === "queued" || status === "accepted" || status === "sent") || !confirmsProactiveDelivery(status);
 }
 
+/** Story: Read the health numbers of an app / Proactive load uses observed member time (spec/consolePanels.md) */
+//@ pure
+export function observedMembershipMs(start: number, end: number, joinedAt: number): number {
+  return end < start || end < joinedAt ? 0 : (start < joinedAt ? exact_consolePanels(end - joinedAt) : exact_consolePanels(end - start));
+}
+
+/** Story: Read the health numbers of an app / Proactive load uses observed member time (spec/consolePanels.md) */
+//@ pure
+export function lawFutureJoinAddsNoMemberTime(start: number, end: number, joinedAt: number): boolean {
+  //@ ensures \result === true
+  return !(end < joinedAt) || observedMembershipMs(start, end, joinedAt) === 0;
+}
+
+/** Story: Read the health numbers of an app / Proactive load uses observed member time (spec/consolePanels.md) */
+//@ pure
+export function lawMembershipTimeIsWithinTheReport(start: number, end: number, joinedAt: number): boolean {
+  //@ ensures \result === true
+  return observedMembershipMs(start, end, joinedAt) >= 0 && (!(start <= end) || observedMembershipMs(start, end, joinedAt) <= exact_consolePanels(end - start));
+}
+
 /** Story: Read the health numbers of an app / The simulated interruption proxy keeps each STOP window (spec/consolePanels.md) */
 //@ pure
 export function stopRejectsInterruption(sentAt: number, stopAt: number): boolean {

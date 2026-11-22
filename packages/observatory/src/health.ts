@@ -4,7 +4,7 @@ import { observatoryCompletionBooking, observatoryMeetingHeld } from "../../core
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
 import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearReviewDeadline, safetyDueAt, safetyOverdue, waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
-import { confirmsProactiveDelivery, interruptionProxyWindowMs, stopRejectsInterruption } from "../../core/src/generated/consolePanels.ts";
+import { confirmsProactiveDelivery, interruptionProxyWindowMs, observedMembershipMs, stopRejectsInterruption } from "../../core/src/generated/consolePanels.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
@@ -175,7 +175,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     && (o.review.decision === "approve" || o.review.decision === "reject"));
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
-  const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
+  const memberWeeks = joined.reduce((sum, member) => sum + observedMembershipMs(x.start, x.now, member.joinedAt ?? x.start), 0) / (7 * DAY);
   const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && confirmsProactiveDelivery(m.status)).length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
@@ -193,8 +193,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
       how: "Pairs whose first meeting both enjoyed (>= 0.6) who met again through the Network within 60 days. Direct meetings are not seen, so this is a lower bound." }),
     metric({ key: "first_value_14d", label: "First outcome in 14 days", value: share(fast, due.length), unit: "share", n: due.length, target: { op: ">=", value: 0.6 },
       how: "Members who joined at least 14 days ago and attended a meeting, or had a request fulfilled or answered, within 14 days of joining." }),
-    metric({ key: "attention_burden", label: "Proactive messages per member per week", value: joined.length ? delivered / joined.length / weeks : null, unit: "per_member_week", n: delivered,
-      how: "Delivered agent-started messages, per joined member, per week of the period." }),
+    metric({ key: "attention_burden", label: "Proactive messages per member per week", value: share(delivered, memberWeeks), unit: "per_member_week", n: delivered,
+      how: "Delivered agent-started messages per observed member-week after joining." }),
     metric({ key: "reviewer_minutes", label: "Reviewer minutes per sent proposal", value: x.reviewSeconds > 0 && x.sentProposals > 0 ? x.reviewSeconds / 60 / x.sentProposals : null, unit: "minutes", n: x.sentProposals, target: { op: "<=", value: 2 },
       how: "Recorded review time over opportunities a person approved that started (the simulated reviewer is left out). No value until reviewers record time." }),
     metric({ key: "shadow_precision", label: "Shadow precision (approved without edits)", value: share(clean, decided.length), unit: "share", n: decided.length, target: { op: ">=", value: 0.8 },
