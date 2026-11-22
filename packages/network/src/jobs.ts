@@ -379,13 +379,14 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
   const tags = facets.filter(f => f.tags.includes(`${T.posting}${intent.id}`)).flatMap(f => f.tags);
   const one = (prefix: string) => tags.find(t => t.startsWith(prefix))?.slice(prefix.length);
   const [payMin, payMax] = (one(T.pay) ?? "0-0").split("-").map(Number) as [number, number];
+  const openings = Number(one(T.openings)?.trim() || "1");
   const seniority = one(T.seniority);
   const updatedAt = Number(one(T.postingUpdatedAt));
   const closedReason = one(T.postingClosedReason);
   return {
     id: intent.id, managerId: intent.memberId, title: intent.objective.replace(/^Hire:\s*/i, ""), family: one(T.family) ?? slug(intent.objective),
     ...(seniority ? { seniority: Number(seniority) } : {}),
-    openings: Number(one(T.openings) ?? 1) || 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode, ...(one(T.area) ? { area: one(T.area)! } : {}),
+    openings: Number.isFinite(openings) ? openings : 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode, ...(one(T.area) ? { area: one(T.area)! } : {}),
     must: tags.filter(t => t.startsWith(T.must)).map(t => { const [s, l] = t.slice(T.must.length).split(":"); return { skill: s!, level: Number(l ?? 2) }; }),
     nice: tags.filter(t => t.startsWith(T.nice)).map(t => t.slice(T.nice.length)),
     ...(one(T.sponsors) ? { sponsors: one(T.sponsors) === "yes" } : {}),

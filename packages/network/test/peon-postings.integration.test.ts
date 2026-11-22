@@ -191,5 +191,16 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect((await postings(rowan)).filter(x => x.status === "active")).toHaveLength(1);
     await text(s, clock, ROWAN, "yes");
     expect((await postings(rowan)).filter(x => x.status === "active")).toHaveLength(0);
+
+    // Early stored close records could have lost their original headcount.
+    await sql`update network.facets set tags = array_replace(tags, 'peon:openings:2', 'peon:openings:0')
+      where app_id = 'peon' and ${`peon:posting:${p.id}`} = any(tags) and 'peon:openings:2' = any(tags)`;
+    expect(await openingsOf()).toMatchObject({ status: "closed", openings: 0 });
+    expect(await call("POST", "/postings", { id: p.id, managerId: rowan })).toMatchObject({
+      status: 400, body: { ok: false, error: "invalid_openings" },
+    });
+    expect(await call("POST", "/postings", { id: p.id, managerId: rowan, openings: 2 })).toMatchObject({
+      status: 200, body: { ok: true, posting: { status: "active", openings: 2 } },
+    });
   }, T);
 });
