@@ -163,6 +163,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const fullPack = hasPackValue ? pairValueScale : undefined;
   const pending = new CandidateHeap();
   const touched = new Set<number>();
+  let untouched = untouchedBound();
   let touches = 0, walked = 0, walkSpent = false;
   /** Touches the positions of `spans`; false when the touch limit stops it first. */
   const visit = (spans: readonly Span[], positionAt: (i: number) => number): boolean => {
@@ -184,7 +185,6 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   // enabled terms still allow an untagged pair after the postings shorter than the window, walk the
   // whole window.
   for (;;) {
-    const untouched = untouchedBound();
     const top = pending.peek();
     const topBound = top?.bound ?? noPairValue;
     const unseen = Math.max(topBound, untouched);
@@ -197,6 +197,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
         if (visit(range.spans, i => range.posting[i])) { open[range.group]--; walked++; } else walkSpent = true;
       } else if (visit(window, i => i)) windowWalked = true;
       else walkSpent = true;
+      if (!walkSpent) untouched = untouchedBound();
       continue;
     }
     if (!top || search.checks >= limits.searchBudget) {

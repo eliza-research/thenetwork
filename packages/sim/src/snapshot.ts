@@ -139,8 +139,12 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
 export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapshot {
   const feat: SnapshotFeatures = { ...SNAPSHOT_FEATURES, ...(s.features ?? {}) };
   const joined = personas.filter(p => s.joined.has(p.id));
-  const ids = new Set(joined.map(p => p.id));
-  const members = joined.map(p => memberOf(p, s));
+  const memberById = new Map<MemberId, Member>();
+  const members = joined.map(p => {
+    const member = memberOf(p, s);
+    if (!memberById.has(member.id)) memberById.set(member.id, member);
+    return member;
+  });
   const facets: Facet[] = [];
   const intents: Intent[] = [];
   const presence: Presence[] = [];
@@ -177,7 +181,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
       });
     }
     if (feat.romancePrefs) {
-      const m = members.find(x => x.id === p.id)!;
+      const m = memberById.get(p.id)!;
       if (m.prefs.romanceOptIn && (!k || knowsRomance(p, k))) facets.push(romancePrefFacet(p, jt, facets.length));
     }
     presence.push({ memberId: p.id, city: p.homeCity, type: "home", areas: [p.routine.homeArea, p.routine.workArea] });
@@ -187,14 +191,14 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
       const from = s.worldStart + tr.fromDay * DAY, to = s.worldStart + (tr.toDay + 1) * DAY;
       if (s.now >= from - 2 * DAY && s.now < to) presence.push({ memberId: p.id, city: tr.city, type: "temporary", areas: [], from, to });
     }
-    if (p.invitedBy && ids.has(p.invitedBy))
+    if (p.invitedBy && memberById.has(p.invitedBy))
       edges.push({ from: p.invitedBy, to: p.id, type: "invited_by", strength: 0.7, explicit: true, createdAt: jt });
     for (const r of p.relationships) {
-      if (r.type === "ex" || !ids.has(r.to) || p.id > r.to) continue; // exes are not disclosed; one edge per pair
+      if (r.type === "ex" || !memberById.has(r.to) || p.id > r.to) continue; // exes are not disclosed; one edge per pair
       edges.push({ from: p.id, to: r.to, type: "knows", strength: r.closeness, explicit: true, createdAt: jt });
     }
   }
-  for (const b of s.blocks) if (ids.has(b.from)) edges.push({ from: b.from, to: b.to, type: "blocked", strength: 1, explicit: true, createdAt: b.at });
+  for (const b of s.blocks) if (memberById.has(b.from)) edges.push({ from: b.from, to: b.to, type: "blocked", strength: 1, explicit: true, createdAt: b.at });
   // Recent proposals by time, not by count: the engine's budgets look back up to 30 days (Quiet),
   // so a fixed last-200 cut silently forgot proposals once a run produced more than 200 in that
   // window, and members were over-proposed.
@@ -202,7 +206,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
   const snap: SimSnapshot = { now: s.now, members, facets, intents, presence, edges, recentProposals: s.recentProposals.filter(p => p.createdAt >= since && p.createdAt <= s.now) };
   if (feat.eventsPerWeek > 0) snap.events = publicEvents(snap, feat.eventsPerWeek);
   if (s.records) Object.assign(snap, networkStateFromRecords(s.records, s.now));
-  if (feat.planAgainEdges && s.records) snap.edges.push(...planAgainEdges(s.records, s.now).filter(e => ids.has(e.from) && ids.has(e.to)));
+  if (feat.planAgainEdges && s.records) snap.edges.push(...planAgainEdges(s.records, s.now).filter(e => memberById.has(e.from) && memberById.has(e.to)));
   return snap;
 }
 
