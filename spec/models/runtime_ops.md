@@ -27,6 +27,9 @@ evaluates the alerts it could collect, may close a missing episode without
 a prior successful post, and can still ping its heartbeat after a failed
 alert delivery. The retained model below describes different behavior for
 those cases.
+A cached metrics response reads the last completed dispatch separately from the
+measured snapshot. A refresh during the webhook changes the snapshot timestamp
+and leaves the completed alert result visible until dispatch returns.
 
 Send failure counts use observed outcomes. The queue still owns pending
 receipts and reconciles them before their outcomes can affect the failure

@@ -107,6 +107,9 @@ pure def sometimesRejected(s: AlertDispatch): bool = s.phase == PostRejected
 ### Collect scheduled rounds and reuse fresh metrics
 
 A new operations round starts when its configured interval has passed. A read request may use the latest metrics for less than 15 seconds after collection.
+The cache holds measured metrics. Each read adds the latest completed dispatch
+result if one exists. A metrics refresh leaves that result unchanged. A dispatch
+that is waiting for its webhook leaves the previous completed result visible.
 
 ```quint
 pure val metricsFreshMs = 15000

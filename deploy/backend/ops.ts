@@ -463,13 +463,13 @@ export function createOps(d: OpsDeps) {
   });
   const dispatcher = new AlertDispatcher({ store: d.store, post, now: d.now, repeatMs: c.repeatMs, maxPostsPerHour: c.maxPostsPerHour, format: c.webhookUrl ? c.webhookFormat : "json", env: c.env, build: c.build });
   const ping = d.ping ?? (async (url: string) => (await fetch(url, { signal: AbortSignal.timeout(5_000) })).ok);
-  let last: { at: number; metrics: OpsMetrics } | undefined;
+  let last: Omit<OpsMetrics, "alerts"> | undefined;
   const startedAt = d.now();
   let lastRound = -Infinity;
   let lastAlerts: OpsMetrics["alerts"];
 
   /** One snapshot. `accrue`: write the daily accruals first (the ops round does; GET /ops/metrics only reads). */
-  async function collect(accrue: boolean): Promise<OpsMetrics> {
+  async function collect(accrue: boolean): Promise<Omit<OpsMetrics, "alerts">> {
     const now = d.now();
     const networks = await Promise.all(d.probes().map(p => collectNetwork(p, now)));
     const line: OpsMetrics["line"] = d.line ? await d.line().catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
@@ -489,9 +489,8 @@ export function createOps(d: OpsDeps) {
       const totalUsd = Math.round(Object.values(byApp).reduce((s, x) => s + (x ?? 0), 0) * 10_000) / 10_000;
       cost = { day, totalUsd, byApp, budgets: budgetLines(byApp, c.budgets) };
     } catch (e) { cost = { error: (e as Error).message.slice(0, 200) }; }
-    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
-    last = { at: now, metrics: m };
-    return m;
+    last = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), cost };
+    return last;
   }
 
   return {
@@ -499,8 +498,8 @@ export function createOps(d: OpsDeps) {
     dispatcher,
     /** The snapshot for GET /ops/metrics: at most one collection every 15 s. */
     async metrics(): Promise<OpsMetrics> {
-      if (last && cachedOpsMetricsFresh(d.now() - last.at)) return last.metrics;
-      return collect(false);
+      const snapshot = last && cachedOpsMetricsFresh(d.now() - last.at) ? last : await collect(false);
+      return lastAlerts ? { ...snapshot, alerts: lastAlerts } : snapshot;
     },
     /** One round (called from the backend tick; runs at most every OPS_EVERY_MS): collect, alert, heartbeat. */
     async tick(): Promise<DispatchResult | undefined> {
