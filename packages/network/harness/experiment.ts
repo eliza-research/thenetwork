@@ -132,16 +132,16 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   // Invitations = proposal messages; yes = decisions to accept them.
   const invites = records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.msg.meta?.type === "proposal" && propIds.has(String(r.msg.meta?.proposalId)));
   const decisions = records.filter((r): r is Extract<RunRecord, { type: "decision" }> => r.type === "decision" && r.messageType === "proposal" && !!r.proposalId && propIds.has(r.proposalId));
-  const yesBy = new Map<string, Set<string>>(), noBy = new Map<string, Set<string>>();
+  const yesBy = new Map<string, Set<string>>();
   // A booked plan (the reveal with an opt-out) counts the member's own decision: silence is a yes,
   // a decliner who stays silent is still a no. Other invitations count the words they sent.
   const bookedMsgs = new Set(invites.filter(r => r.type === "message" && r.msg.meta?.booked).map(r => (r as Extract<RunRecord, { type: "message" }>).msg.id));
   for (const d of decisions) {
     const said = bookedMsgs.has(d.messageId) && d.decision && d.decision !== "none" ? d.decision : d.intent;
-    const m = said === "accept" || said === "counter" ? yesBy : said === "decline" || said === "booked_cancel" ? noBy : undefined;
-    if (!m) continue;
-    if (!m.has(d.proposalId!)) m.set(d.proposalId!, new Set());
-    m.get(d.proposalId!)!.add(d.memberId);
+    if (said !== "accept") continue;
+    const accepted = yesBy.get(d.proposalId!) ?? new Set<string>();
+    accepted.add(d.memberId);
+    yesBy.set(d.proposalId!, accepted);
   }
   const inviteYes = [...yesBy.values()].reduce((s, x) => s + x.size, 0);
   // A proposal is "all yes" when every invited participant accepted (groups: at least 3 and nobody declined... we count strict all-yes).
