@@ -15,6 +15,8 @@ The browser calls [Observatory snapshot and live updates](../observatorySync.md)
 The simulated world releases controlled replies and drains its old step
 before sending a reset for its replacement. Commands waiting for the previous
 world cannot mutate the replacement.
+A database graph refresh changes or removes edges in its app scope. Edge
+deletion publishes a reset so the browser reads the new complete graph.
 
 ```quint
 // -*- mode: Bluespec; -*-

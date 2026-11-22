@@ -25,7 +25,7 @@ import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safet
 import { memberFacets } from "../appProfile.ts";
 import { ACCEPTED_PARTICIPATION_STATUSES, countsAsAcceptance } from "../projector.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
-import { emptyCounters, Store, zeroCounts } from "../store.ts";
+import { edgeId, emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
   BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, DeliveryReason, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
@@ -325,7 +325,7 @@ export class RealSource implements DataSource {
             count(p.enjoyment) filter (where p.status = 'attended' and h.id is not null)::int as enjoyment_n
           from network.participations p left join held h on h.id = p.opportunity_id
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
-      sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app}`,
+      sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app} order by from_id, to_id, type`,
       sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
       sql<ParticipationRow[]>`select p.opportunity_id,p.member_id,p.role,p.status,p.enjoyment::text::float8 as enjoyment,
         rv.opportunity_id is not null as reviewed, coalesce(rv.decision='approve',false) as approved, rv.invalidated is not null as invalidated,
@@ -406,11 +406,18 @@ export class RealSource implements DataSource {
       };
       upsertIfChanged(s.members, m, x => s.upsertMember(x));
     }
+    const currentEdges = new Map<string, ObsEdge>();
     for (const r of edges as any[]) {
       if (!s.members.has(r.from_id) || !s.members.has(r.to_id)) continue;
-      const e = { from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: (r.explicit ? "graph" : "learned") as ObsEdge["origin"] };
-      s.addEdge(e);
+      const id = edgeId(r.type, r.from_id, r.to_id);
+      const edge: ObsEdge = { id, from: r.from_id, to: r.to_id, type: r.type as EdgeType,
+        strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: r.explicit ? "graph" : "learned" };
+      const prior = currentEdges.get(id);
+      if (!prior || edge.strength > prior.strength || (edge.strength === prior.strength && edge.createdAt > prior.createdAt)) {
+        currentEdges.set(id, edge);
+      }
     }
+    s.replaceEdges(currentEdges);
     const receipts = new Map<string, BookingReceiptView[]>();
     for (const receipt of bookedMsgs) {
       const group = receipts.get(receipt.opportunity_id) ?? [];
