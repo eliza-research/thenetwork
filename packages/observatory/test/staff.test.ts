@@ -439,6 +439,42 @@ describe("simulation lab", () => {
     expect((await new Lab({ dir: join(dir, "lab-fake"), script }).list()).map(r => r.id)).toEqual([run.id]);
   }, T);
 
+  test.each(["before spawn", "with an active child"])("server shutdown persists an interrupted run (%s)", async phase => {
+    // spec/consolePanels.md, "Stopping the console closes the lab and finishes interrupted runs"
+    const stoppingBeforeSpawn = phase === "before spawn";
+    const instance = stoppingBeforeSpawn ? "before-spawn" : "active-child";
+    const labDir = join(dir, `lab-shutdown-${instance}`);
+    const marker = join(dir, `shutdown-child-started-${instance}`);
+    const script = join(dir, `shutdown-arm-${instance}.mts`);
+    await writeFile(script, `import { writeFile } from 'node:fs/promises';
+      import { setTimeout } from 'node:timers/promises';
+      await writeFile(${JSON.stringify(marker)}, "started");
+      await setTimeout(2000);
+      console.log(JSON.stringify({ results: [] }));`);
+    const server = await createServer({ port: 0, development: false, token: TOK.legacy, peopleUrl: false, staffRolesUrl: false,
+      audit: { dir: join(dir, `audit-shutdown-${instance}`) }, lab: { dir: labDir, script, concurrency: 1 },
+      game: { seed: 1, personas: 24, days: 1, pushMs: 3_600_000, tickMs: 3_600_000 } });
+    const { lab } = server;
+    let stopped = false;
+    try {
+      const run = await lab.start({ arms: ["consent"], seeds: [1, 2], days: 1 }, "tester");
+      if (!stoppingBeforeSpawn) await expect.poll(() => readFile(marker, "utf8").catch(() => "")).toBe("started");
+      await server.stop();
+      stopped = true;
+      const atStop = { active: lab.running, queued: lab.queued, status: (await lab.get(run.id))?.status };
+      expect(atStop).toEqual({ active: 0, queued: 0, status: "failed" });
+      const saved = JSON.parse(await readFile(run.file, "utf8")) as LabRun;
+      expect(saved).toMatchObject({ status: "failed", finishedAt: expect.any(Number), progress: { done: stoppingBeforeSpawn ? 0 : 1, total: 2 }, results: [] });
+      expect(await new Lab({ dir: labDir }).get(run.id)).toEqual(saved);
+      if (stoppingBeforeSpawn) await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(lab.start({ arms: ["consent"], seeds: [3], days: 1 }, "tester")).rejects.toThrow("stopped");
+    } finally {
+      if (!stopped) await server.stop();
+      const deadline = performance.now() + 5000;
+      while (lab.running && performance.now() < deadline) await sleep(10);
+    }
+  }, T);
+
   test("a real one-day consent run over HTTP reports the judge counts (all 0)", async () => {
     const res = await post(TOK.analyst, "/api/lab/run", { arms: ["consent"], seeds: [1], days: 1 });
     expect(res.status).toBe(200);
@@ -561,10 +597,7 @@ describe("tokens, Access keys and the lab (OBS-11)", () => {
       await lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester");
       await expect(lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester")).rejects.toThrow("queue is full");
     } finally {
-      lab.dispose();
-      // Killed children still finish their final save; keep the owned directory until they do.
-      const deadline = Date.now() + 5000;
-      while (lab.running && Date.now() < deadline) await sleep(10);
+      await lab.dispose();
       expect(lab.running).toBe(0);
     }
   });

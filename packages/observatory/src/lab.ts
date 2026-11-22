@@ -4,6 +4,7 @@
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
 import { spawnProcess } from "../../core/src/runtime/process.ts";
+import { labAcceptsWork, labRunInterrupted } from "../../core/src/generated/consolePanels.ts";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { APP_IDS, DEFAULT_APP, isAppId, matchingAllowed, type AppId } from "./apps.ts";
@@ -87,6 +88,9 @@ export class Lab {
   private seq = 0;
   private loaded: Promise<void>;
   private children = new Set<ReturnType<typeof spawnProcess>>();
+  private jobs = new Set<Promise<void>>();
+  private stopping = false;
+  private closing?: Promise<void>;
   readonly dir: string;
   private script: string;
   private concurrency: number;
@@ -104,7 +108,7 @@ export class Lab {
     for (const f of (await readdir(this.dir)).filter(x => x.endsWith(".json"))) {
       try {
         const r = JSON.parse(await readFile(join(this.dir, f), "utf8")) as LabRun;
-        if (r.status === "queued" || r.status === "running") Object.assign(r, { status: "failed", error: "the server stopped before the run finished" });
+        if (labRunInterrupted(r.status)) Object.assign(r, { status: "failed", error: "the server stopped before the run finished" });
         this.runs.set(r.id, r);
       } catch { /* a file that is not a run */ }
     }
@@ -130,6 +134,7 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
+    if (!labAcceptsWork(this.stopping)) throw new Error("the simulation lab has stopped");
     if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
     const now = Date.now();
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
@@ -150,15 +155,23 @@ export class Lab {
   get queued() { return this.queue.length; }
 
   private pump() {
-    while (this.active < this.concurrency && this.queue.length) {
+    while (labAcceptsWork(this.stopping) && this.active < this.concurrency && this.queue.length) {
       const job = this.queue.shift()!;
       this.active++;
-      this.exec(job.run, job.seed).finally(() => { this.active--; this.pump(); });
+      const active = this.exec(job.run, job.seed).finally(() => {
+        this.jobs.delete(active);
+        this.active--;
+        this.pump();
+      });
+      this.jobs.add(active);
+      void active.catch((error: unknown) => console.error("simulation lab could not save a run", error));
     }
   }
 
   private async exec(run: LabRun, seed: number) {
     if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
+    // The first status write can finish after the lab closes admission.
+    if (!labAcceptsWork(this.stopping)) return;
     const r = run.request;
     try {
       const child = spawnProcess([process.execPath, "--import", "tsx", this.script, ...labArgs(r, seed)], {
@@ -195,6 +208,26 @@ export class Lab {
     return next;
   }
 
-  /** Stop children (server shutdown). */
-  dispose() { for (const c of this.children) c.kill(); this.children.clear(); this.queue = []; }
+  /** spec/consolePanels.md, "Stopping the console closes the lab and finishes interrupted runs" */
+  dispose(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.stopping = true;
+    this.queue = [];
+    for (const child of this.children) child.kill();
+    this.closing = this.finishShutdown();
+    return this.closing;
+  }
+
+  private async finishShutdown(): Promise<void> {
+    await this.loaded;
+    await Promise.allSettled(this.jobs);
+    for (const run of this.runs.values()) {
+      if (!labRunInterrupted(run.status)) continue;
+      run.status = "failed";
+      run.error = [run.error, "the server stopped before the run finished"].filter(Boolean).join("; ");
+      run.finishedAt = Date.now();
+      await this.save(run);
+    }
+    await Promise.all(this.saving.values());
+  }
 }
