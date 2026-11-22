@@ -1,9 +1,11 @@
-// GENERATED from spec/consoleMemberView.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/consoleMemberView.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 export interface DetailGate { lastTicket: number; closedThrough: number }
-/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md:35) */
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+export type ConsoleDeliveryGuard = "DeliveryGuardUnrecorded" | "DeliveryGuardBlocked" | "DeliveryGuardReleased" | "DeliveryGuardChecked";
+/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 export type StaffPhotoView = "HidePhotos" | "ShowPhotoForm" | "ShowGallery";
 
 /** One variant per transition in the spec. */
@@ -12,7 +14,7 @@ export type Event =
   | { type: "cancelDetails" }
   | { type: "finishDetail"; readTicket: number };
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 export const initial: DetailGate = { lastTicket: 0, closedThrough: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -21,27 +23,27 @@ export function inv(current: DetailGate): boolean {
   return alwaysTicketBounds(current);
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function sometimesADetailFinishes(gate: DetailGate): boolean {
   return gate.lastTicket > 0 && gate.closedThrough === gate.lastTicket;
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function sometimesADetailWaits(gate: DetailGate): boolean {
   return gate.closedThrough < gate.lastTicket;
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function beginDetail(gate: DetailGate): DetailGate {
   //@ ensures (inv(gate)) ==> alwaysTicketBounds(\result)
   //@ ensures (inv(gate)) ==> stepDetailBoundaryNeverFalls(gate, \result)
-  return { ...gate, lastTicket: gate.lastTicket + 1 };
+  return { ...gate, lastTicket: exact_consoleMemberView(gate.lastTicket + 1) };
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function cancelDetails(gate: DetailGate): DetailGate {
   //@ ensures (inv(gate)) ==> alwaysTicketBounds(\result)
@@ -49,13 +51,13 @@ export function cancelDetails(gate: DetailGate): DetailGate {
   return { ...gate, closedThrough: gate.lastTicket };
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function canFinishDetail(gate: DetailGate, readTicket: number): boolean {
   return readTicket > gate.closedThrough && readTicket <= gate.lastTicket;
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function finishDetail(gate: DetailGate, readTicket: number): DetailGate {
   //@ ensures (inv(gate) && canFinishDetail(gate, readTicket)) ==> alwaysTicketBounds(\result)
@@ -63,37 +65,89 @@ export function finishDetail(gate: DetailGate, readTicket: number): DetailGate {
   return { ...gate, closedThrough: readTicket };
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function alwaysTicketBounds(gate: DetailGate): boolean {
   return gate.closedThrough >= 0 && gate.closedThrough <= gate.lastTicket;
 }
 
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
 export function stepDetailBoundaryNeverFalls(before: DetailGate, after: DetailGate): boolean {
   return after.closedThrough >= before.closedThrough;
 }
 
-/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md:35) */
+/** Story: Read details for the current subject / Serving revealed details requires current staff authority (spec/consoleMemberView.md) */
+//@ pure
+export function staffRevealMayDisclose(sameView: boolean, safetyAllowed: boolean, signInCurrent: boolean, grantTimeLeftMs: number): boolean {
+  return sameView && safetyAllowed && signInCurrent && grantTimeLeftMs > 0;
+}
+
+/** Story: Read details for the current subject / Serving revealed details requires current staff authority (spec/consoleMemberView.md) */
+//@ pure
+export function lawStaffRevealNeedsCurrentSafety(sameView: boolean, signInCurrent: boolean, grantTimeLeftMs: number): boolean {
+  //@ ensures \result === true
+  return !staffRevealMayDisclose(sameView, false, signInCurrent, grantTimeLeftMs);
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function consoleDeliveryEvidenceAllowed(sameApp: boolean, sameMember: boolean, sameMessage: boolean, memberOutbound: boolean): boolean {
+  return sameApp && sameMember && sameMessage && memberOutbound;
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function consoleDeliveryGuard(exactEvidence: boolean, leakStopped: boolean, staffReleased: boolean, attempted: boolean): ConsoleDeliveryGuard {
+  return !exactEvidence ? "DeliveryGuardUnrecorded" : (leakStopped ? "DeliveryGuardBlocked" : (staffReleased ? "DeliveryGuardReleased" : (attempted ? "DeliveryGuardChecked" : "DeliveryGuardUnrecorded")));
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function consolePreparedBodyWithheld(guardResult: ConsoleDeliveryGuard, storedLeakStop: boolean): boolean {
+  return guardResult === "DeliveryGuardBlocked" || storedLeakStop;
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function lawUnmatchedDeliveryShowsNoLeakCheck(leakStopped: boolean, staffReleased: boolean, attempted: boolean): boolean {
+  //@ ensures \result === true
+  return consoleDeliveryGuard(false, leakStopped, staffReleased, attempted) === "DeliveryGuardUnrecorded";
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function lawUnattemptedDeliveryCannotShowChecked(exactEvidence: boolean, leakStopped: boolean, staffReleased: boolean): boolean {
+  //@ ensures \result === true
+  return consoleDeliveryGuard(exactEvidence, leakStopped, staffReleased, false) !== "DeliveryGuardChecked";
+}
+
+/** Story: Read details for the current subject / The timeline shows recorded delivery and leak evidence for the exact message (spec/consoleMemberView.md) */
+//@ pure
+export function lawRecordedLeakStopWithholdsPreparedBody(guardResult: ConsoleDeliveryGuard): boolean {
+  //@ ensures \result === true
+  return consolePreparedBodyWithheld(guardResult, true);
+}
+
+/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function staffPhotoAllowed(rulePermitsRead: boolean, canSafety: boolean, liveAdult: boolean): boolean {
   return rulePermitsRead && canSafety && liveAdult;
 }
 
-/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md:35) */
+/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function staffPhotoReasonReady(lengthOfReason: number): boolean {
   return lengthOfReason >= 5;
 }
 
-/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md:35) */
+/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function staffPhotoView(allowedRead: boolean, loaded: boolean): StaffPhotoView {
   return !allowedRead ? "HidePhotos" : (loaded ? "ShowGallery" : "ShowPhotoForm");
 }
 
-/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md:35) */
+/** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
 export function lawGalleryNeedsPermission(allowedRead: boolean, loaded: boolean): boolean {
   //@ ensures \result === true
@@ -116,7 +170,7 @@ export function step(current: DetailGate, event: Event): DetailGate {
   //@ ensures inv(\result)
   if (event.type === "beginDetail") return beginDetail(current);
   if (event.type === "cancelDetails") return cancelDetails(current);
-  if (event.type === "finishDetail" && canFinishDetail(current, event.readTicket)) return finishDetail(current, event.readTicket);
+  if (event.type === "finishDetail") return canFinishDetail(current, event.readTicket) ? finishDetail(current, event.readTicket) : current;
   return current;
 }
 
@@ -163,4 +217,10 @@ export function parseState(x: unknown): DetailGate | undefined {
 export function initialHolds(): DetailGate {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_consoleMemberView(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

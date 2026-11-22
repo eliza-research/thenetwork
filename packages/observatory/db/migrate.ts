@@ -1,9 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // The SQL migration runner (runbook-real 1.2; platform plan 2.7). One ledger table
 // (public.__migrations), one transaction, one advisory lock, so two processes never apply the same
 // migration twice.
-//   bun run db:migrate                  # the local dev database (starts the dev cluster)
-//   bun run db:migrate -- --url <url>   # another database (local hosts only, as seed.ts)
+//   pnpm run db:migrate                  # the local dev database (starts the dev cluster)
+//   pnpm run db:migrate -- --url <url>   # another database (local hosts only, as seed.ts)
 //
 // Order:
 //   0001 packages/observatory/db/schema.sql       (baseline, repeatable)
@@ -13,13 +13,33 @@
 // A repeatable baseline runs again when its text changes: both files only create what is missing,
 // so they keep working for the code and tests that apply them directly. New changes go in a new
 // numbered file in migrations/, never in a baseline.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 
-const REPO = resolve(import.meta.dir, "../../..");
-export const MIGRATIONS_DIR = join(import.meta.dir, "migrations");
+const REPO = resolve(import.meta.dirname, "../../..");
+export const MIGRATIONS_DIR = join(import.meta.dirname, "migrations");
+export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT?.trim() || 54339);
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Old and new schemas share the role catalog. Coordinate dev schema changes in one database. */
+export async function withDevMigrationLock<T>(url: string, action: () => Promise<T>): Promise<T> {
+  const coordinator = new URL(url);
+  if (!LOOPBACK.has(coordinator.hostname) || Number(coordinator.port) !== DEV_PG_PORT) return action();
+  coordinator.pathname = "/postgres";
+  const admin = new SQL({ url: coordinator.href, max: 1 });
+  try {
+    return await admin.begin(async lock => {
+      await lock`set local lock_timeout = '60s'`;
+      await lock`select pg_advisory_xact_lock(hashtext('thenetwork:dev-pg:roles'))`;
+      return action();
+    });
+  } finally {
+    await admin.close();
+  }
+}
 
 export interface Migration { id: string; file: string; repeatable: boolean }
 
@@ -30,7 +50,7 @@ export function migrations(): Migration[] {
     .map(f => ({ id: f.replace(/\.sql$/, ""), file: join(MIGRATIONS_DIR, f), repeatable: false }));
   checkNumbers(numbered.map(m => m.id));
   return [
-    { id: "0001_network_schema", file: join(import.meta.dir, "schema.sql"), repeatable: true },
+    { id: "0001_network_schema", file: join(import.meta.dirname, "schema.sql"), repeatable: true },
     { id: "0002_network_state", file: join(REPO, "packages", "network", "db", "network-state.sql"), repeatable: true },
     ...numbered,
     // The MCP server's OAuth schema (packages/mcp/db/oauth.sql): repeatable, after the roles exist, so a
@@ -73,11 +93,11 @@ export interface MigrateResult { applied: string[]; skipped: string[] }
 /** Apply every pending migration in order, in one transaction under an advisory lock. */
 export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?: string; log?: (s: string) => void } = {}): Promise<MigrateResult> {
   const list = migrations();
-  const texts = await Promise.all(list.map(m => Bun.file(m.file).text()));
+  const texts = await Promise.all(list.map(m => fileAt(m.file).text()));
   const sql = new SQL({ url, max: 1 });
   const out: MigrateResult = { applied: [], skipped: [] };
   try {
-    await sql.begin(async tx => {
+    await withDevMigrationLock(url, () => sql.begin(async tx => {
       // Fail fast instead of waiting forever when another process holds a lock on the schema.
       if (opts.lockTimeout) await tx.unsafe(`set local lock_timeout = '${opts.lockTimeout.replace(/[^0-9a-z]/gi, "")}'`);
       await tx`select pg_advisory_xact_lock(hashtext('thenetwork-migrate'))`;
@@ -100,7 +120,7 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
         out.applied.push(m.id);
         opts.log?.(`applied ${m.id}`);
       }
-    });
+    }));
   } finally {
     await sql.close();
   }
@@ -111,7 +131,7 @@ if (import.meta.main) {
   const { parseArgs } = await import("node:util");
   const { values: a } = parseArgs({ options: { url: { type: "string" }, reset: { type: "boolean", default: false } } });
   const { DEV_PG_URL, devPgUp } = await import("./dev-pg.ts");
-  const isLocalUrl = (u: string) => { try { return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(new URL(u).hostname); } catch { return false; } };
+  const isLocalUrl = (u: string) => { try { return LOOPBACK.has(new URL(u).hostname); } catch { return false; } };
   let url = a.url ?? process.env.NETWORK_DATABASE_URL;
   if (!url) { await devPgUp(); url = DEV_PG_URL; }
   if (!isLocalUrl(url)) { console.error(`refusing to migrate non-local database ${new URL(url).hostname}`); process.exit(1); }

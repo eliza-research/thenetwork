@@ -4,7 +4,7 @@
 // (NetworkOptions.capital). Both are optional: without them the Network behaves as before.
 //
 // packages/capital is imported by relative path, as packages/capital imports core and engine,
-// so that no workspace dependency (and no bun.lock change) is added.
+// so that no workspace dependency or lockfile change is added.
 import type { MemberId } from "@thenetwork/core";
 import { CapitalLedger, detectGaming, effortOverlay, organizingReach, resolveCapital, vouchCapacity, type CapitalConfigInput, type CapitalEvent, type CapitalEventInput, type GamingFlag, type NetworkEffort, type OrganizingReach } from "../../capital/src/index.ts";
 

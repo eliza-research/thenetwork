@@ -28,6 +28,50 @@ pure def sometimesADetailFinishes(gate: DetailGate): bool = gate.lastTicket > 0 
 pure def sometimesADetailWaits(gate: DetailGate): bool = gate.closedThrough < gate.lastTicket
 ```
 
+### Serving revealed details requires current staff authority
+
+A reveal grant applies only to the member, app, mode, and staff identity that it was issued for. Check the staff identity's current safety permission and the grant and sign-in expiry when a read starts and again before publishing the response. An expired grant or a changed mode, grant, role, or sign-in cannot expose revealed data. A role lookup failure cannot preserve cached grants from the unavailable database.
+
+```quint
+pure def staffRevealMayDisclose(sameView: bool, safetyAllowed: bool, signInCurrent: bool, grantTimeLeftMs: int): bool =
+  sameView and safetyAllowed and signInCurrent and grantTimeLeftMs > 0
+
+pure def lawStaffRevealNeedsCurrentSafety(sameView: bool, signInCurrent: bool, grantTimeLeftMs: int): bool =
+  not(staffRevealMayDisclose(sameView, false, signInCurrent, grantTimeLeftMs))
+```
+
+### The timeline shows recorded delivery and leak evidence for the exact message
+
+In real mode, show the current durable queue status and a normalized reason when the app, member and outbound message all match. The queue's staff read exposes no address, body, provider error or raw operator note. A leak stop, a staff release, and a body checked before a delivery attempt are separate outcomes. A check does not prove delivery. A pending row with no check evidence shows no leak result. Another message at the same time proves nothing about this message. When the queue has no matching evidence, show only the stored message status and separately recorded timeline events. A failed evidence read stops the detail read. A recorded leak stop withholds the prepared body, including from a member reveal, so only the authorized leak review can show it.
+
+Each app's database reader has access only to its own delivery evidence view. The legacy Observatory reader has access to the Ntwrk view. Apply the same grants on upgrades and when reinstalling the base schema.
+
+```quint
+type ConsoleDeliveryGuard = DeliveryGuardUnrecorded | DeliveryGuardBlocked | DeliveryGuardReleased | DeliveryGuardChecked
+
+pure def consoleDeliveryEvidenceAllowed(sameApp: bool, sameMember: bool, sameMessage: bool, memberOutbound: bool): bool =
+  sameApp and sameMember and sameMessage and memberOutbound
+
+pure def consoleDeliveryGuard(exactEvidence: bool, leakStopped: bool, staffReleased: bool, attempted: bool): ConsoleDeliveryGuard =
+  if (not(exactEvidence)) DeliveryGuardUnrecorded
+  else if (leakStopped) DeliveryGuardBlocked
+  else if (staffReleased) DeliveryGuardReleased
+  else if (attempted) DeliveryGuardChecked
+  else DeliveryGuardUnrecorded
+
+pure def consolePreparedBodyWithheld(guardResult: ConsoleDeliveryGuard, storedLeakStop: bool): bool =
+  guardResult == DeliveryGuardBlocked or storedLeakStop
+
+pure def lawUnmatchedDeliveryShowsNoLeakCheck(leakStopped: bool, staffReleased: bool, attempted: bool): bool =
+  consoleDeliveryGuard(false, leakStopped, staffReleased, attempted) == DeliveryGuardUnrecorded
+
+pure def lawUnattemptedDeliveryCannotShowChecked(exactEvidence: bool, leakStopped: bool, staffReleased: bool): bool =
+  consoleDeliveryGuard(exactEvidence, leakStopped, staffReleased, false) != DeliveryGuardChecked
+
+pure def lawRecordedLeakStopWithholdsPreparedBody(guardResult: ConsoleDeliveryGuard): bool =
+  consolePreparedBodyWithheld(guardResult, true)
+```
+
 ## Story: Open Slop photos for a verified adult
 
 > As an authorized staff member, I want to see photos for a verified adult after giving the logged reason.

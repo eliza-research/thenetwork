@@ -1,0 +1,13 @@
+/*
+ * The one @font-face of the design system. `font.sans` in each brand's tokens.json names "Host Grotesk" first.
+ * The file is apps/site/public/fonts/host-grotesk.woff2 (OFL). Each site serves it as a static file at
+ * /fonts/host-grotesk.woff2. The connector pages (/oauth/*) are served on the same site origin, so their
+ * CSP `font-src 'self'` loads the same file. Where no site serves the file (the stand-alone MCP dev server),
+ * the browser uses the system fonts that follow "Host Grotesk" in `font.sans`.
+ */
+@font-face {
+  font-family: "Host Grotesk";
+  src: url("/fonts/host-grotesk.woff2") format("woff2");
+  font-weight: 300 800;
+  font-display: swap;
+}

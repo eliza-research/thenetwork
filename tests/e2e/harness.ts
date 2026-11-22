@@ -6,7 +6,8 @@
 // Nothing is sent: the channel adapter is dry-run and OTP codes come from a fake provider that keeps
 // them. One SimClock drives the service, the router signatures, the backend's proxy check and the MCP
 // server, so the tests can move time (OTP gaps, the daily engine run) and every signature check agrees.
-import { SQL } from "bun";
+import { serveHttp, type HttpServer } from "../../packages/core/src/runtime/http.ts";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,8 @@ import { SimClock } from "../../packages/core/src/clock.ts";
 import { createBackend, ipOf, loadConfig } from "../../deploy/backend/backend.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
 import { createMcpHandler, platformHooks, type McpHandler } from "../../packages/mcp/src/index.ts";
-import { DryRunAdapter } from "../../packages/network/service/channel.ts";
+import { BlooioAdapter, DryRunAdapter } from "../../packages/network/service/channel.ts";
+import type { ChannelAdapter } from "../../packages/blooio/src/types.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../packages/network/service/service.ts";
 import { type AppId, type AppInfo, DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
@@ -88,7 +90,12 @@ export interface Stack {
 
 let stackSequence = 0;
 
-export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slopCity?: "sf"; extraNetwork?: "ntwrk:sf" } = {}): Promise<Stack> {
+export async function startStack(o: {
+  privateOpenAiApps?: readonly AppId[];
+  slopCity?: "sf";
+  extraNetwork?: "ntwrk:sf";
+  simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
+} = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   if (o.slopCity || o.extraNetwork) {
     const setup = new SQL({ url, max: 1 });
@@ -104,6 +111,7 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slop
   const clock = new SimClock(START);
   const env = { PLATFORM_ENV: "dev", PLATFORM_PROXY_SECRET: PROXY_SECRET, SERVICE_TURN_SECRET: TURN_SECRET };
   const otp = new FakeOtp();
+  const outbound = o.simulatedOutbound;
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
   const svc = await NetworkService.fromDatabase({
@@ -111,7 +119,8 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slop
     network: { seed: 1 }, log: () => {},
     // Every test browser is 127.0.0.1: the per-IP OTP limits (unit-tested in packages/platform) would stop the suite.
     publicApi: { otp, minStartMs: 0, minVerifyMs: 0, ipOf, hostMap, otpLimits: { perIpPerHour: 10_000, verifyPerIpPerHour: 10_000 } },
-    adapter: () => new DryRunAdapter(() => {}),
+    adapter: (_net, rt) => outbound ? new BlooioAdapter({ clock, provider: outbound.provider, from: outbound.line,
+      app: rt.app.id, city: rt.city, env, log: () => {}, liveGate: () => true }) : new DryRunAdapter(() => {}),
     // Photos on (a local folder): the age gate is tested end to end, with an adult control.
     photoStorage: new LocalDiskPhotoStorage(photoDir),
   });
@@ -124,17 +133,17 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slop
     svc, config, log: silent, ping: async () => true, now: () => clock.now(),
     mcp: async req => (mcp ? mcp.fetch(req) : undefined),
   });
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (req, s) => backend.publicFetch(req, s) });
+  const server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: (req, s) => backend.publicFetch(req, s) });
   const backendOrigin = `http://127.0.0.1:${server.port}`;
 
   const dist = mkdtempSync(join(tmpdir(), "e2e-sites-"));
   const sites = {} as Record<AppId, SiteHandle>;
-  const siteServers: Array<{ stop(force?: boolean): unknown }> = [];
+  const siteServers: HttpServer[] = [];
   for (const s of SITES) {
     const outdir = join(dist, s.domain);
     const r = await buildSite(s, outdir, { ...process.env, BACKEND_ORIGIN: "", MCP_URL: "", TURNSTILE_SITE_KEY: "", DEPLOY_TARGET: "" });
     if (!r.ok) throw new Error(`build failed for ${s.domain}: ${r.logs.join("\n")}`);
-    const up = serveSite(s, { port: 0, apiOrigin: backendOrigin, outdir, proxySecret: PROXY_SECRET, now: () => clock.now() });
+    const up = await serveSite(s, { port: 0, apiOrigin: backendOrigin, outdir, proxySecret: PROXY_SECRET, now: () => clock.now() });
     siteServers.push(up);
     sites[s.app] = { site: s, port: up.port!, origin: `http://127.0.0.1:${up.port}` };
     hostMap[`127.0.0.1:${up.port}`] = s.app;
@@ -198,7 +207,7 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[]; slop
       return svc.fetch(new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body) }));
     },
     async close() {
-      for (const s of siteServers) s.stop(true);
+      for (const s of siteServers) await s.stop(true);
       await backend.shutdown([server]);
       await (mcp as unknown as { store: { close?(): Promise<void> } }).store.close?.().catch(() => {});
       rmSync(dist, { recursive: true, force: true });
@@ -222,13 +231,15 @@ export async function signIn(st: Stack, app: AppId, phone: string, b: Browser) {
 }
 
 /** The web join: sign in, then POST /api/join with the app's canonical opt-in version. */
-export async function webJoin(st: Stack, app: AppId, phone: string, o: { age: number; firstName?: string; interests?: string[]; browser?: Browser }) {
+export async function webJoin(st: Stack, app: AppId, phone: string, o: { age: number; firstName?: string; interests?: string[]; browser?: Browser } & Partial<Record<"about" | "neighborhood" | "homeCity" | "zip", string>>) {
   const b = o.browser ?? new Browser();
   await signIn(st, app, phone, b);
   const info = (await (await st.site(app, "/api/app")).json()) as { consent: { version: string } };
+  // The fields an agent signup skill sends (sites/skills/*/SKILL.md "Join in this conversation").
+  const profile = Object.fromEntries((["about", "neighborhood", "homeCity", "zip"] as const).filter(k => o[k] !== undefined).map(k => [k, o[k]]));
   const res = await st.site(app, "/api/join", {
     browser: b,
-    json: { firstName: o.firstName ?? "Rae", age: o.age, consent: { sms: true, version: info.consent.version }, ...(o.interests ? { interests: o.interests } : {}) },
+    json: { firstName: o.firstName ?? "Rae", age: o.age, consent: { sms: true, version: info.consent.version }, ...(o.interests ? { interests: o.interests } : {}), ...profile },
   });
   return { b, res, body: (await res.json()) as Record<string, any> };
 }

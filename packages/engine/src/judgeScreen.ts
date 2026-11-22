@@ -9,8 +9,8 @@
 // (docs/results/2026-10-07-judge-v2.md); the engine ships v2. The v3 text is kept only for the
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
-import { DAY } from "@thenetwork/core";
-import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type PassVerdict } from "./judgeCommon.ts";
+import { standingIntentLive } from "../../core/src/standing-intent.ts";
+import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type JudgeRequest, type PassVerdict } from "./judgeCommon.ts";
 import { buildPublicView, screenConfigOf, type PublicView } from "./packs/network/judgeContext.ts";
 import type { Candidate } from "./types.ts";
 import { judgePackOf } from "./pack.ts";
@@ -75,14 +75,21 @@ export function screenSnapshot(w: World): World["input"] {
   return {
     ...inp,
     facets: inp.facets.map(f => ({ ...f, memberId: C(f.memberId) })),
-    intents: inp.intents.filter(i => i.status === "active" && i.createdAt + i.horizonDays * DAY > now).map(i => ({ ...i, memberId: C(i.memberId) })),
+    intents: inp.intents.filter(i => standingIntentLive(i, now)).map(i => ({ ...i, memberId: C(i.memberId) })),
     presence: inp.presence.map(p => ({ ...p, memberId: C(p.memberId) })),
     edges: inp.edges.map(e => ({ ...e, from: C(e.from), to: C(e.to) })),
   };
 }
 
-export async function screenOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<{ verdict: ScreenVerdict; refs: Record<string, MemberId> }> {
-  const view = buildPublicView(screenSnapshot(w), screenConfigOf(w, c));
+export function prepareScreen(w: World, c: Candidate, maxTokens: number, snapshot = screenSnapshot(w)): JudgeRequest<ScreenVerdict> {
+  const view = buildPublicView(snapshot, screenConfigOf(w, c));
   const attending = attendingRefs(view.refs, c);
-  return { verdict: await runPass(llm, screenMessages(view, judgePackOf(w).screen!.system), raw => parseScreenVerdict(raw, attending), maxTokens), refs: view.refs };
+  const screen = judgePackOf(w).screen!;
+  return { pass: "screen", version: screen.version, messages: screenMessages(view, screen.system), refs: view.refs,
+    settings: { maxTokens }, parse: raw => parseScreenVerdict(raw, attending) };
+}
+
+export async function screenOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<{ verdict: ScreenVerdict; refs: Record<string, MemberId> }> {
+  const request = prepareScreen(w, c, maxTokens);
+  return { verdict: await runPass(llm, request), refs: request.refs };
 }

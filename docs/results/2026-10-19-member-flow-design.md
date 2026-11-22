@@ -1,5 +1,7 @@
 # Member flow simplification
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-19-member-flow-design.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Scope: the founder requested a review and simplification of every page except the homepages.
 This request authorizes UI and copy changes for this local design review. PRD 28.3 and 40 cover onboarding.
 
@@ -54,12 +56,12 @@ The studio uses sample states; the separate platform runtime and e2e suite exerc
 
 ## Validation
 
-- `bun run typecheck`: pass, including the design server.
-- `bun run sites:build`: all four sites build.
-- `bun run plugins/build.ts --check`: plugin snapshots match the skills.
-- `bun test --conditions eliza-source sites`: 81 pass, 0 fail.
-- `bun run test:e2e`: 37 pass, 0 fail, Postgres-backed.
-- `bun run test:integration`: 526 pass, 1 fail.
+- `pnpm run typecheck`: pass, including the design server.
+- `pnpm run sites:build`: all four sites build.
+- `node --import tsx --env-file-if-exists=.env plugins/build.ts --check`: plugin snapshots match the skills.
+- `pnpm exec vitest run --conditions eliza-source sites`: 81 pass, 0 fail.
+- `pnpm run test:e2e`: 37 pass, 0 fail, Postgres-backed.
+- `pnpm run test:integration`: 526 pass, 1 fail.
 - The failing Observatory scorecard parity test reports completion 0.313 versus 0.5.
   The same failure reproduces on unchanged base `b9a6c20` in the primary checkout.
   It is outside this UI change.
@@ -71,7 +73,7 @@ They do not prove live SMS, external OAuth redirects or external client behavior
 Studio write checks: cross-origin save returns 403; stale source returns 409; an unlisted screen state cannot inject HTML.
 Layout controls were saved through the browser and confirmed in the shared stylesheet.
 
-Full simulation: `bun run sim` passed **326/326 blocking gates**, with 14 tracked metrics off target (324.2 seconds).
+Full simulation: `pnpm run sim` passed **326/326 blocking gates**, with 14 tracked metrics off target (324.2 seconds).
 This is the pinned offline simulation: no real model calls; simulated automatic review where configured.
 
 ## Founder copy pass

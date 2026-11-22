@@ -1,7 +1,7 @@
 // Write The Network's data into the `network` schema (dev and staging only): from the synthetic
 // dataset files, or from a whole simulated world (members, graph, every message, opportunity,
 // participation, outcome, feedback, engine run and event). Real-world mode reads it back.
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
 import { consoleRows } from "@thenetwork/network";
 import { eventOf, membersOf } from "../src/events.ts";
@@ -25,7 +25,7 @@ const TABLES: Exclude<keyof NetworkRows, "app">[] = [
 
 const AREA_CODES = ["415", "628", "510", "212", "646", "917", "718", "347", "332", "929"];
 const date = (ms: number | undefined) => (ms === undefined || ms === null ? null : new Date(ms));
-/** Postgres array literal (Bun.SQL sends JS arrays as plain strings). */
+/** A Postgres array literal for bulk inserts. */
 export function pgArray(xs: string[]): string {
   return `{${xs.map(x => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
 }

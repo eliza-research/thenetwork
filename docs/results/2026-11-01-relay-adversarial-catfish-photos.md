@@ -1,5 +1,7 @@
 # A catfish with someone else's photos: a blocking adversarial gate for the relay photo path
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-11-01-relay-adversarial-catfish-photos.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-11-01. Hand-written by the contributor. No model output is in this report. The
 scenario suite is deterministic (seeded; the same seed replays the same cases).
 
@@ -11,7 +13,7 @@ among them "a catfish with someone else's photos"; mvp-plan's P8 row carries "ag
 signals" as a pilot risk, and the tracked gate list keeps an adversary-contact cut. The relay slice
 of that requirement is the policy suite that already gates a scam after the reveal, a number swap
 before both yeses, a leak of the other member's details, a minor in the relay, and the probe
-photo (`packages/sim/src/apps/slop/adversarial.ts`, blocking in `bun run sim --only relay`; merged
+photo (`packages/sim/src/apps/slop/adversarial.ts`, blocking in `pnpm run sim --only relay`; merged
 in 06ec520 and d61e59a, which added the suite and its scenarios). The catfish entry was missing.
 
 ## The scenario
@@ -32,7 +34,7 @@ the photo, so the gate can never pass vacuously.
 
 ## The evidence
 
-`bun run sim --only relay` on the base revision without this change runs 60 blocking gates; with
+`pnpm run sim --only relay` on the base revision without this change runs 60 blocking gates; with
 this change 61, the new gate first:
 
 ```text
@@ -52,8 +54,8 @@ validation layer.
 
 ## Validation
 
-Same machine, Bun 1.4.4, dev PostgreSQL 16 on :54339. `bun run typecheck` clean on all four
-projects; `bun run sim` (full) summary pasted in the pull request; the relay block runs 61/61
+Same machine, the former runtime 1.4.4, dev PostgreSQL 16 on :54339. `pnpm run typecheck` clean on all four
+projects; `pnpm run sim` (full) summary pasted in the pull request; the relay block runs 61/61
 blocking gates.
 
 ## Limits

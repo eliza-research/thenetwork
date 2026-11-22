@@ -1,6 +1,7 @@
 // Declarative scenario scripts (PRD 34.3 "Scenario scripts"): seed specific situations on
 // top of a background world, then grade the run by its FINAL STATE (run log + metrics),
 // not by transcript vibes. pass^k: a scenario passes only if it passes on k seeds.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { DAY, MINUTE, type City, type OpportunityKind, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { Metrics } from "./judge/metrics.ts";
@@ -72,7 +73,7 @@ export interface ExpectationResult { expectation: Expectation; status: "pass" | 
 export interface ScenarioResult { name: string; seed: number; pass: boolean; vacuous: boolean; results: ExpectationResult[]; world: WorldResult }
 
 export async function loadScenario(path: string): Promise<Scenario> {
-  return (await Bun.file(path).json()) as Scenario;
+  return (await fileAt(path).json()) as Scenario;
 }
 
 function resolveAt(at: At, start: number, city: City): number {

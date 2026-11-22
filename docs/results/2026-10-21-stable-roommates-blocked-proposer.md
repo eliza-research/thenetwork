@@ -1,6 +1,8 @@
 # Stable roommates: a rejected proposer never proposed again
 
-`packages/engine/src/packs/slop/assign.ts`, function `stableRound`. Base revision `98d8ada0aa76251872751910837e6a63157ba6c4` (current `main`). **No LLM calls, $0.** Every run used API keys unset and no `LIVE_TESTS`. Validation on this tree is `bun run sim`.
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-21-stable-roommates-blocked-proposer.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
+`packages/engine/src/packs/slop/assign.ts`, function `stableRound`. Base revision `98d8ada0aa76251872751910837e6a63157ba6c4` (current `main`). **No LLM calls, $0.** Every run used API keys unset and no `LIVE_TESTS`. Validation on this tree is `pnpm run sim`.
 
 ## Reproduced problem
 
@@ -11,7 +13,7 @@ The implementation did not deliver that property. On the real engine pipeline th
 Command (the new gate, seeds 1-5, 60 personas per city):
 
 ```sh
-bun run sim --only slop
+pnpm run sim --only slop
 ```
 
 | | candidates | matched pairs | blocking pairs |
@@ -93,18 +95,18 @@ The base fails it with `expected 5 to be 0`. This branch passes.
 
 ## Limits
 
-- The gate covers seeds 1-5 at 60 per city. The defect is seed-dependent, so this is a floor on the rate, not a bound. Seeds 13 at 150 per city (12 blocking pairs on the base) and 1-8 at 150 per city (163) were measured with the same predicate but are not in the gate, to keep `bun run sim` fast.
+- The gate covers seeds 1-5 at 60 per city. The defect is seed-dependent, so this is a floor on the rate, not a bound. Seeds 13 at 150 per city (12 blocking pairs on the base) and 1-8 at 150 per city (163) were measured with the same predicate but are not in the gate, to keep `pnpm run sim` fast.
 - Blocking pairs are counted over eligible pairs both of whose members are matched elsewhere. A member left unmatched cannot block, and cannot be part of a blocking pair. This matches the definition in the pack header.
 - The repair is in the algorithm, not the accounting. `stableRound` still returns no signal when it used the greedy fallback, so a future regression would again be invisible to any gate that does not recompute stability. Reporting that here rather than widening this change: adding a field to `SelectionResult` touches `pack.ts`, the engine and every pack, and is a separate decision.
 - `stableRound` is reached only through `assignment: "stable"`, which no production preset selects. This is a correctness defect in a shipped, documented option with sim callers, not a user-visible incident.
 - No real-LLM run: the defect and the repair are entirely in deterministic assignment arithmetic, so an LLM run could not exercise it. No provider, model or cost is claimed.
-- The PostgreSQL-backed and e2e suites were not run for this change. It touches no database, no HTTP route and no client workflow. `bun run typecheck` and `bun run sim` are the executed evidence.
+- The PostgreSQL-backed and e2e suites were not run for this change. It touches no database, no HTTP route and no client workflow. `pnpm run typecheck` and `pnpm run sim` are the executed evidence.
 
 ## Executed evidence
 
-`bun run typecheck`: exit 0, including the new gate source.
+`pnpm run typecheck`: exit 0, including the new gate source.
 
-`bun run sim`, base and branch on the same machine in the same environment:
+`pnpm run sim`, base and branch on the same machine in the same environment:
 
 | | blocking gates | tracked off target |
 |---|---|---|
@@ -113,4 +115,4 @@ The base fails it with `expected 5 to be 0`. This branch passes.
 
 The slop block reports 39/39 with `PASS assignment stable: no matched pair blocks another on own benefit (0 blocking pairs)`. No other gate changed state.
 
-Four cases report tracked in both runs because the local Postgres 16 build has no `psql` and no `pg_dump`: the backup drill, the pipeline, `observatory-6` and `network-service-M1`. This is a property of this machine and affects base and branch identically. `bun run test:integration`, `bun run test:e2e` and `bun run security` were not run; CI remains the executed gate for those.
+Four cases report tracked in both runs because the local Postgres 16 build has no `psql` and no `pg_dump`: the backup drill, the pipeline, `observatory-6` and `network-service-M1`. This is a property of this machine and affects base and branch identically. `pnpm run test:integration`, `pnpm run test:e2e` and `pnpm run security` were not run; CI remains the executed gate for those.

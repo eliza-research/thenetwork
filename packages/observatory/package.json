@@ -5,24 +5,30 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun run src/server.ts",
-    "dev": "bun --hot run src/server.ts"
+    "start": "node ../design-system/build.ts build && node --import tsx --env-file-if-exists=.env src/server.ts",
+    "dev": "node ../design-system/build.ts build && node --watch --import tsx --env-file-if-exists=.env src/server.ts"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
     "@thenetwork/core": "workspace:*",
+    "@thenetwork/design-system": "workspace:*",
     "@thenetwork/engine": "workspace:*",
     "@thenetwork/network": "workspace:*",
     "@thenetwork/sim": "workspace:*",
+    "@thenetwork/ui": "workspace:*",
     "d3-force": "^3.0.0",
+    "esbuild": "0.28.2",
     "leaflet": "^1.9.4",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "postcss": "8.5.33",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:"
   },
   "devDependencies": {
     "@types/d3-force": "^3.0.10",
     "@types/leaflet": "^1.9.22",
-    "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "happy-dom": "20.14.0"
   }
 }

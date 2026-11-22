@@ -8,7 +8,9 @@ The Network stores one open case at a time for a member and records each report 
 
 ### An event opens a case or adds to its current record
 
-If a member has no open case, the next event opens one. An event after a lift reopens the case, except for the event that records the lift itself. A closed case stays closed. The shell starts a new case for a later event instead of changing the old record.
+If a member has no open case, the next event opens one, except a trust decay event. An event after a lift reopens the case, except for the event that records the lift itself. A closed case stays closed. The shell starts a new case for a later event instead of changing the old record.
+
+A decay event (see [trust levels](trustLevel.md)) never changes the phase. Clean time alone never opens a case and never reopens a lifted one. The shell adds a decay event to a live case and records nothing when the result has no case.
 
 ```quint
 type CasePhase = NoCase | CaseOpen | CaseHeld | CaseLifted | CaseClosed
@@ -17,13 +19,18 @@ pure val initial: SafetyCase = { phase: NoCase }
 
 pure def canRecordCaseEvent(c: SafetyCase): bool = c.phase != CaseClosed
 
-pure def recordCaseEvent(c: SafetyCase, liftEvent: bool): SafetyCase =
-  if (c.phase == NoCase or (c.phase == CaseLifted and not(liftEvent))) { phase: CaseOpen } else c
+pure def recordCaseEvent(c: SafetyCase, liftEvent: bool, decayEvent: bool): SafetyCase =
+  if (decayEvent) c
+  else if (c.phase == NoCase or (c.phase == CaseLifted and not(liftEvent))) { phase: CaseOpen }
+  else c
+
+pure def lawDecayNeverOpensCase(liftEvent: bool): bool =
+  recordCaseEvent(initial, liftEvent, true) == initial
 ```
 
 ### A recorded hold or lift updates the open case
 
-A trust hold marks the case held. An authorized staff lift removes the trust hold, and the case records the lift. Closing the case leaves the trust decision unchanged.
+A trust hold marks the case held. An authorized staff lift removes the trust hold, and the case records the lift. The lift depends on the trust hold, not on the case phase: a lift marks any live case lifted, also an open case that started after an earlier held case closed while the trust hold stayed. Closing the case leaves the trust decision unchanged.
 
 ```quint
 pure def liveCase(c: SafetyCase): bool = c.phase != NoCase and c.phase != CaseClosed
@@ -68,13 +75,40 @@ pure def holdAuthority(actorPresent: bool, reportMatches: bool): StaffActionResu
 pure def holdSubjectKnown(knownMember: bool, reportOnFile: bool): bool = knownMember or reportOnFile
 ```
 
+## Story: Get immediate safety guidance in a member conversation
+
+> As a member who says that I am in danger now, I want emergency guidance before any report confirmation or follow-up.
+
+### Direct current-danger text gets immediate guidance first
+
+Recognize a direct affirmative statement of current danger or an explicit request for emergency help now. Do not infer immediacy from a past event or an urgent report category alone. Inspect only the person’s own plain text, after carrier commands and existing identity admission. A copied profile or reaction cannot take this branch. Reply to the member without asking for contact details or opening a normal conversation. The reply starts with guidance to contact local emergency services. Use a fixed reply so a saved acknowledgement or other updates do not move ahead of it.
+
+A report that named a subject still follows the same report and block decisions. A danger disclosure during a post-meeting check-in can record a report only with an exact current check-in receipt and explicit report language about the counterpart. It does not confirm attendance or consent to meet again. Otherwise, leave unrelated prompts unchanged and issue guidance alone. The Network does not dispatch emergency services.
+
+```quint
+pure def immediateDangerReply(directText: bool, currentDanger: bool): bool =
+  directText and currentDanger
+
+pure def lawEmergencyReplyRequiresOwnText(currentDanger: bool): bool =
+  not(immediateDangerReply(false, currentDanger))
+
+pure def lawEmergencyReplyRequiresCurrentDanger(directText: bool): bool =
+  not(immediateDangerReply(directText, false))
+
+pure def emergencyCheckInReport(exactReceipt: bool, attributedReport: bool): bool =
+  exactReceipt and attributedReport
+
+pure def lawEmergencyCheckInNeedsReceipt(attributedReport: bool): bool =
+  not(emergencyCheckInReport(false, attributedReport))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.
 
 ### A hold, ban, or dismissal updates the matching report
 
-An open report can be dismissed or marked held. A hold updates the named report, or every open report for the member when no report is named. A ban updates the member's open and held reports. A dismissed report stays dismissed.
+An open report can be dismissed or marked held. A hold updates the named report, or every open report for the member when no report is named. A ban updates the member's open and held reports. A dismissed report stays dismissed. Until staff decide, an open urgent report from a reporter who met the member restricts that member's matching. A held, banned or dismissed report does not restrict matching through this rule.
 
 ```quint
 type ReportPhase = ReportOpen | ReportHeld | ReportBanned | ReportDismissed
@@ -90,8 +124,62 @@ pure def reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision,
 pure def reportRestrictsMatching(reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
   reportPhase == ReportOpen and metBefore and urgent
 
+pure def lawDecidedReportDoesNotRestrictMatching(decision: ReportDecision, metBefore: bool, urgent: bool): bool =
+  not(reportRestrictsMatching(reportAfterDecision(ReportOpen, decision, true, true), metBefore, urgent))
+
 pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: bool, reportMatches: bool): bool =
   reportAfterDecision(ReportDismissed, decision, sameMember, reportMatches) == ReportDismissed
+```
+
+### The exact open report follows its subject through ordinary app leave
+
+An open, urgent report from a member who met the subject continues to restrict matching in the originating app after ordinary leave. When the runtime forgets the member, the shell records only the app, originating runtime, exact report ID, and verified canonical subject. Its review remains with that runtime. The shell erases the association on account erasure or phone reassignment. A generic lift and closing a case leave this report open. Exact dismissal removes only its own restriction. An authorized hold of an archived report records the durable staff hold and marks the exact report held in the same transaction. A ban still requires the existing verified person and staff authority.
+
+```quint
+pure def carryReportOnAppLeave(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
+  ordinaryLeave and reportRestrictsMatching(reportPhase, metBefore, urgent)
+
+pure def archivedReportHoldAllowed(exactSubject: bool, matchingRestriction: bool): bool =
+  exactSubject and matchingRestriction
+
+pure def lawOnlyOpenReportsCarry(ordinaryLeave: bool, reportPhase: ReportPhase, metBefore: bool, urgent: bool): bool =
+  carryReportOnAppLeave(ordinaryLeave, reportPhase, metBefore, urgent) implies reportPhase == ReportOpen
+
+pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
+  not(archivedReportHoldAllowed(false, matchingRestriction))
+```
+
+### A unique offered report name routes back to its app
+
+An explicit app choice or dedicated line sets the app. The shared-line fallback can use a current report question to route the verified member's own signed text. The text must name exactly one counterpart shown in the stored question across the member's app memberships. The counterpart must still belong to that question and be a current counterpart. The reply must arrive at or after the question and no later than processing, within one day of the question. Apply the report in the question's app only if the same member and choice remain current at the write. With no matching question, use the ordinary routing rules. With several matching questions, preserve them for an explicit app choice.
+
+```quint
+type SharedReportRoute = NoReportRoute | UniqueReportRoute | AmbiguousReportRoute
+
+pure def sharedReportRoute(signedMember: bool, choices: int): SharedReportRoute =
+  if (not(signedMember) or choices <= 0) NoReportRoute
+  else if (choices == 1) UniqueReportRoute
+  else AmbiguousReportRoute
+
+pure def reportClarificationTimeCurrent(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
+  oldestPrompt <= askedAt and askedAt <= receivedAt and receivedAt <= asOf
+
+pure def lawSharedReportRequiresOneChoice(signedMember: bool, choices: int): bool =
+  sharedReportRoute(signedMember, choices) == UniqueReportRoute implies signedMember and choices == 1
+
+pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
+  reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) implies receivedAt >= askedAt
+```
+
+### A ban allows only carrier commands and app leave
+
+A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.
+
+```quint
+pure def inboundAllowedAfterBan(banned: bool, compliance: bool): bool = not(banned) or compliance
+
+pure def lawBanBlocksOrdinaryInbound(compliance: bool): bool =
+  inboundAllowedAfterBan(true, compliance) == compliance
 ```
 
 ## Story: Clear a mistaken minor signal after checking ages

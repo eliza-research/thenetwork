@@ -12,6 +12,8 @@ const TERMINAL: ReadonlySet<OppState> = new Set<OppState>([
   "COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED",
 ]);
 export const isTerminal = (s: OppState) => TERMINAL.has(s);
+/** The statuses that hold a counted yes which a flake notice can take back. */
+const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set<ParticipantStatus>(["accepted", "countered", "confirmed"]);
 
 export interface ProjectorOptions {
   /** State a member takes when they join (from their profile: normal, quiet...). */
@@ -142,7 +144,12 @@ export class Projector {
           else if (said === "decline") st = "declined";
           else if (said === "counter") st = "countered";
           else if (said === "ignore" || said === "ack" || said === "none") st = "ignored";
-        } else if (r.intent === "flake_notice") st = "cancelled_with_notice";
+        } else if (r.intent === "flake_notice" && YES_BEFORE_FLAKE.has(o.status[r.memberId]!)) {
+          // Cancelled with notice is a yes taken back (spec/models/console_views.md, saidYes), and the
+          // c.accepts counter already holds that yes. A member with no yes (declined, ignored, dropped) keeps
+          // the status, so a status count of yes answers (sources/real.ts) equals c.accepts.
+          st = "cancelled_with_notice";
+        }
         if (!st || isTerminal(o.state) && st !== "cancelled_with_notice") return;
         const prev = o.status[r.memberId];
         if (prev === st) return;

@@ -1,6 +1,6 @@
 // Device test day (entry-flows doc, decision 5). Writes one HTML page with every link we plan to
 // send, so a person can open it on an iPhone, an Android phone and a desktop and tap each one.
-// Usage: bun run scripts/link-test-page.ts [out.html] [+1NETWORKLINE]
+// Usage: node --import tsx --env-file-if-exists=.env packages/notify/scripts/link-test-page.ts [out.html] [+1NETWORKLINE]
 // Record the results in docs/runbook-deeplink-test.md.
 
 import { writeFileSync } from "node:fs";

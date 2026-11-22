@@ -6,7 +6,7 @@
 import type { Facet, MemberId } from "@thenetwork/core";
 import type { StandingAvailability } from "../../attention.ts";
 import type { World } from "../../world.ts";
-import { hood, type Neighborhood } from "./geo.ts";
+import { FRIENDS_CITY, hood, type Neighborhood } from "./geo.ts";
 
 /** Facet tag vocabulary friends.help writes at onboarding (the simulator's snapshot uses the same). */
 export const FT = {
@@ -79,7 +79,7 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
     const mi = w.get(id)!;
     const fs = facets.get(id) ?? [];
     const ts = fs.flatMap(f => f.tags);
-    const pres = mi.presence.filter(p => p.city === "nyc");
+    const pres = mi.presence.filter(p => p.city === FRIENDS_CITY);
     const homeP = pres.find(p => p.type === "home");
     const home = hood(homeP?.areas[0]);
     const often = pres.flatMap(p => (p === homeP ? p.areas.slice(1) : p.areas)).map(hood).filter((x): x is Neighborhood => !!x);

@@ -2,8 +2,9 @@
 import {ChannelSendError, type SendReceipt, type SendRequest} from "../../blooio/src/types.ts";
 import {readCappedText} from "../../platform/src/body.ts";
 import {normalizePhone} from "../../platform/src/phone.ts";
+import {cloudDeliveryReceiptAllowed, cloudDispatchMayRetry, cloudLookupConfirmsAbsence, cloudReceiptTimeAllowed} from "../../core/src/generated/cloudDeliveryReceipt.ts";
 import {DELIVER_PATH, NETWORK_APP_IDS, parseApprovedRelayPhotos, type DeliverRequest, type NetworkAppId} from "../../core/src/svc/contract.ts";
-import {svcSign} from "../../core/src/svc/svc-auth.ts";
+import {SVC_MAX_SKEW_S, svcSign} from "../../core/src/svc/svc-auth.ts";
 import {BlooioAdapter, type BlooioAdapterOptions} from "./channel.ts";
 
 /**
@@ -45,23 +46,27 @@ export class CloudChannelAdapter extends BlooioAdapter {
         value=JSON.parse(text);
       } catch {throw new ChannelSendError("Cloud acceptance is unknown","unknown");}
       const result=value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
-      // Accepted is accepted: history is false for a recipient with no Eliza account yet (the contract), and
-      // acceptedAt is optional (the queue uses its own clock without it). A malformed acceptedAt is not trusted.
-      const acceptedAt=typeof result?.acceptedAt==="string" ? Date.parse(result.acceptedAt) : undefined;
-      if (response.status===200 && result?.ok===true && typeof result.history==="boolean" && typeof result.replayed==="boolean"
-        && Array.isArray(result.providerMessageIds) && result.providerMessageIds.length>0 && result.providerMessageIds.every(id=>typeof id==="string" && id.trim())
-        && (result.acceptedAt===undefined || Number.isFinite(acceptedAt))) {
-        return {providerMessageId:result.providerMessageIds[0] as string,providerMessageIds:result.providerMessageIds as string[],status:"queued",
-          replayed:result.replayed,...(acceptedAt!==undefined?{acceptedAt}:{}),historyRecorded:result.history};
+      const rawTime = result?.acceptedAt;
+      const timestamp = typeof rawTime === "string" ? Date.parse(rawTime) : NaN;
+      const canonicalTime = Number.isFinite(timestamp) && new Date(timestamp).toISOString() === rawTime;
+      const validTime = cloudReceiptTimeAllowed(scope.createdAt, options.clock.now(), SVC_MAX_SKEW_S * 1000,
+        rawTime !== undefined, canonicalTime, canonicalTime ? timestamp : 0);
+      const ids = result?.providerMessageIds;
+      const providerIds = Array.isArray(ids) && ids.every(id => typeof id === "string" && id.trim()) && new Set(ids).size === ids.length
+        ? ids as string[] : [];
+      if (cloudDeliveryReceiptAllowed(response.status, result?.ok === true, result?.history === true, providerIds.length > 0,
+        typeof result?.replayed === "boolean", validTime)) {
+        return { providerMessageId: providerIds[0]!, providerMessageIds: providerIds, status: "queued", replayed: result?.replayed === true,
+          ...(canonicalTime ? { acceptedAt: timestamp } : {}), historyRecorded: true };
       }
-      // A receipt lookup that Cloud answers with a retryable "rejected" means Cloud never admitted this id
-      // (the same meaning as on the deliver path: refused before dispatch). The queue then sends it again
-      // with the same key. Any other answer stays unknown.
-      if (receiptOnly && result?.ok===false && result.error==="rejected" && result.retryable===true)
+      const error = typeof result?.error === "string" ? result.error : "";
+      const failed = result?.ok === false, retryable = result?.retryable === true;
+      if (cloudLookupConfirmsAbsence(receiptOnly, failed, retryable, response.status, error))
         throw new ChannelSendError("Cloud never admitted this id","unknown",response.status,"not_found");
+      if (cloudDispatchMayRetry(receiptOnly, failed, retryable, response.status, error))
+        throw new ChannelSendError("Cloud refused admission before dispatch","retryable",response.status);
       if (!receiptOnly && result?.ok===false && result.error!=="unknown") {
         if (result.error==="opted_out") throw new ChannelSendError("Recipient opted out","blocked",response.status,"opted_out");
-        if (result.error==="rejected" && result.retryable===true) throw new ChannelSendError("Cloud refused admission before dispatch","retryable",response.status);
         if ([400,401,403,404,409,422].includes(response.status)) throw new ChannelSendError("Cloud refused delivery","invalid",response.status);
       }
       throw new ChannelSendError("Cloud acceptance is unknown","unknown",response.status);

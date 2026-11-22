@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // The Network Observatory server: game mode (live simulated world) and real-world mode (Postgres),
 // switchable at runtime. REST for state and details, a WebSocket for live deltas, and the web UI.
-//   bun run packages/observatory/src/server.ts [--port 4747] [--mode game|real] [--seed 1]
+//   pnpm run observatory [--port 4747] [--mode game|real] [--seed 1]
 //       [--personas 0] [--engine engine-v1|random|off] [--db-url postgres://...] [--review auto|human] [--time-aware]
 // Security (audit P1-1, admin-console 4): it binds to 127.0.0.1 (OBSERVATORY_HOST overrides). Every
 // /api/* route and the /ws upgrade need a staff identity: a static token ("Authorization: Bearer
@@ -27,18 +27,22 @@
 // when NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN are set (sources/service.ts); the database login stays read-only.
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import type { Server, ServerWebSocket } from "bun";
-import index from "../web/index.html";
+import { serveHttp, type HttpServer as Server, type ServerWebSocket } from "../../core/src/runtime/http.ts";
+import { buildWebRoutes } from "./web-assets.ts";
 import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } from "../../core/src/generated/staffPermissions.ts";
+import { staffRevealMayDisclose } from "../../core/src/generated/consoleMemberView.ts";
+import { monthlyGatheringConsoleAllowed } from "../../core/src/generated/monthlyGathering.ts";
+import { readCappedText } from "../../platform/src/body.ts";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
 import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
 import { CostView } from "./ops.ts";
+import { gatheringId, type GatheringRequest } from "./gatherings.ts";
 import {
   AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, globalRolesFor, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
@@ -82,7 +86,7 @@ export interface ServerOptions {
   real?: RealOptions & { appUrls?: Partial<Record<AppId, string>> };
   /** The cross-app person view's database. Default: OBSERVATORY_PLATFORM_DATABASE_URL, else the real-mode URL. false: off. */
   peopleUrl?: string | false;
-  /** Bundle the UI in development mode (HMR, unminified). Default: NODE_ENV !== "production". */
+  /** Keep the browser bundle unminified in development. Default: NODE_ENV !== "production". */
   development?: boolean;
   /** Shortest static token accepted (default 32). */
   minTokenLength?: number;
@@ -93,7 +97,7 @@ export interface ServerOptions {
 }
 
 export interface ObservatoryServer {
-  server: Server<unknown>; url: string;
+  server: Server<WsData>; url: string;
   /** The admin token (if there is one), and the page URL that carries it in the #fragment (never sent to a server). */
   token?: string; openUrl: string;
   mode(): Mode;
@@ -188,12 +192,13 @@ function hostnameOf(hostOrUrl: string): string | undefined {
 export async function createServer(opts: ServerOptions = {}): Promise<ObservatoryServer> {
   const realOnly = opts.realOnly ?? process.env.OBSERVATORY_REAL_ONLY === "1";
   let mode: Mode = realOnly ? "real" : opts.mode ?? "game";
+  let modeRevision = 0;
   const sla = slaHours();
   /** One source per (mode, app), started when first asked for. */
   const sources = new Map<string, DataSource>();
   const starting = new Map<string, Promise<DataSource>>();
   const unsub = new Map<string, () => void>();
-  let server!: Server<unknown>;
+  let server!: Server<WsData>;
   const key = (m: Mode, app: AppId) => `${m}:${app}`;
 
   /** Open sockets, each with who opened it (deltas are shaped per person; audit observatory-6). */
@@ -245,6 +250,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (mode === m && sources.has(key(m, DEFAULT_APP))) return;
     if (m === "real") for (const app of APP_IDS) await sources.get(key("game", app))?.control({ type: "pause" });
     mode = m;
+    modeRevision++;
     await source(m, DEFAULT_APP);
     // A socket opened in one mode is authorized again for the new one (an engineer has no role in real mode).
     for (const ws of sockets) recheck(ws);
@@ -281,6 +287,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const access = trustCfAccess ? new AccessVerifier({
     ...opts.cfAccess, team: opts.cfAccess?.team ?? process.env.OBSERVATORY_CF_ACCESS_TEAM ?? "", aud: opts.cfAccess?.aud ?? process.env.OBSERVATORY_CF_ACCESS_AUD ?? "",
   }) : undefined;
+  const development = opts.development ?? process.env.NODE_ENV !== "production";
+  const webRoutes = await buildWebRoutes(development);
   // platform.staff_roles (SSO users, real mode): read through the real-mode database.
   const rolesUrl = opts.staffRolesUrl === false ? undefined : opts.staffRolesUrl ?? (trustCfAccess && (realOnly || mode === "real") ? opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL : undefined);
   const rolesSql = rolesUrl ? new SQL({ url: rolesUrl, max: 1, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: "network-observatory-roles" } }) : undefined;
@@ -295,7 +303,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   /** Active PII reveals: "<staff id>|<mode>|<app>|<member id>" -> grant (a game member and a real member never share one). In memory: a restart ends every reveal. */
   const reveals = new Map<string, RevealGrant>();
   const photoPreviews = new Map<string,{token:string;until:number}>();
-  const revealKey = (u: StaffUser, app: AppId, memberId: string) => `${u.id}|${mode}|${app}|${memberId}`;
+  const revealKey = (u: StaffUser, app: AppId, memberId: string, readMode = mode) => `${u.id}|${readMode}|${app}|${memberId}`;
   /** One-use WebSocket tickets: ticket -> who asked, for which app, until when. */
   const tickets = new Map<string, { user: StaffUser; app: AppId; until: number }>();
   /** "<staff id>|<app>" with the truth lens on (game mode). Per person: hidden truth never goes to anyone else. */
@@ -353,6 +361,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     return isAppId(v) ? v : json({ error: `unknown app "${v}" (one of ${APP_IDS.join(", ")})`, code: "unknown_app" }, 400);
   }
   const forbidden = (text: string) => json({ error: `forbidden: ${text}`, code: "forbidden" }, 403);
+  const modeChanged = () => json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
   type Req = Request & { params: Record<string, string> };
   type Handler = (req: Req, user: StaffUser, app: AppId) => Response | Promise<Response>;
   const admitRoute = (req: Request, roles: StaffRole[], need: readonly StaffRole[] | undefined, appRoute: boolean) => {
@@ -377,7 +386,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       try { return await h(req, u, app); } catch (e) { return fail(e); }
     }
     if (route.decision === "NeedsRole") return forbidden(`needs ${["admin", ...(need ?? [])].join(" or ")} for ${app}`);
-    if (route.decision === "ModeChanged") return json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
+    if (route.decision === "ModeChanged") return modeChanged();
     return forbidden(`no role for ${app}${mode === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
   };
   /** A route that is not about one app: any staff member, or with `need`, the role for every app (role@*). */
@@ -413,18 +422,49 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
-  const revealFor = (u: StaffUser, app: AppId, memberId: string): RevealGrant | undefined => {
-    const k = revealKey(u, app, memberId), g = reveals.get(k);
-    if (g && g.until <= Date.now()) { reveals.delete(k); return undefined; }
-    return g;
+  const currentSafety = (u: StaffUser, app: AppId, readMode: Mode): boolean => {
+    const staff = u.via === "sso" ? staffUser(u.id, ssoGrants(u.id, auth), "sso") : u;
+    return allowed(staff, ["safety"], app, readMode);
   };
+  function revealCurrent(u: StaffUser, app: AppId, readMode: Mode, until: number): boolean {
+    const now = Date.now();
+    return staffRevealMayDisclose(readMode === mode, currentSafety(u, app, readMode), u.expiresAt === undefined || u.expiresAt > now, until - now);
+  }
+  function revealFor(u: StaffUser, app: AppId, memberId: string, readMode = mode): RevealGrant | undefined {
+    const key = revealKey(u, app, memberId, readMode), grant = reveals.get(key);
+    if (grant && readMode === mode && !revealCurrent(u, app, readMode, grant.until)) {
+      reveals.delete(key);
+      return;
+    }
+    return readMode === mode ? grant : undefined;
+  }
   /**
    * Member 360 and timeline (admin-console 4.1), for the app: admin and safety see any member; an
    * engineer sees simulated members only; a reviewer sees members in an open review item; an analyst sees none.
    */
-  async function canSeeMember(u: StaffUser, app: AppId, id: string): Promise<boolean> {
-    const access = staffMemberAccess([...rolesFor(u, app, mode)], mode === "real");
-    return access === "AnyMember" || (access === "OpenReviewMember" && (await source(mode, app)).inOpenReview(id));
+  async function canSeeMember(u: StaffUser, app: AppId, id: string, readMode = mode): Promise<boolean> {
+    const access = staffMemberAccess([...rolesFor(u, app, readMode)], readMode === "real");
+    return access === "AnyMember" || (access === "OpenReviewMember" && (await source(readMode, app)).inOpenReview(id));
+  }
+
+  interface MemberRead {
+    id: string;
+    readMode: Mode;
+    revision: number;
+    grant?: RevealGrant;
+  }
+  async function startMemberRead(u: StaffUser, app: AppId, id: string, action: "read_member" | "read_timeline" | "read_member_app"): Promise<MemberRead | Response> {
+    const readMode = mode, revision = modeRevision;
+    if (!(await canSeeMember(u, app, id, readMode))) return forbidden("this role cannot open this member");
+    if (revision !== modeRevision) return modeChanged();
+    const grant = revealFor(u, app, id, readMode);
+    const refused = await record(u, app, { action, targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
+    const read = { id, readMode, revision, grant };
+    return refused ?? memberReadRefusal(u, app, read) ?? read;
+  }
+  function memberReadRefusal(u: StaffUser, app: AppId, read: MemberRead): Response | undefined {
+    if (read.revision !== modeRevision) return modeChanged();
+    if (read.grant && revealFor(u, app, read.id, read.readMode) !== read.grant) return forbidden("the reveal is no longer active");
   }
   /** The cross-app view's data (real mode only: the platform schema holds people and memberships). */
   function peopleView(): PeopleView | Response {
@@ -434,13 +474,43 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     return people;
   }
 
+  const gatheringRoute = (action: GatheringRequest["action"]) => guard(async (req, user, app) => {
+    const realNetworkAdmin = monthlyGatheringConsoleAllowed(mode === "real", app === "ntwrk", allowed(user, ["admin"], app, mode), true);
+    if (!realNetworkAdmin) return forbidden("monthly gatherings need a Network administrator in real mode");
+    const revision = modeRevision;
+    const network = await source("real", app);
+    if (!(network instanceof RealSource) || !network.gatheringServiceAvailable) return json({ ok: false, error: "gatherings_unavailable" }, 503);
+
+    const id = action === "review" ? req.params.id : undefined;
+    if (action === "review" && (!id || !gatheringId.test(id))) return json({ ok: false, error: "invalid_request" }, 400);
+    let request: GatheringRequest = { action: "list" };
+    if (action !== "list") {
+      try {
+        const raw = await readCappedText(req, 2048);
+        if (raw === "too_large") return json({ ok: false, error: "invalid_request" }, 413);
+        const body: unknown = JSON.parse(raw);
+        request = action === "review" && id ? { action, id, body } : { action: "draft", body };
+      } catch { return json({ ok: false, error: "invalid_request" }, 400); }
+    }
+    const audit = { action: action === "list" ? "read_monthly_gatherings" : action === "draft" ? "create_monthly_gathering" : "review_monthly_gathering",
+      ...(id ? { targetId: id } : {}) };
+    const refusal = await record(user, app, { ...audit, ok: true, ...(action !== "list" ? { detail: { phase: "requested" } } : {}) });
+    if (refusal) return refusal;
+    if (revision !== modeRevision) return modeChanged();
+    const answer = await network.monthlyGatherings(user.id, request);
+    if (!answer) return json({ ok: false, error: "gatherings_unavailable" }, 503);
+    if (action === "list" && revision !== modeRevision) return modeChanged();
+    if (action !== "list") await record(user, app, { ...audit, ok: answer.body.ok, detail: { phase: "result" } });
+    return json(answer.body, answer.status);
+  }, ["admin"]);
+
   await source(mode, DEFAULT_APP);
-  server = Bun.serve({
+  server = await serveHttp<WsData>({
     port: opts.port ?? 4747,
     hostname,
-    development: opts.development ?? process.env.NODE_ENV !== "production",
+    development,
     routes: {
-      "/": index,
+      ...webRoutes,
       // Liveness for Railway's health check and an uptime monitor: no auth, no data, no Host check (Access guards the domain).
       "/healthz": () => new Response(JSON.stringify({ ok: true }), { headers: { ...SECURITY_HEADERS, "content-type": "application/json" } }),
       "/api/health": global(() => json({ ok: true, mode })),
@@ -485,43 +555,37 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/member/:id": guard(async (req, u, app) => {
-        const id = decodeURIComponent(req.params.id!);
-        if (!(await canSeeMember(u, app, id))) return forbidden("this role cannot open this member");
-        const grant = revealFor(u, app, id);
-        const no = await record(u, app, { action: "read_member", targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
-        if (no) return no;
-        const d = await (await source(mode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app) });
+        const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_member");
+        if (read instanceof Response) return read;
+        const { id, readMode, grant } = read;
+        const d = await (await source(readMode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app) });
         if (!d) return json({ error: "not found" }, 404);
         // Dating facts stay hidden until a reveal; scores and ratings never leave (admin-console 3.3.1).
         d.facets = memberFacets(app, d.facets, !!grant);
         if (grant) d.revealed = { until: grant.until };
-        if (allowed(u, ["safety"], app, mode)) {
+        if (currentSafety(u, app, readMode)) {
           const rows = await audit.list({ targetType: "member", targetId: id, limit: 50, actions: ["read_member", "read_timeline", "reveal"], apps: [app] }).catch(() => []);
-          d.staffAccess = rows.map(r => ({ actor: r.actor, at: r.at, action: r.action }));
+          if (currentSafety(u, app, readMode)) d.staffAccess = rows.map(r => ({ actor: r.actor, at: r.at, action: r.action }));
         }
-        return json(d);
+        return memberReadRefusal(u, app, read) ?? json(d);
       }),
       "/api/member/:id/timeline": guard(async (req, u, app) => {
-        const id = decodeURIComponent(req.params.id!);
-        if (!(await canSeeMember(u, app, id))) return forbidden("this role cannot open this member");
-        const grant = revealFor(u, app, id);
-        const no = await record(u, app, { action: "read_timeline", targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
-        if (no) return no;
-        const t = await (await source(mode, app)).timeline(id, { reveal: !!grant });
+        const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_timeline");
+        if (read instanceof Response) return read;
+        const { id, readMode, grant } = read;
+        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant });
         if (!t) return json({ error: "not found" }, 404);
-        return json(grant ? { ...t, revealed: { until: grant.until } } : t);
+        return memberReadRefusal(u, app, read) ?? json(grant ? { ...t, revealed: { until: grant.until } } : t);
       }),
       "/api/member/:id/app": guard(async (req, u, app) => {
         // The app's own Member 360 panel (slop: dating preferences behind a reveal, the photo rule; peon: roles and applications).
-        const id = decodeURIComponent(req.params.id!);
-        if (!(await canSeeMember(u, app, id))) return forbidden("this role cannot open this member");
-        const grant = revealFor(u, app, id);
-        const no = await record(u, app, { action: "read_member_app", targetType: "member", targetId: id, ok: true, ...(grant ? { detail: { revealed: true } } : {}) });
-        if (no) return no;
+        const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_member_app");
+        if (read instanceof Response) return read;
+        const { id, readMode, grant } = read;
         // Read whole on the server (the age-verification tag is agent-only); what leaves is the panel, and its dating facts only with a reveal.
-        const d = await (await source(mode, app)).member(id, { reveal: true });
+        const d = await (await source(readMode, app)).member(id, { reveal: true });
         if (!d) return json({ error: "not found" }, 404);
-        return json(appProfile(app, d, { revealed: !!grant }));
+        return memberReadRefusal(u, app, read) ?? json(appProfile(app, d, { revealed: !!grant }));
       }),
       "/api/member/:id/photos": {
         // slop photos: admin or safety, a typed reason, verified adults only (never a member under 18). Audited before the read.
@@ -563,14 +627,43 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }
         return json(d);
       }),
+      "/api/review/:id/plan": { GET: guard(async (req, u, app) => {
+        const readRevision = modeRevision;
+        if (mode !== "real") return json({ ok: false, error: "real_only" }, 404);
+        let id: string;
+        try { id = decodeURIComponent(req.params.id!); } catch { return json({ ok: false, error: "invalid_review" }, 400); }
+        const seen = new URL(req.url).searchParams.get("revision");
+        const revision = seen !== null && /^\d+$/.test(seen) ? Number(seen) : NaN;
+        if (!id || id.length > 200 || !Number.isSafeInteger(revision)) return json({ ok: false, error: "invalid_review" }, 400);
+        const no = await record(u, app, { action: "read_review_plan", targetType: "opportunity", targetId: id, ok: true, detail: { revision } });
+        if (no) return no;
+        const src = await source("real", app);
+        if (readRevision !== modeRevision) return modeChanged();
+        if (!(src instanceof RealSource)) return json({ ok: false, error: "preview_unavailable" }, 503);
+        try {
+          const pending = src.reviewPlanPreview(u.id, id, revision);
+          if (!pending) return json({ ok: false, error: "preview_unavailable" }, 503);
+          const preview = await pending;
+          if (readRevision !== modeRevision) return modeChanged();
+          return preview ? json({ ok: true, preview }) : json({ ok: false, error: "preview_unavailable" }, 404);
+        } catch {
+          return json({ ok: false, error: "preview_unavailable" }, 503);
+        }
+      }, ["reviewer", "safety"]) },
       "/api/reveal": {
         // Admin-console 4.4: per member, with a reason, for at most 15 minutes; audited before it is granted.
-        GET: guard((_r, u, app) => json([...reveals.entries()].filter(([k, g]) => k.startsWith(`${u.id}|${mode}|${app}|`) && g.until > Date.now()).map(([, g]) => g))),
+        GET: guard((_r, u, app) => {
+          const prefix = `${u.id}|${mode}|${app}|`;
+          return json([...reveals.entries()].flatMap(([key, grant]) =>
+            key.startsWith(prefix) && revealFor(u, app, grant.memberId) === grant ? [grant] : []));
+        }),
         POST: guard(async (req, u, app) => {
+          const readMode = mode, revision = modeRevision;
           const b = await req.json().catch(() => ({})) as { memberId?: string; reason?: string; minutes?: number };
           const memberId = String(b.memberId ?? ""), reason = String(b.reason ?? "").trim();
           if (!memberId || reason.length < 5) return json({ ok: false, error: "a member and a reason (at least 5 characters) are required" }, 400);
-          const s = await source(mode, app);
+          const s = await source(readMode, app);
+          if (revision !== modeRevision) return modeChanged();
           if (!s.state().members.some(m => m.id === memberId)) {
             // A refused reveal is audited too: probing for who is a member leaves a row (audit observatory-M3).
             const no = await record(u, app, { action: "reveal", targetType: "member", targetId: memberId, reason, ok: false, detail: { refused: "unknown_member" } });
@@ -581,7 +674,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const at = Date.now(), grant: RevealGrant = { memberId, reason, at, until: at + minutes * 60_000 };
           const no = await record(u, app, { action: "reveal", targetType: "member", targetId: memberId, reason, ok: true, detail: { minutes } });
           if (no) return no;
-          reveals.set(revealKey(u, app, memberId), grant);
+          if (revision !== modeRevision) return modeChanged();
+          if (!revealCurrent(u, app, readMode, grant.until)) return forbidden("the reveal is no longer active");
+          reveals.set(revealKey(u, app, memberId, readMode), grant);
           return json({ ok: true, ...grant });
         }, ["safety"]),
         // End a reveal before its time (audited).
@@ -627,7 +722,14 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/safety": {
-        GET: guard(async (_r, _u, app) => json(await (await source(mode, app)).safety()), ["safety"]),
+        GET: guard(async (_r, u, app) => {
+          const readMode = mode, revision = modeRevision;
+          const no = await record(u, app, { action: "read_safety", ok: true });
+          if (no) return no;
+          if (revision !== modeRevision) return modeChanged();
+          const safety = await (await source(readMode, app)).safety();
+          return revision === modeRevision ? json(safety) : modeChanged();
+        }, ["safety"]),
         POST: guard(async (req, u, app) => {
           const a = await req.json().catch(() => null) as SafetyAction | null;
           const v = checkSafety(a);
@@ -695,7 +797,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       // The weekly bias monitor (aggregates only; real mode reads it from the Network service). Admin or analyst.
       "/api/bias": guard(async (_r, u, app) => {
         const src = await source(mode, app);
-        if (!src.bias) return json({ ok: false, error: "the bias monitor runs on real data only (bun run sim measures it in simulation)", code: "real_only" }, 404);
+        if (!src.bias) return json({ ok: false, error: "the bias monitor runs on real data only (pnpm run sim measures it in simulation)", code: "real_only" }, 404);
         const no = await record(u, app, { action: "read_bias", ok: true });
         if (no) return no;
         const r = await src.bias(u.id);
@@ -709,6 +811,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         return r ? json({ ok: true, ...r }) : json({ ok: false, error: "no database configured", code: "not_configured" }, 503);
       }, ["analyst"]),
       "/api/config": guard(async (_r, _u, app) => json(await (await source(mode, app)).config()), ["analyst"]),
+      "/api/gatherings": { GET: gatheringRoute("list"), POST: gatheringRoute("draft") },
+      "/api/gatherings/:id/review": { POST: gatheringRoute("review") },
       "/api/audit": guard(async (req, u, app) => {
         const q = new URL(req.url).searchParams;
         const no = await record(u, app, { action: "read_audit", ok: true });
@@ -849,7 +953,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
 }
 
 /** Command fields an audit row keeps as they are (ids, decisions, codes, numbers). Anything else a client sends is dropped (audit observatory-15). */
-const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "mode", "speed", "ms", "action", "participants", "category", "swapOut", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
+const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "mode", "speed", "ms", "action", "participants", "category", "swapOut", "revision", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
 /** Free texts: only their length is kept. */
 const AUDIT_TEXTS = new Set(["text", "objective", "note", "why"]);
 const auditValue = (v: unknown): unknown =>

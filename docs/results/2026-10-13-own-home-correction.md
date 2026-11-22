@@ -1,5 +1,7 @@
 # Correct a signed-in member's home
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-13-own-home-correction.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 The older join path could retain an explicit Bay Area neighborhood while recording
 NYC as the member's physical home. The newer join fix prevents that for new joins,
 but existing members had no supported correction path. Repeating join returns the
@@ -23,7 +25,7 @@ on the base and candidate. All identities and OTP were fictional; the actual
 HTTP/router/backend/Postgres path ran on the existing owned local cluster.
 
 ```text
-Bun 1.4.2, --conditions eliza-source
+the former runtime 1.4.2, --conditions eliza-source
 tests/e2e/platform.e2e.test.ts
 -t "a signed-in member corrects a legacy home|home correction refuses a move"
 
@@ -43,7 +45,7 @@ owned checkouts. No dependency was installed or donor files changed.
 
 Sites typecheck passed. Root `tsc --noEmit -p .` passed using existing TypeScript
 5.9.3 through Node 24.18.0 with a 640 MiB V8 heap. This is a compiler result, not a
-claim that the prescribed Bun-launched full gate passed: that earlier invocation
+claim that the prescribed the former runtime full gate passed: that earlier invocation
 was stopped when observed RSS exceeded the admitted 1 GiB cap. A 512 MiB Node
 attempt also exhausted its heap. Earlier missing-observatory-dependency diagnostics
 were identical (all 61 lines) on candidate and untouched base with the same Node

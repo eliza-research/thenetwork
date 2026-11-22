@@ -144,12 +144,11 @@
     "files": {
       "quint/join_flow.qnt": "ca72b802df4bd16d",
       "packages/core/src/phone-core.ts": "3a8383db7544150e",
-      "packages/platform/src/api.ts": "1d96d66eba6bf53e",
-      "sites/shared/auth.ts": "b73bb99f2c4e16b2",
-      "sites/shared/join-core.ts": "540b273643cb94aa",
-      "sites/shared/join.ts": "acab7566148cf5a9",
-      "sites/shared/prefill.ts": "822c6c2083c566cd"
-    }
+      "packages/platform/src/api.ts": "1d96d66eba6bf53e"
+    },
+    "drift": [
+      "The browser half of join_flow modelled sites/shared/join.ts, auth.ts, join-core.ts and prefill.ts, which are not on this branch. spec/browserJoin.md owns that flow now, and packages/ui/src/hooks/useJoin.ts calls the generated browserJoin machine. Nobody has compared join_flow with useJoin.ts, so this record names no hash for it."
+    ]
   },
   "matching_engine": {
     "files": {

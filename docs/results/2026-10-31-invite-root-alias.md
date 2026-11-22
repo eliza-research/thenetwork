@@ -1,6 +1,8 @@
 # Inviter cohort walk and alias cycles
 
-Hand-written. The command lines below are the runs from this checkout. No model was called. `bun run sim` clears provider keys, and no key was set. The reviewer in the network block is the simulated reviewer (`review: "auto"`).
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-31-invite-root-alias.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
+Hand-written. The command lines below are the runs from this checkout. No model was called. `pnpm run sim` clears provider keys, and no key was set. The reviewer in the network block is the simulated reviewer (`review: "auto"`).
 
 ## Defect
 
@@ -13,7 +15,7 @@ A chain that does not cycle already resolved. A cycle of plain member ids alread
 ## Command
 
 ```bash
-bun run --conditions eliza-source scripts/sim/network.ts
+node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/sim/network.ts
 ```
 
 Seed 1. The members are fixed in `inviteRootGate` (`scripts/sim/network.ts`). The walk does not use randomness.
@@ -46,14 +48,14 @@ Roots after the fix, seed 1:
 
 ## Other runs
 
-`bun run typecheck`: pass (root, sites, observatory, deploy/cloudflare). About 16 s.
+`pnpm run typecheck`: pass (root, sites, observatory, deploy/cloudflare). About 16 s.
 
-`bun run sim --only network --quick`: 48/48 blocking gates pass, 1 tracked, 112.3 s. The new gate is the first PASS.
+`pnpm run sim --only network --quick`: 48/48 blocking gates pass, 1 tracked, 112.3 s. The new gate is the first PASS.
 
-`bun run sim` (full default blocks, dev Postgres on :54339, no `--quick`): **328/328 blocking gates pass**, 14 tracked off target, 351.4 s. Exit 0. The 14 tracked lines are the existing slop, relay, and friends metrics. They are not the new gate. Safety, ops, and pipeline ran on Postgres (they did not skip).
+`pnpm run sim` (full default blocks, dev Postgres on :54339, no `--quick`): **328/328 blocking gates pass**, 14 tracked off target, 351.4 s. Exit 0. The 14 tracked lines are the existing slop, relay, and friends metrics. They are not the new gate. Safety, ops, and pipeline ran on Postgres (they did not skip).
 
-`bun run test:integration` (Postgres 16.15 on :54339): **681 pass, 8 skip, 0 fail**, 68 files, 223.3 s. Exit 0. The 8 skips are `isolated PostgreSQL completed cleanup reconciliation`. They skip without that suite's extra cluster. They are not this walk.
+`pnpm run test:integration` (Postgres 16.15 on :54339): **681 pass, 8 skip, 0 fail**, 68 files, 223.3 s. Exit 0. The 8 skips are `isolated PostgreSQL completed cleanup reconciliation`. They skip without that suite's extra cluster. They are not this walk.
 
-`bun run test:e2e`: **42 pass, 1 skip, 0 fail**, 3 files, 11.8 s. Exit 0. The skip is `failed security checks give recovery feedback and a later SDK success clears only that feedback`. It is not this walk.
+`pnpm run test:e2e`: **42 pass, 1 skip, 0 fail**, 3 files, 11.8 s. Exit 0. The skip is `failed security checks give recovery feedback and a later SDK success clears only that feedback`. It is not this walk.
 
 No LLM. Provider and model: none. Calls: 0. Cost: 0.

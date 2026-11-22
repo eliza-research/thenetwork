@@ -1,6 +1,7 @@
 /** V2 intake withdrawal: actual SQL/service route with only the external Cloud event proof faked. */
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { SimClock } from "@thenetwork/core";
@@ -36,7 +37,7 @@ async function fixture() {
   let calls = 0, activeSourceCalls = 0, signed = true;
   let alter: (proof: Record<string, unknown>, call: number) => void = () => {};
   const contexts = new Map<string, { channel: "blooio"; messageId: string; commandSha256: string }>();
-  const cloud = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+  const cloud = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     calls++; expect(new URL(req.url).pathname).toBe(PROFILE_REVIEW_WITHDRAWAL_PROOF_PATH);
     const raw = await req.text(), wrapper = parseProfileReviewWithdrawalProofRequest(JSON.parse(raw));
     const auth = await svcVerify(secret, { method: "POST", path: PROFILE_REVIEW_WITHDRAWAL_PROOF_PATH, headers: req.headers, body: raw, nowS: Math.floor(clock.now()/1000) });
@@ -52,7 +53,7 @@ async function fixture() {
     env: { PLATFORM_ENV: "staging", PLATFORM_HASH_KEY: "synthetic-withdrawal-hash-".repeat(2), SERVICE_TURN_SECRET: secret, NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(policy) },
     profileSuggestionWithdrawalOwner: callbacks.profileSuggestionWithdrawalOwner,
     profileSuggestionAuthorization: async () => { activeSourceCalls++; return false; } });
-  const http = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
+  const http = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
   const request = (operation: ProfileReviewWithdrawalRequest["operation"] = "withdraw"): ProfileReviewWithdrawalRequest => ({ version: 2, operation,
     app: owner.app, personId: owner.personId, memberId: "member-one", connectionId, withdrawalId: randomUUID(), requestNonce: randomUUID() });
   return { clock, request, get calls() { return calls; }, get activeSourceCalls() { return activeSourceCalls; }, setAlter(fn: typeof alter) { alter=fn; }, setSigned(value: boolean) { signed=value; },
@@ -69,7 +70,7 @@ async function fixture() {
       await this.prepare(input); const body = JSON.stringify(input);
       const response = await fetch(http.url.origin+PROFILE_REVIEW_WITHDRAWAL_PATH, { method:'POST',body,headers:unsigned?{}:await svcSign(secret,{method:'POST',path:PROFILE_REVIEW_WITHDRAWAL_PATH,id:`learning-withdrawal:${input.requestNonce}`,body,nowS:Math.floor(clock.now()/1000)}) });
       return { status:response.status,body:await response.json(),hash:sha(body) };
-    }, async close() { http.stop(true); cloud.stop(true); await service.close(); } };
+    }, async close() { await http.stop(true); await cloud.stop(true); await service.close(); } };
 }
 
 test("V2 withdrawal removes pending intake only and keeps accepted facts regardless of OAuth retention", async () => {

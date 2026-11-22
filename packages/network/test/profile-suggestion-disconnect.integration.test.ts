@@ -1,6 +1,7 @@
 /** Real SQL + service route integration; only the external Cloud revoked-owner proof is synthetic. */
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { SimClock } from "@thenetwork/core";
@@ -50,7 +51,7 @@ async function fixture() {
   let calls = 0, activeSourceCalls = 0;
   let alter: (proof: Record<string, unknown>, call: number) => void = () => {};
   let signed = true;
-  const cloud = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+  const cloud = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     calls++;
     expect(new URL(req.url).pathname).toBe(PROFILE_REVIEW_DISCONNECT_PROOF_PATH);
     const raw = await req.text(), wrapper = parseProfileReviewDisconnectProofRequest(JSON.parse(raw));
@@ -69,7 +70,7 @@ async function fixture() {
     env: { PLATFORM_ENV: "staging", PLATFORM_HASH_KEY: "synthetic-disconnect-hash-".repeat(2), SERVICE_TURN_SECRET: secret, NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(policy) },
     profileSuggestionRevokedOwner: callbacks.profileSuggestionRevokedOwner,
     profileSuggestionAuthorization: async () => { activeSourceCalls++; return false; } });
-  const http = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
+  const http = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
   const request = (operation: ProfileReviewDisconnectRequest["operation"] = "disconnect"): ProfileReviewDisconnectRequest => ({
     version: 1, operation, app: owner.app, personId: owner.personId, memberId: "member-one", connectionId,
     revokedEventId: "revoked:one", requestNonce: randomUUID() });
@@ -81,7 +82,7 @@ async function fixture() {
         headers: unsigned ? {} : await svcSign(secret, { method: "POST", path: PROFILE_REVIEW_DISCONNECT_PATH,
           id: `connection-cleanup:${input.requestNonce}`, body, nowS: Math.floor(clock.now()/1000) }) });
       return { status: response.status, body: await response.json(), requestHash: sha(body) };
-    }, async close() { http.stop(true); cloud.stop(true); await service.close(); } };
+    }, async close() { await http.stop(true); await cloud.stop(true); await service.close(); } };
 }
 
 test("revoked cleanup uses real SQL with active-source authorization false and leaves reconnect batches untouched", async () => {

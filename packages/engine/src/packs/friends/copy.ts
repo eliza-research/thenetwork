@@ -2,9 +2,8 @@
 // no dates, singles, flirting or chemistry language anywhere. Never mentions loneliness, being new
 // to the city or a breakup (agent-private; domain research C4 "Explanation norms"). Every string
 // still passes the core leak gate before it is sent. A leaf module.
-import type { Category, Facet } from "@thenetwork/core";
+import type { Facet } from "@thenetwork/core";
 
-export const FRIENDS_LANE_LABEL: Partial<Record<Category, string>> = { social: "a small-group meetup", hobby: "an activity buddy" };
 export const FRIENDS_KIND_PHRASE: Partial<Record<Facet["kind"], string>> = { interest: "is into" };
 export const FRIENDS_SAFE_FALLBACK = "friends.help thinks you'd enjoy this.";
 export const FRIENDS_ACTIVITY: Record<string, string> = {

@@ -1,9 +1,9 @@
-// GENERATED from spec/chatRetry.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/chatRetry.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 export type RetryPhase = "Unconfigured" | "Ready" | "Requesting" | "Accepted" | "CallbackStopped" | "Aborted" | "Expired" | "TerminalFailure" | "Exhausted";
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 export interface RetryRun { phase: RetryPhase; attemptLimit: number; unbounded: boolean; attemptsStarted: number }
 
 /** One variant per transition in the spec. */
@@ -14,7 +14,7 @@ export type Event =
   | { type: "acceptReply" }
   | { type: "rejectReply"; terminal: boolean };
 
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 export const initial: RetryRun = { phase: "Unconfigured", attemptLimit: 0, unbounded: false, attemptsStarted: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -23,7 +23,7 @@ export function inv(current: RetryRun): boolean {
   return alwaysRetriesBounded(current) && alwaysExhaustionUsesBudget(current);
 }
 
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 //@ pure
 export function configure(r: RetryRun, attemptLimit: number, unbounded: boolean): RetryRun {
   //@ ensures (inv(r) && canConfigure(r, attemptLimit)) ==> alwaysRetriesBounded(\result)
@@ -34,37 +34,37 @@ export function configure(r: RetryRun, attemptLimit: number, unbounded: boolean)
   return { ...r, attemptLimit: attemptLimit, unbounded: unbounded, phase: unbounded || attemptLimit > 0 ? "Ready" : "Exhausted" };
 }
 
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 //@ pure
 export function alwaysRetriesBounded(r: RetryRun): boolean {
   return r.attemptsStarted >= 0 && r.attemptLimit >= 0 && (r.unbounded || r.attemptsStarted <= r.attemptLimit) && (!(r.phase === "Unconfigured") || r.attemptsStarted === 0) && (!(r.phase === "Ready") || (r.unbounded || r.attemptsStarted < r.attemptLimit));
 }
 
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 //@ pure
 export function canConfigure(r: RetryRun, attemptLimit: number): boolean {
   return r.phase === "Unconfigured" && attemptLimit >= 0;
 }
 
-/** Story: Finish a structured request within its budget / Only a positive configured timeout sets a deadline (spec/chatRetry.md:35) */
+/** Story: Finish a structured request within its budget / Only a positive configured timeout sets a deadline (spec/chatRetry.md) */
 //@ pure
 export function hasDeadline(isSet: boolean, deadlineMs: number): boolean {
   return isSet && deadlineMs > 0;
 }
 
-/** Story: Finish a structured request within its budget / Only a positive configured timeout sets a deadline (spec/chatRetry.md:35) */
+/** Story: Finish a structured request within its budget / Only a positive configured timeout sets a deadline (spec/chatRetry.md) */
 //@ pure
 export function deadlineExpired(hasLimit: boolean, left: number): boolean {
   return hasLimit && left <= 0;
 }
 
-/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md:44) */
+/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md) */
 //@ pure
 export function canStopBeforeAttempt(r: RetryRun): boolean {
   return r.phase === "Ready";
 }
 
-/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md:44) */
+/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md) */
 //@ pure
 export function stopBeforeAttempt(r: RetryRun): RetryRun {
   //@ ensures (inv(r) && canStopBeforeAttempt(r)) ==> alwaysRetriesBounded(\result)
@@ -75,13 +75,13 @@ export function stopBeforeAttempt(r: RetryRun): RetryRun {
   return { ...r, phase: "CallbackStopped" };
 }
 
-/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md:44) */
+/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md) */
 //@ pure
 export function canPreflight(r: RetryRun): boolean {
   return r.phase === "Ready";
 }
 
-/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md:44) */
+/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md) */
 //@ pure
 export function preflight(r: RetryRun, cancelled: boolean, expired: boolean): RetryRun {
   //@ ensures (inv(r) && canPreflight(r)) ==> alwaysRetriesBounded(\result)
@@ -89,22 +89,22 @@ export function preflight(r: RetryRun, cancelled: boolean, expired: boolean): Re
   //@ ensures (inv(r) && canPreflight(r)) ==> stepOnlyStartConsumesAnAttempt(r, "preflight", \result)
   //@ ensures (inv(r) && canPreflight(r)) ==> stepOkOnlyAfterValidation(r, "preflight", \result)
   //@ ensures (inv(r) && canPreflight(r)) ==> stepTerminalPhasesStayClosed(r, \result)
-  return cancelled ? ({ ...r, phase: "Aborted" } as RetryRun) : (expired ? ({ ...r, phase: "Expired" } as RetryRun) : ({ ...r, phase: "Requesting", attemptsStarted: r.attemptsStarted + 1 } as RetryRun));
+  return cancelled ? ({ ...r, phase: "Aborted" } as RetryRun) : (expired ? ({ ...r, phase: "Expired" } as RetryRun) : ({ ...r, phase: "Requesting", attemptsStarted: exact_chatRetry(r.attemptsStarted + 1) } as RetryRun));
 }
 
-/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md:44) */
+/** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md) */
 //@ pure
 export function stepOnlyStartConsumesAnAttempt(before: RetryRun, via: string, after: RetryRun): boolean {
-  return via === "preflight" && after.phase === "Requesting" ? after.attemptsStarted === before.attemptsStarted + 1 : after.attemptsStarted === before.attemptsStarted;
+  return via === "preflight" && after.phase === "Requesting" ? after.attemptsStarted === exact_chatRetry(before.attemptsStarted + 1) : after.attemptsStarted === before.attemptsStarted;
 }
 
-/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md:63) */
+/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md) */
 //@ pure
 export function canAcceptReply(r: RetryRun): boolean {
   return r.phase === "Requesting";
 }
 
-/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md:63) */
+/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md) */
 //@ pure
 export function acceptReply(r: RetryRun): RetryRun {
   //@ ensures (inv(r) && canAcceptReply(r)) ==> alwaysRetriesBounded(\result)
@@ -115,31 +115,31 @@ export function acceptReply(r: RetryRun): RetryRun {
   return { ...r, phase: "Accepted" };
 }
 
-/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md:63) */
+/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md) */
 //@ pure
 export function stepOkOnlyAfterValidation(before: RetryRun, via: string, after: RetryRun): boolean {
   return !(after.phase === "Accepted" && before.phase !== "Accepted") || (before.phase === "Requesting" && via === "acceptReply");
 }
 
-/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md:63) */
+/** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md) */
 //@ pure
 export function sometimesValidated(r: RetryRun): boolean {
   return r.phase === "Accepted";
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function isFinalCode(code: string): boolean {
   return code === "aborted" || code === "deadline" || code === "budget";
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function canRejectReply(r: RetryRun): boolean {
   return r.phase === "Requesting";
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function rejectReply(r: RetryRun, terminal: boolean): RetryRun {
   //@ ensures (inv(r) && canRejectReply(r)) ==> alwaysRetriesBounded(\result)
@@ -150,25 +150,25 @@ export function rejectReply(r: RetryRun, terminal: boolean): RetryRun {
   return { ...r, phase: terminal ? "TerminalFailure" : (r.unbounded || r.attemptsStarted < r.attemptLimit ? "Ready" : "Exhausted") };
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function alwaysExhaustionUsesBudget(r: RetryRun): boolean {
   return !(r.phase === "Exhausted") || (!r.unbounded && r.attemptsStarted === r.attemptLimit);
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function stepTerminalPhasesStayClosed(before: RetryRun, after: RetryRun): boolean {
   return !(before.phase !== "Unconfigured" && before.phase !== "Ready" && before.phase !== "Requesting") || after.phase === before.phase;
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function sometimesRetry(r: RetryRun): boolean {
   return r.phase === "Ready" && r.attemptsStarted > 0;
 }
 
-/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md:78) */
+/** Story: Finish a structured request within its budget / Terminal errors stop the retry loop (spec/chatRetry.md) */
 //@ pure
 export function sometimesExhaustedAfterRequest(r: RetryRun): boolean {
   return r.phase === "Exhausted" && r.attemptsStarted > 0;
@@ -190,11 +190,11 @@ export function enabled(current: RetryRun, event: Event): boolean {
 export function step(current: RetryRun, event: Event): RetryRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "configure" && canConfigure(current, event.attemptLimit)) return configure(current, event.attemptLimit, event.unbounded);
-  if (event.type === "stopBeforeAttempt" && canStopBeforeAttempt(current)) return stopBeforeAttempt(current);
-  if (event.type === "preflight" && canPreflight(current)) return preflight(current, event.cancelled, event.expired);
-  if (event.type === "acceptReply" && canAcceptReply(current)) return acceptReply(current);
-  if (event.type === "rejectReply" && canRejectReply(current)) return rejectReply(current, event.terminal);
+  if (event.type === "configure") return canConfigure(current, event.attemptLimit) ? configure(current, event.attemptLimit, event.unbounded) : current;
+  if (event.type === "stopBeforeAttempt") return canStopBeforeAttempt(current) ? stopBeforeAttempt(current) : current;
+  if (event.type === "preflight") return canPreflight(current) ? preflight(current, event.cancelled, event.expired) : current;
+  if (event.type === "acceptReply") return canAcceptReply(current) ? acceptReply(current) : current;
+  if (event.type === "rejectReply") return canRejectReply(current) ? rejectReply(current, event.terminal) : current;
   return current;
 }
 
@@ -243,4 +243,10 @@ export function parseState(x: unknown): RetryRun | undefined {
 export function initialHolds(): RetryRun {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_chatRetry(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

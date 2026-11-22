@@ -19,6 +19,7 @@
 //              the same cases on the live path (the slop probe hook with SLOP_PROBE_PHOTOS, the desk).
 // The relay inside the slop world (adversary personas exchanging items after the reveal) is gated in
 // the slop block (scripts/sim/slop.ts, "relay world" gates), on the pinned seeds.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { findLeaks } from "../../packages/core/src/index.ts";
 import { appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "../../packages/engine/src/packs/slop/copy.ts";
@@ -35,8 +36,8 @@ import { slopRelayAdversarial, type AdversarialResult } from "../../packages/sim
 import { appWiring, SLOP_PROBE_PHOTOS } from "../../packages/network/service/packs.ts";
 import { Block, expect } from "./gate.ts";
 
-const ROOT = `${import.meta.dir}/../../evals`;
-const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
+const ROOT = `${import.meta.dirname}/../../evals`;
+const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 const NOW = Date.UTC(2026, 9, 9, 18);
@@ -62,7 +63,7 @@ export async function relayBlock(b: Block): Promise<void> {
     const honest = by("honest"), held = honest.filter(x => stopped(x.text)).map(x => x.text);
     b.gate(`relay corpus ${file}: honest messages held <= 5% (n ${honest.length})`, honest.length >= 25 && held.length / honest.length <= 0.05, `${pct(held.length / honest.length)}${held.length ? `; held: ${held.slice(0, 3).join(" | ")}` : ""}`, blocking);
   }
-  const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
+  const benign = (await fileAt(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const benignHeld = benign.filter(t => relayItem(text(t), baseCtx()).decision !== "pass");
   b.gate(`relay corpus network/benign-adult.txt: held <= 2% (n ${benign.length})`, benignHeld.length / benign.length <= 0.02, `${pct(benignHeld.length / benign.length)}${benignHeld.length ? `; ${benignHeld.slice(0, 3).join(" | ")}` : ""}`);
 
@@ -216,7 +217,7 @@ export async function relayBlock(b: Block): Promise<void> {
     expect(findLeaks(m.text)).toEqual([]);
     expect(appearanceLeak(m.text)).toBeNull();
     expect(slopProbeMessage({ text: base }, [])).toEqual({ text: base, photos: [] });
-    const copy = await Bun.file(`${import.meta.dir}/../../packages/engine/src/packs/slop/copy.ts`).text();
+    const copy = await fileAt(`${import.meta.dirname}/../../packages/engine/src/packs/slop/copy.ts`).text();
     expect(copy).not.toMatch(/no photo/i);
   });
 }
@@ -331,10 +332,10 @@ async function clefGates(b: Block): Promise<void> {
   // ---- the rules + Clef arm from recorded answers (never live) ---------------------------------------
   const cache = await loadClefCache(CLEF_CACHE);
   if (!cache?.size) {
-    b.track("relay + Clef arm (recorded answers): skipped, no evals/relay/clef-answers.jsonl (fill it with `bun run relay-eval --live`)", false, "rules-only gates above still block");
+    b.track("relay + Clef arm (recorded answers): skipped, no evals/relay/clef-answers.jsonl (fill it with `pnpm run relay-eval --live`)", false, "rules-only gates above still block");
     return;
   }
-  const weights = (await Bun.file(CLEF_WEIGHTS).exists()) ? await loadRelayClefWeights(CLEF_WEIGHTS) : DEFAULT_RELAY_CLEF_WEIGHTS;
+  const weights = (await fileAt(CLEF_WEIGHTS).exists()) ? await loadRelayClefWeights(CLEF_WEIGHTS) : DEFAULT_RELAY_CLEF_WEIGHTS;
   const model = (weights.provenance?.model as "clef" | "clef-flash" | undefined) ?? "clef-flash";
   for (const file of [...TUNING_FILES, HELDOUT_FILE]) {
     const rows = await loadCorpus(file);

@@ -1,6 +1,9 @@
 // Real local HTTP provider transport and Postgres OTP lifecycle. No external provider is called.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { BlooioClient } from "@thenetwork/blooio";
 import { APPS } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
@@ -15,7 +18,7 @@ import { dropDb, migratedDb, pgAvailable } from "./pg.ts";
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("Postgres required");
 const KEY = "owned-otp-integration-key-0123456789";
 const ENV = { OTP_PROVIDER: "blooio", BLOOIO_API_KEY: "synthetic-key", BLOOIO_FROM: "+12125550100" };
-let url: string, sql: SQL, store: PgPeopleStore, server: ReturnType<typeof Bun.serve>;
+let url: string, sql: SQL, store: PgPeopleStore, server: HttpServer;
 let mode = "queued", sequence = 0, now = Date.UTC(2026, 9, 13), phoneSequence = 10;
 const requests: Array<{ code: string; key: string; from: string; to: string }> = [];
 const logs: string[] = [];
@@ -27,7 +30,7 @@ const service = (p: OtpProvider) => new OtpService(store, p, { hashKey: KEY, now
 describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
   beforeAll(async () => {
     url = await migratedDb("blooio_otp"); sql = new SQL({ url }); store = new PgPeopleStore(sql);
-    server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+    server = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) {
       const path = new URL(req.url).pathname;
       if (req.method === "GET") {
         expect(path).toMatch(/^\/v4\/chats\/chat_message_\d+\/messages\/message_\d+\/status$/);
@@ -40,14 +43,14 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       const body = await req.json() as { text: string; from: string; to: string };
       const code = /\b\d{6}\b/.exec(body.text)![0];
       requests.push({ code, key: req.headers.get("idempotency-key")!, from: body.from, to: body.to });
-      if (mode === "timeout") { await Bun.sleep(120); return Response.json({ id: "late", status: "queued" }); }
+      if (mode === "timeout") { await sleep(120); return Response.json({ id: "late", status: "queued" }); }
       if (mode === "reject") return Response.json({ error: { message: `echoed code ${code} phone ${body.to} key synthetic-key`, code: "denied" } }, { status: 403 });
       if (mode === "missing-id") return Response.json({ status: "queued" });
       const id = `message_${++sequence}`;
       return Response.json({ id, ...(mode === "no-chat" ? {} : { chat_id: `chat_${id}` }), ...(mode === "missing-status" ? {} : { status: mode === "no-chat" ? "queued" : mode }) }, { status: 201 });
     } });
   });
-  afterAll(async () => { server?.stop(true); await sql?.close(); if (url) await dropDb(url); });
+  afterAll(async () => { await server?.stop(true); await sql?.close(); if (url) await dropDb(url); });
 
   test("explicit provider configuration preserves Twilio and rejects missing or ambiguous Blooio authority", () => {
     expect(() => otpProviderFromEnv({ PLATFORM_ENV: "dev", OTP_PROVIDER: "unexpected" })).toThrow("Unknown OTP_PROVIDER");
@@ -66,9 +69,9 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     mode = "queued";
     const p = phone();
     const api = createPublicApi({ store, otp: provider(), env: { PLATFORM_ENV: "dev" }, hashKey: KEY, now: () => now, minStartMs: 0, minVerifyMs: 0, log: l => logs.push(l) });
-    const http = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async req => (await api.fetch(new Request(`http://localhost:5103${new URL(req.url).pathname}`, req))) ?? new Response(null, { status: 404 }) });
+    const http = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: async req => (await api.fetch(new Request(`http://localhost:5103${new URL(req.url).pathname}`, req))) ?? new Response(null, { status: 404 }) });
     try {
-      const post = (path: string, body: unknown) => fetch(`http://127.0.0.1:${http.port}${path}`, { method: "POST", headers: { "content-type": "application/json", host: "localhost:5103" }, body: JSON.stringify(body) });
+      const post = (path: string, body: unknown) => fetchWithHost(`http://127.0.0.1:${http.port}${path}`, { method: "POST", headers: { "content-type": "application/json", host: "localhost:5103" }, body: JSON.stringify(body) });
       const start = await post("/api/auth/otp/start", { phone: p });
       expect(start.status).toBe(200);
       const sent = requests.at(-1)!;
@@ -83,7 +86,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       expect(first.status).toBe(200); expect(first.headers.get("set-cookie")).toContain("sid_peon=");
       expect((await post("/api/auth/otp/verify", { phone: p, code: sent.code })).status).toBe(400);
       expect(logs.join("\n")).not.toContain(sent.code);
-    } finally { http.stop(true); }
+    } finally { await http.stop(true); }
   });
 
   test("configured production phone-code apps retain genuine OTP, profile persistence and send/guess caps", async () => {
@@ -103,7 +106,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       log: (line: string) => logs.push(line),
     };
     let api = createPublicApi(options);
-    const http = Bun.serve({
+    const http = await serveHttp({
       hostname: "127.0.0.1",
       port: 0,
       fetch: async (req) => {
@@ -116,7 +119,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     });
     try {
       const call = (host: string, path: string, body?: unknown, cookie?: string) =>
-        fetch(`http://127.0.0.1:${http.port}${path}`, {
+        fetchWithHost(`http://127.0.0.1:${http.port}${path}`, {
           method: body ? "POST" : "GET",
           headers: {
             host,
@@ -214,7 +217,7 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
       expect((await call("friends.help", "/api/auth/otp/verify", { phone: guessed, code })).status).toBe(400);
       expect(logs.join("\n")).not.toContain(code);
     } finally {
-      http.stop(true);
+      await http.stop(true);
     }
   });
   test("private receipt survives Postgres and enables a status-only lookup without exposing it in auth responses", async () => {

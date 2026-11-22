@@ -18,6 +18,8 @@
 //     under 0.8x by group and by rating quintile are flagged; small groups are suppressed;
 //   - the labelling page cannot make a network request.
 // TRACKED: the label-count curve (tau, held-out accuracy, ECE) and calibration.
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
+import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +33,7 @@ import { applyHead } from "../../packages/engine/src/packs/slop/clef.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 export const CLEF_PINNED = { seed: 1, perCity: 250, labels: 2000 };
-const ROOT = join(import.meta.dir, "..", "..");
+const ROOT = join(import.meta.dirname, "..", "..");
 
 /** A fake Workers AI fetch answering from synthetic feature rows (keyed by the photo bytes). */
 function fakeFetch(rows: ReadonlyMap<string, Record<string, number>>, calls: string[]) {
@@ -64,7 +66,7 @@ export async function clefBlock(b: Block): Promise<void> {
     const dir = await mkdtemp(join(tmpdir(), "clef-sim-"));
     try {
       const path = join(dir, "clefWeights.json");
-      await Bun.write(path, JSON.stringify(fit.weights, null, 2));
+      await writePath(path, JSON.stringify(fit.weights, null, 2));
       const w = await loadClefWeights(path);
       expect(w.placeholder).toBe(false);
       expect(w.provenance?.fitter).toBe("clef-fit-1");
@@ -145,11 +147,11 @@ export async function clefBlock(b: Block): Promise<void> {
     const dir = await mkdtemp(join(tmpdir(), "clef-cli-"));
     try {
       const labels = DIMS.flatMap(dim => synthLabels(s, { n: 300, dim, seed: 3 }));
-      await Bun.write(join(dir, "features.jsonl"), [...s.rows].map(([id, x]) => JSON.stringify({ id, x })).join("\n"));
-      await Bun.write(join(dir, "labels.jsonl"), labels.map(l => JSON.stringify(l)).join("\n"));
+      await writePath(join(dir, "features.jsonl"), [...s.rows].map(([id, x]) => JSON.stringify({ id, x })).join("\n"));
+      await writePath(join(dir, "labels.jsonl"), labels.map(l => JSON.stringify(l)).join("\n"));
       const env = { ...process.env };
       for (const k of ["CLOUDFLARE_AI_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "OPENAI_API_KEY", "SURPLUS_API_KEY"]) delete env[k];
-      const cli = (...args: string[]) => Bun.spawnSync([process.execPath, "run", "--conditions", "eliza-source", join(ROOT, "scripts/clef-fit.ts"), ...args], { cwd: ROOT, env });
+      const cli = (...args: string[]) => spawnProcessSync([process.execPath, "--import", "tsx", "--conditions", "eliza-source", join(ROOT, "scripts/clef-fit.ts"), ...args], { cwd: ROOT, env });
       const r = cli("fit", "--features", join(dir, "features.jsonl"), "--pairs", join(dir, "labels.jsonl"), "--out", join(dir, "w.json"), "--version", "sim-cli");
       expect(r.exitCode).toBe(0);
       const w = await loadClefWeights(join(dir, "w.json"));
@@ -157,18 +159,18 @@ export async function clefBlock(b: Block): Promise<void> {
       expect(w.provenance?.pairsSha256?.length).toBe(64);
       // No photo id appears in the printed report (aggregates only).
       expect(r.stdout.toString()).not.toContain(s.train[0]!);
-      await Bun.write(join(dir, "photos", "a.jpg"), photoBytes("a"));
-      await Bun.write(join(dir, "manifest.jsonl"), JSON.stringify({ photo: "a.jpg", subject: "s", age: 30, ageVerified: true, consent: "r1" }));
+      await writePath(join(dir, "photos", "a.jpg"), photoBytes("a"));
+      await writePath(join(dir, "manifest.jsonl"), JSON.stringify({ photo: "a.jpg", subject: "s", age: 30, ageVerified: true, consent: "r1" }));
       const dry = cli("features", "--photos", join(dir, "photos"), "--manifest", join(dir, "manifest.jsonl"), "--out", join(dir, "f.jsonl"));
       expect(dry.exitCode).toBe(0);
       expect(dry.stdout.toString()).toContain("cost estimate");
       expect(dry.stdout.toString()).toContain("dry run");
-      expect(await Bun.file(join(dir, "f.jsonl")).exists()).toBe(false);
+      expect(await fileAt(join(dir, "f.jsonl")).exists()).toBe(false);
       const live = cli("features", "--photos", join(dir, "photos"), "--manifest", join(dir, "manifest.jsonl"), "--out", join(dir, "f.jsonl"), "--live");
       expect(live.exitCode).toBe(2);
       expect(live.stdout.toString()).toContain("cost estimate"); // the estimate prints before the env check
       expect(live.stderr.toString()).toContain("CLOUDFLARE_AI_TOKEN");
-      expect(await Bun.file(join(dir, "f.jsonl")).exists()).toBe(false);
+      expect(await fileAt(join(dir, "f.jsonl")).exists()).toBe(false);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
@@ -204,7 +206,7 @@ export async function clefBlock(b: Block): Promise<void> {
   });
 
   await b.run("clef labelling page: local only (CSP forbids network; no network API or remote URL in the page)", async () => {
-    const html = await Bun.file(join(ROOT, "tools/clef-label/index.html")).text();
+    const html = await fileAt(join(ROOT, "tools/clef-label/index.html")).text();
     const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? "";
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("connect-src 'none'");

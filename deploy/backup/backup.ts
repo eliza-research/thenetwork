@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Back up the Network's Postgres to the private R2 backup bucket (docs/deploy.md section 8).
-//   bun run deploy/backup/backup.ts                 # BACKUP_DATABASE_URL -> R2 (the Railway cron service)
-//   bun run deploy/backup/backup.ts --out ./runs/backup --local   # a local copy only, no upload
+//   node --import tsx --env-file-if-exists=.env deploy/backup/backup.ts                 # BACKUP_DATABASE_URL -> R2 (the Railway cron service)
+//   node --import tsx --env-file-if-exists=.env deploy/backup/backup.ts --out ./runs/backup --local   # a local copy only, no upload
 //
 // What it does:
 //  1. Opens a read-only REPEATABLE READ transaction on BACKUP_DATABASE_URL and exports its snapshot.
@@ -15,10 +15,11 @@
 // The dump holds member data (phone numbers, messages). The bucket must be private, its token scoped to
 // it alone, and a lifecycle rule deletes objects after 35 days (docs/deploy.md 8.1). Logs never hold a URL.
 // Without the encryption key nobody can read an uploaded dump: keep a copy of the key outside Railway.
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
 import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { assertBucketPrivate, backupBucketFromEnv, backupKeyFromEnv, encryptFile, pgBin, redactUrls, rowCounts, run, type BackupKey, type Manifest } from "./lib.ts";
 
 /** libpq environment for a URL: the password never appears in a process list. */
@@ -61,7 +62,7 @@ export async function backup(o: { url: string; outDir: string; roles?: boolean; 
       manifest.files.roles = "roles.sql";
     } catch (e) { log("roles not dumped (needs a superuser login); a restore on the same server does not need them", { error: redactUrls((e as Error).message) }); }
   }
-  await Bun.write(join(o.outDir, "manifest.json"), JSON.stringify(manifest, null, 1));
+  await writePath(join(o.outDir, "manifest.json"), JSON.stringify(manifest, null, 1));
   const bytes = (await stat(dump)).size;
   return { dir: o.outDir, manifest, bytes };
 }
@@ -81,7 +82,7 @@ export async function upload(dir: string, manifest: Manifest, prefix: string, en
     let local = join(dir, f), name = f;
     if (key) { name = `${f}.enc`; local = join(dir, name); await encryptFile(join(dir, f), local, key); }
     const k = `${prefix}/${name}`;
-    await bucket.write(k, Bun.file(local), { type: "application/octet-stream" });
+    await bucket.write(k, await fileAt(local).blob(), { type: "application/octet-stream" });
     keys.push(k);
   }
   // The manifest goes last: a prefix with a manifest is a complete backup.

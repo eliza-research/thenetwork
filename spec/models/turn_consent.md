@@ -8,6 +8,17 @@ A member needs STOP to take effect on every app that shares the line.
 
 Check turn claims, STOP and START, consent ordering, and gateway projections. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [signed inbox spec](../signedInbox.md) generates claim, replay, completion, and compliance recovery decisions. The [webhook inbox spec](../webhookInbox.md) generates selection, retry, and cancellation decisions for the compiled drain shell. Pending-row completion and cancellations commit together. A failed STOP stays pending. The [turn receipt spec](../turnReceipt.md) drives the compiled gateway receipt shell under the turn row lock. The reply status and receipt body commit together before notification projection. The [shared context spec](../sharedContext.md) generates the context eligibility and output gates for the canonical member. The service verifies signed requests and holds the appropriate locks during these operations.
+
+The [shared-line consent journey](../sharedLineConsentJourney.md)
+exercises STOP and START through the signed HTTP entry point, checks the
+gateway's returned consent update, and reads the effective consent on
+both apps from their stored ledgers. The [carrier consent
+rules](../carrierConsent.md) define when the parser maps courtesy
+keywords and independent opt-out clauses to Stop. The journey supplies
+both accepted and rejected text to that parser. The whole-flow model
+starts with the reader's result and keeps its existing transitions.
+
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -652,7 +663,7 @@ module turn_consent {
   /**
    * The legacy webhook drain (inbox.ts handleWaiting): compliance first, else the oldest row; ordinary rows wait while a
    * signed turn of the sender runs or ended unresolved a short while ago. A failure counts an attempt; at 5 the row is
-   * failed, except a STOP, which stays pending (SD-129 fix). A handled STOP cancels the ordinary rows received before it.
+   * failed, except a STOP, which stays pending (SD-129 fix). A handled STOP cancels the ordinary rows received before it in the same queue write. The model abstracts the production 50-row read window.
    * The effects run as one step at consent time = now, with no gateway and no fence.
    */
   action drain(m: int, failed: bool, c1: bool, c2: bool): bool = all {

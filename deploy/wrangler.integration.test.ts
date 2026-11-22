@@ -1,25 +1,26 @@
-// Exercise the actual operator wrapper as a child process. bunx is a recording CLI boundary;
+// Exercise the operator wrapper as a child process with a recording pnpm command.
 // this test never loads Wrangler, reads credentials, authenticates or contacts Cloudflare.
-import { expect, test } from "bun:test";
+import { findExecutable, spawnProcessSync } from "../packages/core/src/runtime/process.ts";
+import { expect, test } from "vitest";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("Wrangler OS-session opt-in preserves context and account/deploy guards", () => {
-  const bash = Bun.which("bash");
+  const bash = findExecutable("bash");
   if (!bash) throw new Error("This integration test needs Bash on PATH (Git Bash on Windows).");
   const root = mkdtempSync(join(tmpdir(), "ntwrk wrangler cli-"));
   const home = "/synthetic-wrangler-home";
   try {
-    const cli = join(root, "bunx");
+    const cli = join(root, "pnpm");
     writeFileSync(cli, '#!/bin/bash\nprintf \'context=%s\\naccount=%s\\n\' "${XDG_CONFIG_HOME-UNSET}" "$CLOUDFLARE_ACCOUNT_ID"\nprintf \'arg=%s\\n\' "$@"\n');
     chmodSync(cli, 0o700);
     // Let Bash derive its own PATH from cwd: native Windows drive letters cannot
     // be inserted into a colon-separated POSIX PATH. Keep only the recording CLI
-    // and shell tools, with no inherited login files, provider env or real bunx.
-    const invoke = (extra: Record<string, string>, args = ["whoami"]) => Bun.spawnSync(
+    // and shell tools, with no inherited login files or provider environment.
+    const invoke = (extra: Record<string, string>, args = ["whoami"]) => spawnProcessSync(
       [bash, "--noprofile", "--norc", "-c", 'export PATH="$PWD:/usr/bin:/bin"; exec bash "$@"', "wrangler-test",
-        join(import.meta.dir, "../scripts/wrangler.sh").replaceAll("\\", "/"), ...args],
+        join(import.meta.dirname, "../scripts/wrangler.sh").replaceAll("\\", "/"), ...args],
       { cwd: root, env: { HOME: home, CLOUDFLARE_ACCOUNT_ID: "synthetic-account", ...extra } },
     );
     const normal = invoke({});

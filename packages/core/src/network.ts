@@ -83,6 +83,14 @@ export interface SimMeta {
   plan?: PlanMeta;
   /** Outbound only, on a "crew_offer": the crew being offered. The persona opts in ("yes") or out. */
   crew?: { crewId: string; activity?: string };
+  /** Issuer-owned member invitation URL in the requester's own direct reply. Never a general URL exemption. */
+  approvedInviteLink?: string;
+  /** Exact invitees whose verified join notices are present in this outbound message. */
+  invitationJoins?: readonly MemberId[];
+  /** The party whose decision is requested on an exact staff-reviewed home-help plan. */
+  homeHelpConsentFor?: "requester" | "helper";
+  /** A private invitation question, evidence readback, or review status for the signed requester. */
+  privateInviteVouch?: true;
   [k: string]: unknown;
 }
 
@@ -111,6 +119,8 @@ export interface SimMessage {
 /** An inbound webhook payload as the Network sees it. */
 export interface InboundMessage {
   id: string; memberId: MemberId; body: string; ts: number; channel: ChannelKind; keyword?: Keyword;
+  /** The signed gateway's exact receive time, before normalization to the local clock. */
+  signedReceivedAt?: number;
   /** A tapback on an outbound message (SimMeta.reaction); `body` then carries the emoji. Never a keyword. */
   reaction?: Reaction;
   /**
@@ -124,7 +134,10 @@ export interface InboundMessage {
 
 export interface MeetingReport {
   proposalId: string; participants: MemberId[]; at: number; city: City; kind?: string;
+  previousAt?: number;
 }
+
+export type InitialInviteReceipt = { kind: "accepted"; at: number } | { kind: "not_sent" };
 
 export interface NetworkContext {
   clock: Clock;
@@ -134,6 +147,8 @@ export interface NetworkContext {
    * quiet hours and conversation caps). The Network decides this; a context never guesses it.
    */
   send(memberId: MemberId, body: string, opts?: { meta?: SimMeta; idempotencyKey?: string; reply?: boolean }): SimMessage;
+  /** For a queue-backed channel, read the outcome of a prior committed send. Undefined means unresolved. */
+  initialInviteReceipt?(messageId: string): InitialInviteReceipt | undefined;
   /**
    * Public view of joined members in core types, as a perfect onboarding/extraction would
    * capture it (stated interests, intents, presence, boundaries and private disclosures
@@ -153,6 +168,8 @@ export interface NetworkContext {
    * later if they accept. Returns the new member id, or undefined when the world has no factory.
    */
   invite?(inviterId: MemberId, friendName: string): MemberId | undefined;
+  /** Current verified cross-city join evidence, scoped to this inviter and app. Not a matching input. */
+  verifiedJoinedInviteeName?(inviterId: MemberId, inviteeId: MemberId): string | undefined;
 }
 
 export interface NetworkUnderTest {

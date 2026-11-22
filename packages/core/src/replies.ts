@@ -1,3 +1,5 @@
+import { coordinatedStopClause, stopWordAllowsCourtesy, type StopConjunct } from "./generated/carrierConsent.ts";
+
 // Member reply understanding (audit 2026-10-08 network-consent-2, plugin-prototypes-12).
 // Deterministic, no model. One shared parser for "did the member say yes?" and "does the member
 // want us to stop texting?", so the Network, the simulator's stub Network and the Blooio keyword
@@ -276,11 +278,32 @@ const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|dej
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
 const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
 const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
+const OPT_OUT_COORDINATION = /\band\b/i;
 
-function optOutClauses(text: string, norm: (value: string) => string): string[] {
+function readStopConjunct(clause: string, startsStop: (clause: string) => boolean): StopConjunct {
+  const command = clause.replace(/^(?:please|pls) /, "");
+  const negated = NEGATED_OPT_OUT.exec(command);
+  if (negated) {
+    if (negated.index !== 0 && command.slice(0, negated.index) !== "i ") return "OtherClause";
+    const complement = command.slice(negated.index + negated[0].length).trim().toUpperCase();
+    return complement && !ONLY_STOP_COURTESY.test(complement) ? "CompleteNegation" : "IncompleteNegation";
+  }
+  return startsStop(command) ? "ExplicitStop" : "OtherClause";
+}
+
+function optOutClauses(text: string, norm: (value: string) => string, startsStop: (clause: string) => boolean): string[] {
   const t = norm(text);
   if (!NEGATED_OPT_OUT.test(t)) return [t];
-  return text.split(OPT_OUT_CLAUSE).map(norm).filter(clause => clause && !NEGATED_OPT_OUT.test(clause));
+  return text.split(OPT_OUT_CLAUSE).flatMap(part => {
+    const clause = norm(part);
+    if (!clause) return [];
+    if (!NEGATED_OPT_OUT.test(clause)) return [clause];
+    const [first, last, ...rest] = part.split(OPT_OUT_COORDINATION).map(norm);
+    if (!first || !last || rest.length) return [];
+    const result = coordinatedStopClause(readStopConjunct(first, startsStop), readStopConjunct(last, startsStop));
+    if (result === "FirstStops") return [first];
+    return result === "LastStops" ? [last] : [];
+  });
 }
 
 /**
@@ -299,8 +322,9 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
-  const clauses = optOutClauses(text, norm);
-  if (clauses.some(clause => LIKELY_EN.test(clause) || LIKELY_ES.test(clause) || /\bleave me alone\b/.test(clause))) return { match: "likely", scope: "all", lang };
+  const clauses = optOutClauses(text, norm, clause => LIKELY_EN.exec(clause)?.index === 0 || LIKELY_ES.exec(clause)?.index === 0);
+  if (clauses.some(clause => LIKELY_EN.test(clause) || LIKELY_ES.test(clause))) return { match: "likely", scope: "all", lang };
+  if (clauses.length === 1 && clauses[0] === t && hasStopWithCourtesy(keywordKey(text)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   if (clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
@@ -318,13 +342,21 @@ export const KEYWORDS = {
   stop: ["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT"],
   /** "STOP PLEASE", "PLEASE STOP": a stop with a courtesy word (the platform ledger). */
   stopPolite: ["STOP PLEASE", "PLEASE STOP"],
-  /** Courtesy and urgency words a whole-message STOP or STOP ALL may carry around it ("PLS STOP NOW", "STOP RN", "STOP ALL PLS"). */
   stopTail: ["PLEASE", "PLS", "PLZ", "NOW", "OK", "OKAY", "JUST", "ALREADY", "THANKS", "THANK YOU", "THX", "TY", "RN", "ASAP", "RIGHT NOW", "IMMEDIATELY", "FOR REAL"],
   /** Spanish whole-message opt-outs, accents folded. */
   stopEs: ["PARA", "PARAR", "ALTO", "BASTA", "BAJA", "CANCELAR", "DETENER", "NO MAS", "NO MAS MENSAJES"],
   start: ["START", "UNSTOP", "SUBSCRIBE", "RESUME"],
   help: ["HELP", "INFO"],
 } as const;
+
+const STOP_TAIL = `(?:${KEYWORDS.stopTail.join("|")})`;
+const COURTESY_STOP = `(?:${KEYWORDS.stop.filter(stopWordAllowsCourtesy).join("|")})`;
+const ONLY_STOP_COURTESY = new RegExp(`^${STOP_TAIL}(?: ${STOP_TAIL})*$`);
+const STOP_WITH_COURTESY = new RegExp(`^(?:${STOP_TAIL} )*${COURTESY_STOP}(?:(?: ${STOP_TAIL})* ${COURTESY_STOP})*(?: ${STOP_TAIL})*$`);
+
+export function hasStopWithCourtesy(key: string): boolean {
+  return STOP_WITH_COURTESY.test(key);
+}
 
 /** The carrier compliance copy for STOP and HELP on the Network's line. */
 export const STOP_CONFIRMATION = "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.";
@@ -380,5 +412,7 @@ export function optOutPhrase(text: string, isLeave: (text: string) => boolean = 
   const norm = (s: string) => foldKeywordText(s).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
   const t = norm(text);
   if (!t || t.length > 160 || isLeave(text)) return false;
-  return optOutClauses(text, norm).some(clause => OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)));
+  const startsStop = (clause: string) => !isLeave(clause)
+    && (OPT_OUT_EN.some(r => r.exec(clause)?.index === 0) || OPT_OUT_ES.some(r => r.exec(clause)?.index === 0));
+  return optOutClauses(text, norm, startsStop).some(clause => OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)));
 }

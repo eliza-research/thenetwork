@@ -8,7 +8,8 @@
 // NETWORK_SERVICE_TOKEN are set (sources/service.ts), and are refused otherwise. "Shadow" engine runs
 // build a WorldSnapshot from the database and run engine-v1 on it in memory; proposals are shown as
 // ghosts and never written (PRD 34.6).
-import { SQL } from "bun";
+import { SQL } from "../../../core/src/runtime/postgres.ts";
+import { consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
 import {
   DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
@@ -22,12 +23,13 @@ import { memberFacets } from "../appProfile.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
 import { emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
-  BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
+  BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, DeliveryReason, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
   SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
 import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
+import type { GatheringRequest } from "../gatherings.ts";
 import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
 
 export interface RealOptions {
@@ -56,6 +58,24 @@ const SAID_YES = ["accepted", "countered", "confirmed", "attended", "no_show", "
 const HELD = ["COMPLETED", "FEEDBACK_COLLECTED"];
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
 export const HIDDEN_MESSAGE = "[member message hidden]";
+
+interface MessageEvidenceKey { id: string; member_id: string; direction: string; system: boolean; status: string }
+interface DeliveryEvidence {
+  app_id: AppId; member_id: string; message_id: string; status: string | null; reason: DeliveryReason | null;
+  leak_stopped: boolean; staff_released: boolean; attempted: boolean;
+}
+const guardLabel: Record<ConsoleDeliveryGuard, ObsMessage["guard"]> = {
+  DeliveryGuardUnrecorded: undefined, DeliveryGuardBlocked: "blocked", DeliveryGuardReleased: "released", DeliveryGuardChecked: "passed",
+};
+
+function deliveryOf(app: AppId, row: MessageEvidenceKey, evidence?: DeliveryEvidence) {
+  const record = evidence && consoleDeliveryEvidenceAllowed(evidence.app_id === app, evidence.member_id === row.member_id,
+    evidence.message_id === row.id, row.direction === "outbound" && row.system === false) ? evidence : undefined;
+  const check = consoleDeliveryGuard(!!record, record?.leak_stopped === true, record?.staff_released === true, record?.attempted === true);
+  const status = record?.status ?? row.status;
+  const withheld = row.direction === "outbound" && consolePreparedBodyWithheld(check, status === "parked_leak_review" || status === "dropped_leak_review");
+  return { guard: guardLabel[check], status, withheld, reason: record?.reason };
+}
 
 /** How the Network treats a member's age at one moment (network.md 6.3). */
 interface AgeState { minor: boolean; unknown: boolean }
@@ -379,7 +399,10 @@ export class RealSource implements DataSource {
         createdAt: ms(r.created_at) ?? 0, updatedAt: ms(r.updated_at) ?? 0, meetingAt: ms(r.meeting_at), runId: r.run_id ?? undefined,
       };
       const rv = reviewBy.get(r.id);
-      if (rv) o.review = this.reviewOf(rv);
+      if (rv) {
+        o.review = this.reviewOf(rv);
+        o.origin = rv.origin ?? undefined;
+      }
       if (times.has(r.id)) o.times = times.get(r.id);
       if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
@@ -477,7 +500,7 @@ export class RealSource implements DataSource {
     const s = this.store;
     const app = this.app;
     const now = this.store.clock.now, since = new Date(now - ALERT_WINDOW);
-    const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service] = await Promise.all([
+    const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service, survey] = await Promise.all([
       this.stateRow("saved_at, matching_enabled as matching, deferred, trust, counters, gate_reasons as gate"),
       sql`select id, member_id, kind, category, desire_id, outcome, tries, opportunity_id, created_at, fulfilled_at from network.requests where app_id = ${app} order by created_at desc`.catch(() => []),
       sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
@@ -492,6 +515,8 @@ export class RealSource implements DataSource {
       sql`select max(at) as at from network.matching_runs where app_id = ${app}`,
       sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`.catch(() => [{ n: 0 }]),
       this.service?.health(),
+      sql<{ yes: number; total: number }[]>`select count(*) filter(where payload->>'worthwhile'='true')::int as yes,count(*)::int as total
+        from network.events where app_id=${app} and type='interruption_feedback' and payload->>'worthwhile' in ('true','false')`,
     ]);
     // Network state (stored by the Network's PgStore).
     const row = (st as any[])[0];
@@ -556,7 +581,7 @@ export class RealSource implements DataSource {
     const card = scorecard({
       now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
-      inviters, minorContacts, leaks,
+      inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });
     const growth = growthStats({ members, opps, requests, invitees, invitesSent: inviteRows.length, growthAsks: all.filter(e => e.type === "growth_ask").length, inviters });
     s.setHealth({ alerts, scorecard: card, growth });
@@ -601,14 +626,14 @@ export class RealSource implements DataSource {
     if (!m || !this.sql) return undefined;
     const sql = this.sql;
     const rv = this.reveal || !!opts.reveal;
-    const [prof, facets, intents, presence, msgs, fallbacks] = await Promise.all([
+    const [prof, facets, intents, presence, msgs] = await Promise.all([
       sql`select name, bio, occupation, home_area from network.members where app_id = ${this.app} and id = ${id}`,
       sql`select * from network.facets where app_id = ${this.app} and member_id = ${id} order by kind, id`,
       sql`select * from network.intents where app_id = ${this.app} and member_id = ${id} order by created_at`,
       sql`select * from network.presence where app_id = ${this.app} and member_id = ${id}`,
       this.messages(id, rv),
-      this.guardFallbacks(id),
     ]);
+    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
     const p = (prof as any[])[0] ?? {};
     return {
       member: rv && p.name ? { ...m, name: p.name } : m,
@@ -619,7 +644,7 @@ export class RealSource implements DataSource {
       presence: (presence as any[]).map(presenceOf),
       edges: [...this.store.edges.values()].filter(e => e.from === id || e.to === id),
       opportunities: [...this.store.opps.values()].filter(o => o.participants.includes(id)).sort((a, b) => b.createdAt - a.createdAt),
-      messages: (msgs as any[]).map(r => this.messageOf(r, rv, fallbacks)),
+      messages: (msgs as any[]).map(r => this.messageOf(r, rv, evidence.get(r.id))),
     };
   }
 
@@ -627,16 +652,19 @@ export class RealSource implements DataSource {
   private messages(id: string, rv: boolean) {
     const sql = this.sql!;
     return rv
-      ? sql`select id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`
-      : sql`select id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
+      ? sql`select id, member_id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`
+      : sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
             from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`;
   }
 
-  /** Times (ms) at which the leak guard sent a generic version to this member (the timeline marks those messages). */
-  private async guardFallbacks(id: string): Promise<Set<number> | undefined> {
-    if (!this.netState) return undefined;
-    const rows = await this.sql!`select at from network.events where app_id = ${this.app} and type = 'guard_blocked' and object_type = 'member' and object_id = ${id} and (payload->>'fallback')::boolean`;
-    return new Set((rows as any[]).map(r => ms(r.at)!));
+  /** Reads only the app's shaped evidence, including when the queue has advanced past the message projection. */
+  private async deliveryEvidence(messages: MessageEvidenceKey[]): Promise<Map<string, DeliveryEvidence>> {
+    const sql = this.sql;
+    const ids = messages.filter(row => row.direction === "outbound" && !row.system).map(row => row.id);
+    if (!sql || !ids.length) return new Map();
+    const rows = await sql<DeliveryEvidence[]>`select app_id,member_id,message_id,status,reason,leak_stopped,staff_released,attempted
+      from network.${sql(`outbound_evidence_${this.app}`)} where app_id=${this.app} and message_id in ${sql(ids)}`;
+    return new Map(rows.map(row => [row.message_id, row]));
   }
 
   async timeline(id: string, opts: ViewOptions = {}): Promise<MemberTimeline | undefined> {
@@ -645,18 +673,21 @@ export class RealSource implements DataSource {
     const sql = this.sql;
     const rv = this.reveal || !!opts.reveal;
     const theirs = new Set([...this.store.opps.values()].filter(o => o.source !== "shadow" && o.participants.includes(id)).map(o => o.id));
-    const [msgs, events, fallbacks, pending] = await Promise.all([
+    // Include every member reference that onTimeline may use, including members replaced in earlier rosters.
+    const [msgs, events, pending] = await Promise.all([
       this.messages(id, rv),
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
-          where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id} or payload->>'memberId' = ${id} or payload->'participants' ? ${id} or payload->'members' ? ${id}
+          where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id}
+             or ${id} in (payload->>'memberId', payload->>'from', payload->>'newMemberId', payload->>'out', payload->>'in', payload->>'target', payload->>'by')
+             or payload->'participants' ? ${id} or payload->'members' ? ${id} or payload->'attendance' ? ${id}
              or (object_type = 'opportunity' and object_id = any(${`{${[...theirs].map(x => `"${x.replace(/"/g, "")}"`).join(",")}}`}::text[])))
           order by at, id limit 5000`,
-      this.guardFallbacks(id),
       this.stateRow("deferred_sends").then(rows => rows.map(r => ({ d: (typeof r.deferred_sends === "string" ? JSON.parse(r.deferred_sends) : r.deferred_sends ?? []).filter((x: any) => x?.memberId === id) }))),
     ]);
+    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     const entries: TimelineEntry[] = [
-      ...(msgs as any[]).map((r): TimelineEntry => { const message = this.messageOf(r, rv, fallbacks); return { t: message.ts, kind: "message", message }; }),
+      ...(msgs as any[]).map((r): TimelineEntry => { const message = this.messageOf(r, rv, evidence.get(r.id)); return { t: message.ts, kind: "message", message }; }),
       ...(events as any[]).filter(e => onTimeline(e as EventRow, id, theirs)).map((e): TimelineEntry => ({ t: ms(e.at) ?? 0, kind: "event", event: describe(e as EventRow, name) })),
     ];
     // Stable: at the same instant, what the system did comes before the message it sent.
@@ -670,15 +701,15 @@ export class RealSource implements DataSource {
   }
 
   /** Unless PII is revealed, what a member wrote never leaves the database (the queries select only its length). */
-  private messageOf(r: any, rv = this.reveal, fallbacks?: Set<number>): ObsMessage {
+  private messageOf(r: any, rv = this.reveal, evidence?: DeliveryEvidence): ObsMessage {
     const hidden = r.direction === "inbound" && !rv;
     const ts = ms(r.ts) ?? 0;
-    // The consent Network checks every outbound text with the leak guard (its state is stored here).
-    const guard = this.netState && r.direction === "outbound" && !r.system ? (fallbacks?.has(ts) ? "fallback" : "passed") : undefined;
+    const { guard, status, withheld, reason } = deliveryOf(this.app, r, evidence);
+    const body = withheld ? "[outbound message withheld]" : hidden ? HIDDEN_MESSAGE : scrubText(r.body ?? "", rv);
     return {
-      id: r.id, ts, direction: r.direction, body: hidden ? HIDDEN_MESSAGE : scrubText(r.body ?? "", rv), status: r.status,
+      id: r.id, ts, direction: r.direction, body, status,
       type: r.type ?? undefined, proposalId: r.opportunity_id ?? undefined, proactive: r.proactive, system: r.system,
-      ...(hidden ? { hiddenLength: r.body_len ?? 0 } : {}), ...(guard ? { guard } : {}),
+      ...(hidden ? { hiddenLength: r.body_len ?? 0 } : {}), ...(guard ? { guard } : {}), ...(reason ? { deliveryReason: reason } : {}),
     };
   }
 
@@ -704,10 +735,11 @@ export class RealSource implements DataSource {
                   from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`;
     const events = !sql ? [] : await sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
       where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id limit 2000`;
+    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     return {
       opportunity: o, members: o.participants.map(x => this.store.member(x)!).filter(Boolean),
-      messages: (msgs as any[]).map(r => ({ ...this.messageOf(r), memberId: r.member_id })),
+      messages: (msgs as any[]).map(r => ({ ...this.messageOf(r, this.reveal, evidence.get(r.id)), memberId: r.member_id })),
       run: o.runId ? this.store.runs.find(r => r.id === o.runId) : undefined,
       events: (events as any[]).map(e => describe(e as EventRow, name)),
     };
@@ -798,6 +830,17 @@ export class RealSource implements DataSource {
     return this.afterAction(await this.service.safety(actor, a));
   }
 
+  get gatheringServiceAvailable() { return this.service !== undefined; }
+
+  /** Authoring remains exclusively on the Network service. */
+  monthlyGatherings(actor: string, request: GatheringRequest) {
+    return this.service?.monthlyGatherings(actor, request);
+  }
+
+  reviewPlanPreview(actor: string, id: string, revision: number) {
+    return this.service?.reviewPlanPreview(actor, id, revision);
+  }
+
   /** A staff action the service applied: read the database again so every viewer sees it. */
   private async afterAction(r: ControlResult): Promise<ControlResult> {
     if (r.ok || r.code === "not_in_review") { await this.loading; await this.reload(); this.push(); }
@@ -829,14 +872,16 @@ export class RealSource implements DataSource {
     const re = searchPattern(q);
     const like = `%${q.trim().replace(/[\\%_]/g, x => `\\${x}`)}%`;
     const [msgs, events] = await Promise.all([
-      sql`select member_id, ts, body, type, opportunity_id from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like} order by ts desc limit ${limit}`,
+      sql`select id, member_id, ts, direction, status, system, body, type, opportunity_id
+        from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like} order by ts desc limit ${limit}`,
       // Feedback events hold what a member wrote: never searched.
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${this.app} and type <> 'feedback_given' order by at desc, id desc limit 5000`,
     ]);
+    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     const hits: SearchHit[] = [];
     for (const r of msgs as any[]) {
-      if (!this.store.members.has(r.member_id)) continue;
+      if (!this.store.members.has(r.member_id) || deliveryOf(this.app, r, evidence.get(r.id)).withheld) continue;
       const text = scrubText(r.body, this.reveal);
       // The match must survive scrubbing: a phone number or email is not findable by searching for it.
       if (!re.test(text)) continue;
@@ -945,10 +990,7 @@ export function appSnapshotSql(sql: SQL, app: string): SQL {
     if (!strings.some(x => x.includes("platform.person_blocks") || x.includes("platform.matching_ages"))) return (sql as any)(strings, ...values);
     const swapped = strings.map(x => x.replaceAll("platform.person_blocks", `platform.person_blocks_${suffix}`)
       .replaceAll("platform.matching_ages", `platform.matching_ages_${suffix}`));
-    // A real tagged template gives `raw` as a frozen, non-enumerable property. Object.assign made it
-    // enumerable, so Bun 1.4.4 and later refuse the array ("use sql.unsafe(), or define 'raw' with
-    // Object.defineProperty()") and every rewritten query failed. Build it the way the parser builds
-    // it, so the rewritten query runs on Bun 1.4.2 and on 1.4.4 and later.
+    // The query builder needs the raw segments of a tagged template.
     const raw = Object.freeze([...swapped]);
     const rebuilt = Object.freeze(Object.defineProperty([...swapped], "raw", { value: raw, enumerable: false })) as unknown as TemplateStringsArray;
     return (sql as any)(rebuilt, ...values);

@@ -1,8 +1,10 @@
 # Attention budget, digests, hold queue and consent-first probes, measured (2026-10-07)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-07-attention-budget.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Spec: [docs/design/2026-10-07-experience-design.md](../design/2026-10-07-experience-design.md), section 1 and Phase 1 of section 8, with the founder defaults D1-D18 ("the doc"). Builds on [2026-10-07-engine-v1.2.md](2026-10-07-engine-v1.2.md). **No LLM calls, $0.** Tests ran with keys unset and without `LIVE_TESTS`.
 
-The runs below used the engine experiment harness (`packages/engine/experiments/attention.ts`, `attentionNetwork.ts`) and the engine test suite, both since deleted. Validation on the current tree is `bun run sim`. This document keeps iteration 4 (the current design) in full. Iterations 1-3 are summarized below; their full text is in git history at commit `16cde70` (`git show 16cde70:docs/results/2026-10-07-attention-budget.md`).
+The runs below used the engine experiment harness (`packages/engine/experiments/attention.ts`, `attentionNetwork.ts`) and the engine test suite, both since deleted. Validation on the current tree is `pnpm run sim`. This document keeps iteration 4 (the current design) in full. Iterations 1-3 are summarized below; their full text is in git history at commit `16cde70` (`git show 16cde70:docs/results/2026-10-07-attention-budget.md`).
 
 ## Earlier iterations (summary)
 
@@ -23,7 +25,7 @@ The founder keeps "always probe first", so iteration 4 tests designs that stay a
 - **(c) Pre-commit vs (b) inferred time: a tie on meetings** (with fixes 15.0 vs 15.0; without 10.8 vs 11.8). Pre-commit halves seats at a not-free time again (29% vs 47%), and inference alone already beats today's default time (47% vs 61%). (c) is the design that matches the copy ("you're both in, Thu 7pm"), so it is the recommendation; (b) is the fallback when no offered time fit.
 - **Warm mentions**: about 14-15 probes per seed (3.5% of probes) qualify under the D5 rules below. With the simulator's own probe model (no warm effect) they change nothing (HQ-acw0 = HQ-ac exactly). With an assumed lift of 0.3 on the yes probability (harness-only sensitivity): HQ-acw 15.0 vs HQ-ac 13.1 (+1.9, inside noise). Coverage is the limit, not the lift.
 - **Privacy cost.** Of the members who said yes and then learned who it was, **3-6% decided no on the named plan**, about the same with a required reconfirmation (N3 4.2%, H-N3 4.8%) as with the opt-out reveal (Q-c 4.1%, HQ-c 4.7%). Names are disclosed at the same moment in both designs (after both yeses), so the opt-out reveal adds no disclosure. What it changes is the default on silence: a member who ignores the booked plan is counted as in. Explicit "can't make it" replies cancel the plan: 2-6 per seed (about 1 in 7 booked plans with fixes, 1 in 8 without).
-- Every arm keeps every invariant: 0 minor contacts, 0 canary leaks, 0 over-cap, 0 quiet-hour sends, 0 messages past Blooio's third unanswered, 0 judge invariants. Nobody is named in any message before both participants said yes (checked end-to-end in the engine's `attention-sim.test.ts` at the time; now validated by `bun run sim`).
+- Every arm keeps every invariant: 0 minor contacts, 0 canary leaks, 0 over-cap, 0 quiet-hour sends, 0 messages past Blooio's third unanswered, 0 judge invariants. Nobody is named in any message before both participants said yes (checked end-to-end in the engine's `attention-sim.test.ts` at the time; now validated by `pnpm run sim`).
 
 ## What was built
 
@@ -39,7 +41,7 @@ The founder keeps "always probe first", so iteration 4 tests designs that stay a
   - Parallel flows share one set of time options, so the two members' picks can meet. Picks are kept per member and the meeting time is their intersection.
   - Counts kept: wasted invites, back-outs, warm probes.
 - Experiment (`packages/engine/experiments/attention.ts`, since deleted): variants Q-* (no fixes) and HQ-* (fixes 1-3), a "consent-first cost and privacy" table, and the harness-only warm model `warmProbes`. Under that model members consent to mutual mentions with p = 0.7, and a probe naming a mutual is answered yes with P' = P + lift x (1 - P).
-- Tests (since deleted; now validated by `bun run sim`): parallel flow and warm-mention rules in `attention.test.ts`; an iteration-4 end-to-end configuration in `attention-sim.test.ts`, which checks every invariant plus "every reveal follows a yes from every participant".
+- Tests (since deleted; now validated by `pnpm run sim`): parallel flow and warm-mention rules in `attention.test.ts`; an iteration-4 end-to-end configuration in `attention-sim.test.ts`, which checks every invariant plus "every reveal follows a yes from every participant".
 
 ## Do warm mentions stay within D5?
 
@@ -111,6 +113,6 @@ Caveats:
 ## Files (iteration 4)
 
 - `packages/engine/src/attention.ts` (parallel flows, `warmMention`, `buildProbe` mutual), `packages/engine/src/config.ts` (`consent`, `attention-v1.2.0`).
-- Deleted since: `packages/engine/experiments/attentionNetwork.ts`, `packages/engine/experiments/attention.ts`, `packages/engine/test/attention.test.ts`, `packages/engine/test/attention-sim.test.ts`. Validated by `bun run sim`.
+- Deleted since: `packages/engine/experiments/attentionNetwork.ts`, `packages/engine/experiments/attention.ts`, `packages/engine/test/attention.test.ts`, `packages/engine/test/attention-sim.test.ts`. Validated by `pnpm run sim`.
 - `docs/design/2026-10-07-experience-design.md` (1.8: booked-plan reveal, parallel probes, warm mentions).
 - Not touched: `packages/network`, `packages/observatory`, `packages/sim`.

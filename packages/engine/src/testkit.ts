@@ -163,8 +163,8 @@ export function randomWorld(opts: WorldOptions = {}): EngineInput {
     const iid = `h${j}`;
     if (r < 0.5) {
       interactions.push({ id: iid, kind: "intro", category: "social", participants: [a, b], at, outcome: "completed" });
-      feedback.push({ id: `fb${j}a`, from: a, about: b, opportunityId: iid, at: at + DAY, sentiment: "positive", wouldMeetAgain: true, processed: true });
-      feedback.push({ id: `fb${j}b`, from: aliasOf(b), about: a, opportunityId: iid, at: at + DAY, sentiment: "positive", wouldMeetAgain: true, processed: true });
+      feedback.push({ id: `fb${j}a`, from: a, about: b, opportunityId: iid, at: at + DAY, sentiment: "positive", wouldMeetAgain: true, repeatConsent: true, processed: true });
+      feedback.push({ id: `fb${j}b`, from: aliasOf(b), about: a, opportunityId: iid, at: at + DAY, sentiment: "positive", wouldMeetAgain: true, repeatConsent: true, processed: true });
     } else if (r < 0.75) {
       interactions.push({ id: iid, kind: "intro", category: rng.pick(CATS), participants: [a, b], at, outcome: "declined", declinedBy: [b] });
     } else {

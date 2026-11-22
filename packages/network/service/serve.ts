@@ -1,3 +1,4 @@
+import { serveHttp } from "../../core/src/runtime/http.ts";
 // The service's two HTTP servers, its tick loop, and the MCP server mounted on it. Shared by main.ts,
 // the shared backend (deploy/backend/server.ts) and scripts/platform-dev.ts (local dev).
 import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, PgOAuthStore, platformHooks } from "../../mcp/src/index.ts";
@@ -36,6 +37,7 @@ export interface ServiceMcpOptions {
 export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions = {}): Promise<McpHandler | undefined> {
   const env = o.env ?? process.env;
   const log = o.log ?? console.log;
+  const now = o.now ?? (() => svc.clock.now());
   const dev = devShortcutsAllowed(env);
   const stageOrigins = stagingSiteOrigins(env);
   const privateOpenAiApps = o.privateOpenAiApps ?? (env.MCP_PRIVATE_OPENAI_APPS ?? "").split(",").map(s => s.trim()).filter(Boolean);
@@ -54,7 +56,24 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     log("MCP server off: it needs TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY and a database outside PLATFORM_ENV=dev");
     return undefined;
   }
-  const store = o.databaseUrl ? new PgOAuthStore(o.databaseUrl) : new MemoryOAuthStore();
+  const store = o.databaseUrl ? new PgOAuthStore(o.databaseUrl, async (tx, owner) => {
+    // Share the platform join fence for a still-unattached phone. Do not wait on
+    // platform rows while holding the grant lock that a number move can need.
+    const [joinLock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`platform:join:${owner.e164}`})) as locked`;
+    if (!joinLock?.locked) return false;
+    const [session] = await tx`select expires_at,revoked_at from platform.sessions where token_hash=${owner.sessionHash}
+      and app_id=${owner.app} and e164=${owner.e164} and (person_id is null or person_id::text=${owner.personId}) for share nowait`;
+    if (!session) return false;
+    const [phone] = await tx`select person_id,hold from platform.phone_identities where e164=${owner.e164} for share nowait`;
+    if (phone?.hold || (phone?.person_id ?? null) !== owner.personId) return false;
+    if (owner.personId) {
+      const [person] = await tx`select 1 from platform.people where id=${owner.personId}::uuid and deleted_at is null
+        and phone_hash=${owner.phoneKey} for share nowait`;
+      if (!person) return false;
+    }
+    const at = owner.now();
+    return new Date(session.expires_at).getTime() > at && (session.revoked_at === null || new Date(session.revoked_at).getTime() > at);
+  }) : new MemoryOAuthStore();
   // The migration runner applies the oauth schema (9001); a deployed service login has no CREATE right.
   if (store instanceof PgOAuthStore && o.migrate !== false) await store.migrate();
   const api = svc.publicApi;
@@ -93,27 +112,34 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
     }),
-    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
+    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now,
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
+  svc.notify?.setAssistantUpdatesLookup((personId, app) => isMcpAppId(app) ? mcp.assistantUpdateSurfaces(personId, app) : Promise.resolve([]));
+  if (store instanceof PgOAuthStore) {
+    svc.setNotificationClaimSurfaces(async (tx, personId, phoneKey, app) => isMcpAppId(app)
+      ? mcp.assistantUpdateSurfacesForClaim(await store.assistantGrantsForClaim(tx, personId, phoneKey, app, now()))
+      : []);
+  }
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
-    if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
+    if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);
   });
+  svc.onEraseAccount(personId => mcp.forgetPerson(personId));
   return mcp;
 }
 
 const TICK_MS = 60_000;
 
 /** The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790). */
-export function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
+export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
   // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 16 KB.
-  const server = Bun.serve({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
+  const server = await serveHttp({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
   log(`listening on http://${o.host}:${server.port} (POST /webhooks/blooio[/:app], GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
-  const api = Bun.serve({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: 16 * 1024 });
+  const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: 16 * 1024 });
   log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);
   return { server, api, stop: () => { server.stop(); api.stop(); } };
 }

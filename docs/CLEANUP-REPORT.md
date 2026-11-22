@@ -1,5 +1,7 @@
 # Cleanup report (2026-10-08)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/CLEANUP-REPORT.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Branch `chore/cleanup`, from `origin/main` at `16cde70`. The spec was the cleanup plan (inventory worktree, `CLEANUP-PLAN.md`) plus the founder decisions given with the task. Nothing was pushed. No LLM call was made: every simulation ran with the provider keys cleared. Git history was not rewritten.
 
 ## Before and after
@@ -13,9 +15,9 @@ Branch `chore/cleanup`, from `origin/main` at `16cde70`. The spec was the cleanu
 | Packages | core, engine, judge, sim, worlds, evals, capital, network, notify, mcp, platform, observatory, plugin-network, and 11 prototypes | core, engine, sim, capital, network, notify, mcp, platform, observatory, plugin-network, blooio |
 | docs/ files | 127 | 63 (with this report) |
 
-## Validation: `bun run sim`
+## Validation: `pnpm run sim`
 
-`scripts/sim.ts` (root script `bun run sim`) is the single validation command. Blocks: `evals`, `network`, `slop`, `peon`, `friends`, and `capital` (only with `--with-capital`, `--nightly` or `--only capital`). Flags: `--only <block>` (repeatable or comma-separated), `--quick` (fewer seeds and shorter runs; quality gates become tracked), `--json <file>`. It clears the provider keys, needs no Postgres, and exits 1 on any blocking gate failure.
+`scripts/sim.ts` (root script `pnpm run sim`) is the single validation command. Blocks: `evals`, `network`, `slop`, `peon`, `friends`, and `capital` (only with `--with-capital`, `--nightly` or `--only capital`). Flags: `--only <block>` (repeatable or comma-separated), `--quick` (fewer seeds and shorter runs; quality gates become tracked), `--json <file>`. It clears the provider keys, needs no Postgres, and exits 1 on any blocking gate failure.
 
 **Final run on HEAD:** `PASS: 152/152 blocking gates, 7 tracked off target`, **355 s wall** (236 s CPU): evals 0.6 s, network 225 s, slop 20 s, peon 49 s, friends 60 s. The machine was heavily loaded by other processes during every run (load average 30-70); the same run took 431 s to 1,168 s at other times. On a quiet machine expect a few minutes, dominated by the network block.
 
@@ -33,12 +35,12 @@ Pinned seeds (documented in each block's header in `scripts/sim/`):
 
 **Conformance ported before deletion.** `scripts/sim/conformance.ts` runs the core rules for every pack on its own simulated worlds: minors never in any role (generators, proposals, alternates, via, asks, scored log, debt, attention items, probes), blocks win, consent before reveal under random answer orders (and anonymous probes), the member-facing leak gate (canaries and other members' private facts), and the judge cannot undo a hard filter (always-yes fake model). Slop adds its stated filters both ways with an orientation-rule negative control, and the never-shared rating checks; friends adds no-romance at every layer, no minors in plans, and held adversaries; peon adds sealed-attribute invariance and the four-fifths negative control. Determinism, attention-unit and geo-contract checks from the old suite were not ported (the sims are deterministic and their fingerprints are compared).
 
-**Behaviour checks for the refactors.** Each block prints a run fingerprint (a digest of the arms' metrics, and of the network invariant run's records without wall-clock fields and engine run ids). `bun run sim --json` on archived snapshots of the commits gave identical gates, values and fingerprints: dead-code commit = keyword merge = core consolidation = taxonomy, worlds and judge moves = HEAD. The dead-code commit itself was compared against the fingerprint commit with a record-level diff: the only differences were the engine config hash (the config shape changed) and wall-clock fields.
+**Behaviour checks for the refactors.** Each block prints a run fingerprint (a digest of the arms' metrics, and of the network invariant run's records without wall-clock fields and engine run ids). `pnpm run sim --json` on archived snapshots of the commits gave identical gates, values and fingerprints: dead-code commit = keyword merge = core consolidation = taxonomy, worlds and judge moves = HEAD. The dead-code commit itself was compared against the fingerprint commit with a record-level diff: the only differences were the engine config hash (the config shape changed) and wall-clock fields.
 
 ## CI
 
-- `ci.yml` job `offline`: install, typecheck (`-p .` and `-p sites/tsconfig.json`), `bun run sim`, `bun run plugins/build.ts --check`, the production sites build. No Postgres.
-- New job `security (pending)`: the Postgres service, `require-pg.ts`, and `bun run security` (the six pending files).
+- `ci.yml` job `offline`: install, typecheck (`-p .` and `-p sites/tsconfig.json`), `pnpm run sim`, `node --import tsx --env-file-if-exists=.env plugins/build.ts --check`, the production sites build. No Postgres.
+- New job `security (pending)`: the Postgres service, `require-pg.ts`, and `pnpm run security` (the six pending files).
 - `plugin-network` job: typecheck only.
 - `deploy-sites.yml`: the test step is gone; typecheck, build, deploy and the post-deploy `deploy/smoke.ts` stay. `CLOUDFLARE_ACCOUNT_ID` must be set as a CI variable (no default).
 
@@ -63,11 +65,11 @@ Pinned seeds (documented in each block's header in `scripts/sim/`):
 - **Budgets and the judge:** `network/src/outreach.ts` is the single source (OUTREACH plus `PRD_BUDGETS`, `LANE_BUDGETS` and `CONNECTION`, moved verbatim). The run-log schema moved to `core/runlog.ts`; the grader (`rules`, `metrics` / `computeMetrics`, the LLM graders) moved to `packages/sim/src/judge`; the unused LLM policy judge and calibration set were deleted. Production (`network/src`, `network/service`) no longer imports `@thenetwork/judge` or `@thenetwork/sim`: a bundle of `deploy/backend/server.ts` contains no module from either.
 - **Out of sim, for production:** the Network-environment contract and channel message types -> `core/network.ts`; `STOP_CONFIRMATION` / `HELP_TEXT` -> `core/replies.ts`; the member vocabulary (INTERESTS, SKILLS, DESIRES, NEIGHBORHOODS, `skillFirstPerson`) -> `engine/src/packs/network/vocabulary.ts`.
 - **Corpora -> `evals/`:** the network fixtures, the core replies corpus (184 rows, extracted from the test), the core opt-out cases, the platform opt-out corpus, and the guard evasion, homoglyph and fuzzy rows (132).
-- **MCP:** connector-mcp's output pipeline (phone, email, internal-id and ISO-timestamp checks on top of core LeakGuard) is `packages/mcp/src/leaks.ts`; `get_updates` withholds any summary that fails it; `bun run sim` checks it (evals block).
+- **MCP:** connector-mcp's output pipeline (phone, email, internal-id and ISO-timestamp checks on top of core LeakGuard) is `packages/mcp/src/leaks.ts`; `get_updates` withholds any summary that fails it; `pnpm run sim` checks it (evals block).
 
 ## Docs
 
-New `docs/results/SUMMARY.md` (one section per folded topic plus one line per prototype verdict) and `docs/prd-pending-edits.md` (unapplied PRD edits only). `data/synthetic/README.md` absorbed `data-model-sources.md`. Iteration logs trimmed: slop-pack 1,740 -> 607 lines, peon-pack 1,078 -> 213, attention-budget 482 -> 116, network-consent 374 -> 135, plans 262 -> 104. README, AGENTS (Commands; Hard rules as pointers; factual updates to Platform decisions 5, 7, 8 and 11), CONTRIBUTING and the package READMEs describe `bun run sim`. Stale names fixed (buddies -> friends in observatory.md and the apps README; "superseded" headers on research docs using buddies.nyc / ntwrk.club). Code comments that cited folded docs or deleted tests were repointed. The platform owner's docs were edited in place only (links, commands, private data).
+New `docs/results/SUMMARY.md` (one section per folded topic plus one line per prototype verdict) and `docs/prd-pending-edits.md` (unapplied PRD edits only). `data/synthetic/README.md` absorbed `data-model-sources.md`. Iteration logs trimmed: slop-pack 1,740 -> 607 lines, peon-pack 1,078 -> 213, attention-budget 482 -> 116, network-consent 374 -> 135, plans 262 -> 104. README, AGENTS (Commands; Hard rules as pointers; factual updates to Platform decisions 5, 7, 8 and 11), CONTRIBUTING and the package READMEs describe `pnpm run sim`. Stale names fixed (buddies -> friends in observatory.md and the apps README; "superseded" headers on research docs using buddies.nyc / ntwrk.club). Code comments that cited folded docs or deleted tests were repointed. The platform owner's docs were edited in place only (links, commands, private data).
 
 ## Private data
 
@@ -104,17 +106,17 @@ New `docs/results/SUMMARY.md` (one section per folded topic plus one line per pr
 
 ## Final checks
 
-- `bunx tsc --noEmit -p .` and `bunx tsc --noEmit -p sites/tsconfig.json`: clean.
-- `bun run sim`: 152/152 blocking gates, 355 s (above).
-- `DEPLOY_TARGET=production bun run sites/sites.ts`: builds the four sites (warnings only for the missing `TURNSTILE_SITE_KEY`, as in CI).
-- `bun run plugins/build.ts --check`: plugin skill snapshots are up to date.
+- `pnpm exec tsc --noEmit -p .` and `pnpm exec tsc --noEmit -p sites/tsconfig.json`: clean.
+- `pnpm run sim`: 152/152 blocking gates, 355 s (above).
+- `DEPLOY_TARGET=production node --import tsx --env-file-if-exists=.env sites/sites.ts`: builds the four sites (warnings only for the missing `TURNSTILE_SITE_KEY`, as in CI).
+- `node --import tsx --env-file-if-exists=.env plugins/build.ts --check`: plugin skill snapshots are up to date.
 
 ## Commits
 
 ```
 26eda78 mcp: output leak gate on get_updates summaries (ported from connector-mcp)
-4274a8b sim: bun run sim, the single validation command; corpora move to evals/
-b151e25 ci: run bun run sim instead of the test suites; security (pending) job
+4274a8b sim: pnpm run sim, the single validation command; corpora move to evals/
+b151e25 ci: run pnpm run sim instead of the test suites; security (pending) job
 bc84f6e sim: run fingerprints (tracked) so refactors can be compared byte for byte
 ee1e2ae Delete the prototypes (except messaging-blooio), reference/ and packages/evals
 cf7ab5f Promote messaging-blooio to packages/blooio (@thenetwork/blooio)
@@ -126,7 +128,7 @@ d14a96c core: one STOP/HELP/START keyword table and opt-out reader in replies.ts
 ec5e430 Production stops importing the simulator: contract types to core, vocabulary to networkPack
 c1fefb3 Merge packages/worlds into packages/sim/src/apps/{slop,peon,friends}
 deebe62 Budgets in network/src/outreach.ts; the judge moves into the sim; packages/judge is gone
-cc0046b docs: README, AGENTS, CONTRIBUTING and package READMEs for bun run sim
+cc0046b docs: README, AGENTS, CONTRIBUTING and package READMEs for pnpm run sim
 242fc9c Cloudflare account id from the environment, no hardcoded defaults
 0c92cf3 docs: fold, trim and delete per the cleanup plan; redact private data in docs
 1142bbe Name the Cloudflare accounts: Pages projects in the ntwrk.party account, slop/friends zones in Eliza Labs

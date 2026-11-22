@@ -54,6 +54,8 @@ export interface Intent {
   id: string; memberId: MemberId; objective: string; category: Category;
   details?: string; desiredPeople?: string; horizonDays: number;
   status: "active" | "paused" | "closed"; createdAt: number; embedding?: number[];
+  /** The app that owns a verified, app-scoped intent. Legacy projections can omit it. */
+  app?: AppId;
 }
 export interface Presence {
   memberId: MemberId; city: City; type: "home" | "routine" | "temporary";
@@ -131,8 +133,17 @@ export interface OpenOpportunity {
   until?: number;
 }
 
+/** A public event in the matching market. A published listing includes its actual public venue. */
+export interface NetworkEvent {
+  id: string; title: string; description?: string; city: City; area?: string;
+  start: number; end: number; tags: string[]; category: Category; capacity?: number;
+  riskTags?: string[];
+  listing?: { url: string; venue: string; lat: number; lng: number };
+}
+
 /** Snapshot the engine reads. Built from Postgres in production, from the simulator in tests. */
 export interface WorldSnapshot {
   now: number; members: Member[]; facets: Facet[]; intents: Intent[];
   presence: Presence[]; edges: Edge[]; recentProposals: Proposal[];
+  events?: NetworkEvent[];
 }

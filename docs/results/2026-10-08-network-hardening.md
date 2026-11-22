@@ -1,5 +1,7 @@
 # Network hardening: member-text understanding, consent and safety order
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-08-network-hardening.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-08. Worktree the `thenetwork-console` worktree, branch `obs/network-console`, base `f270286`. Tests and runs used no API keys and no `LIVE_TESTS`. Every simulated run used the simulated reviewer (`review: "auto"`).
 
 This work fixes the `packages/network` findings in [the audit](../audit/2026-10-08-weaknesses.md): the six P0 findings, the P1 network findings and the cheap P2 and P3 ones. Section 5 lists what is still open.
@@ -26,7 +28,7 @@ What changed in `packages/network/src` (each has a regression test or corpus lin
 | minor_contact after a late minor signal | An opportunity a new minor was in (participant, or alternate while it is still open) is closed, never carried on with a replacement. |
 | A friend called "Yes" | A one-word "Yes!" to a growth ask no longer invites a friend named "Yes". |
 
-Results at the fixed code, same command: `bun run packages/network/harness/experiment.ts --only consent --days 21 --seed <s> [--paraphrase]`, simulated reviewer, no API keys.
+Results at the fixed code, same command: `node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --only consent --days 21 --seed <s> [--paraphrase]`, simulated reviewer, no API keys.
 
 | Arm, seed | Proposals | Everyone yes | Meetings | Enjoyed share | Precision (probed) | Invariants | Canary leaks | Minor contacts |
 |---|---|---|---|---|---|---|---|---|
@@ -110,7 +112,7 @@ Limits:
 
 ## 4. Simulation: before and after
 
-Command: `bun run packages/network/harness/experiment.ts --only consent --days 21 --seed N`, for seeds 1, 2 and 3. The paraphrase arm adds `--paraphrase` (`harness/paraphrase.ts`). The personas decide as before, but the Network sees other words. "Before" is the base code run with the new harness metrics. The table gives means over the 3 seeds.
+Command: `node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --only consent --days 21 --seed N`, for seeds 1, 2 and 3. The paraphrase arm adds `--paraphrase` (`harness/paraphrase.ts`). The personas decide as before, but the Network sees other words. "Before" is the base code run with the new harness metrics. The table gives means over the 3 seeds.
 
 | Metric | Before, template | After, template | Before, paraphrase | After, paraphrase |
 |---|---|---|---|---|

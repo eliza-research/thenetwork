@@ -1,10 +1,10 @@
 // The cost ledger on Postgres (issue #11, ops monitoring): a relay Clef classifier call to Workers AI and
 // an LLM attempt each write one network.cost_ledger row with the real app and purpose, codes and counts
-// only. Needs the dev Postgres on :54339 (bun run packages/observatory/db/dev-pg.ts up). No live call:
+// only. Needs the dev Postgres on :54339 (pnpm exec tsx packages/observatory/db/dev-pg.ts up). No live call:
 // the classifier's telemetry events and the LLM response info are fed in directly.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {CLEF_PRICE_PER_M_INPUT} from "../../engine/src/packs/slop/clef.ts";
 import {CostLedger,costRatesFromEnv,PgCostSink,type CostRow} from "../service/cost.ts";

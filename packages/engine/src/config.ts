@@ -2,6 +2,7 @@
 // covered by the config hash logged with each run (ME-004). Thresholds are applied (ME-009).
 import type { Category, City, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR, initialInviteBudget, minorInitialInviteBudget, planInviteBudget } from "@thenetwork/core";
+import { emptyIntentDefaultWaitDays } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import type { Effort, ItemKind } from "./types.ts";
 
@@ -53,13 +54,6 @@ export interface EngineConfig {
   floors: { fit: number; mutualBenefit: number; confidence: number; maxSocialRisk: number; judgeDimension: number };
   weights: Weights;
   retrieval: { topK: number; exposureFloorK: number; lowExposureMax: number; minSim: number; warmMinSim: number; poolSim: number };
-  /**
-   * Structured needs -> offers complementarity (complementarity.ts). `weight` blends it into
-   * fit and each side's benefit: x' = (1 - weight) x + weight * structured; 0 turns it off.
-   * `overlap` / `need` / `give` weigh a side's benefit (interest overlap; the other member meets
-   * my want; I meet theirs).
-   */
-  complementarity: { weight: number; overlap: number; need: number; give: number };
   generators: Record<GeneratorName, boolean>;
   /**
    * v1.2 dispatch awareness. `skipOpenOpportunities`: members in an opportunity that was sent and
@@ -82,10 +76,8 @@ export interface EngineConfig {
   /** v1.2: romance proposals only when both members stated romance preferences (else ask for them). */
   romance: { requireStatedPrefs: boolean };
   maxPerIntent: number;
-  group: {
-    minSize: number; maxSize: number; beamWidth: number; poolSize: number; minPairwise: number;
-    maxAnchorsPerCity: number; alternates: number; minThemeMembers: number;
-  };
+  /** Group size bounds (networkPack group_size rule). */
+  group: { minSize: number; maxSize: number };
   exploration: { rate: number; maxShare: number };
   judge: {
     /** Pass 2 (rubric judge, judge.ts) on the top configurations. */
@@ -155,15 +147,6 @@ export const DEFAULT_CONFIG: EngineConfig = {
     activationCost: 0.25, interruptionCost: 0.2, load: 0.4, repetition: 0.4, socialRisk: 0.4,
   },
   retrieval: { topK: 50, exposureFloorK: 10, lowExposureMax: 1, minSim: 0.2, warmMinSim: 0.15, poolSim: 0.4 },
-  // Complementarity (2026-10-06, docs/results/SUMMARY.md, "Liveness and complementarity"). Inside the
-  // engine's own candidate set the embedding-based score picked good pairs at 24-28% against a 22%
-  // base rate, while a structured needs -> offers score reached 46-47% (PoC). weight 0.5 gives the
-  // structured evidence the same say as the semantic evidence rather than replacing it: semantic
-  // fit still carries free-text wants outside the taxonomy, and the term is neutral (not applied)
-  // for members with no structured profile. Side weights: what I get (need 0.55) dominates, then
-  // shared interests (0.35), then the pleasure of helping (0.1), the same ordering as the reasons
-  // members give for a good intro. Sensitivity: weights 0.25-0.75 in the results doc.
-  complementarity: { weight: 0.5, overlap: 0.35, need: 0.55, give: 0.1 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, true])) as Record<GeneratorName, boolean>,
   // v1.2 defaults (docs/results/2026-10-07-engine-v1.2.md, 8 sim seeds, history fed). On: dispatch
   // awareness (met + worthwhile +5.1 per seed on the v1.2 snapshot), personal growth as hobby
@@ -176,7 +159,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   acceptance: { prior: 0.45, strength: 2 },
   romance: { requireStatedPrefs: true },
   maxPerIntent: 4,
-  group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
+  group: { minSize: 3, maxSize: 6 },
   exploration: { rate: 0.125, maxShare: 0.15 },
   // Passes 1 and 3 are off by default (evaluated 2026-10-06: docs/results/SUMMARY.md, "Judge passes");
   // turning them on changes which candidates survive and adds LLM calls. Pass 2 reads pass 3's
@@ -191,7 +174,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   selection: { maxProposalsPerCity: 120, runLoadPenalty: 0.08, exposureFloorShare: 0.25, exposureDebtWeight: 0.05, exposureDebtCap: 3 },
   inviteTtlMs: 48 * HOUR, sameDayInviteTtlMs: 3 * HOUR,
   newcomerDays: 14,
-  emptyStateDays: 10,
+  emptyStateDays: emptyIntentDefaultWaitDays,
   // High-risk vocabulary (F14/F15 safety rules). Matched on whole words (with plurals), so
   // "kids" never fires on "kid-friendly"... unless a rule below says so. Kept deliberately
   // small: generic words about children, money or health are handled by the context rules in
@@ -309,8 +292,8 @@ export interface AttentionConfig {
     prior: { weekdayDay: number; weekdayEvening: number; weekendDay: number; weekendEvening: number };
     /** Standing availability (4b): a decaying prior, re-confirmed after `reconfirmDays`. */
     standing: { inside: number; outsideFactor: number; halfLifeDays: number; statedConfidence: number; inferredConfidence: number; reconfirmDays: number };
-    /** Calendar free/busy (4c): a busy block multiplies P by `busyFactor`; a free calendar pulls P toward `freeTarget` by `freeWeight`. */
-    calendar: { busyFactor: number; freeTarget: number; freeWeight: number; offerAfterAcceptedPlans: number };
+    /** Calendar free/busy (4c): busy excludes a slot. Confirmed free time pulls P toward `freeTarget` by `freeWeight`. */
+    calendar: { freeTarget: number; freeWeight: number; offerAfterAcceptedPlans: number };
     /** Learned from accepted and attended times (4e): weight n / (n + k), capped at `maxWeight` (unconfirmed). */
     learned: { target: number; k: number; maxWeight: number; halfLifeDays: number; declinePenalty: number };
     /** Opt-in weekly "what's your week like?" check-in (4d): JS weekday and local hour. */
@@ -373,7 +356,7 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
     targetAny: 0.9, minGain: 0.03, minJoint: 0.02,
     prior: { weekdayDay: 0.1, weekdayEvening: 0.35, weekendDay: 0.45, weekendEvening: 0.4 },
     standing: { inside: 0.85, outsideFactor: 0.5, halfLifeDays: 45, statedConfidence: 0.8, inferredConfidence: 0.5, reconfirmDays: 30 },
-    calendar: { busyFactor: 0.05, freeTarget: 0.8, freeWeight: 0.3, offerAfterAcceptedPlans: 1 },
+    calendar: { freeTarget: 0.8, freeWeight: 0.3, offerAfterAcceptedPlans: 1 },
     learned: { target: 0.8, k: 2, maxWeight: 0.5, halfLifeDays: 60, declinePenalty: 0.5 },
     weeklyCheckIn: { day: 0, hour: 17 },
   },
@@ -457,8 +440,8 @@ export interface PlansConfig {
   runDays: number[];
   /** Quorum: group plans `group`, activity-partner plans `partner`. */
   quorum: { group: number; partner: number };
-  /** Beam search (group.ts style) width, pool cap per (slot, activity), alternates kept for backfill. */
-  beamWidth: number; poolSize: number; alternates: number;
+  /** Pool cap per (slot, activity), alternates kept for backfill. */
+  poolSize: number; alternates: number;
   /** Least misery: U = minWeight x min_i u_i + (1 - minWeight) x mean_i u_i (design 4.5 step 4). */
   minWeight: number;
   /** Floors (4.5 step 6): every member's u_i, and the plan's U. */
@@ -471,8 +454,6 @@ export interface PlansConfig {
   otherAreaFit: number;
   /** Familiarity (4.5 step 5): bonus per member with exactly one familiar face and a new face; penalty per member with >= 2 familiar faces; total clamped. */
   familiarity: { oneBonus: number; cliquePenalty: number; maxBonus: number; maxPenalty: number };
-  /** Pairwise compatibility floor (makeCompat, as group.minPairwise). */
-  minPairwise: number;
   /** Plans per member per planner run, and at most one live plan per member. Plans per city per run. */
   maxPlansPerCityRun: number;
   /** Stated windows from the weekly check-in: confidence, and P(free) target inside one. */
@@ -499,14 +480,13 @@ export const DEFAULT_PLANS: PlansConfig = {
   size: { min: 3, max: 6, target: 6, partner: 2 },
   minInvite: 4, partnerPlans: true, yesHolds: false, runDays: [1, 4],
   quorum: { group: 3, partner: 2 },
-  beamWidth: 8, poolSize: 24, alternates: 3,
+  poolSize: 24, alternates: 3,
   minWeight: 0.6,
   minMemberU: 0.4, threshold: 0.4,
   minFree: 0.5,
   familyFit: 0.5, minFit: 1,
   otherAreaFit: 0.85,
   familiarity: { oneBonus: 0.05, cliquePenalty: 0.1, maxBonus: 0.1, maxPenalty: 0.2 },
-  minPairwise: 0.05,
   maxPlansPerCityRun: 6,
   stated: { confidence: 0.8, inside: 0.85, outsideFactor: 0.5 },
   fallback: { smaller: true, soloEvent: true, nextWeek: true, carryBonus: 0.1, carryDays: 10 },

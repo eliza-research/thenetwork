@@ -1,13 +1,13 @@
-// GENERATED from spec/databaseRestore.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/databaseRestore.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 export type RestorePhase = "Starting" | "ReadingManifest" | "CheckingSource" | "CheckingTarget" | "CreatingTarget" | "RestoringDump" | "CheckingCounts" | "Finished" | "Refused";
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 export type RestoreReason = "NoneYet" | "InvalidTarget" | "UnknownManifest" | "OwnDatabase" | "RolesOnSource" | "NeedsDecryption" | "TargetExists";
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 export interface Restore { phase: RestorePhase; reason: RestoreReason; runRoles: boolean; keepPrivileges: boolean; countsAgree: boolean }
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 export interface ManifestFacts { sourceKnown: boolean; sameServer: boolean; ownDatabase: boolean; rolesRequested: boolean; encrypted: boolean; dumpPresent: boolean; keepPrivileges: boolean }
 
 /** One variant per transition in the spec. */
@@ -20,9 +20,9 @@ export type Event =
   | { type: "recordDump" }
   | { type: "recordCounts"; countsAgree: boolean };
 
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 export const liveNames: string[] = ["railway", "network", "postgres", "template0", "template1"];
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 export const initial: Restore = { phase: "Starting", reason: "NoneYet", runRoles: false, keepPrivileges: false, countsAgree: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -31,118 +31,118 @@ export function inv(current: Restore): boolean {
   return true;
 }
 
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 //@ pure
 export function canCheckName(restore: Restore): boolean {
   return restore.phase === "Starting";
 }
 
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 //@ pure
 export function checkName(restore: Restore, name: string, validName: boolean): Restore {
   //@ ensures (inv(restore) && canCheckName(restore)) ==> stepCountsFollowRestore(restore, "checkName", \result)
   return validName && !liveNames.includes(name) ? ({ ...restore, phase: "ReadingManifest" } as Restore) : ({ ...restore, phase: "Refused", reason: "InvalidTarget" } as Restore);
 }
 
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 //@ pure
 export function canCheckVersion(restore: Restore): boolean {
   return restore.phase === "ReadingManifest";
 }
 
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 //@ pure
 export function checkVersion(restore: Restore, versionOne: boolean): Restore {
   //@ ensures (inv(restore) && canCheckVersion(restore)) ==> stepCountsFollowRestore(restore, "checkVersion", \result)
   return versionOne ? ({ ...restore, phase: "CheckingSource" } as Restore) : ({ ...restore, phase: "Refused", reason: "UnknownManifest" } as Restore);
 }
 
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 //@ pure
 export function canCheckManifest(restore: Restore): boolean {
   return restore.phase === "CheckingSource";
 }
 
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 //@ pure
 export function checkManifest(restore: Restore, manifest: ManifestFacts): Restore {
   //@ ensures (inv(restore) && canCheckManifest(restore)) ==> stepCountsFollowRestore(restore, "checkManifest", \result)
-  const source: boolean = !manifest.sourceKnown || manifest.sameServer;
-  return source && manifest.ownDatabase ? ({ ...restore, phase: "Refused", reason: "OwnDatabase" } as Restore) : (source && manifest.rolesRequested ? ({ ...restore, phase: "Refused", reason: "RolesOnSource" } as Restore) : (manifest.encrypted && !manifest.dumpPresent ? ({ ...restore, phase: "Refused", reason: "NeedsDecryption" } as Restore) : ({ ...restore, phase: "CheckingTarget", runRoles: manifest.rolesRequested, keepPrivileges: manifest.keepPrivileges } as Restore)));
+  const local_0 = !manifest.sourceKnown || manifest.sameServer;
+  return local_0 && manifest.ownDatabase ? ({ ...restore, phase: "Refused", reason: "OwnDatabase" } as Restore) : (local_0 && manifest.rolesRequested ? ({ ...restore, phase: "Refused", reason: "RolesOnSource" } as Restore) : (manifest.encrypted && !manifest.dumpPresent ? ({ ...restore, phase: "Refused", reason: "NeedsDecryption" } as Restore) : ({ ...restore, phase: "CheckingTarget", runRoles: manifest.rolesRequested, keepPrivileges: manifest.keepPrivileges } as Restore)));
 }
 
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 //@ pure
 export function shouldApplyRoles(restore: Restore, rolesPresent: boolean): boolean {
   return restore.phase === "RestoringDump" && restore.runRoles && rolesPresent;
 }
 
-/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
+/** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md) */
 //@ pure
 export function lawRolesRequireKnownOtherServer(manifest: ManifestFacts): boolean {
   //@ ensures \result === true
   return !checkManifest(({ ...initial, phase: "CheckingSource" } as Restore), manifest).runRoles || (manifest.sourceKnown && !manifest.sameServer);
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function canCheckTarget(restore: Restore): boolean {
   return restore.phase === "CheckingTarget";
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function checkTarget(restore: Restore, targetExists: boolean): Restore {
   //@ ensures (inv(restore) && canCheckTarget(restore)) ==> stepCountsFollowRestore(restore, "checkTarget", \result)
   return targetExists ? ({ ...restore, phase: "Refused", reason: "TargetExists" } as Restore) : ({ ...restore, phase: "CreatingTarget" } as Restore);
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function canRecordCreation(restore: Restore): boolean {
   return restore.phase === "CreatingTarget";
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function recordCreation(restore: Restore): Restore {
   //@ ensures (inv(restore) && canRecordCreation(restore)) ==> stepCountsFollowRestore(restore, "recordCreation", \result)
   return { ...restore, phase: "RestoringDump" };
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function canRecordDump(restore: Restore): boolean {
   return restore.phase === "RestoringDump";
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function recordDump(restore: Restore): Restore {
   //@ ensures (inv(restore) && canRecordDump(restore)) ==> stepCountsFollowRestore(restore, "recordDump", \result)
   return { ...restore, phase: "CheckingCounts" };
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function canRecordCounts(restore: Restore): boolean {
   return restore.phase === "CheckingCounts";
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function recordCounts(restore: Restore, countsAgree: boolean): Restore {
   //@ ensures (inv(restore) && canRecordCounts(restore)) ==> stepCountsFollowRestore(restore, "recordCounts", \result)
   return { ...restore, phase: "Finished", countsAgree: countsAgree };
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function stepCountsFollowRestore(before: Restore, via: string, after: Restore): boolean {
   return !(after.phase === "Finished") || (via === "recordCounts" && before.phase === "CheckingCounts");
 }
 
-/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md:65) */
+/** Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump (spec/databaseRestore.md) */
 //@ pure
 export function sometimesFinishes(restore: Restore): boolean {
   return restore.phase === "Finished" && restore.countsAgree;
@@ -166,13 +166,13 @@ export function enabled(current: Restore, event: Event): boolean {
 export function step(current: Restore, event: Event): Restore {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkName" && canCheckName(current)) return checkName(current, event.name, event.validName);
-  if (event.type === "checkVersion" && canCheckVersion(current)) return checkVersion(current, event.versionOne);
-  if (event.type === "checkManifest" && canCheckManifest(current)) return checkManifest(current, event.manifest);
-  if (event.type === "checkTarget" && canCheckTarget(current)) return checkTarget(current, event.targetExists);
-  if (event.type === "recordCreation" && canRecordCreation(current)) return recordCreation(current);
-  if (event.type === "recordDump" && canRecordDump(current)) return recordDump(current);
-  if (event.type === "recordCounts" && canRecordCounts(current)) return recordCounts(current, event.countsAgree);
+  if (event.type === "checkName") return canCheckName(current) ? checkName(current, event.name, event.validName) : current;
+  if (event.type === "checkVersion") return canCheckVersion(current) ? checkVersion(current, event.versionOne) : current;
+  if (event.type === "checkManifest") return canCheckManifest(current) ? checkManifest(current, event.manifest) : current;
+  if (event.type === "checkTarget") return canCheckTarget(current) ? checkTarget(current, event.targetExists) : current;
+  if (event.type === "recordCreation") return canRecordCreation(current) ? recordCreation(current) : current;
+  if (event.type === "recordDump") return canRecordDump(current) ? recordDump(current) : current;
+  if (event.type === "recordCounts") return canRecordCounts(current) ? recordCounts(current, event.countsAgree) : current;
   return current;
 }
 
@@ -189,10 +189,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_ManifestFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.sourceKnown === "boolean" && typeof v.sameServer === "boolean" && typeof v.ownDatabase === "boolean" && typeof v.rolesRequested === "boolean" && typeof v.encrypted === "boolean" && typeof v.dumpPresent === "boolean" && typeof v.keepPrivileges === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "checkName" && typeof raw.name === "string" && typeof raw.validName === "boolean") return { type: "checkName", name: raw.name, validName: raw.validName };
   if (raw.type === "checkVersion" && typeof raw.versionOne === "boolean") return { type: "checkVersion", versionOne: raw.versionOne };
-  if (raw.type === "checkManifest" && typeof raw.manifest === "object" && raw.manifest !== null && !Array.isArray(raw.manifest) && typeof raw.manifest.sourceKnown === "boolean" && typeof raw.manifest.sameServer === "boolean" && typeof raw.manifest.ownDatabase === "boolean" && typeof raw.manifest.rolesRequested === "boolean" && typeof raw.manifest.encrypted === "boolean" && typeof raw.manifest.dumpPresent === "boolean" && typeof raw.manifest.keepPrivileges === "boolean") return { type: "checkManifest", manifest: ({ sourceKnown: raw.manifest.sourceKnown, sameServer: raw.manifest.sameServer, ownDatabase: raw.manifest.ownDatabase, rolesRequested: raw.manifest.rolesRequested, encrypted: raw.manifest.encrypted, dumpPresent: raw.manifest.dumpPresent, keepPrivileges: raw.manifest.keepPrivileges }) };
+  if (raw.type === "checkManifest" && is_ManifestFacts(raw.manifest)) return { type: "checkManifest", manifest: ({ sourceKnown: raw.manifest.sourceKnown, sameServer: raw.manifest.sameServer, ownDatabase: raw.manifest.ownDatabase, rolesRequested: raw.manifest.rolesRequested, encrypted: raw.manifest.encrypted, dumpPresent: raw.manifest.dumpPresent, keepPrivileges: raw.manifest.keepPrivileges }) };
   if (raw.type === "checkTarget" && typeof raw.targetExists === "boolean") return { type: "checkTarget", targetExists: raw.targetExists };
   if (raw.type === "recordCreation") return { type: "recordCreation" };
   if (raw.type === "recordDump") return { type: "recordDump" };

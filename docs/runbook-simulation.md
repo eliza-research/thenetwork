@@ -27,8 +27,8 @@ No step in this runbook calls an LLM unless it says so. The persona agents use t
 ### 2.1 Start it
 
 ```bash
-bun install
-bun run observatory
+pnpm install
+pnpm run observatory
 ```
 
 The server prints one line:
@@ -39,15 +39,15 @@ The Network Observatory → http://127.0.0.1:4747/#token=<random token>  (mode: 
 
 1. Open that URL. The page keeps the token for the browser session and removes it from the address bar.
 2. If the page shows "Token required", paste the token from the terminal.
-3. To keep the same token across restarts, set it: `OBSERVATORY_TOKEN=<your token> bun run observatory`.
+3. To keep the same token across restarts, set it: `OBSERVATORY_TOKEN=<your token> pnpm run observatory`.
 
-The server listens on 127.0.0.1 only. Every `/api/*` route and the `/ws` WebSocket need the token. The printed token is an admin token, so you see every tab. To see what another role sees, start the server with role tokens: `OBSERVATORY_TOKENS="admin:<32+ chars>,reviewer:<32+ chars>,..." bun run observatory` (every token needs 32 or more characters), then open `http://127.0.0.1:4747/#token=<the reviewer token>`. `?token=` is refused. See [observatory.md](observatory.md) sections 8 and 9 for the access rules.
+The server listens on 127.0.0.1 only. Every `/api/*` route and the `/ws` WebSocket need the token. The printed token is an admin token, so you see every tab. To see what another role sees, start the server with role tokens: `OBSERVATORY_TOKENS="admin:<32+ chars>,reviewer:<32+ chars>,..." pnpm run observatory` (every token needs 32 or more characters), then open `http://127.0.0.1:4747/#token=<the reviewer token>`. `?token=` is refused. See [observatory.md](observatory.md) sections 8 and 9 for the access rules.
 
 The server writes an audit row for each member, timeline or opportunity read and each staff action, to `runs/audit/audit.jsonl` (`OBSERVATORY_AUDIT_DIR` changes the folder).
 
 ### 2.2 Options
 
-Pass options after the script name: `bun run observatory --review human --port 4793`.
+Pass options after the script name: `pnpm run observatory --review human --port 4793`.
 
 | Option | Default | What it does |
 |---|---|---|
@@ -84,7 +84,7 @@ The Observatory has an app switcher (ntwrk, slop, peon, friends, all). Each app 
 - slop and peon run with matching off ("matching off until pack"). Joins, onboarding and safety still run. The matching switch answers 409 `matching_locked`.
 - "all" shows one line per app (members, review backlog, SLA misses, send failures, matching). It does not start a world.
 - The levels (2.4) are ntwrk scenarios. In other apps, the join-age filter can remove part of a level's cast.
-- To see one app only, start the server with a per-app token: `OBSERVATORY_TOKENS="admin@*:<32+ chars>,reviewer@slop:<32+ chars>" bun run observatory`, then open `http://127.0.0.1:4747/#token=<the slop reviewer token>`. The slop reviewer sees slop only.
+- To see one app only, start the server with a per-app token: `OBSERVATORY_TOKENS="admin@*:<32+ chars>,reviewer@slop:<32+ chars>" pnpm run observatory`, then open `http://127.0.0.1:4747/#token=<the slop reviewer token>`. The slop reviewer sees slop only.
 
 Checked on 2026-10-08: with a `reviewer@slop` token, `/api/me?app=slop` listed `apps: ["slop"]`, `/api/state?app=ntwrk` gave 403, `?app=foo` gave 400, and the matching switch on slop gave 409 `matching_locked`.
 
@@ -101,7 +101,7 @@ Space plays or pauses. `n` steps one hour, `d` one day. `/` searches, `?` shows 
 ### 3.1 Compare the three Networks
 
 ```bash
-bun run packages/network/harness/experiment.ts --days 21 --seed 1
+node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed 1
 ```
 
 It runs three arms on the 250 NYC members and prints one JSON object on stdout:
@@ -146,7 +146,7 @@ Per app: `POST /api/lab/run?app=slop` with `{"arms":["consent"],"seeds":[1],"day
 One seed without the UI is the same command the lab runs:
 
 ```bash
-bun run packages/network/harness/experiment.ts --only consent --days 1 --seed 1
+node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --only consent --days 1 --seed 1
 ```
 
 It prints the experiment JSON (indented) with a `judge` object per arm. On 2026-10-07 the 1-day consent run gave `{"invariants":0,"byRule":{},"canaryLeaks":0,"minorContacts":0}` in about 1 second.
@@ -154,8 +154,8 @@ It prints the experiment JSON (indented) with a `judge` object per arm. On 2026-
 ### 3.3 The Observatory report
 
 ```bash
-bun run packages/observatory/src/report.ts --days 14 --seed 1
-bun run packages/observatory/src/report.ts --days 2 --review human
+node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14 --seed 1
+node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 2 --review human
 ```
 
 It plays the game world headless and prints JSON: the review gate counts, the judge counts (invariants, canary leaks, minor contacts), the proposal funnel, engine runs by day, the learned graph and the scoreboard. With `--review human` nobody reviews, so every queued item expires unsent. Use that to check the gate.
@@ -163,8 +163,8 @@ It plays the game world headless and prints JSON: the review gate counts, the ju
 ### 3.4 The simulator CLI (StubNetwork)
 
 ```bash
-bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
-bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
 ```
 
 The CLI runs only the `StubNetwork`. Use the harness (3.1, section 4) or the lab (3.2) for the ConsentNetwork. Details: [packages/sim/README.md](../packages/sim/README.md).
@@ -193,8 +193,8 @@ What does not exist yet:
 A scenario is a scripted situation on the NYC world with checks that must pass.
 
 ```bash
-bun run packages/network/harness/scenarios.ts                 # all scenarios
-bun run packages/network/harness/scenarios.ts under_13_join   # one scenario
+node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts                 # all scenarios
+node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts under_13_join   # one scenario
 ```
 
 Output: `PASS <id>` or `FAIL <id>`, then each check.
@@ -227,7 +227,7 @@ Every scenario uses the simulated reviewer (`review: "auto"`) and seed 7. The ne
 3. Write `setup(personas, start)`. Pick the cast with the helpers (`adults()`, `nth()`). Return the member ids and the scripted actions (`say(id, text)` at `at(start, day, hourNy)`).
 4. To script a member's first message, return `joinText`. To make invitees bad actors, return `badInvitees: true`.
 5. Write `check(ctx)`. Return one check for each thing that must be true. Use the run records (`ctx.records`), the Network (`ctx.net`) and the cast (`ctx.ids`).
-6. Run it alone: `bun run packages/network/harness/scenarios.ts <id>`.
+6. Run it alone: `node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts <id>`.
 7. Run the network tests (section 8). The new scenario runs there and shows as a level in the Observatory with no other change.
 
 A bug fix needs one scenario or test that fails before the fix and passes after it (CONTRIBUTING.md 3.4). One is enough.
@@ -243,8 +243,8 @@ Owner: the synthetic-data maintainer (`scripts/synthetic`, `data/synthetic`). Do
 **Caution:** `generate.ts` without `--dry-run` overwrites `data/synthetic/v1`. `validate.ts` without `--out` writes `data/synthetic/v1/validation.json`.
 
 ```bash
-bun scripts/synthetic/generate.ts --dry-run                  # cache hits and misses; writes nothing; no API calls
-bun scripts/synthetic/validate.ts --out /tmp/validation.json # runs every check; exits 1 on a failure
+node --import tsx --env-file-if-exists=.env scripts/synthetic/generate.ts --dry-run                  # cache hits and misses; writes nothing; no API calls
+node --import tsx --env-file-if-exists=.env scripts/synthetic/validate.ts --out /tmp/validation.json # runs every check; exits 1 on a failure
 ```
 
 A new dataset version changes every baseline. Re-baseline (section 7) in the same PR.
@@ -359,18 +359,18 @@ Do this when the Network, the engine, the oracle, the personas or the dataset ch
 
    ```bash
    E=packages/network/harness/experiment.ts
-   for s in 1 2 3; do bun run $E --days 21 --seed $s > docs/results/network/arms-21d-<topic>-seed$s.json; done
-   for s in 1 2 3; do bun run $E --days 21 --seed $s --only consent --time-aware > docs/results/network/consent-time-aware-21d-<topic>-seed$s.json; done
+   for s in 1 2 3; do node --import tsx --env-file-if-exists=.env $E --days 21 --seed $s > docs/results/network/arms-21d-<topic>-seed$s.json; done
+   for s in 1 2 3; do node --import tsx --env-file-if-exists=.env $E --days 21 --seed $s --only consent --time-aware > docs/results/network/consent-time-aware-21d-<topic>-seed$s.json; done
    ```
 
 2. Run the sensitivity runs and the long run (seed 1):
 
    ```bash
    E=packages/network/harness/experiment.ts
-   bun run $E --days 21 --seed 1 --only consent --primed-identity 0.90 > docs/results/network/sensitivity-identity-0.90.json
-   bun run $E --days 21 --seed 1 --only consent --primed-identity 0.98 > docs/results/network/sensitivity-identity-0.98.json
-   bun run $E --days 21 --seed 1 --only consent --primed-met 0.9 --primed-partial 0.75 > docs/results/network/sensitivity-ask-lower.json
-   bun run $E --days 42 --seed 1 --only consent > docs/results/network/consent-42d-seed1.json
+   node --import tsx --env-file-if-exists=.env $E --days 21 --seed 1 --only consent --primed-identity 0.90 > docs/results/network/sensitivity-identity-0.90.json
+   node --import tsx --env-file-if-exists=.env $E --days 21 --seed 1 --only consent --primed-identity 0.98 > docs/results/network/sensitivity-identity-0.98.json
+   node --import tsx --env-file-if-exists=.env $E --days 21 --seed 1 --only consent --primed-met 0.9 --primed-partial 0.75 > docs/results/network/sensitivity-ask-lower.json
+   node --import tsx --env-file-if-exists=.env $E --days 42 --seed 1 --only consent > docs/results/network/consent-42d-seed1.json
    ```
 
 3. Run one command twice and compare the JSON. It must be identical. If it is not, someone changed the code during the run; run again.
@@ -385,15 +385,15 @@ The simulations are the validation layer (2026-10-08: the unit and golden tests 
 
 | Changed | Command |
 |---|---|
-| `packages/network`, `packages/sim` | `bun run sim --only network` (the invariant run, consent vs push on seeds 1-3, every NYC scenario, the sim scenarios at pass^3; about 4-10 minutes depending on machine load) |
-| An app pack or world | `bun run sim --only slop` (or `peon`, `friends`) |
-| Parsers, corpora, the leak guard, opt-out | `bun run sim --only evals` |
-| `packages/capital` | `bun run sim --only capital` (32 paired seeds; slow) |
-| Platform, MCP, backend, service, console (Postgres, HTTP) | `bun run test:integration` and `bun run test:e2e` (need the dev Postgres; `bun run security` is the security subset) |
-| `sites/` | `DEPLOY_TARGET=production bun run sites/sites.ts` and `bunx tsc --noEmit -p sites/tsconfig.json` |
-| Any TypeScript | `bun run typecheck` |
-| Before you mark the PR ready | `bun run sim` and `bun run typecheck` |
+| `packages/network`, `packages/sim` | `pnpm run sim --only network` (the invariant run, consent vs push on seeds 1-3, every NYC scenario, the sim scenarios at pass^3; about 4-10 minutes depending on machine load) |
+| An app pack or world | `pnpm run sim --only slop` (or `peon`, `friends`) |
+| Parsers, corpora, the leak guard, opt-out | `pnpm run sim --only evals` |
+| `packages/capital` | `pnpm run sim --only capital` (32 paired seeds; slow) |
+| Platform, MCP, backend, service, console (Postgres, HTTP) | `pnpm run test:integration` and `pnpm run test:e2e` (need the dev Postgres; `pnpm run security` is the security subset) |
+| `sites/` | `DEPLOY_TARGET=production node --import tsx --env-file-if-exists=.env sites/sites.ts` and `pnpm exec tsc --noEmit -p sites/tsconfig.json` |
+| Any TypeScript | `pnpm run typecheck` |
+| Before you mark the PR ready | `pnpm run sim` and `pnpm run typecheck` |
 
 Paste the commands and the gate summary line in the PR.
 
-The safety gates are 0 canary leaks, 0 minor contacts and 0 invariant violations. `bun run sim` checks them on a 10-day run, and on the 21-day consent runs for seeds 1-3 (with pooled floors: everyone-yes 0.73 or more, 140 meetings or more). Runs of 30 days or more can show a `two_unanswered` violation from the one allowed re-engagement (D6). That is a known judge issue ([network.md](network.md) section 11); any other violation is a real failure. The 42-day seed-1 run on 2026-10-07 sent no re-engagement and had 0 violations.
+The safety gates are 0 canary leaks, 0 minor contacts and 0 invariant violations. `pnpm run sim` checks them on a 10-day run, and on the 21-day consent runs for seeds 1-3 (with pooled floors: everyone-yes 0.73 or more, 140 meetings or more). Runs of 30 days or more can show a `two_unanswered` violation from the one allowed re-engagement (D6). That is a known judge issue ([network.md](network.md) section 11); any other violation is a real failure. The 42-day seed-1 run on 2026-10-07 sent no re-engagement and had 0 violations.

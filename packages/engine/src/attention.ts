@@ -23,6 +23,11 @@
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
 import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
+import { unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import { stricterInviteBudget } from "../../core/src/generated/participationBudgets.ts";
+import { planStandingWindowCoversSlot } from "../../core/src/generated/planFormation.ts";
+import { calendarAvailability, type CalendarAvailabilityEvidence } from "../../core/src/calendar-free-busy.ts";
+export { calendarAvailability };
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
@@ -111,7 +116,8 @@ export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENT
   // Minors take the stricter of the minors cap and their state's cap (a Quiet minor keeps Quiet's
   // 1 per 30 days, engine-attention-plans-5).
   const st = cfg.caps[m.state];
-  const base = isMinor(m.age) && cfg.minors.cap.limit / cfg.minors.cap.periodDays < st.limit / st.periodDays ? cfg.minors.cap : cfg.caps[m.state];
+  // spec/participationBudgets.md, "A minor's solo offers have a smaller default cap"
+  const base = isMinor(m.age) ? stricterInviteBudget(cfg.minors.cap, st) : st;
   if (m.state === "paused" || m.onlyWhenAsked || m.prefs.mode === "only_when_asked") return { limit: 0, periodDays: base.periodDays };
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
   const limit = m.prefs.capOverride === undefined ? base.limit : Math.min(base.limit, Math.max(0, Math.floor(m.prefs.capOverride)));
@@ -168,7 +174,7 @@ export type Calibrator = (score: number, category: Category) => number;
 /**
  * Isotonic (pool-adjacent-violators) fit of persona "worth a text?" judgments on the engine score,
  * engine-v1.2.0 defaults, simulator seeds 101-104 (disjoint from the evaluation seeds 1-8), 1,650
- * labels, base rate 58.7%: `bun packages/engine/experiments/attention.ts --fit`. Knots are
+ * labels, base rate 58.7%: `node --import tsx packages/engine/experiments/attention.ts --fit`. Knots are
  * (score, P(worthwhile)); linear in between, flat outside. Per-category knots where n >= 100. A
  * prior to be replaced by the weekly per-category refit on production labels (5.3).
  */
@@ -393,6 +399,8 @@ export interface ComposeInput {
   /** Candidate items (held + new). Revalidate before composing (revalidateHold). */
   items: readonly AttentionItem[];
   ledger: readonly AttentionLedgerEntry[];
+  /** Current unanswered count from a caller that tracks delivery receipts and terminal invite expiry. */
+  unansweredCount?: number;
   conversation: Conversation;
   now: number;
   mode: "digest" | "break_in";
@@ -475,7 +483,8 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const no = (reason: string) => ({ ...res, reason });
   if (m.state === "paused") return no("paused");
   // The two-unanswered pause comes first (F28): the Network's own auto-pause always fires before Blooio's limit.
-  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt) >= 2) return no("only_when_asked");
+  const unanswered = inp.unansweredCount ?? unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt);
+  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInvitePause(unanswered)) return no("only_when_asked");
   // Reserve Blooio's third unanswered slot for logistics and safety (1.9).
   if (inp.conversation.outboundSinceInbound > cfg.blooio.interruptMaxOutstanding) return no("conversation_streak");
   if (inMemberQuietHours(m, now, cfg)) return no("quiet_hours");
@@ -977,12 +986,23 @@ export interface StandingAvailability extends WeeklyWindow {
   /** true = inferred (e.g. from calendar patterns), false = said by the member. */
   inferred?: boolean;
 }
+
+/** Check a recurring window on the slot's local start date against the complete interval. */
+export function standingWindowCoversSlot(w: WeeklyWindow, slot: TimeSlot, tz: string, lp = localParts(slot.start, tz)): boolean {
+  if (!w.byDay.includes((lp.weekday + 1) % 7)) return false;
+  const atHour = (hour: number) => {
+    const wholeHour = Math.floor(hour);
+    return fromLocal(lp.year, lp.month, lp.day, wholeHour, tz) + (hour - wholeHour) * HOUR;
+  };
+  return planStandingWindowCoversSlot(atHour(w.startHour), atHour(w.endHour), slot.start, slot.end);
+}
+
 /** Everything the Network knows about when a member is free. All of it is engine-visible; none of it is shareable. */
 export interface AvailabilityEvidence {
   memberId: MemberId; tz: string;
   quietHours?: [number, number];
-  /** Connected calendar, free/busy only (4c): busy blocks, never titles. Absent = not connected. */
-  calendar?: { busy: TimeSlot[] };
+  /** The current purpose-authorized free/busy observation. Coverage and freshness are checked per slot. */
+  calendar?: CalendarAvailabilityEvidence;
   standing?: StandingAvailability[];
   /** Times the member accepted (picked) or attended, and times they turned down as "can't then" (4e). */
   history?: { at: number; outcome: "accepted" | "attended" | "declined_time" }[];
@@ -999,6 +1019,8 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   const weekend = cfg.sendTime.weekendDays.includes(day);
   if (ev.quietHours && withinQuietHours(lp.hour, ...ev.quietHours)) return 0;
   if (ev.away?.some(a => a.start < slot.end && a.end > slot.start)) return 0;
+  const calendar = calendarAvailability(ev.calendar, slot, now);
+  if (calendar === "busy") return 0;
   const part = daypart(lp.hour);
   let p = weekend ? (part === "day" ? A.prior.weekendDay : A.prior.weekendEvening) : (part === "day" ? A.prior.weekdayDay : A.prior.weekdayEvening);
   // (b) standing availability: a decaying prior.
@@ -1007,7 +1029,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
     const c0 = w.inferred ? A.standing.inferredConfidence : A.standing.statedConfidence;
     const conf = c0 * Math.pow(2, -Math.max(0, now - (w.confirmedAt ?? w.statedAt)) / (A.standing.halfLifeDays * DAY));
     any = Math.max(any, conf);
-    if (w.byDay.includes(day) && lp.hour >= w.startHour && lp.hour < w.endHour) inside = Math.max(inside, conf);
+    if (standingWindowCoversSlot(w, slot, ev.tz, lp)) inside = Math.max(inside, conf);
   }
   if (inside > 0) p += inside * (A.standing.inside - p);
   else if (any > 0) p *= 1 - A.standing.outsideFactor * any;
@@ -1023,11 +1045,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   }
   if (pos > 0) p += Math.min(A.learned.maxWeight, pos / (pos + A.learned.k)) * (A.learned.target - p);
   if (neg > 0) p *= 1 - A.learned.declinePenalty * (neg / (neg + A.learned.k));
-  // (c) calendar free/busy: a hard-ish filter.
-  if (ev.calendar) {
-    if (ev.calendar.busy.some(b => b.start < slot.end && b.end > slot.start)) p *= A.calendar.busyFactor;
-    else p += A.calendar.freeWeight * (A.calendar.freeTarget - p);
-  }
+  if (calendar === "free") p += A.calendar.freeWeight * (A.calendar.freeTarget - p);
   return Math.max(0, Math.min(1, p));
 }
 
@@ -1067,11 +1085,14 @@ export function chooseTimeOptions(members: readonly AvailabilityEvidence[], now:
     for (const m of members) { const p = availabilityProb(m, slot, now, cfg); each[m.memberId] = p; joint *= p; }
     return { slot, joint, each };
   };
+  const calendarAllows = (slot: TimeSlot) => members.every(m => calendarAvailability(m.calendar, slot, now) !== "busy");
   if (o.fixed && o.window) {
-    const one = score({ start: o.window.start, end: Math.max(o.window.end, o.window.start + A.slotHours * HOUR) });
+    const slot = { start: o.window.start, end: Math.max(o.window.end, o.window.start + A.slotHours * HOUR) };
+    if (!calendarAllows(slot)) return { slots: [], pAny: 0 };
+    const one = score(slot);
     return { slots: [one], pAny: one.joint };
   }
-  const cands = (o.candidates ?? candidateSlots(o.tz, now, { window: o.window }, cfg)).map(score)
+  const cands = (o.candidates ?? candidateSlots(o.tz, now, { window: o.window }, cfg)).filter(calendarAllows).map(score)
     .filter(c => c.joint >= A.minJoint).sort((a, b) => (b.joint - a.joint) || (a.slot.start - b.slot.start));
   const chosen: TimeOptions["slots"] = [];
   const dayOf = (t: number) => { const p = localParts(t, o.tz); return `${p.year}-${p.month}-${p.day}`; };
@@ -1107,16 +1128,33 @@ export function standingFromFacets(facets: readonly (Pick<Facet, "inferred" | "o
   const out: StandingAvailability[] = [];
   for (const f of facets) {
     if (f.kind !== "availability_pattern" || !validityIncludes(f, now)) continue;
-    const by = new Map<string, number[]>();
+    const partsByDay = new Map<number, Set<string>>();
     for (const t of f.tags) {
       const [rawPart, rawDay] = t.split(":");
       const part = rawPart?.toLowerCase();
       // Day tags arrive as "Tue" or "tue" depending on the source (sim sources.ts emits lowercase).
       const i = DAYS3.findIndex(d => d.toLowerCase() === (rawDay ?? "").slice(0, 3).toLowerCase());
       if (!part || !PARTS[part] || i < 0) continue;
-      by.set(part, [...(by.get(part) ?? []), i]);
+      partsByDay.set(i, (partsByDay.get(i) ?? new Set()).add(part));
     }
-    for (const [part, days] of by) out.push({ byDay: days, startHour: PARTS[part]![0], endHour: PARTS[part]![1], source: f.inferred ? "calendar_pattern" : "conversation", statedAt: f.observedAt ?? f.validFrom ?? now, inferred: !!f.inferred });
+    // Adjacent parts of one day are one window ("afternoons and evenings" = 12:00-22:00), so an
+    // activity that crosses a part boundary fits inside it (spec/planFormation.md, "A standing
+    // window applies to the whole activity").
+    const by = new Map<string, { range: [number, number]; days: number[] }>();
+    for (const [day, parts] of partsByDay) {
+      const ranges: [number, number][] = [];
+      for (const [start, end] of Object.entries(PARTS).filter(([part]) => parts.has(part)).map(([, hours]) => hours)) {
+        const last = ranges[ranges.length - 1];
+        if (last && last[1] === start) last[1] = end; else ranges.push([start, end]);
+      }
+      for (const range of ranges) {
+        const key = range.join("-");
+        const entry = by.get(key) ?? { range, days: [] };
+        entry.days.push(day);
+        by.set(key, entry);
+      }
+    }
+    for (const { range: [startHour, endHour], days } of by.values()) out.push({ byDay: days, startHour, endHour, source: f.inferred ? "calendar_pattern" : "conversation", statedAt: f.observedAt ?? f.validFrom ?? now, inferred: !!f.inferred });
   }
   return out;
 }

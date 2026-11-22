@@ -1,5 +1,5 @@
 // OAuth 2.1 against the handler with the real platform OTP and a fake provider (no texts are sent).
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { PeopleStore } from "@thenetwork/platform";
 import { signProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { redirectUriAllowed } from "../src/handler.ts";
@@ -15,7 +15,7 @@ describe("metadata", () => {
     expect(as.issuer).toBe("https://peon.biz");
     expect(as.code_challenge_methods_supported).toEqual(["S256"]);
     expect(as.authorization_response_iss_parameter_supported).toBe(true);
-    expect(as.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write"]);
+    expect(as.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write", "profile:read"]);
     expect(as.registration_endpoint).toBe("https://peon.biz/oauth/register");
     const prm = await (await env.fetch(new Request(`${origin(PEON)}/.well-known/oauth-protected-resource/mcp`))).json() as Record<string, any>;
     expect(prm).toMatchObject({ resource: "https://peon.biz/mcp", authorization_servers: ["https://peon.biz"], bearer_methods_supported: ["header"] });
@@ -318,20 +318,72 @@ describe("banned numbers", () => {
 });
 
 describe("the person's consent records", () => {
-  test("listed on the site and revocable by the person only, from the site itself", async () => {
+  // spec/connectedAssistants.md, "A confirmed removal shows its result"
+  test("lists the current person's grants and requires the exact browser confirmation to remove one", async () => {
+    const env = setup();
+    const personId = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const c = await connect(env, PEON, PHONE_A);
+    const site = /sid_peon=[^;]+/.exec(c.flow.siteCookie!)![0];
+    const page = (path = "", cookie = site) => env.fetch(new Request(`${origin(PEON)}/oauth/consents${path}`, { headers: { cookie } }));
+    const [grant] = await env.store.grantsFor(env.accounts.phoneHash(PHONE_A), "peon", env.clock.t);
+    expect(grant?.personId).toBe(personId);
+    const former = { ...grant!, id: "earlier-owner-grant", personId: "earlier-owner" };
+    await env.store.putGrant(former);
+    const html = await (await page()).text();
+    expect(html).toContain("Test Assistant");
+    expect(html).not.toContain(former.id);
+    expect(html).not.toContain('name="grant"');
+    const chosen = /name="remove" value="([^"]+)"/.exec(html)![1]!;
+    const confirmPath = `?remove=${encodeURIComponent(chosen)}`;
+    const getProof = async () => {
+      const confirm = await (await page(confirmPath)).text();
+      expect(confirm).toContain(`name="grant" value="${chosen}"`);
+      expect(confirm).toContain("Keep access");
+      return /name="confirmation" value="([^"]+)"/.exec(confirm)![1]!;
+    };
+    const post = (id: string, confirmation?: string, o = origin(PEON), cookie = site) => env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, {
+      method: "POST", headers: { cookie, origin: o, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant: id, ...(confirmation ? { confirmation } : {}) }),
+    }));
+    expect(await (await page(`?remove=${former.id}`)).text()).not.toContain('name="confirmation"');
+    expect(await (await post(chosen)).text()).not.toContain("Access removed.");
+    const proof = await getProof();
+    expect((await post(chosen, proof, "https://evil.example")).status).toBe(403);
+    expect(await (await post(former.id, proof)).text()).not.toContain("Access removed.");
+    const anotherSession = await env.sessions.create("peon", PHONE_A, personId);
+    expect(await (await post(chosen, proof, origin(PEON), `sid_peon=${anotherSession.token}`)).text()).not.toContain("Access removed.");
+    env.clock.t += 5 * 60_000;
+    expect(await (await post(chosen, proof)).text()).not.toContain("Access removed.");
+    expect(await env.store.getGrant(chosen)).toMatchObject({ revokedAt: null });
+    const current = await getProof();
+    expect(await (await post(chosen, current)).text()).toContain("Access removed.");
+    expect(await (await post(chosen, current)).text()).not.toContain("Access removed.");
+    expect(await env.store.getGrant(former.id)).toMatchObject({ revokedAt: null });
+    expect((await env.store.auditRows()).filter(row => row.kind === "consent_revoked").map(row => row.grantId)).toEqual([chosen]);
+    expect((await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token })).res.status).toBe(401);
+    expect((await page("", "")).status).toBe(401);
+  });
+
+  test("a removal confirmation ends when its grant expires before five minutes", async () => {
     const env = setup();
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     const c = await connect(env, PEON, PHONE_A);
-    const site = /sid_peon=[^;]+/.exec(c.flow.siteCookie!)![0];
-    const list = await env.fetch(new Request(`${origin(PEON)}/oauth/consents`, { headers: { cookie: site } }));
-    const html = await list.text();
-    expect(html).toContain("Test Assistant");
-    const grantId = /name="grant" value="([^"]+)"/.exec(html)![1]!;
-    const post = (o: string) => env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, { method: "POST", headers: { cookie: site, origin: o, "content-type": "application/x-www-form-urlencoded" }, body: `grant=${grantId}` }));
-    expect((await post("https://evil.example")).status).toBe(403);
-    expect(await (await post(origin(PEON))).text()).toContain("Access removed.");
-    expect((await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token })).res.status).toBe(401);
-    expect((await env.fetch(new Request(`${origin(PEON)}/oauth/consents`))).status).toBe(401);
+    const cookie = /sid_peon=[^;]+/.exec(c.flow.siteCookie!)![0];
+    const [live] = await env.store.grantsFor(env.accounts.phoneHash(PHONE_A), "peon", env.clock.t);
+    const expiresAt = env.clock.t + 60_000;
+    const grant = { ...live!, id: "short-lived-consent", expiresAt };
+    await env.store.putGrant(grant);
+    const response = await env.fetch(new Request(`${origin(PEON)}/oauth/consents?remove=${grant.id}`, { headers: { cookie } }));
+    const confirmation = /name="confirmation" value="([^"]+)"/.exec(await response.text())?.[1];
+    expect(confirmation?.split(".")[0]).toBe(String(expiresAt));
+    env.clock.t = expiresAt;
+    const expired = await env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, {
+      method: "POST", headers: { cookie, origin: origin(PEON), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant: grant.id, confirmation: confirmation! }),
+    }));
+    expect((await expired.text()).includes("Access removed.")).toBe(false);
+    expect(await env.store.getGrant(grant.id)).toMatchObject({ revokedAt: null });
+    expect(await env.store.getGrant(live!.id)).toMatchObject({ revokedAt: null });
   });
 
   test("a signed-in site session skips the code step; revokeAllFor ends every grant of a phone", async () => {
@@ -500,6 +552,88 @@ describe("explicit client approval boundary", () => {
     return grant;
   }
 
+  test("a session outage on an OTP app retries the same request in the same browser", async () => {
+    let available = false;
+    let transportFailure = false;
+    let siteToken = "";
+    let env: Env;
+    env = setup({ authenticatedSiteSession: async app => {
+      if (transportFailure) throw new Error("session service is unavailable");
+      return available ? env.sessions.authenticate(app, siteToken) : "unavailable";
+    } });
+    const who = await member(env);
+    siteToken = who.cookie.slice("sid_peon=".length);
+    const client = await register(env, DOMAIN);
+    const started = await begin(env, client.body.client_id, who.cookie);
+    expect(started.response.status).toBe(503);
+    const retry = /href="(\/oauth\/retry\?rid=([A-Za-z0-9_-]+))"/.exec(started.html);
+    if (!retry) throw new Error("missing same-request retry link");
+    const [, path, rid] = retry;
+    const fetchRetry = (cookie: string, base = BASE, route = path) => env.fetch(new Request(base + route, { headers: { cookie } }));
+    expect((await fetchRetry(who.cookie)).status).toBe(400);
+    expect((await fetchRetry(started.cookie, origin(SLOP))).status).toBe(400);
+    transportFailure = true;
+    const stillUnavailable = await fetchRetry(started.cookie);
+    expect(stillUnavailable.status).toBe(503);
+    expect(await stillUnavailable.text()).toContain(`href="${path}"`);
+
+    transportFailure = false;
+    available = true;
+    const boundBrowserOnly = started.cookie.replace(`; ${who.cookie}`, "");
+    const phonePage = await fetchRetry(boundBrowserOnly);
+    expect(phonePage.status).toBe(200);
+    expect(await phonePage.text()).toContain(`name="rid" value="${rid}"`);
+    expect((await fetchRetry(boundBrowserOnly, BASE, `/oauth/cloud-return?rid=${rid}`)).status).toBe(200);
+    expect(await env.store.getAuthRequest(rid!)).toMatchObject({ step: "phone", e164: null });
+
+    const consent = await fetchRetry(started.cookie);
+    expect(consent.status).toBe(200);
+    expect(consent.headers.get("location")).toBeNull();
+    expect(await consent.text()).toContain('action="/oauth/authorize/consent"');
+    expect(await env.store.getAuthRequest(rid!)).toMatchObject({ step: "consent", personId: who.personId });
+    noIssuedAccess(env);
+    expect((await fetchRetry(started.cookie)).status).toBe(400);
+    const approved = await post(env, "/oauth/authorize/consent", rid!, started.cookie, { decision: "approve" });
+    expect(approved.status).toBe(303);
+    expect(new URL(approved.headers.get("location")!).searchParams.get("state")).toBe("connection-state");
+    expect(env.provider.sent).toHaveLength(0);
+  });
+
+  test("a session retry cannot replace a phone form that advanced during its check", async () => {
+    let enteredCheck!: () => void;
+    let finishCheck!: () => void;
+    const checking = new Promise<void>(resolve => { enteredCheck = resolve; });
+    const complete = new Promise<void>(resolve => { finishCheck = resolve; });
+    let recovering = false;
+    let siteToken = "";
+    let env: Env;
+    env = setup({ authenticatedSiteSession: async app => {
+      if (!recovering) return "unavailable";
+      enteredCheck();
+      await complete;
+      return env.sessions.authenticate(app, siteToken);
+    } });
+    const who = await member(env);
+    siteToken = who.cookie.slice("sid_peon=".length);
+    const client = await register(env, DOMAIN);
+    const started = await begin(env, client.body.client_id, who.cookie);
+    const retry = /href="(\/oauth\/retry\?rid=([A-Za-z0-9_-]+))"/.exec(started.html);
+    if (!retry) throw new Error("missing same-request retry link");
+    recovering = true;
+    const delayed = env.fetch(new Request(BASE + retry[1], { headers: { cookie: started.cookie } }));
+    await checking;
+    try {
+      const phone = await post(env, "/oauth/authorize/phone", retry[2]!, started.cookie, { phone: PHONE_B });
+      expect(phone.status).toBe(200);
+      expect(await phone.text()).toContain(PHONE_B.slice(-4));
+    } finally {
+      finishCheck();
+    }
+    expect((await delayed).status).toBe(400);
+    expect(await env.store.getAuthRequest(retry[2]!)).toMatchObject({ step: "code", e164: PHONE_B, personId: null });
+    noIssuedAccess(env);
+  });
+
   test("a new DCR client cannot turn a signed-in browser GET into a grant or code", async () => {
     let links = 0;
     const env = setup({ assistantLinked: async () => { links++; } });
@@ -582,12 +716,11 @@ describe("explicit client approval boundary", () => {
   test("an approval expiring during storage consumption cannot issue access", async () => {
     const env = setup(); const who = await member(env); const client = await register(env, DOMAIN);
     const request = await begin(env, client.body.client_id, who.cookie);
-    const take = env.store.takeConsentRequest.bind(env.store);
-    env.store.takeConsentRequest = async (id, at) => {
-      const result = await take(id, at);
-      if (result) env.clock.t = result.expiresAt;
-      return result;
-    };
+    const commit = env.store.commitConsentGrant.bind(env.store);
+    env.store.commitConsentGrant = (id, at, confirm, writes) => commit(id, at, approval => {
+      env.clock.t = approval.expiresAt;
+      return confirm(approval);
+    }, writes);
     expect((await post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "approve" })).status).toBe(400);
     noIssuedAccess(env);
   });
@@ -596,10 +729,10 @@ describe("explicit client approval boundary", () => {
     for (const patch of [{ e164: PHONE_B }, { personId: "different-owner" }]) {
       const env = setup(); const who = await member(env); const client = await register(env, DOMAIN);
       const request = await begin(env, client.body.client_id, who.cookie);
-      const take = env.store.takeConsentRequest.bind(env.store);
-      env.store.takeConsentRequest = async (id, at) => {
+      const commit = env.store.commitConsentGrant.bind(env.store);
+      env.store.commitConsentGrant = async (id, at, confirm, writes) => {
         await env.store.updateAuthRequest(id, patch);
-        return take(id, at);
+        return commit(id, at, confirm, writes);
       };
       expect((await post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "approve" })).status).toBe(400);
       noIssuedAccess(env);

@@ -2,6 +2,7 @@
 // is at "@thenetwork/network/harness".
 export * from "./network.ts";
 export * from "./classify.ts";
+export * from "./invitation.ts";
 export * from "./copy.ts";
 export * from "./geo.ts";
 export * from "./trust.ts";

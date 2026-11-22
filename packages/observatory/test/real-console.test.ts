@@ -2,8 +2,8 @@
 // section 6): the Network's stored state, requests, the newer review columns, events for the
 // timeline and the opportunity history, safety cases, the config history, search without inbound
 // text, the per-member PII reveal, and the append-only staff audit table.
-import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { GameSource } from "../src/sources/game.ts";
@@ -37,14 +37,14 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
     // Compare the same observation time. Wall time must not make future simulated meetings overdue.
-    setSystemTime(new Date(gs.clock.now));
+    vi.setSystemTime(new Date(gs.clock.now));
     real = new RealSource({ url, pollMs: 3_600_000, pushMs: 3_600_000, service: false });
     await real.init();
     rs = real.state();
   }, T);
   afterAll(async () => {
     try { await real?.dispose(); await g?.dispose(); await dropTestDb(); }
-    finally { setSystemTime(); }
+    finally { vi.useRealTimers(); }
   });
 
   test("review items with edits, re-rolls and time spent; requests; the Network's counters and switch", () => {
@@ -88,8 +88,17 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     const inbound = rt.entries.filter(e => e.kind === "message" && e.message.direction === "inbound" && !e.message.system);
     expect(inbound.length).toBeGreaterThan(0);
     expect(inbound.every(e => e.kind === "message" && e.message.body === HIDDEN_MESSAGE)).toBe(true);
-    const outbound = rt.entries.filter(e => e.kind === "message" && e.message.direction === "outbound" && !e.message.system);
-    expect(outbound.every(e => e.kind === "message" && e.message.guard === "passed")).toBe(true);
+    const outbound = (t: typeof rt) => t.entries.flatMap(e => e.kind === "message" && e.message.direction === "outbound" && !e.message.system ? [e.message] : []);
+    const stored = outbound(rt);
+    expect(stored.length).toBeGreaterThan(0);
+    const statuses = (messages: typeof stored) => new Map(messages.map(m => [m.id, m.status]));
+    expect(statuses(stored)).toEqual(statuses(outbound(gt)));
+    // spec/consoleMemberView.md, "The timeline shows recorded delivery and leak evidence for the exact message"
+    // The game export has message statuses and no provider queue evidence.
+    for (const message of stored) {
+      expect(message).not.toHaveProperty("guard");
+      expect(message).not.toHaveProperty("deliveryReason");
+    }
     // A reveal for this member shows their own words (and only on this call).
     const rv = (await real.timeline(id, { reveal: true }))!;
     expect(rv.entries.some(e => e.kind === "message" && e.message.direction === "inbound" && e.message.body !== HIDDEN_MESSAGE)).toBe(true);

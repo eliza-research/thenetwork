@@ -1,0 +1,49 @@
+import { apply, initial } from "./generated/runtimeUnit.effect.js"
+
+interface StoredUnitEffects<State, Result> {
+  load(): Promise<State | undefined>
+  restore(state: State): void
+  run(): Promise<Result> | Result
+  save(): Promise<void>
+}
+
+error UnexpectedUnitPhase { phase: string }
+error StoredUnitIOFailure { operation: string, cause: unknown }
+
+function io<T>(operation: string, work: () => T | Promise<T>) {
+  return tryPromise({
+    try: async () => work(),
+    catch: cause => new StoredUnitIOFailure({ operation, cause }),
+  })
+}
+
+/** Sequence the effects under the lock held by the caller. */
+export async function runStoredNetworkUnit<State extends object, Result>(
+  effects: StoredUnitEffects<State, Result>,
+): Promise<Result> {
+  try {
+    return await runPromise(effect {
+      const state = try io("load", () => effects.load())
+      let unit = try apply(initial, { type: "recordLoad", snapshotFound: state !== undefined })
+      if (unit.phase === "RestoringSnapshot" && state !== undefined) {
+        try Effect.try({
+          try: () => effects.restore(state),
+          catch: cause => new StoredUnitIOFailure({ operation: "restore", cause }),
+        })
+        unit = try apply(unit, { type: "recordRestore" })
+      }
+      if (unit.phase !== "RunningAction") throw new UnexpectedUnitPhase({ phase: unit.phase })
+      const out = try io("run", () => effects.run())
+      const saving = try apply(unit, { type: "recordAction" })
+      if (saving.phase !== "SavingState") throw new UnexpectedUnitPhase({ phase: saving.phase })
+      try io("save", () => effects.save())
+      const saved = try apply(saving, { type: "recordSave" })
+      if (saved.phase !== "StateSaved") throw new UnexpectedUnitPhase({ phase: saved.phase })
+      return out
+    })
+  } catch (error) {
+    // The store and HTTP callers inspect the original rejection, including database error codes.
+    if (error instanceof StoredUnitIOFailure) throw error.cause
+    throw error
+  }
+}

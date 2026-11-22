@@ -11,6 +11,13 @@
 //   per-period decay, then clipped by a per-period cap. Credits reduced to 0 are still written
 //   (amount 0), so detection sees the behaviour.
 import { DAY, HOUR } from "../../core/src/clock.ts";
+import {
+  acceptsCapitalAttendanceProof, capitalAttendanceMayResolve, capitalHelpMayResolve, capitalHelpSourceMayStart,
+  capitalAttendanceEvidence, capitalEntryUsesPeriodCap, capitalFraudReverses, capitalHelpWasUseful,
+  capitalPeriodRoom, initial as capitalEventInitial, isCapitalFraudCandidate, mayEarnCapital,
+  mayReverseCapitalEntry, needCapitalSourceOpen, organizingCapitalQuorum, organizingCapitalSourceOpen,
+  step as stepCapitalEvent,
+} from "../../core/src/generated/capitalLedger.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
 import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, PlanOrigin, Verification, Viewer } from "./types.ts";
@@ -130,10 +137,13 @@ export class CapitalLedger {
    */
   record(ev: CapitalEvent): LedgerEntry[] {
     const bad = validateCapitalEvent(ev);
-    if (bad) this.reject(ev, bad);
-    if (this.seen.has(ev.id)) return [];
-    if (ev.t < this.lastT) this.reject(ev, `events must be recorded in time order (t ${ev.t} < ${this.lastT})`);
+    const validated = stepCapitalEvent(capitalEventInitial, { type: "validateLedgerEvent", valid: !bad });
+    if (validated.phase === "InvalidCapitalEvent") this.reject(ev, bad!);
+    const admitted = stepCapitalEvent(validated, { type: "checkLedgerSource", duplicate: this.seen.has(ev.id), inOrder: ev.t >= this.lastT });
+    if (admitted.phase === "OutOfOrderCapitalEvent") this.reject(ev, `events must be recorded in time order (t ${ev.t} < ${this.lastT})`);
+    if (admitted.phase !== "AppendingCapitalEvent") return [];
     this.store?.appendEvent(ev);
+    if (stepCapitalEvent(admitted, { type: "recordLedgerAppend" }).phase !== "ApplyingCapitalEvent") return [];
     this.seen.add(ev.id);
     this.lastT = ev.t;
     const out: LedgerEntry[] = [];
@@ -247,14 +257,15 @@ export class CapitalLedger {
       }
       case "plan_attended": {
         const p = this.plans.get(planKey(ev.member, ev.planId));
-        if (!p || !p.accepted || p.resolved) break;
+        if (!p || !capitalAttendanceMayResolve(p.accepted, p.resolved)) break;
         p.resolved = true;
-        if (!ev.verifiedBy.length) break;
+        const evidence = capitalAttendanceEvidence(ev.verifiedBy.length > 0, ev.verifiedBy.some(v => v !== "counterpart"));
+        if (evidence === "AttendanceUnverified") break;
         // Only eligible adult members count as counterparts or confirmers (capital-9).
         const counterparts = uniq(ev.counterparts.filter(x => x !== ev.member && this.isEligible(x)));
         const confirmedBy = uniq((ev.confirmers ?? (ev.verifiedBy.includes("counterpart") ? counterparts : [])).filter(x => x !== ev.member && this.isEligible(x)));
         // Verified only by counterparts, and none of them counts: nobody verified it.
-        if (ev.verifiedBy.every(v => v === "counterpart") && !confirmedBy.length) break;
+        if (!acceptsCapitalAttendanceProof(evidence, confirmedBy.length > 0)) break;
         const e = this.credit(ev.member, "attendance", c.credit.attendance, ev, counterparts, confirmedBy, "attended",
           out, { planId: ev.planId, origin: ev.origin, verification: [...ev.verifiedBy] });
         if (e) p.attendedEntry = e;
@@ -272,32 +283,32 @@ export class CapitalLedger {
         break;
       }
       case "help_given": {
-        if (ev.helper === ev.recipient || this.helps.has(ev.helpId)) break;
+        if (!capitalHelpSourceMayStart(ev.helper === ev.recipient, this.helps.has(ev.helpId))) break;
         this.helps.set(ev.helpId, { helper: ev.helper, recipient: ev.recipient, resolved: false });
         break;
       }
       case "help_confirmed": {
         const h = this.helps.get(ev.helpId);
-        if (!h || h.resolved || h.recipient !== ev.recipient) break;
+        if (!h || !capitalHelpMayResolve(h.resolved, h.recipient === ev.recipient)) break;
         h.resolved = true;
-        if (!ev.useful || !this.isEligible(h.recipient)) break;
+        if (!capitalHelpWasUseful(ev.useful, this.isEligible(h.recipient))) break;
         this.credit(h.helper, "help", c.credit.help, ev, [h.recipient], [h.recipient], "help confirmed useful by the recipient", out);
         break;
       }
       case "organized": {
-        if (!ev.publicVenue) break; // organizing credit is for public venues only (MVP)
-        if (this.credited.has(`organized|${ev.organizer}|${ev.planId}`)) break;
+        const source = `organized|${ev.organizer}|${ev.planId}`;
+        if (!organizingCapitalSourceOpen(ev.publicVenue, this.credited.has(source))) break;
         const attendees = uniq(ev.attendees.filter(a => a !== ev.organizer && this.isEligible(a)));
-        if (attendees.length < c.organizing.minAttendees) break;
+        if (!organizingCapitalQuorum(attendees.length, c.organizing.minAttendees)) break;
         if (this.credit(ev.organizer, "organizing", c.credit.organizing, ev, attendees, [],
-          ev.recurring ? "led a recurring crew session" : "organized a plan", out, { planId: ev.planId, label: ev.label })) this.credited.add(`organized|${ev.organizer}|${ev.planId}`);
+          ev.recurring ? "led a recurring crew session" : "organized a plan", out, { planId: ev.planId, label: ev.label })) this.credited.add(source);
         break;
       }
       case "need_answered": {
         const by = ev.confirmedBy === "staff" ? [] : [ev.confirmedBy];
-        if (by[0] === ev.member || (by.length && !this.isEligible(by[0]!))) break;
-        if (this.credited.has(`need|${ev.member}|${ev.needId}`)) break;
-        this.credited.add(`need|${ev.member}|${ev.needId}`);
+        const source = `need|${ev.member}|${ev.needId}`;
+        if (!needCapitalSourceOpen(this.credited.has(source), by[0] === ev.member, !by.length || this.isEligible(by[0]!))) break;
+        this.credited.add(source);
         this.credit(ev.member, "needs_answered", c.credit.needs_answered, ev, by, by, "answered a Network need", out, { label: ev.label });
         break;
       }
@@ -310,11 +321,11 @@ export class CapitalLedger {
         for (const m of set) {
           if (!this.isEligible(m)) continue;
           for (const e of [...(this.byMember.get(m) ?? [])]) {
-            if (e.sign !== 1 || e.amount <= 0 || this.reversed.has(e.id)) continue;
+            if (!isCapitalFraudCandidate(e.sign === 1, !(e.amount <= 0), this.reversed.has(e.id))) continue;
             const involved = [...e.provenance.counterparts, ...e.provenance.confirmedBy].some(x => set.has(x));
             // A credit that exists only because of a reversed credit (feedback on a staged plan) goes too.
             const dependent = e.provenance.basis !== undefined && this.reversed.has(e.provenance.basis);
-            if (involved || dependent) this.reverse(m, e.id, ev, "clawback: credit found to be fraudulent", out);
+            if (capitalFraudReverses(involved, dependent)) this.reverse(m, e.id, ev, "clawback: credit found to be fraudulent", out);
           }
           // One fraud penalty per member per period: several review cases about the same ring only claw back.
           const recentFraud = (this.byMember.get(m) ?? []).some(e => e.category === "fraud" && ev.t - e.t < c.antiGaming.periodDays * DAY);
@@ -377,7 +388,7 @@ export class CapitalLedger {
   /** Earn entry with anti-gaming multipliers. Returns undefined for excluded members. */
   private credit(member: MemberId, cat: EarnCategory, base: number, ev: CapitalEvent, counterparts: MemberId[], confirmedBy: MemberId[],
     outcome: string, out: LedgerEntry[], extra: Partial<Prov> = {}): LedgerEntry | undefined {
-    if (!this.isEligible(member) || this.members.get(member)!.removed || base <= 0) return undefined;
+    if (!mayEarnCapital(this.isEligible(member), this.members.get(member)?.removed ?? false, !(base <= 0))) return undefined;
     const ag = this.cfg.antiGaming;
     // Credits the pair chose themselves (help, needs, member-started plans) decay over a longer window.
     const controlled = cat === "help" || cat === "needs_answered" || (cat === "attendance" && pairChosen(extra.origin, extra.verification));
@@ -396,7 +407,8 @@ export class CapitalLedger {
       }
       // Per period cap on positive NC, net of clawbacks of credits inside the period. A clawback of
       // an older credit does not make room (capital-2): that credit never used this period's cap.
-      if (age < period && (e.sign === 1 || (e.category === "clawback" && ev.t - (this.byId.get(e.provenance.reverses!)?.t ?? -Infinity) < period))) inPeriod += e.amount;
+      const reversesCurrentCredit = e.category === "clawback" && ev.t - (this.byId.get(e.provenance.reverses!)?.t ?? -Infinity) < period;
+      if (capitalEntryUsesPeriodCap(age, period, e.sign === 1, reversesCurrentCredit)) inPeriod += e.amount;
     }
     // Per counterpart pair. A plan the members chose decays on its most repeated counterpart (the
     // recurring core): with the mean, two fresh "fillers" per staged meetup cancelled the decay
@@ -405,7 +417,7 @@ export class CapitalLedger {
     const pairMult = !decays.length ? 1 : controlled ? Math.min(...decays) : decays.reduce((s, x) => s + x, 0) / decays.length;
     // Per category and period.
     const catMult = 1 / (1 + nCat / ag.categorySoftN[cat]);
-    const room = Math.max(0, ag.periodCap - inPeriod);
+    const room = capitalPeriodRoom(ag.periodCap - inPeriod);
     const amount = round(Math.min(base * pairMult * catMult, room));
     return this.write(member, cat, 1, amount, base, base > 0 ? amount / base : 0, ev, { counterparts, confirmedBy, outcome, ...extra }, out);
   }
@@ -416,7 +428,7 @@ export class CapitalLedger {
 
   private reverse(member: MemberId, entryId: string, ev: CapitalEvent, outcome: string, out: LedgerEntry[]) {
     const orig = this.byId.get(entryId);
-    if (!orig || orig.member !== member || this.reversed.has(entryId)) return;
+    if (!orig || !mayReverseCapitalEntry(orig.member === member, this.reversed.has(entryId))) return;
     this.reversed.add(entryId);
     this.write(member, "clawback", -1, -orig.amount, orig.amount, 1, ev,
       { counterparts: orig.provenance.counterparts, confirmedBy: [], outcome, reverses: entryId, label: orig.provenance.label }, out);

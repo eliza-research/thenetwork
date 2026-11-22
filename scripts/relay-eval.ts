@@ -1,26 +1,27 @@
 // The Clef relay classifier: live evaluation and calibration (operator CLI). docs/results/2026-10-09-relay.md section 6.
 // Only `--live` calls Cloudflare Workers AI, and only with CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID
 // set. Every Clef answer is cached in evals/relay/clef-answers.jsonl (keyed by a hash; no text), so a
-// second run, the fit and `bun run sim` read the cache. Reports are aggregates only: no message text.
+// second run, the fit and `pnpm run sim` read the cache. Reports are aggregates only: no message text.
 //
-//   bun run relay-eval [--model clef-flash|clef] [--weights evals/relay/clef-relay-weights.json]
+//   pnpm run relay-eval [--model clef-flash|clef] [--weights evals/relay/clef-relay-weights.json]
 //       Offline: the cost estimate for the missing answers, and the report from the cache (if any).
-//   bun run relay-eval --live [--model clef-flash] [--budget-usd 1] [--concurrency 4] [--timeout-ms 15000]
+//   pnpm run relay-eval --live [--model clef-flash] [--budget-usd 1] [--concurrency 4] [--timeout-ms 15000]
 //       Fill missing answers for every corpus (tuning sets, heldout-2, benign-adult), then report:
 //       per category recall and precision on the tuning sets (5-fold cross-validated) vs heldout-2,
 //       the false-hold rate on honest messages, for direct-only, question bank and both, and the cost.
-//   bun run relay-eval fit --live [--model clef-flash] [--out evals/relay/clef-relay-weights.json]
+//   pnpm run relay-eval fit --live [--model clef-flash] [--out evals/relay/clef-relay-weights.json]
 //       [--mode auto|direct|bank|both] [--max-false-hold 0.02] [--l2 0.003] [--budget-usd 1]
 //       Fill missing TUNING answers, compare the three modes by cross-validation on the tuning sets,
 //       fit the best (or --mode) on all tuning rows and write the weights. heldout-2 is never fitted
 //       on; it is scored (from the cache, filled with the tuning rows) and reported.
 //   Without --live, `fit` prints the plan and the cost estimate and exits.
-//   bun run relay-eval rules [--file relay/relay-heldout-2.jsonl] [--json out.json]
+//   pnpm run relay-eval rules [--file relay/relay-heldout-2.jsonl] [--json out.json]
 //       Offline, no model call: the rules-only policy (relayItem) on one corpus file (default heldout-2,
 //       never tuned on): the class x pass/hold/block confusion, recall per class with Wilson 95% CIs,
 //       the false-hold rate on the file's honest rows and on network/benign-adult.txt, and the leak
 //       recall (contact + rating). Then rules + Clef from the recorded answers when the cache covers
 //       the file; otherwise Clef is reported as not measured. Aggregates and reason codes only.
+import { fileAt, writePath } from "../packages/core/src/runtime/files.ts";
 import { appendFile } from "node:fs/promises";
 import { CLEF_MODEL_IDS, type ClefModel } from "../packages/engine/src/packs/slop/clef.ts";
 import { clefRelayClassifier, DEFAULT_RELAY_CLEF_WEIGHTS, estimateRelayClefTokens, loadRelayClefWeights, RELAY_CLEF_BANK_VERSION, RELAY_CLEF_MODES, relayClefCost, relayClefKey, type RelayClefCacheRow, type RelayClefEvent, type RelayClefMode, type RelayClefWeights } from "../packages/engine/src/relayClef.ts";
@@ -119,7 +120,7 @@ const report = (label: string, w: RelayClefWeights, cv?: (typeof cmp.modes)[numb
 console.log(`\n${formatArm("tuning: rules only", scoreArms(tune.rows, DEFAULT_RELAY_CLEF_WEIGHTS).rules)}`);
 for (const m of cmp.modes) report(`mode ${m.mode}${m.mode === cmp.best ? " (best on tuning CV, Clef alone)" : ""}${m.eligible ? "" : ` (over the ${(headFalseHold * 100).toFixed(0)}% false-hold limit)`}: weights fitted on all tuning rows for heldout-2`, fitted[m.mode], m);
 const shippedPath = arg("weights") ?? CLEF_WEIGHTS;
-const shipped = (await Bun.file(shippedPath).exists()) ? await loadRelayClefWeights(shippedPath) : DEFAULT_RELAY_CLEF_WEIGHTS;
+const shipped = (await fileAt(shippedPath).exists()) ? await loadRelayClefWeights(shippedPath) : DEFAULT_RELAY_CLEF_WEIGHTS;
 report(`shipped weights ${shipped.version} (mode ${shipped.mode}; in-sample on tuning when fitted on it)`, shipped);
 
 if (cmd === "fit") {
@@ -137,8 +138,8 @@ if (cmd === "fit") {
     },
   };
   const out = arg("out") ?? CLEF_WEIGHTS;
-  await Bun.write(out, `${JSON.stringify(w, null, 1)}\n`);
-  console.log(`\nwrote ${out} (${w.version}); \`bun run sim --only relay\` now scores the Clef arm with it`);
+  await writePath(out, `${JSON.stringify(w, null, 1)}\n`);
+  console.log(`\nwrote ${out} (${w.version}); \`pnpm run sim --only relay\` now scores the Clef arm with it`);
 }
 
 // ------------------------------------------------------------------------------- rules report
@@ -202,11 +203,11 @@ async function rulesReport(): Promise<void> {
   const covered = c ? rows.filter(r => c.has(relayClefKey(model, r.text.trim()))).length : 0;
   if (!c?.size || covered < rows.length) {
     const why = !c?.size ? `no recorded answers (${cachePath} is missing)` : `recorded answers cover ${covered}/${rows.length} rows`;
-    console.log(`\n-- rules + Clef (${model}): not measured: needs CLOUDFLARE_AI_TOKEN (${why}; fill with \`bun run relay-eval --live\`)`);
+    console.log(`\n-- rules + Clef (${model}): not measured: needs CLOUDFLARE_AI_TOKEN (${why}; fill with \`pnpm run relay-eval --live\`)`);
     result.clef = { measured: false, reason: `needs CLOUDFLARE_AI_TOKEN; ${why}` };
   } else {
     const weightsPath = arg("weights") ?? CLEF_WEIGHTS;
-    const weights = (await Bun.file(weightsPath).exists()) ? await loadRelayClefWeights(weightsPath) : DEFAULT_RELAY_CLEF_WEIGHTS;
+    const weights = (await fileAt(weightsPath).exists()) ? await loadRelayClefWeights(weightsPath) : DEFAULT_RELAY_CLEF_WEIGHTS;
     const hook = clefRelayClassifier({ model, weights, offline: true, answers: cacheLookup(c) });
     // Scored on the slop desk's rules (appearanceLeak included), as production runs it.
     const decided = new Map<string, { decision: Decision; reasons: string[] }>();
@@ -214,5 +215,5 @@ async function rulesReport(): Promise<void> {
     result.clef = { measured: true, weights: weights.version, arm: armReport(`rules + Clef (${model}, offline from recorded answers, weights ${weights.version})`, rows, t => decided.get(t)!, benignRows) };
   }
   const out = arg("json");
-  if (out) { await Bun.write(out, `${JSON.stringify(result, null, 1)}\n`); console.log(`\nwrote ${out}`); }
+  if (out) { await writePath(out, `${JSON.stringify(result, null, 1)}\n`); console.log(`\nwrote ${out}`); }
 }

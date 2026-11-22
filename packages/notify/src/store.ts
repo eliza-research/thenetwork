@@ -2,12 +2,20 @@
 // Postgres version (pg-store.ts, schema in db/schema.sql) keeps the same rules as this in-memory
 // one, and the same tests run against both.
 
+import { digestItemSetCanBeRecorded, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
-import type { InboxItem, InboxItemInput, Surface } from "./types.ts";
+import type { Assistant, InboxItem, InboxItemInput, Surface } from "./types.ts";
 
 export const dedupeKey = (i: Pick<InboxItemInput, "personId" | "app" | "eventType" | "subjectId">) =>
   [i.personId, i.app, i.eventType, i.subjectId].join("|");
+
+export interface DigestAssistantLink {
+  app: string;
+  assistants: Assistant[];
+  expiresAt: number;
+  bodyHash: string;
+}
 
 export interface DeliveryRecord {
   deliveryId: string;
@@ -17,9 +25,15 @@ export interface DeliveryRecord {
   target: Surface;
   countsTowardCap: boolean;
   sentAt: number;
+  assistantLink?: DigestAssistantLink;
   /** Set when the member acts on it (token redeemed, thread reply) or the outcome window passes. */
   outcome?: "acted" | "ignored";
   outcomeAt?: number;
+}
+
+function copyDelivery(d: DeliveryRecord): DeliveryRecord {
+  const link = d.assistantLink;
+  return { ...d, itemIds: [...d.itemIds], ...(link ? { assistantLink: { ...link, assistants: [...link.assistants] } } : {}) };
 }
 
 export interface NotifyStore {
@@ -111,7 +125,15 @@ export class MemoryNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     if (this.deliveries.has(d.deliveryId)) return false;
-    this.deliveries.set(d.deliveryId, { ...d, itemIds: [...d.itemIds] });
+    if (d.deliveryId.startsWith("ntf_")) {
+      const pending = [...new Set(d.itemIds)].filter(id => {
+        const item = this.items.get(id);
+        return item?.personId === d.personId && inboxItemDigestible(item.seenAt !== undefined, item.notifiedAt !== undefined,
+          item.expiresAt !== undefined, item.expiresAt ?? 0, d.sentAt);
+      });
+      if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+    }
+    this.deliveries.set(d.deliveryId, copyDelivery(d));
     for (const id of d.itemIds) {
       const i = this.items.get(id);
       if (i && i.notifiedAt === undefined) { i.notifiedAt = d.sentAt; i.deliveryId = d.deliveryId; }
@@ -121,7 +143,7 @@ export class MemoryNotifyStore implements NotifyStore {
 
   async getDelivery(id: string) {
     const d = this.deliveries.get(id);
-    return d && { ...d, itemIds: [...d.itemIds] };
+    return d && copyDelivery(d);
   }
 
   async capSendsSince(personId: string, since: number) {
@@ -137,7 +159,7 @@ export class MemoryNotifyStore implements NotifyStore {
   }
 
   async pendingDeliveries(personId: string) {
-    return [...this.deliveries.values()].filter(d => d.personId === personId && !d.outcome).map(d => ({ ...d }));
+    return [...this.deliveries.values()].filter(d => d.personId === personId && !d.outcome).map(copyDelivery);
   }
 
   async expireDeliveries(before: number, at: number) {
@@ -146,7 +168,7 @@ export class MemoryNotifyStore implements NotifyStore {
       if (d.outcome || d.sentAt >= before) continue;
       d.outcome = "ignored";
       d.outcomeAt = at;
-      out.push({ ...d });
+      out.push(copyDelivery(d));
     }
     return out;
   }

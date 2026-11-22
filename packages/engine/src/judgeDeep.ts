@@ -18,7 +18,7 @@ import { privateVocabulary } from "./explain.ts";
 import { involvesMinor } from "./filters.ts";
 import {
   attendingRefs, checkMemberFacing, passMessages, ReplyFields, runPass, str,
-  type CitedFact, type PassVerdict,
+  type CitedFact, type JudgeRequest, type PassVerdict,
 } from "./judgeCommon.ts";
 import type { DeepContext } from "./packs/network/judgeContext.ts";
 import type { Candidate } from "./types.ts";
@@ -88,7 +88,7 @@ export const deepDecision = (v: DeepVerdict) => v.verdict === "yes";
  * blocks (incl. with the connector), safety holds, category and romance opt-ins of attending people.
  * Returns the first failing reason or null.
  */
-export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category"> & { alternates?: MemberId[] }): string | null {
+export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category" | "lane"> & { alternates?: MemberId[] }): string | null {
   if (involvesMinor(w, { participants: c.participants, alternates: c.alternates ?? [], via: c.via })) return "underage";
   const everyone = [...c.participants, ...(c.via ? [c.via] : [])];
   for (const id of everyone) if (!w.get(id)) return "unknown_member";
@@ -116,8 +116,15 @@ export function gateMemberFacing(w: World, c: Candidate, v: DeepVerdict, refs: R
   return { why, rejected };
 }
 
-export async function deepReviewOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<{ verdict: DeepVerdict; refs: Record<string, MemberId> }> {
+type DeepReview = { verdict: DeepVerdict; refs: Record<string, MemberId> };
+
+export function prepareDeepReview(w: World, c: Candidate, maxTokens: number): JudgeRequest<DeepReview> {
   const { messages, refs } = buildDeepMessages(w, c);
   const attending = attendingRefs(refs, c);
-  return { verdict: await runPass(llm, messages, raw => parseDeepVerdict(raw, attending), maxTokens), refs };
+  return { pass: "deep", version: judgePackOf(w).deep!.version, messages, refs, settings: { maxTokens },
+    parse: raw => ({ verdict: parseDeepVerdict(raw, attending), refs }) };
+}
+
+export async function deepReviewOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<DeepReview> {
+  return runPass(llm, prepareDeepReview(w, c, maxTokens));
 }

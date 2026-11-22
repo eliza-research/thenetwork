@@ -1,0 +1,25 @@
+import { apply, initial } from "./generated/backendHealth.effect.js"
+import type { HealthStatus } from "./generated/backendHealth.effect.js"
+
+interface HealthEffects {
+  ping(): Promise<boolean>
+  hasLateTick(): boolean
+}
+
+error MissingHealthReport
+
+export function checkBackendHealth(serving: boolean, effects: HealthEffects): Promise<HealthStatus> {
+  return runPromise(effect {
+    const admission = try apply(initial, { type: "checkAdmission", serving })
+    if (admission.tag === "Reported") return admission.status
+
+    const reachable = try promise(() => effects.ping().catch(() => false))
+    const database = try apply(admission, { type: "checkDatabase", reachable })
+    if (database.tag === "Reported") return database.status
+
+    const late = try sync(() => effects.hasLateTick())
+    const report = try apply(database, { type: "checkTicks", late })
+    if (report.tag !== "Reported") throw new MissingHealthReport()
+    return report.status
+  })
+}

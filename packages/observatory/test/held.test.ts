@@ -2,7 +2,8 @@
 // relay items, read from the Network service's staff API and released or rejected through it. A local
 // fake of the service; the console in real mode on a running server. Per app, audited, safety or admin
 // only, never a score, never a minor's text; a queue the service does not have yet is "not available".
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ const T = 120_000;
 const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
 const TOK = { admin: long("adm-held"), safety: long("saf-held"), reviewer: long("rev-held"), analyst: long("ana-held") };
 const calls: { method: string; path: string; app: string | null; staff: string | null; body?: any }[] = [];
-let fake: ReturnType<typeof Bun.serve>;
+let fake: HttpServer;
 let obs: ObservatoryServer;
 let dir: string;
 const keep = { NETWORK_DATABASE_URL: process.env.NETWORK_DATABASE_URL, DATABASE_URL: process.env.DATABASE_URL };
@@ -23,7 +24,7 @@ const post = (tok: string, path: string, body: unknown) => as(tok, path, { metho
 beforeAll(async () => {
   delete process.env.NETWORK_DATABASE_URL; delete process.env.DATABASE_URL;
   // The leak review routes exist (messaging pipeline contract); the relay routes do not (404 without a reason).
-  fake = Bun.serve({
+  fake = await serveHttp({
     port: 0, hostname: "127.0.0.1",
     async fetch(req) {
       const u = new URL(req.url);
@@ -58,7 +59,7 @@ beforeAll(async () => {
   });
 }, T);
 afterAll(async () => {
-  await obs?.stop(); fake?.stop(true);
+  await obs?.stop(); await fake?.stop(true);
   for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   if (dir) await rm(dir, { recursive: true, force: true });
 });

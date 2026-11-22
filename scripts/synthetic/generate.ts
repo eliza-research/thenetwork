@@ -1,10 +1,10 @@
 // Generate the SYNTHETIC SF + NYC member dataset (data/synthetic/v1/).
 //
-//   bun scripts/synthetic/generate.ts                 # 250 SF + 250 NYC, LLM-enriched (cached), defaultLLM()
-//   bun scripts/synthetic/generate.ts --no-llm        # template text only (no API calls)
-//   bun scripts/synthetic/generate.ts --dry-run       # report cache hits/misses, write nothing, no API calls
-//   bun scripts/synthetic/generate.ts --max-fresh 60  # refuse to run if more than 60 members need new LLM text
-//   bun scripts/synthetic/generate.ts --concurrency 4 --fresh
+//   node --import tsx scripts/synthetic/generate.ts                 # 250 SF + 250 NYC, LLM-enriched (cached), defaultLLM()
+//   node --import tsx scripts/synthetic/generate.ts --no-llm        # template text only (no API calls)
+//   node --import tsx scripts/synthetic/generate.ts --dry-run       # report cache hits/misses, write nothing, no API calls
+//   node --import tsx scripts/synthetic/generate.ts --max-fresh 60  # refuse to run if more than 60 members need new LLM text
+//   node --import tsx scripts/synthetic/generate.ts --concurrency 4 --fresh
 //
 // Pipeline: packages/sim generatePersonas (seeded hidden truth + public profile) -> deterministic
 // post-processing (invented names, real neighborhoods, ages incl. ~10% minors, travelers,
@@ -16,6 +16,7 @@
 // Everything except the LLM text is a pure function of SEED; LLM outputs are cached under
 // runs/synthetic-cache/ (gitignored) per member; an entry is reused whenever its prompt is unchanged,
 // whichever model wrote it, so changing the default model never regenerates existing text.
+import { writePath } from "../../packages/core/src/runtime/files.ts";
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { DAY, DEFAULT_MODEL, DEFAULT_PROVIDER, HOUR, defaultLLM, type City, type LLM } from "../../packages/core/src/index.ts";
@@ -646,7 +647,7 @@ const freshIds: string[] = [];
       try {
         const out = await chatJson(llm!, [{ role: "user", content: prompt }], anyJson<any>, { attempts: 2, maxTokens: 4000, temperature: 0.9, grow: SIM_JSON_GROW });
         if (!out || typeof out.bio !== "string") throw new Error("missing bio");
-        await Bun.write(`${CACHE_DIR}/${p.id}.json`, JSON.stringify({ key: keyFor(MODEL, prompt), model: MODEL, provider: PROVIDER, out }));
+        await writePath(`${CACHE_DIR}/${p.id}.json`, JSON.stringify({ key: keyFor(MODEL, prompt), model: MODEL, provider: PROVIDER, out }));
         const n = normalize(p, out, fb);
         enrich.set(p.id, { ...n, source: "llm", model: MODEL });
         break;
@@ -865,7 +866,7 @@ const jsonl = (rows: unknown[]) => rows.map(r => JSON.stringify(r)).join("\n") +
 const filesOut: Manifest["files"] = {};
 const write = async (name: string, rows: unknown[]) => {
   const text = jsonl(rows);
-  await Bun.write(`${outDir}/${name}`, text);
+  await writePath(`${outDir}/${name}`, text);
   filesOut[name] = { records: rows.length, sha256: sha256(text) };
 };
 await write(FILES.members, members);
@@ -934,5 +935,5 @@ const manifest: Manifest = {
     "generator 1.2.1: intent records anchored to the snapshot. Before, createdAt was the first statement (join + 0-20 days) with no re-confirmation, so 304 of 582 active intents were past their 60/90-day horizon at snapshot time and 252 of 450 adults had no live intent while the oracle still counted those wants. Now the agent re-asks every 30 days: answered check-ins re-confirm a held want (createdAt = that check-in) or withdraw a lapsed one (status closed); unanswered ones let the record age out. Hidden wants carry lapsesAt (exponential lifetime from when stated: help 45 d, romance 240 d, other 365 d), and the oracle ignores a want once it lapses. Same RNG streams as 1.2.0 for everything else; no new LLM text.",
   ],
 };
-await Bun.write(`${outDir}/${FILES.manifest}`, JSON.stringify(manifest, null, 2) + "\n");
+await writePath(`${outDir}/${FILES.manifest}`, JSON.stringify(manifest, null, 2) + "\n");
 console.log(JSON.stringify({ out: outDir, counts: manifest.counts, llm: manifest.llm }, null, 2));

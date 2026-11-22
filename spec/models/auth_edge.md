@@ -131,6 +131,7 @@ module auth_edge {
     codeToBanned: bool,          // a code went for a request that began after the number was banned
     lateBanCode: bool,           // a code went to a number banned while its request was in flight
     sessionToBanned: bool,       // a session was created for a banned number
+    bannedSessionUsed: bool,     // a session authenticated while its number or person was banned
     otpLogins: int,
     cloudLogins: int,
     burned: bool,                // an OTP start was refused after an earlier bucket counted it
@@ -185,6 +186,16 @@ module auth_edge {
     (s.rows.get(sid).revoked == NONE or s.rows.get(sid).revoked > at) and
     s.rows.get(sid).expires > at
 
+  // A current ban of the row's number, or of a number of the row's person, refuses the row at each use,
+  // also when staff banned the number after sign-in (sessions.ts authenticate reads the ban before
+  // readRow; spec/webSession.md, "Only a live token on the requested app can authenticate").
+  def bannedRow(w: World, r: Session): bool =
+    w.banned.contains(r.phone) or (r.person != NONE and w.banned.exists(q => w.phoneOf.get(q) == r.person))
+
+  // The session authenticates: live, and not banned now.
+  def usableSession(w: World, s: Sess, sid: int, at: int): bool =
+    liveSession(s, sid, at) and not(bannedRow(w, s.rows.get(sid)))
+
   // sessions.ts:63-65 revoke: revoked_at = least(coalesce(revoked_at, at), at) (pg-store.ts:252-254).
   pure def revokeRow(rows: int -> Session, sid: int, at: int): int -> Session =
     if (sid != NONE and rows.keys().contains(sid))
@@ -227,7 +238,7 @@ module auth_edge {
     edge' = { backendSecret: 1, backendPrevious: NONE, siteSecret: 1 },
     svc' = { inflight: Set(), seen: Set(), effects: Map() },
     ghost' = {
-      codeToBanned: false, lateBanCode: false, sessionToBanned: false, otpLogins: 0, cloudLogins: 0, burned: false,
+      codeToBanned: false, lateBanCode: false, sessionToBanned: false, bannedSessionUsed: false, otpLogins: 0, cloudLogins: 0, burned: false,
       foreignActs: Set(), under13At: Map(), cloudSkewRejects: Set(), cloudRefusedDeleted: false,
       actedUnvalidated: false, rotations: 0, servedUnsigned: false, edgeOutage: false,
       staleSvcEffect: false, querySvcEffect: false, skewedSvcOk: false, ageLoweredByOther: false,
@@ -406,16 +417,29 @@ module auth_edge {
 
   // ------------------------------------------------------------------ web-session (rotation)
 
-  // sessions.ts:50-53: the read. A session older than a day and not yet rotated will rotate.
+  // sessions.ts authenticate with no rotation: the read of the cookie that each API request makes. The
+  // ban is read at this use (bannedRow).
+  action sessionAuth(h: str): bool = {
+    val sid = sess.jar.get(h)
+    all {
+      usableSession(world, sess, sid, now),
+      ghost' = { ...ghost, bannedSessionUsed: ghost.bannedSessionUsed or bannedRow(world, sess.rows.get(sid)) },
+      now' = now, mode' = mode, world' = world, otp' = otp, sess' = sess, edge' = edge, svc' = svc,
+    }
+  }
+
+  // sessions.ts:50-53: the read. A session older than a day and not yet rotated will rotate. A banned
+  // row is refused before the rotation (bannedRow).
   action rotateRead(h: str, req: int): bool = {
     val sid = sess.jar.get(h)
     all {
-      liveSession(sess, sid, now),
+      usableSession(world, sess, sid, now),
       sess.rows.get(sid).revoked == NONE,
       now - sess.rows.get(sid).created >= SESSION_ROTATE,
       not(sess.pendingRot.contains({ human: h, sid: sid, req: req })),
       sess' = { ...sess, pendingRot: sess.pendingRot.union(Set({ human: h, sid: sid, req: req })) },
-      now' = now, mode' = mode, world' = world, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
+      ghost' = { ...ghost, bannedSessionUsed: ghost.bannedSessionUsed or bannedRow(world, sess.rows.get(sid)) },
+      now' = now, mode' = mode, world' = world, otp' = otp, edge' = edge, svc' = svc,
     }
   }
 
@@ -510,7 +534,8 @@ module auth_edge {
     val act = { human: h, person: target, op: op }
     val unvalidated = s.cloud and (world.cloudRevoked.contains(s.chain) or status != "valid")
     all {
-      liveSession(sess, sid, now),
+      // sessions.ts authenticate refuses a banned row (401) before the Cloud validation and the route.
+      usableSession(world, sess, sid, now),
       if (status == "invalid") all {
         // api.ts:320: the session is revoked; 401.
         sess' = { ...sess, rows: revokeRow(sess.rows, sid, now) },
@@ -520,7 +545,7 @@ module auth_edge {
         sess' = sess, world' = world, ghost' = ghost,
       } else if (op == "export") all {
         // api.ts:584-587, accounts.ts:500-516: the data of personFor(who.e164). A banned (or held)
-        // number gets 403 and nothing.
+        // number gets 403 and nothing (a second check: usableSession already refuses a banned row).
         sess' = sess, world' = world,
         ghost' = if (world.banned.contains(s.phone)) ghost
                  else { ...ghost, actedUnvalidated: ghost.actedUnvalidated or unvalidated,
@@ -650,7 +675,8 @@ module auth_edge {
   }
 
   // service.ts:2010-2042 ban by phone: needs a person; writes the ban and suppresses the number.
-  // Sessions are not revoked (not a rule this module checks: existing sessions keep own-data rights).
+  // The ban writes no session row: each later use of a session of the number or its person reads the
+  // ban and is refused (usableSession, bannedSessionRefused).
   action banNumber(p: str): bool = {
     all {
       personFor(world, p) != NONE,
@@ -787,8 +813,8 @@ module auth_edge {
       },
       otpVerify(h, p),
       any {
-        nondet req = Set(1, 2).oneOf()
-        rotateRead(h, req),
+        sessionAuth(h),
+        all { nondet req = Set(1, 2).oneOf() rotateRead(h, req) },
         all { sess.pendingRot.size() > 0, nondet r = sess.pendingRot.oneOf() rotateCommit(r) },
       },
       cloudLogin(h, p, cloudSkew),
@@ -810,6 +836,11 @@ module auth_edge {
   // The same rule: no login (OTP or Cloud) creates a session for a banned number.
   // Was violated at ad67275 in OTP mode (SD-013); holds after 6225b02 (api.ts:488).
   val bannedNoSession = not(ghost.sessionToBanned)
+
+  // The same rule for a session from before the ban (upstream PR #485): no session authenticates while
+  // its number, or a number of its person, is banned. spec/webSession.md, "Only a live token on the
+  // requested app can authenticate".
+  val bannedSessionRefused = not(ghost.bannedSessionUsed)
 
   // accounts.ts:8 and 499 ("This app's own data") and PRD export/delete of one's own data: a session
   // from before a person existed (it may belong to an earlier holder of the number) never acts for that
@@ -871,6 +902,7 @@ module auth_edge {
   val safety = and {
     bannedNoCode,
     bannedNoSession,
+    bannedSessionRefused,
     staleSessionNoAct,
     ageOnlyByOwner,
     under13NothingStored,
@@ -904,6 +936,10 @@ module auth_edge {
   val witness_cloudSuppressedRefused = not(ghost.cloudRefusedDeleted)
   // SD-013 remainder: a ban that commits while a code request is in flight does not stop that code.
   val witness_lateBanCode = not(ghost.lateBanCode)
+  // A ban lands after sign-in: a browser still holds a session that is live by its own row, and the
+  // session's number is banned (sessionAuth refuses it).
+  val witness_banAfterSignIn = not(sess.jar.keys().exists(h =>
+    liveSession(sess, sess.jar.get(h), now) and bannedRow(world, sess.rows.get(sess.jar.get(h)))))
 
   // ------------------------------------------------------------------ run tests (concrete traces)
 
@@ -955,6 +991,19 @@ module auth_edge {
       .then(otpVerify("alice", "X"))
       .expect(ghost.otpLogins == 0 and sess.rows == Map() and safety)
 
+  // Upstream PR #485: alice signs in, then staff ban the number. The row is still live by its own
+  // expiry, but the next use reads the ban: no authentication, no rotation, no account action.
+  run banAfterSignInTest =
+    initWith("otp")
+      .then(textJoin("X"))
+      .then(otpStartBegin("alice", "X")).then(otpStartAll(1))
+      .then(otpVerify("alice", "X"))
+      .expect(ghost.otpLogins == 1 and usableSession(world, sess, sess.jar.get("alice"), now) and safety)
+      .then(banNumber("X"))
+      .expect(liveSession(sess, sess.jar.get("alice"), now) and not(usableSession(world, sess, sess.jar.get("alice"), now))
+              and not(witness_banAfterSignIn) and safety)
+      .then(sessionAuth("alice").fail())
+
   // Cloud mode refuses a banned number at the callback (api.ts:437): no session.
   run cloudBannedRefusedTest =
     initWith("cloud")
@@ -1004,7 +1053,7 @@ module auth_edge {
 
   // A member's repeated web join under 13 is "under_age" (joinPlan checks the age before "existing"):
   // the floor drops and declineUnderAge forgets the membership; the session keeps its person.
-  // A banned number's export reads nothing.
+  // Once the number is banned, the session refuses an export at authentication.
   run repeatJoinUnderAgeTest =
     initWith("otp")
       .then(otpStartBegin("alice", "X")).then(otpStartAll(1))
@@ -1014,8 +1063,8 @@ module auth_edge {
       .expect(world.floor.get("X") == 10 and world.member == Set() and world.alive == Set(1)
               and liveSession(sess, 1, now) and safety)
       .then(banNumber("X"))
-      .then(account("alice", "export", 25, "valid"))
       .expect(ghost.foreignActs == Set() and safety)
+      .then(account("alice", "export", 25, "valid").fail())
 
   // An adult web join creates the person, attaches it to the session and passes every invariant.
   run webJoinTest =

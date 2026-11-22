@@ -1,12 +1,14 @@
 # Leak guard: spaced defanged dots (2026-11-05)
 
-Hand-written note. The numbers come from `bun run sim --only evals` on this tree, and from `findLeaks` on the same strings before the change. No LLM. The sim clears provider keys. Seeds do not apply: the evals block scores the hand-written corpora in `evals/`.
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-11-05-leak-guard-spaced-defang.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
+Hand-written note. The numbers come from `pnpm run sim --only evals` on this tree, and from `findLeaks` on the same strings before the change. No LLM. The sim clears provider keys. Seeds do not apply: the evals block scores the hand-written corpora in `evals/`.
 
 ## Command
 
 ```bash
-bun run sim --only evals
-bun run typecheck
+pnpm run sim --only evals
+pnpm run typecheck
 ```
 
 Base of this follow-up is `1e54e64` (`fix(core): catch defanged dots in the leak guard`) on `cursor/leak-dot-defang-474c`. Upstream `main` is `a0ed7bc`.
@@ -42,7 +44,7 @@ The 162 rows already in the corpus keep the same labels. The 19 new rows are the
 
 Whole evals block after the change: 25/25 blocking gates pass, exit 0, 0.4s.
 
-`bun run typecheck` after the change: exit 0.
+`pnpm run typecheck` after the change: exit 0.
 
 ## What stays limited
 
@@ -54,4 +56,4 @@ A spaced middle dot, bullet, or katakana middle dot joins only that same short l
 
 ## What was not run
 
-No real LLM call. The leak guard does not call a model. `bun run test:integration` and `bun run test:e2e` were not run. This change does not touch Postgres or HTTP. The leak-guard corpus is the sim evals block.
+No real LLM call. The leak guard does not call a model. `pnpm run test:integration` and `pnpm run test:e2e` were not run. This change does not touch Postgres or HTTP. The leak-guard corpus is the sim evals block.

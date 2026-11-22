@@ -1,16 +1,17 @@
 // Shared by the relay sim block (scripts/sim/relay.ts) and the Clef relay CLI (scripts/relay-eval.ts):
 // the relay corpora, the recorded Clef answers (evals/relay/clef-answers.jsonl) and the rows the
 // decision layer is fitted and scored on. Nothing here calls Clef.
+import { fileAt } from "../packages/core/src/runtime/files.ts";
 import { join } from "node:path";
 import { relayItem, type RelayContext, type RelayItem } from "../packages/engine/src/relay.ts";
 import { clefFeatureRow, type ClefModel, type ClefResult } from "../packages/engine/src/packs/slop/clef.ts";
 import { RELAY_CLEF_BANK_VERSION, RELAY_CLEF_QUESTIONS, relayClefKey, type RelayClefCacheRow } from "../packages/engine/src/relayClef.ts";
 import { reasonCategories, type RelayClass, type RelayFitRow } from "../packages/engine/src/relayClefFit.ts";
 
-export const EVALS = join(import.meta.dir, "..", "evals");
+export const EVALS = join(import.meta.dirname, "..", "evals");
 /** The recorded Clef answers for the corpora (one row per model x text; no text, keyed by hash). */
 export const CLEF_CACHE = `${EVALS}/relay/clef-answers.jsonl`;
-/** Fitted decision-layer weights (written by `bun run relay-eval fit --live`). */
+/** Fitted decision-layer weights (written by `pnpm run relay-eval fit --live`). */
 export const CLEF_WEIGHTS = `${EVALS}/relay/clef-relay-weights.json`;
 /** The files the rules were tuned on: the Clef decision layer may be fitted on these. */
 export const TUNING_FILES = ["relay/relay.jsonl", "relay/relay-paraphrases.jsonl", "relay/relay-heldout-1.jsonl"] as const;
@@ -20,7 +21,7 @@ export const BENIGN_FILE = "network/benign-adult.txt";
 
 export type CorpusRow = { text: string; class: RelayClass; want: "pass" | "stop" };
 export async function loadCorpus(file: string): Promise<CorpusRow[]> {
-  const raw = (await Bun.file(`${EVALS}/${file}`).text()).trim();
+  const raw = (await fileAt(`${EVALS}/${file}`).text()).trim();
   if (file.endsWith(".txt")) return raw.split("\n").filter(Boolean).map(text => ({ text, class: "honest", want: "pass" }));
   return raw.split("\n").filter(Boolean).map(l => JSON.parse(l) as CorpusRow);
 }
@@ -40,7 +41,7 @@ export const textItem = (t: string, id = "i1", at = NOW): RelayItem => ({ id, ki
 
 /** Read the cache (rows for the current question bank only). Missing file -> null. */
 export async function loadClefCache(path = CLEF_CACHE): Promise<Map<string, RelayClefCacheRow> | null> {
-  const f = Bun.file(path);
+  const f = fileAt(path);
   if (!(await f.exists())) return null;
   const out = new Map<string, RelayClefCacheRow>();
   for (const l of (await f.text()).split("\n")) {

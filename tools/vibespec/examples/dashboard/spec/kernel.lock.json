@@ -1,7 +1,0 @@
-{
-  "Story: An ID is never issued twice / A new number is above the stored counter and above every number seen": ["e42137e8bc97","e7375e5d575b"],
-  "Story: Owners hear about an edit once it has settled / An edit is due when it is unannounced and has been quiet for the whole debounce period": ["e3b0c44298fc","90382cf004d9"],
-  "Story: A due date is reminded about once / At most one reminder is due for a task at a time": ["fbb28c7429f4","2266550f1a7c"],
-  "Story: A list page never comes up empty / A page starts inside the list": ["13baa73dcb01","424b565d4dd6"],
-  "Story: Only recent requests are accepted / A request is fresh within the window, either way": ["e3b0c44298fc","4dc93efef816"]
-}

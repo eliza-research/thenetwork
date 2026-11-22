@@ -4,9 +4,9 @@
 //   -> when every hard field is set and not yet confirmed: send readBack -> otherwise send nextQuestion.
 // Copy rules: one question per message, about the member only; the read-back repeats only what the
 // member said (or the one stated default: straight after an unclear seeks answer), and never identity, orientation, age, kids, faith or anything the rules did not read.
-import { classifyYesNo } from "@thenetwork/core";
+import { parseReply } from "@thenetwork/core";
 import {
-  confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackEligible, readbackReason, step,
+  confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackAffirmed, readbackReason, step,
 } from "../../../../core/src/generated/slopOnboarding.ts";
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
@@ -87,15 +87,29 @@ export function readBack(p: SlopOnboarding): string | undefined {
 /**
  * The member's answer to a read-back: "yep" confirms; "no, 30-40" or "actually women too" changes the
  * field and leaves the profile unconfirmed (the service reads back again). "no" alone changes nothing
- * and stays unconfirmed (the service asks what to fix).
+ * and stays unconfirmed (the service asks what to fix). A hedged, conditional or questioning answer
+ * ("right, maybe", "perfect, if 11211 includes Greenpoint", "right?") never confirms.
  */
 export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptions = {}): SlopOnboarding {
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
-  const yes = !changed && (classifyYesNo(text) === "yes" || /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text));
-  return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, yes, p.minor || p.declined) });
+  const reply = parseReply(text);
+  // spec/slopOnboarding.md, "Only a plain yes confirms the read-back"
+  const affirmed = readbackAffirmed(reply.answer === "yes", reply.answer === "no",
+    reply.constraints.length > 0 || READBACK_QUALIFIER.test(text), BARE_AFFIRMATION.test(text));
+  // spec/slopOnboarding.md, "A correction needs another confirmation"
+  return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, affirmed, next.minor || next.declined) });
 }
-const view = (p: SlopOnboarding) => ({ g: p.gender?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value, l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(), age: p.age?.value, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])) });
+/** An affirmation word the reply parser does not know, with nothing after it. */
+const BARE_AFFIRMATION = /^\s*(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)[.!\s]*$/i;
+/** A question, a hedge or a condition anywhere in the answer. */
+const READBACK_QUALIFIER = /\?|\b(?:maybe|idk|unsure|let me check|if|unless|wait)\b/i;
+const view = (p: SlopOnboarding) => ({
+  g: p.gender?.value, o: p.orientation?.value, id: p.identity?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value,
+  l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), ndb: !!p.noDealbreakers,
+  i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(),
+  age: p.age?.value, minor: p.minor, declined: p.declined, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])),
+});
 
 // ------------------------------------------------------------------------------------------ next question
 
@@ -141,9 +155,10 @@ export function nextQuestion(p: SlopOnboarding): { reason: string; field: Onboar
 export function nextOnboardingPrompt(p: SlopOnboarding, skip: readonly string[] = []): { reason: string; text: string } | undefined {
   // spec/slopOnboarding.md, "Age restrictions stop dating onboarding before a prompt"
   const restricted = p.minor || p.declined;
-  const wantsReadback = !restricted && readbackEligible(hardComplete(p), !!p.confirmed, skip.includes(readbackReason),
-    (p.askCounts[readbackReason] ?? 0) < MAX_ASKS_PER_QUESTION);
-  let prompt = step(initial, { type: "routeProfile", restricted, wantsReadback });
+  let prompt = step(initial, {
+    type: "routeProfile", restricted, hardComplete: hardComplete(p), confirmed: !!p.confirmed,
+    skipped: skip.includes(readbackReason), belowAskCap: (p.askCounts[readbackReason] ?? 0) < MAX_ASKS_PER_QUESTION,
+  });
   if (prompt.phase === "ReadbackOffered") {
     const text = readBack(p);
     prompt = step(prompt, { type: "resolveReadback", textAvailable: !!text });

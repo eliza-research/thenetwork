@@ -1,5 +1,7 @@
 # Slop multi-market radius correction
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-13-slop-multi-market-radius.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-13. This is a reproduced bug fix, not a new matching market rollout.
 
 ## Problem
@@ -14,14 +16,14 @@ Home location, physical presence, mutual distance limits, and the NYC-only produ
 
 ## Reproduction and validation
 
-Runtime: Bun 1.4.2. Base: `61d5663b2f56cbdd2f54cc1c6bbb6d09ddd1f21d`. Implementation: `29431581bce07504172248b47be42df4971b84e2`.
+Runtime: the former runtime 1.4.2. Base: `61d5663b2f56cbdd2f54cc1c6bbb6d09ddd1f21d`. Implementation: `29431581bce07504172248b47be42df4971b84e2`.
 
 The primary case uses fictional adults through actual HTTP MCP intake and local PostgreSQL. It checks durable onboarding state and private tags, then the runtime pack and actual geographic matching.
 
 ```sh
-REQUIRE_PG=1 OBSERVATORY_PG_PORT=54349 bun test --conditions eliza-source tests/e2e/platform.e2e.test.ts -t "multi-market radius"
-bun run --conditions eliza-source scripts/sim.ts --only onboard
-bun node_modules/typescript/bin/tsc --noEmit
+REQUIRE_PG=1 OBSERVATORY_PG_PORT=54349 pnpm exec vitest run --conditions eliza-source tests/e2e/platform.e2e.test.ts -t "multi-market radius"
+node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/sim.ts --only onboard
+pnpm exec tsc --noEmit
 ```
 
 The test environment uses the existing owned local test cluster. Set `OBSERVATORY_PG_DIR` to that cluster's data directory. Do not reset another cluster.
@@ -56,12 +58,12 @@ Date: 2026-10-13. Provider: Surplus Intelligence. Requested and returned model: 
 A portable bundle contains the actual base and candidate readers plus the existing core `defaultLLM()` implementation.
 Source candidate: `d32c63d60211b86856c3e02a143c72281c84f819`; base: `61d5663b2f56cbdd2f54cc1c6bbb6d09ddd1f21d`.
 Bundle SHA-256: `aa2beee5819aaccd5279aa99dbc06c8a6d5d72004fd9a5b1e678d34199bf84f3`.
-Local and remote hashes matched before execution. Runtime: Bun 1.4.2.
+Local and remote hashes matched before execution. Runtime: the former runtime 1.4.2.
 
 Execution command, after verifying the existing provider and model:
 
 ```sh
-RADIUS_PROVIDER_MODEL_VERIFIED=1 LLM_MAX_RETRIES=0 bun --no-env-file ./real-llm-radius.portable.mjs --execute-real
+RADIUS_PROVIDER_MODEL_VERIFIED=1 LLM_MAX_RETRIES=0 node ./real-llm-radius.portable.mjs --execute-real
 ```
 
 Two fixed synthetic inputs ran against each source version. The inputs were declared before any model call:
@@ -79,7 +81,7 @@ Each request allowed 500 completion tokens and 12 seconds; the entire run allowe
 The provider reported costs of 34, 41, 44, and 44 micro-USD: **163 micro-USD ($0.000163) total**.
 This is provider-reported response cost, not an independently reconciled invoice.
 The soft SDK cost guard was 5,000 micro-USD; it stops subsequent calls, not an already-issued request.
-Actual synthetic model text, prompt hashes, usage, bundle hash, and Bun binary hash were retained privately.
+Actual synthetic model text, prompt hashes, usage, bundle hash, and the former runtime binary hash were retained privately.
 Only the owned temporary bundle and directory were removed after collection.
 
 These two extraction cases prove the reader regression. They do not measure population quality or prove real user acceptance.

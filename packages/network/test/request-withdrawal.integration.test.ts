@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 
@@ -48,4 +48,31 @@ test("an explicitly withdrawn waiting request stays closed after restart and a n
     await x.run(2 * DAY);
     expect(x.sent.some(s => s.meta.type === "probe")).toBe(false);
   }
+});
+
+// spec/opportunityLifecycle.md, "A member can withdraw probe consent before the reveal"
+test("a requester can withdraw an accepted probe while the other reply is pending", async () => {
+  const x = new Mini([
+    { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
+    { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
+  ], { review: "human", onboardingRequests: false });
+  await x.onboard("a", "b");
+  await x.say("a", "Find me a climbing partner.");
+  const request = x.net.exportState().requests.at(-1)!;
+  const oppId = request.oppId!;
+  expect(x.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(await x.runUntil(() => x.probed("a"))).toBe(true);
+  await x.say("a", "Yes, that works for me.");
+  const opportunity = () => x.net.exportState().opps.find(o => o.id === oppId)!;
+  expect(opportunity().status).toContainEqual(["a", "available"]);
+  await x.net.onInbound({ id: "assistant-not-consent", memberId: "a", source: "mcp", channel: "sms", ts: x.clock.now(), body: "Not this week, thanks." });
+  expect(opportunity().stage).toBe("probing");
+  await x.say("a", "Not this week, thanks.");
+  expect(opportunity()).toMatchObject({ stage: "closed", closedReason: "consent withdrawn" });
+  expect(opportunity().status).toContainEqual(["a", "no"]);
+  x.restart();
+  await x.say("b", "Yes, that works for me.");
+  await x.run(2 * DAY);
+  expect(x.meetings.some(meeting => meeting.proposalId === oppId)).toBe(false);
+  expect(x.sent.some(message => message.meta.type === "proposal" && message.meta.proposalId === oppId)).toBe(false);
 });

@@ -16,8 +16,8 @@ This repository is a Slop bounty repository with a monthly pool of 1,000 USDC. [
 
 1. Star this repository with your own GitHub account.
 2. Fork this repository to your own GitHub account.
-3. Do all work on a branch in your fork. Open your PR from the fork into `vibestack`.
-   For a maintainer-requested backport, follow the guide on the target branch.
+3. Do all work on a branch in your fork. Open every PR from your fork into
+   `develop`, the repository's main branch.
 
 You can use the GitHub web page, browser automation, computer use or the GitHub CLI:
 
@@ -36,18 +36,33 @@ needs approval. Link the specific story or rule when you propose a change.
   maintainer approval and an update to the product specification.
 - Add or update the story and its rules in `spec/<name>.md`. Put the Quint
   for a rule immediately below its prose. Follow the
-  [sync skill](.claude/skills/sync/SKILL.md).
+  [sync skill](.agents/skills/sync/SKILL.md) and the
+  [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
-  Run `bun run spec:sync` to publish the generated modules. Commit the
-  source spec and the published modules together.
-- Keep the relevant [whole-flow model](spec/models/README.md) consistent
-  with the runtime. Compare the guards, outcomes, and invariants where
-  the generated rule enters the flow.
-- Run `bun run check` for the Vibespec pipeline and the project commands in
-  section 6 for the application. The product owner runs `bun run accept`
-  after comparing the prose and Quint.
-- For work on the generator, run `bun run spec:selftest` and add a fixture
-  for each new class of error it detects.
+  Run `pnpm run spec:sync` to publish the generated modules. Commit the
+  source spec and the published modules together. Ordinary generation and
+  checks reuse formal tool actions under `.spec-cache/formal/` when their
+  effective inputs match. Generation and snapshot comparison both compile
+  the current VibeLang shells.
+- Fully implement and integrate the approved behavior in the
+  [top-level stories](spec/product/stories.md), executable rules, and
+  [whole-flow models](spec/models/README.md). Follow them exactly.
+  Verify behavior through the application's real entry points. Compare
+  guards, outcomes, and invariants where each rule enters the flow.
+- Run the full validation suite in section 6. The product owner compares each changed
+  rule with its Quint and records approval with `pnpm run accept`.
+  When every model is valid, the checker runs type checks and proofs alongside
+  the simulations. It shares Node's compile cache with child processes and
+  reuses verification results for unchanged inputs. Quint parses and
+  typechecks each harness one time for each check, and each simulation uses
+  the compiled harness. Each tool runs in its own process group, and a check
+  that stops also stops each tool that it started. See the
+  [check stages and cache rules](SPEC.md#stages-of-pnpm-check).
+- For work on the generator, follow the [Vibestack contributor guide](tools/vibestack/CONTRIBUTING.md#changing-the-tools)
+  and add a fixture for each new class of error it detects.
+- For a Vibestack browser property, cite the rule and run it on a locally
+  served fixture. Keep a failed trace for replay. The vendored toolchain's
+  self-test checks its own examples. [Browser checks](SPEC.md#exploring-the-page)
 
 ## 3. What is accepted and what is not
 
@@ -82,21 +97,21 @@ Slop.cash deducts Points.
 
 ## 4. Setup
 
-You need [Bun](https://bun.sh) 1.4.2 (the version in `package.json`) and PostgreSQL 16 server and client programs on your PATH (`initdb`, `pg_ctl`, `psql`). On macOS: `brew install postgresql@16`.
+You need Node 26 (see `.nvmrc`), Corepack 0.35.0, pnpm 10.24.0 and PostgreSQL 16 server and client programs on your PATH (`initdb`, `pg_ctl`, `psql`). On macOS: `brew install postgresql@16`.
 
 ```bash
 cp .env.example .env                                   # never commit .env
-bun install --frozen-lockfile
-bun run spec:setup                                     # Node 24+ for Vibespec
-bun run packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
-bun run sim                                            # must pass before you start
+pnpm install --frozen-lockfile
+pnpm run spec:setup                                     # Node 26 with Corepack and pnpm 10.24.0
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
+pnpm run sim                                            # must pass before you start
 ```
 
 Caution: do not use port 54329. Another tool uses it.
 
 ## 5. Environment variables
 
-Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.example) has every name with no secret values. This table comes from a search of the code for `process.env`, `Bun.env` and every `env.<NAME>` read. It lists the variables you need to test and validate. The deploy-only variables are in section 5.2.
+Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.example) has every name with no secret values. This table comes from a search of the code for `process.env` and every `env.<NAME>` read. It lists the variables you need to test and validate. The deploy-only variables are in section 5.2.
 
 ### 5.1 Variables for testing and validation
 
@@ -112,23 +127,23 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 | `LLM_TIMEOUT_MS` | Timeout of one LLM request. Default 60000. 0 turns it off. | Optional | |
 | `LLM_MAX_RETRIES` | Retries per LLM call. Default 4. | Optional | |
 | `LLM_DEADLINE_MS` | Limit for one call with all its retries. Default 3 times the timeout. 0 turns it off. | Optional | |
-| `CLOUDFLARE_AI_TOKEN` | Cloudflare Workers AI token for Clef: the slop.date photo rater and the relay scam classifier. | `bun run relay-eval --live`, `bun run clef features --live`, live photo rating | Cloudflare dashboard, API token with Workers AI permission |
+| `CLOUDFLARE_AI_TOKEN` | Cloudflare Workers AI token for Clef: the slop.date photo rater and the relay scam classifier. | `pnpm run relay-eval --live`, `pnpm run clef features --live`, live photo rating | Cloudflare dashboard, API token with Workers AI permission |
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account of the Workers AI token. `scripts/wrangler.sh` also needs it. | With `CLOUDFLARE_AI_TOKEN` | Cloudflare dashboard |
 | `CLEF_MODEL` | Photo rater model: `clef` (default) or `clef-flash`. | Optional | |
 | `RELAY_CLEF_MODEL` | Relay classifier model: `clef-flash` (default) or `clef`. | Optional | |
 | `CLEF_RATINGS` | Photo ratings. Unset or `on` means on. `off` turns them off. | Optional | |
-| `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused. | Optional | `bun run clef fit` output |
+| `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused. | Optional | `pnpm run clef fit` output |
 | `OBSERVATORY_PG_PORT`, `OBSERVATORY_PG_DIR` | Port (default 54339) and data folder (default `runs/pg`) of the dev Postgres. The integration and e2e tests use it. | Optional | |
 | `PG_BIN_DIR` | Folder of the Postgres client programs, if they are not on PATH. | Optional | |
 | `REQUIRE_PG` | `1` makes a Postgres test or sim block fail instead of skip when there is no Postgres. CI sets it. | Optional. Set it to prove that no Postgres case skipped. | |
-| `NETWORK_DATABASE_URL` | The Postgres database of the service. `bun run platform:dev` and `bun run db:migrate` need a local one. | Platform dev (section 8) | `postgres://$USER@localhost:54339/<your db>` |
+| `NETWORK_DATABASE_URL` | The Postgres database of the service. `pnpm run platform:dev` and `pnpm run db:migrate` need a local one. | Platform dev (section 8) | `postgres://$USER@localhost:54339/<your db>` |
 | `DATABASE_URL` | Fallback database URL for the Observatory and the backend. | Optional | |
 | `PLATFORM_ENV` | `dev`, `staging` or `production`. `platform:dev` sets `dev`. Never set `production` locally. | Set by the dev scripts | |
 | `NETWORK_SERVICE_TOKENS` | Staff tokens (`role@app:token`, comma-separated). `platform:dev` prints dev tokens when it is unset. | Optional | Make your own |
 | `OBSERVATORY_TOKEN` | Admin token of the local Observatory. A random one is printed when it is unset. | Optional | |
 | `PIPELINE_DEBUG` | Any value prints the steps of the `pipeline` sim block. | Optional | |
 
-`bun run sim` deletes `SURPLUS_API_KEY`, `OPENAI_API_KEY` and `CLOUDFLARE_AI_TOKEN` from its own process before it starts (except the onboarding arm with `--llm`). So the offline gates never call a model, even when your `.env` has keys.
+`pnpm run sim` deletes `SURPLUS_API_KEY`, `OPENAI_API_KEY` and `CLOUDFLARE_AI_TOKEN` from its own process before it starts (except the onboarding arm with `--llm`). So the offline gates never call a model, even when your `.env` has keys.
 
 ### 5.2 Variables you must not set locally
 
@@ -138,24 +153,35 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 
 ## 6. The validation layer
 
-The validation layer is the simulations plus the integration and e2e tests ([docs/tests-policy.md](docs/tests-policy.md)). There are no unit tests and no smoke tests. Do not add any.
+Run the full validation suite for every PR. Every required test, proof, and
+check must pass before merge. Resolve all failures, skipped required
+checks, and open proof obligations. Verify that the running application
+meets the top-level stories and models.
+
+The suite includes formal checks, browser exploration, simulations,
+integration tests, and end-to-end tests. Follow the
+[test policy](docs/tests-policy.md). Do not add unit or smoke tests.
 
 | Command | What it does | Needs |
 |---|---|---|
-| `bun run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline, pipeline-slop and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline, pipeline-slop and audit blocks (they skip without it) |
-| `bun run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
-| `bun run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
-| `bun run sim --with-capital` | Adds the slow network-capital block. | |
-| `bun run typecheck` | TypeScript for the packages, deploy, tests, scripts and sites. | |
-| `bun run test:integration` | Real Postgres, real HTTP servers, the full service. Includes the security suite. | Dev Postgres |
-| `bun run security` | The security suite alone (the file list is in AGENTS.md). | Dev Postgres |
-| `bun run test:e2e` | `tests/e2e`: the platform and notify through the running service. | Dev Postgres |
-| `bun run plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
-| `bun run sites:build` | The production build of the four sites. | |
+| `pnpm run check` | Run the Vibestack checks, including Quint simulations, TypeScript comparison, and Dafny proofs. | [Vibestack toolchain](README.md#quick-start) |
+| `pnpm run quint:check` | Check the whole-flow Quint models, traces, safety, and reachability. | [Quint toolchain](spec/models/README.md#run-the-models) |
+| `pnpm run spec:check-generated` | Verify the checked-in TypeScript and VibeLang outputs against their sources. | Vibestack toolchain |
+| `pnpm run spec:explore` | Run Bombadil on the Peon signup flow. | [Chromium and the local platform](SPEC.md#exploring-the-page) |
+| `pnpm run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline, pipeline-slop and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline, pipeline-slop and audit blocks (they skip without it) |
+| `pnpm run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
+| `pnpm run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
+| `pnpm run sim --with-capital` | Adds the slow network-capital block. | |
+| `pnpm run typecheck` | TypeScript for the packages, deploy, tests, scripts and sites. | |
+| `pnpm run test:integration` | Real Postgres, real HTTP servers, the full service. Includes the security suite. | Dev Postgres |
+| `pnpm run security` | The security suite alone (the file list is in AGENTS.md). | Dev Postgres |
+| `pnpm run test:e2e` | `tests/e2e`: the platform and notify through the running service. | Dev Postgres |
+| `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
+| `pnpm run sites:build` | The production build of the four sites. | |
 
-CI (`.github/workflows/ci.yml`) runs all of these with no secrets or model
-providers. For changes to model-backed behavior, show a real-LLM run
-(section 7.2).
+Use `REQUIRE_PG=1` for checks that depend on Postgres. Run any other required
+checks in the [command map](README.md#commands). For changes to model-backed
+behavior, show a real-LLM run (section 7.2).
 
 ## 7. Validate the matching algorithm
 
@@ -180,12 +206,12 @@ Start small.
 
 | What it measures | Command |
 |---|---|
-| The simulated world with LLM persona agents (the members' words come from the LLM) | `bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm` |
+| The simulated world with LLM persona agents (the members' words come from the LLM) | `node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm` |
 | The same, with LLM persona bios too | add `--llm-personas` |
 | LLM judges of sent proactive messages (quality and privacy audit) | add `--judge 20` |
-| slop.date onboarding with the LLM reader arm | `bun run sim --only onboard --llm` |
-| The relay scam classifier on Clef (Workers AI) | `bun run relay-eval --live --budget-usd 1` |
-| Clef photo features (consented photos only) | `bun run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl --budget-usd 5 --live` |
+| slop.date onboarding with the LLM reader arm | `pnpm run sim --only onboard --llm` |
+| The relay scam classifier on Clef (Workers AI) | `pnpm run relay-eval --live --budget-usd 1` |
+| Clef photo features (consented photos only) | `pnpm run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl --budget-usd 5 --live` |
 
 The service's engine judge is off by default. For a bounded real-model qualification, use `NETWORK_ENGINE_JUDGE=1` with the budget, request limit and dry-run command in [the service README](packages/network/service/README.md#matching-judge-in-staging). This does not enable matching, approve proposals or enable sends. The sim adapter (`packages/sim/src/engineAdapter.ts`) still does not supply an LLM to the engine. If your change touches `judge*.ts`, agree the measurement method with a maintainer in the issue before you start.
 
@@ -207,18 +233,18 @@ Commands to measure matching:
 
 ```bash
 # The ConsentNetwork on the NYC world: arms and scenarios
-bun run packages/network/harness/experiment.ts --days 21 --seed 1
-bun run packages/network/harness/scenarios.ts [scenario_id]
+node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed 1
+node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts [scenario_id]
 
 # The simulated world, and one scenario with pass^k
-bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
-bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
 
-# Per-app worlds (bun run sim runs their official gates)
-bun run packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
+# Per-app worlds (pnpm run sim runs their official gates)
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
   --population '{"catfish":0.005,"bodyTypes":true}' --world '{"verification":true,"relay":true,"review":3,"widen":true,"checkin":true,"photos":1,"rater":true}'
-bun run packages/sim/src/apps/peon/cli.ts --seeds 13-16
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/peon/cli.ts --seeds 13-16
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8
 ```
 
 [docs/runbook-simulation.md](docs/runbook-simulation.md) explains the simulation. [docs/results/](docs/results/) shows the standard for a report.
@@ -240,7 +266,7 @@ The integration points:
 Start the local platform. It sends nothing. The login codes are printed in the service log.
 
 ```bash
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev bun run platform:dev
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev pnpm run platform:dev
 ```
 
 Open the sites at `127.0.0.1`, not `localhost`. The MCP pages check the origin. A web client (ChatGPT, Grok, Muse) cannot reach `127.0.0.1`. Test web clients against a staging URL that a maintainer gives you. Do not deploy anything yourself.
@@ -273,6 +299,7 @@ Do not change the UI, the visual design, styles or copy. This includes the sites
 
 The only exception: a change that fixes a broken user flow. That PR must include:
 
+- Screenshots of the same screen and state before and after the fix.
 - A video of the flow before the fix (broken) and after the fix (working).
 - Detailed test steps from a clean checkout: commands, URL and what to click, with the expected result of each step.
 
@@ -288,8 +315,8 @@ These numbers measure real progress. A change to line coverage or test count is 
 | Members with a first outcome in 14 days | Simulated world run; pilot | 60% or more (PRD 28.2) |
 | Pair recall and member recall | Simulated world run | Higher is better |
 | Exposure fairness (Gini, members with no proposal) | Simulated world run | Lower is better |
-| Gate values per app (second dates, hires, repeat meetups) | `bun run sim` | Blocking gates pass. Tracked gates move toward the target. |
-| Relay recall and false-hold rate | `bun run relay-eval` on heldout-2 | Higher recall, lower false holds |
+| Gate values per app (second dates, hires, repeat meetups) | `pnpm run sim` | Blocking gates pass. Tracked gates move toward the target. |
+| Relay recall and false-hold rate | `pnpm run relay-eval` on heldout-2 | Higher recall, lower false holds |
 | Canary leaks, invariant violations, minor contacts | Every simulated run | Always 0 |
 
 Safety scores are gates. A PR that makes a canary leak, an invariant violation or a minor contact non-zero is not accepted, even if other scores improve.
@@ -333,7 +360,14 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 ### 12.1 Rules
 
 - Link a reproduced issue, approved product story or rule, or maintainer request.
-- Use the code that exists. Remove dead code and merge duplicates. Add a new type, file, package or dependency only when it is necessary, and say why.
+- Keep the diff focused. Remove low-quality output, unnecessary files, dead
+  or redundant code, and superseded implementations. Reuse code that
+  serves the approved behavior. Explain each new type, file, package, or
+  dependency.
+- Keep code free of comments. Put explanations in the spec or documentation.
+  Use comment syntax only for required tool directives such as `//@` proof contracts.
+- Meet all [Vibestack requirements](SPEC.md) and
+  [TypeScript conventions](AGENTS.md#typescript-best-practices) before merge.
 - Explain the cause. Describe at least two other implementations and why yours is better.
 - A bug fix adds one sim gate, scenario, corpus row, or integration or e2e case that fails before the fix. That is enough. Do not add more.
 - For measured research or simulation changes, write results to
@@ -345,20 +379,23 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 Use the [evidence policy](#evidence) for the PR body. Include each applicable
 item below.
 
-- [ ] The repository is starred and the PR comes from your fork.
+- [ ] The repository is starred and the PR comes from your fork into `develop`.
 - [ ] Linked issue, approved product story or rule, or maintainer request.
 - [ ] The root cause, in plain words.
 - [ ] The fix, and two other implementations you did not use.
-- [ ] The before and after results, with the same command, seeds and data.
+- [ ] For code changes, before and after results with the same inputs,
+  commands, and seeds where used.
+- [ ] For UI changes, before and after screenshots and recordings.
 - [ ] For model-backed changes, real-LLM commands and output, provider, exact
   model ID, number of calls and cost.
 - [ ] For agent flow changes, client and version, provider, model and result
   for each applicable client (section 8).
-- [ ] For application changes, report `bun run sim`, `bun run typecheck`,
-  `bun run test:integration` and `bun run test:e2e`. Set `REQUIRE_PG=1` for
-  the Postgres-dependent checks. Paste the summary lines.
-- [ ] For spec changes, confirm that the spec, generated modules, and related
-  flow model agree. Include Vibespec check results and any open obligations.
+- [ ] Passing results for the full validation suite in section 6, including
+  Quint, Dafny, Bombadil, and the application checks.
+- [ ] Evidence that the affected stories, rules, generated modules, and flow
+  models agree and are fully integrated into the running application.
+- [ ] The diff follows Vibestack and TypeScript requirements. Code is free
+  of comments, and obsolete files and implementations are removed.
 - [ ] Test steps and the expected result of each step.
 - [ ] Risks and trade-offs.
 - [ ] No secrets, `.env`, `runs/` or member data in the diff.
@@ -386,7 +423,8 @@ Issue, approved specification and rule, or maintainer request.
 ## Evidence
 - Change types: comma-separated types
 - Test results: commands and observed outcomes or linked results
-- Proof of change: reproduction and before/after results or demonstrated outcome
+- Proof of change: before and after results for code changes, or the outcome of other changes
+- UI screenshots: before and after images, for UI changes
 - UI video: before and after recordings, for UI changes
 - Runtime logs: redacted service, simulator or agent output, for non-UI changes
 - Benchmarks: reproducible baseline and PR measurements, for performance changes
@@ -414,12 +452,14 @@ line. A Markdown bullet before the field name is optional.
   behavior, `ui` for a user interface, `performance` for a claimed
   optimization, and `hardware` for device-dependent behavior.
 - `Test results:` Give the exact commands and observed results or link the CI
-  jobs and summarize their outcome. Report failures and skips. For docs-only
-  work, show the applicable Markdown, link, example, or consistency check.
+  jobs and summarize their outcome. Report the full suite from section 6.
+  For docs-only work, also show the applicable Markdown, link, or example.
 - `Proof of change:` Show how to reproduce the issue on the target branch
-  and what happened on the PR commit with the same input. For an approved
-  capability, show the user journey and the expected outcome. For docs-only
-  work, show the contradiction or gap and the corrected instruction.
+  and what happened on the PR commit with the same input. For a new
+  capability, show the previous behavior and the completed journey.
+  For docs-only work, show the contradiction or gap and the corrected instruction.
+- `UI screenshots:` For UI changes, show the same screen and state before
+  and after the change.
 - `UI video:` For UI fixes, link recordings of the broken and fixed flow.
   Show the steps in the affected site, connector screen, or staff console.
   Use synthetic accounts. The broken-flow exception in section 9 applies.

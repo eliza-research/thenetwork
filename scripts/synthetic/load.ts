@@ -3,12 +3,13 @@
 //   import { loadSnapshot } from "./scripts/synthetic/load.ts";
 //   const snapshot = await loadSnapshot();            // core WorldSnapshot from PUBLIC files only
 //
-//   bun scripts/synthetic/load.ts                     # summary of the snapshot
-//   bun scripts/synthetic/load.ts --engine            # also run engine v1 once and report proposals
-//   bun scripts/synthetic/load.ts --engine --config '{"complementarity":{"weight":0}}'   # config override
-//   bun scripts/synthetic/load.ts --engine --dir /tmp/x --no-write   # other dataset; don't write engine_v1_run.json
+//   node --import tsx scripts/synthetic/load.ts                     # summary of the snapshot
+//   node --import tsx scripts/synthetic/load.ts --engine            # also run engine v1 once and report proposals
+//   node --import tsx scripts/synthetic/load.ts --engine --config '{"complementarity":{"weight":0}}'   # config override
+//   node --import tsx scripts/synthetic/load.ts --engine --dir /tmp/x --no-write   # other dataset; don't write engine_v1_run.json
 //
 // loadSnapshot never reads hidden_truth.jsonl. loadPersonas (simulator/oracle only) does.
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
 import { parseArgs } from "node:util";
 import type { Edge, Facet, Intent, Member, Presence, WorldSnapshot } from "../../packages/core/src/index.ts";
 import type { Persona } from "../../packages/sim/src/persona.ts";
@@ -25,7 +26,7 @@ export interface PublicData {
 
 export async function loadPublic(dir = DATA_DIR): Promise<PublicData> {
   return {
-    manifest: await Bun.file(`${dir}/${FILES.manifest}`).json(),
+    manifest: await fileAt(`${dir}/${FILES.manifest}`).json(),
     members: await readJsonl(`${dir}/${FILES.members}`),
     facets: await readJsonl(`${dir}/${FILES.facets}`),
     intents: await readJsonl(`${dir}/${FILES.intents}`),
@@ -188,7 +189,7 @@ if (import.meta.main) {
       }));
     }
     summary.engine = report;
-    if (!a["no-write"]) await Bun.write(`${a.dir}/engine_v1_run.json`, JSON.stringify(report, null, 2) + "\n");
+    if (!a["no-write"]) await writePath(`${a.dir}/engine_v1_run.json`, JSON.stringify(report, null, 2) + "\n");
   }
   console.log(JSON.stringify(summary, null, 2));
 }

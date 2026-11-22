@@ -1,0 +1,96 @@
+import { apply, initial, noHistoryAllowed, receiptAccepted, receiptFinal, receiptMessageStatus, receiptReplyIdsMatch } from "./generated/turnReceipt.effect.js"
+
+interface CompletedTurn {
+  receipt_hash: string | null
+  receipt: { outcome: string } | null
+  replies: readonly { id: string }[]
+  response: {
+    accountEligible: boolean
+    replyKind: "reply" | "compliance"
+    reason: string
+    memberId: string | null
+  }
+  knownApp: boolean
+}
+
+interface ReceiptInput {
+  digest: string
+  delivery: "accepted" | "unknown" | "rejected"
+  replyIds: string[]
+  providerIds: boolean
+  history: boolean
+}
+
+interface ReceiptEffects<Turn> {
+  readTurn(): Promise<Turn | undefined>
+  authorityIsCurrent(turn: Turn): boolean
+  receiptValuesMatch(turn: Turn): boolean
+  writeReplies(turn: Turn, status: string): Promise<void>
+  writeReceipt(): Promise<void>
+}
+
+error ReceiptIOFailure { cause: unknown }
+error UnexpectedReceiptPhase { phase: string }
+
+function io<T>(work: () => Promise<T>) {
+  return tryPromise({ try: work, catch: cause => new ReceiptIOFailure({ cause }) })
+}
+
+function inspect<T>(work: () => T) {
+  return Effect.try({ try: work, catch: cause => new ReceiptIOFailure({ cause }) })
+}
+
+/** Called inside the transaction that holds the stored turn's row lock. */
+export async function recordSignedTurnReceipt<Turn extends CompletedTurn>(input: ReceiptInput, effects: ReceiptEffects<Turn>) {
+  try {
+    return await runPromise(effect {
+      const claim = try io(() => effects.readTurn())
+      const turn = try apply(initial, { type: "checkTurn", handled: claim !== undefined })
+      if (turn.phase === "TurnUnavailable") return turn.phase
+      if (claim === undefined) throw new UnexpectedReceiptPhase({ phase: turn.phase })
+
+      const validAuthority = try inspect(() => effects.authorityIsCurrent(claim))
+      const authority = try apply(turn, { type: "checkAuthority", validAuthority })
+      if (authority.phase === "AuthorityInvalid") return authority.phase
+
+      const alreadyStored = Boolean(claim.receipt_hash)
+      // The two signed senders can encode identical receipt values with different object key order.
+      const identical = claim.receipt_hash === input.digest
+        || (alreadyStored && (try inspect(() => effects.receiptValuesMatch(claim))))
+      const previous = try apply(authority, {
+        type: "readPrevious", identical, alreadyStored,
+        previouslyUnknown: claim.receipt?.outcome === "unknown", finalDelivery: receiptFinal(input.delivery),
+      })
+      if (previous.phase === "Replayed" || previous.phase === "Conflict") return previous.phase
+
+      const orderedIdsMatch = receiptReplyIdsMatch(claim.replies.map(reply => reply.id), input.replyIds)
+      let ready = try apply(previous, {
+        type: "checkScope", collectedReplies: claim.replies.length > 0, orderedIdsMatch,
+        providerIds: input.providerIds, history: input.history,
+      })
+      if (ready.phase === "ScopeInvalid") return ready.phase
+      if (ready.phase === "CheckingDelivery") {
+        const response = claim.response
+        ready = try apply(ready, {
+          type: "checkDelivery", accepted: receiptAccepted(input.delivery), providerIds: input.providerIds,
+          history: input.history, accountFree: noHistoryAllowed(
+            response.accountEligible === false, response.replyKind, response.reason, response.memberId === null, claim.knownApp,
+          ),
+        })
+        if (ready.phase === "DeliveryInvalid") return ready.phase
+      }
+
+      if (ready.phase === "AwaitingReplyWrite") {
+        const status = receiptMessageStatus(input.delivery)
+        try io(() => effects.writeReplies(claim, status))
+      } else if (ready.phase !== "AwaitingEmptyWrite") throw new UnexpectedReceiptPhase({ phase: ready.phase })
+      try io(() => effects.writeReceipt())
+      const stored = try apply(ready, { type: "recordReceipt" })
+      if (stored.phase !== "Stored") throw new UnexpectedReceiptPhase({ phase: stored.phase })
+      return stored.phase
+    })
+  } catch (error) {
+    if (error instanceof ReceiptIOFailure) throw error.cause
+    throw error
+  }
+}

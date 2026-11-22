@@ -195,19 +195,21 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     r.selectedOwn === 0 && r.selectedExpected === 1 && r.queued === 1 && r.beforeReview && r.candidateFirst && r.managerAfterYes && r.result && r.restored), JSON.stringify({ rows: ownerRows }));
 
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
+    // No posting is stored yet: the lookup an update or close reads from finds nothing.
+    const storedPosting = () => undefined;
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
-    const step = readPostingText(POST, { postings: [], newId: "p-new" })!;
+    const step = readPostingText(POST, { postings: [], newId: "p-new", storedPosting })!;
     expect(step.ready).toBe(true);
     expect(step.text).toMatch(/Reply yes to post it/);
-    const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2" })!;
+    const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2", storedPosting })!;
     expect(noPay.ready).toBe(false);
     expect(noPay.text).toBe(POSTING_COPY.askPay);
-    const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3" })!;
+    const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3", storedPosting })!;
     expect(fixed.ready).toBe(true);
     expect(fixed.draft).toMatchObject({ id: "p-2", title: "barista", payMin: 40, payMax: 50 });
     // Not a posting command, no draft waiting: not about a posting (the turn goes on as usual).
-    expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4" })).toBeUndefined();
+    expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4", storedPosting })).toBeUndefined();
   });
 
   const w = new SeatWorld();
@@ -257,7 +259,10 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
       expect(i.proposal.participants.some(p => p.startsWith("job:"))).toBe(false);
       const cand = i.proposal.participants.find(p => p !== "hm1")!;
       expect(CANDIDATES).toContain(cand);
-      expect(w.opp(i.oppId)?.seat).toEqual({ id: seat, manager: "hm1" });
+      const bound = w.opp(i.oppId)?.seat;
+      expect(bound).toMatchObject({ id: seat, manager: "hm1" });
+      expect(bound?.evidence?.search).toMatch(/^[a-f0-9]{64}$/);
+      expect(bound?.evidence?.posting).toMatch(/^[a-f0-9]{64}$/);
       expect(w.about(i.oppId, m).length).toBe(0);
     }
     A = items[0]!.oppId;
@@ -281,8 +286,10 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   });
 
   await b.run("restart: the item, the seat and the manager's pending review survive an export and import", async () => {
+    const bound = w.opp(A)?.seat;
+    expect(bound).toMatchObject({ id: seat, manager: "hm1" });
     w.restart();
-    expect(w.opp(A)?.seat).toEqual({ id: seat, manager: "hm1" });
+    expect(w.opp(A)?.seat).toEqual(bound);
     expect(w.probedFor("hm1", A)).toBe(true);
   });
 

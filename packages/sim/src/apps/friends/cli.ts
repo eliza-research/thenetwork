@@ -1,6 +1,7 @@
 // Run friends.help arms over seeds and print the comparison table (docs/results/2026-10-08-friends-pack.md).
 // No LLM calls.
-//   bun run packages/sim/src/apps/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
+import { writePath } from "../../../../core/src/runtime/files.ts";
 import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
@@ -33,7 +34,7 @@ async function main() {
     ["Proposals / seed", m => m.proposals, false, 0],
     ["Probes / seed", m => m.probes, false, 0],
     ["Probe yes rate", m => m.probeYesRate, true],
-    ["Quorum rate (booked / probed)", m => m.quorumRate, true],
+    ["Quorum rate (reached / probed)", m => m.quorumRate, true],
     ["Meetups held / seed", m => m.meetups, false, 1],
     ["  of which crew sessions", m => m.crewSessions, false, 1],
     ["Attendance (came / booked)", m => m.attendance, true],
@@ -88,7 +89,7 @@ async function main() {
     console.log("\n" + printGates("HISTORICAL gates (first proposed; not the launch criteria):", historicalGates(all.pack, all.random)));
   }
   const out = arg("json");
-  if (out) await Bun.write(out, JSON.stringify(all, null, 1));
+  if (out) await writePath(out, JSON.stringify(all, null, 1));
 }
 
 if (import.meta.main) await main();

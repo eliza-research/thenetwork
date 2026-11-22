@@ -1,5 +1,7 @@
 # The Network on elizaOS v3: integration research
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/research/eliza-integration.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Status: research draft, 2026-10-05. Sources: elizaOS monorepo at a local elizaOS monorepo checkout (branch `shaw/mega-refactor`, HEAD `6c6fddb6f65e`, working tree read as-is), the recovered homepage at `reference/eliza-homepage/` (see its `RECOVERED.md`), and PRD sections 22, 30, 31, 32 and 35 (`docs/prd-snapshot.md`).
 
 Path convention: paths starting `cloud/` mean `packages/cloud/` in the elizaOS monorepo. Other monorepo paths are given from the repo root (`packages/...`, `plugins/...`).
@@ -207,7 +209,7 @@ Key files:
 ### (b) `/api/network/*` and admin routes
 - **Routing:**
   - Drop `route.ts` files under `cloud/api/network/...` and `cloud/api/network/admin/...`. Each one is `new Hono<AppEnv>()` + `export default app` and must import from `"hono"`, or codegen fails.
-  - Run `bun run --cwd packages/cloud/api codegen`. This regenerates `api/src/_router.generated.ts` and `_router-shard-keys.generated.ts`; `network` becomes its own shard automatically.
+  - Run `pnpm run --cwd packages/cloud/api codegen`. This regenerates `api/src/_router.generated.ts` and `_router-shard-keys.generated.ts`; `network` becomes its own shard automatically.
   - `typecheck` runs the router-contract check and a worker-bundle check.
 - **Auth:** helpers in `cloud/shared/src/lib/auth/workers-hono-auth.ts`:
   - `requireUser` (304)
@@ -241,8 +243,8 @@ Key files:
 - **Railway worker `network-matcher`:**
   - New folder `cloud/services/network-matcher/`; the workspace glob already picks it up.
   - `package.json` depends on `@elizaos/cloud-shared` (workspace) and imports `dbWrite` from `@elizaos/cloud-shared/db/client`, which reads `DATABASE_URL` outside Workers.
-  - Run a `Bun.serve` `/health` endpoint plus a tick loop with `pg_try_advisory_lock`.
-  - The template for a DB-backed Bun service is `cloud/services/container-control-plane`.
+  - Run a `the former HTTP server helper` `/health` endpoint plus a tick loop with `pg_try_advisory_lock`.
+  - The template for a DB-backed the former runtime service is `cloud/services/container-control-plane`.
   - Copy the Dockerfile and `railway.toml` from `cloud/services/gateway-webhook/`, but use the multi-package source-copy approach of `cloud/services/agent-server/Dockerfile`, because cloud-shared pulls in many workspaces.
   - Clone the deploy workflow from `.github/workflows/deploy-gateway-webhook.yml`.
   - **Note:** no existing Railway service reads the cloud DB today, so this is new ground (Docker image size, connection limits).
@@ -307,22 +309,22 @@ Key files:
 - The identity-cluster merge engine (`plugins/plugin-sql/src/services/sql-principal.ts`) is **not active** in shared turns (in-memory SQLite), so do not rely on it.
 
 ### (g) Local dev and staging
-- **API:** `bun run --cwd packages/cloud/api dev` (`scripts/admin/dev/cloud-api-dev.ts`). It:
+- **API:** `pnpm run --cwd packages/cloud/api dev` (`scripts/admin/dev/cloud-api-dev.ts`). It:
   - starts a PGlite TCP bridge on `127.0.0.1:55432` when `DATABASE_URL` is unset;
   - runs migrations;
   - writes `api/.dev.vars` (from `cloud/shared/.env.example`, with generated secrets including `CRON_SECRET`);
   - starts `wrangler dev --local --port 8787`.
 - **Other entry points:**
-  - `bun run dev:cloud` (API + app).
-  - `bun run cloud:mock` (`packages/scripts/cloud/mock-stack-up.ts`, with MOCK_REDIS + PGlite).
-  - `scripts/admin/dev/cloud-api-hono-dev.ts` (Bun, no wrangler).
+  - `pnpm run dev:cloud` (API + app).
+  - `pnpm run cloud:mock` (`packages/scripts/cloud/mock-stack-up.ts`, with MOCK_REDIS + PGlite).
+  - `scripts/admin/dev/cloud-api-hono-dev.ts` (the former runtime, no wrangler).
 - **Mocks:** `cloud/test-mocks/` (steward, stripe, hetzner, control-plane, provider-contract, synthetic-environment; Mockoon JSON).
 - **Gateway:** run `cloud/services/gateway-webhook` locally with `ELIZA_CLOUD_URL=http://127.0.0.1:8787` and test signing secrets. Alternatively, skip it and POST straight to the internal personal-shared route with `INTERNAL_SECRET`.
 - **Model:** the shared turn uses a Cerebras handler. Setting `ELIZAOS_CLOUD_SMALL_MODEL` and the Cerebras key in `.dev.vars` lines up with this repo's Cerebras setup.
 - **Tests:**
-  - `bun run --cwd packages/cloud/api test`. Suffixes: `*.pglite.test.ts`, `*.miniflare.test.ts`, `*.integration.test.ts`.
+  - `pnpm run --cwd packages/cloud/api test`. Suffixes: `*.pglite.test.ts`, `*.miniflare.test.ts`, `*.integration.test.ts`.
   - E2E batches in `cloud/api/test/e2e`.
-  - `bun run --cwd packages/cloud/shared test`.
+  - `pnpm run --cwd packages/cloud/shared test`.
 - **Staging:** `[env.staging]` in `cloud/api/wrangler.toml` (Worker `eliza-cloud-api-staging`, `api-staging.eliza.app`, Hyperdrive at lines 764-766). Every binding is repeated per environment. Railway has staging environments for the gateway.
 
 ### (h) MCP server with OAuth
@@ -355,7 +357,7 @@ Key files:
 | `packages/cloud/api/network/admin/**/route.ts` | Review queue, member 360, timeline, pipeline, metrics, config, audit (role-checked) |
 | `packages/cloud/api/cron/network-tick/route.ts` | Job runner: due jobs, outreach, expiries |
 | `packages/cloud/api/internal/network/messages/route.ts` (or a branch in the personal-shared route) | Inbound Network turns |
-| `packages/cloud/services/network-matcher/` | Railway Bun worker (matcher, enrichment, simulation) |
+| `packages/cloud/services/network-matcher/` | Railway the former runtime worker (matcher, enrichment, simulation) |
 | `packages/ui/src/cloud/network/**` + route registrations | Member pages (`/network/*`) and admin console (`/cloud/admin/network/*`) |
 
 **Modify:**
@@ -379,7 +381,7 @@ Key files:
 
 Do the work on a branch in a separate git worktree of the eliza repo. The a local elizaOS monorepo checkout checkout has uncommitted changes and is read-only for this research.
 
-1. **Stub Network API** (in this repo: `prototypes/network-stub/`, Bun + Hono, port 8790):
+1. **Stub Network API** (in this repo: `prototypes/network-stub/`, the former runtime + Hono, port 8790):
    - `GET /members/by-phone/:e164` returns `{memberId, name, city, facets[], activeItems[]}` from a JSON fixture.
    - `POST /members/:id/facets` appends and returns the new facet.
    - `GET /health`.
@@ -397,7 +399,7 @@ Do the work on a branch in a separate git worktree of the eliza repo. The a loca
      - build `createNetworkEdgePlugin({ baseUrl: env.NETWORK_STUB_URL, memberId })`;
      - pass both through `execution`.
 5. **Run:**
-   - `bun run --cwd packages/cloud/api dev` (PGlite, wrangler on :8787). Put the Cerebras key, `NETWORK_STUB_URL=http://127.0.0.1:8790` and the model in `api/.dev.vars`.
+   - `pnpm run --cwd packages/cloud/api dev` (PGlite, wrangler on :8787). Put the Cerebras key, `NETWORK_STUB_URL=http://127.0.0.1:8790` and the model in `api/.dev.vars`.
    - Start the stub.
    - Drive a turn without the gateway:
      ```

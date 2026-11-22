@@ -1,13 +1,17 @@
 // The deployable backend (deploy/backend; docs/deploy.md): config, edge headers, routing, logs,
 // shutdown, and one boot of the real process against a database of its own on the dev cluster.
-import { afterAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { spawnProcess } from "../../packages/core/src/runtime/process.ts";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+import { afterAll, describe, expect, test } from "vitest";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { migrate } from "../../packages/observatory/db/migrate.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
+import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
 import {
   BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
@@ -206,15 +210,19 @@ describe("logs", () => {
 function fakeService() {
   const calls: { kind: string; host: string | null; path: string; ip: string | null }[] = [];
   let release: () => void = () => {};
-  const svc: ServiceLike & { closed: boolean; ticks: number; slowTick: boolean } = {
-    closed: false, ticks: 0, slowTick: false,
+  const svc: ServiceLike & { closed: boolean; ticks: number; slowTick: boolean; rounds: string[] } = {
+    closed: false, ticks: 0, slowTick: false, rounds: [],
     async fetch(req) { calls.push({ kind: "staff", host: req.headers.get("host"), path: new URL(req.url).pathname, ip: null }); return Response.json({ ok: true, staff: true }); },
     async publicFetch(req) { calls.push({ kind: "public", host: req.headers.get("host"), path: new URL(req.url).pathname, ip: req.headers.get(CLIENT_IP) }); return Response.json({ ok: true }); },
     runtimes: new Map([["ntwrk:nyc", { id: "ntwrk:nyc", tick: async () => {
       svc.ticks++;
+      svc.rounds.push("network:ntwrk:nyc");
       if (svc.slowTick) await new Promise<void>(r => { release = r; });
       return true;
     } }]]),
+    async inboxTick() { svc.rounds.push("inbox"); },
+    async purge() { svc.rounds.push("retention"); },
+    async notifyTick() { svc.rounds.push("notify"); },
     async close() { svc.closed = true; },
   };
   return { svc, calls, release: () => release() };
@@ -253,7 +261,7 @@ describe("routing", () => {
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
     for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
       "/internal/profile-suggestions/preview", "/internal/profile-suggestions/decide", "/internal/profile-suggestions/delete", "/internal/profile-suggestions/collect", "/internal/profile-suggestions/consent-context",
-      PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH]) {
+      PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH, calendarOwnerPath]) {
       const r = await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
       expect([p, r.status]).toEqual([p, 200]);
       expect(calls.at(-1)).toMatchObject({ kind: "staff", path: p });
@@ -262,6 +270,10 @@ describe("routing", () => {
     // The relay action's cap is 16 KiB (relay-endpoint.ts RELAY_MAX_BODY_BYTES): a larger declared body never reaches the service.
     const big = await b.publicFetch(new Request("http://api.example.test/internal/relay", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }));
     expect(big.status).toBe(413);
+    const oversizedCalendar = await b.publicFetch(new Request(`http://api.example.test${calendarOwnerPath}`, {
+      method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) },
+    }));
+    expect(oversizedCalendar.status).toBe(413);
     expect(calls.length).toBe(n);
     // The same size is fine on the turn route (256 KiB).
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);
@@ -344,18 +356,43 @@ describe("router to backend (deploy/router.ts, the real Worker code)", () => {
   });
 });
 
+describe("deployed tick round", () => {
+  // spec/platformRetention.md, "Platform rows and inbox payloads have separate cutoffs"
+  // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("redrives inbound work, ticks networks, purges expired data, and then runs notifications", async () => {
+    const { svc } = fakeService();
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    const round = ["inbox", "network:ntwrk:nyc", "retention", "notify"];
+    await b.tickAll();
+    await b.tickAll();
+    expect(svc.rounds).toEqual([...round, ...round]);
+  });
+
+  test("a redrive or retention error does not stop the remaining workers", async () => {
+    const { svc } = fakeService();
+    const lines: string[] = [];
+    svc.inboxTick = async () => { svc.rounds.push("inbox"); throw new Error("inbox unavailable"); };
+    svc.purge = async () => { svc.rounds.push("retention"); throw new Error("retention unavailable"); };
+    const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true });
+    await b.tickAll();
+    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    expect(lines.join("\n")).toMatch(/"msg":"inbox tick failed"/);
+    expect(lines.join("\n")).toMatch(/"msg":"retention tick failed"/);
+  });
+});
+
 describe("graceful shutdown", () => {
   test("a tick in flight finishes before the pool closes; new work is refused meanwhile", async () => {
     const { svc, release } = fakeService();
     svc.slowTick = true;
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
     const first = b.startTicks();
-    await Bun.sleep(5);
+    await sleep(5);
     expect(b.inFlight).toBe(1);
     const stopped: boolean[] = [];
     const server = { stop: (force?: boolean) => { stopped.push(!!force); } };
     const done = b.shutdown([server]);
-    await Bun.sleep(20);
+    await sleep(20);
     expect(svc.closed).toBe(false);
     expect((await b.publicFetch(new Request("http://x/healthz"))).status).toBe(503);
     expect((await b.publicFetch(new Request("http://x/api/app"))).status).toBe(503);
@@ -375,9 +412,37 @@ describe("graceful shutdown", () => {
     svc.slowTick = true;
     const b = createBackend({ svc, config: cfg({ shutdownGraceMs: 30 }), log: silent, ping: async () => true });
     void b.startTicks();
-    await Bun.sleep(5);
+    await sleep(5);
     expect(await b.shutdown()).toEqual({ clean: false });
     expect(svc.closed).toBe(true);
+  });
+
+  // spec/backendLifecycle.md, "The grace period covers listener and work drain"
+  test("the shutdown grace period also bounds an in-flight HTTP response", async () => {
+    const { svc } = fakeService();
+    let recordEntry!: () => void;
+    let finishResponse!: (response: Response) => void;
+    const entered = new Promise<void>(resolve => { recordEntry = resolve; });
+    const response = new Promise<Response>(resolve => { finishResponse = resolve; });
+    const closeMode: boolean[] = [];
+    svc.publicFetch = () => { recordEntry(); return response; };
+    svc.close = async (force = false) => { closeMode.push(force); };
+    const b = createBackend({ svc, config: cfg({ deployed: false, shutdownGraceMs: 30 }), log: silent, ping: async () => true });
+    const listener = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: b.publicFetch });
+    const client = fetch(new URL("/api/app", listener.url), { signal: AbortSignal.timeout(2000) })
+      .then(res => res.status, () => null);
+    const reachedService = await Promise.race([entered.then(() => true), client.then(() => false)]);
+    try {
+      expect(reachedService).toBe(true);
+      const result = await Promise.race([b.shutdown([listener]), sleep(600, "still draining")]);
+      expect(result).toEqual({ clean: false });
+      expect(closeMode).toEqual([true]);
+      expect(await client).toBeNull();
+    } finally {
+      finishResponse(Response.json({ ok: true }));
+      await listener.stop(true);
+      await b.shutdown();
+    }
   });
 });
 
@@ -405,12 +470,12 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
       PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
     };
-    const proc = Bun.spawn(["bun", "run", `${import.meta.dir}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
+    const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
     try {
       let ok = false;
       for (let i = 0; i < 100 && !ok; i++) {
-        await Bun.sleep(100);
+        await sleep(100);
         ok = await fetch(`http://127.0.0.1:${port}/healthz`).then(r => r.status === 200, () => false);
       }
       if (!ok) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").filter(l => !l.includes('"applied ')).slice(-5).join("\n")}`); }

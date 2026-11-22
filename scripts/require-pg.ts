@@ -1,6 +1,6 @@
 // CI guard for REQUIRE_PG=1 (audit sites-infra-5): every Postgres test helper must see a Postgres,
 // so no Postgres suite can skip silently. Exits 1 when one cannot.
-//   REQUIRE_PG=1 bun run scripts/require-pg.ts
+//   REQUIRE_PG=1 node --import tsx --env-file-if-exists=.env scripts/require-pg.ts
 const HELPERS = ["../packages/observatory/test/pg.ts", "../packages/platform/test/pg.ts"];
 
 export async function missingPg(helpers = HELPERS): Promise<string[]> {

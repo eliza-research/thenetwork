@@ -1,7 +1,7 @@
 /**
  * Service-to-service signing between the Eliza gateway / shared agent and the Network service
- * (eliza-research/thenetwork docs/design/eliza-conversation-layer.md). Mirrored byte-for-byte in the
- * service (packages/core/src/svc/svc-auth.ts). No imports: WebCrypto only, so it runs in Workerd and Bun.
+ * See docs/design/eliza-conversation-layer.md. The signing implementation mirrors the Eliza plugin.
+ * It uses the Web Crypto APIs available in Node.js 26 and Workerd.
  *
  *   canonical = METHOD \n PATH \n TS \n ID \n hex(sha256(body))
  *   x-ntwrk-svc-ts  = unix seconds

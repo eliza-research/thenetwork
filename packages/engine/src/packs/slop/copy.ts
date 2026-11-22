@@ -5,7 +5,6 @@
 // an adult who consented to photo use (slopProbeMessage); nothing in the text ever describes it.
 import type { Facet } from "@thenetwork/core";
 
-export const SLOP_LANE_LABEL: Record<string, string> = { romance: "a first date" };
 export const SLOP_FACET_PHRASE: Partial<Record<Facet["kind"], string>> = { interest: "is into" };
 export const SLOP_SAFE_FALLBACK = "I think you two could have a good first date.";
 export const SLOP_LANE_ACTIVITY: Record<string, string> = { romance: "a first date" };

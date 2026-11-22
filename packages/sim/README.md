@@ -1,6 +1,6 @@
 # @thenetwork/sim: the Network World Simulator
 
-This package is the simulation harness from PRD Section 34, and the repo's validation layer (`bun run sim`, scripts/sim.ts). It creates synthetic SF and NYC members whose ground truth is hidden from the Network. It then runs them through any Network implementation in simulated time and scores the result against an oracle that has the full hidden information. Run logs are written as JSONL so a run can be replayed.
+This package is the simulation harness from PRD Section 34, and the repo's validation layer (`pnpm run sim`, scripts/sim.ts). It creates synthetic SF and NYC members whose ground truth is hidden from the Network. It then runs them through any Network implementation in simulated time and scores the result against an oracle that has the full hidden information. Run logs are written as JSONL so a run can be replayed.
 
 The judge lives in `src/judge/`: the deterministic style and safety rules, the LLM graders, and the metrics computed from run logs (`computeMetrics`). The run-log schema is `packages/core/src/runlog.ts`. The per-app worlds (slop.date, peon.biz, friends.help) are in `src/apps/` ([README](src/apps/README.md)).
 
@@ -31,12 +31,12 @@ packages/sim/scenarios/*.json   scripted situations (band, group flake, canary, 
 ## Quick start
 
 ```bash
-bun install
-bun run packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1 --network stub
-bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm        # LLM persona voices (defaultLLM())
-bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/group-flake-morning-of.json --k 4
-bun run packages/sim/src/cli.ts --engine ./my-engine.ts                     # module exporting createEngine()
-bun run sim                                                                  # the gates (scenarios at pass^3, the Network sims, the app worlds)
+pnpm install
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1 --network stub
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm        # LLM persona voices (defaultLLM())
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --scenario packages/sim/scenarios/group-flake-morning-of.json --k 4
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --engine ./my-engine.ts                     # module exporting createEngine()
+pnpm run sim                                                                  # the gates (scenarios at pass^3, the Network sims, the app worlds)
 ```
 
 The other flags are `--mode accelerated --speed 1440` (one sim day per wall minute), `--mode realtime`, `--llm-personas` (LLM-enriched bios), `--adversarial-rate`, `--minor-share` (default 0.05), `--richness` (snapshot from richness tiers instead of perfect onboarding), `--stable-decisions` and `--logistics` (opt-in oracle refinements: no fresh coin flip when the same people are asked again, and travel and time in show-up), `--quality-churn` (personas lose trust after unsafe or poor intros), `--trip-clock` (travellers reply on the trip city's clock), `--judge N` (LLM-judge N sent proactive messages with `judgeLLM()`), `--no-log` and `--json`. Models: persona agents and persona bios use `defaultLLM()` (`DEFAULT_LLM_PROVIDER`/`DEFAULT_LLM_MODEL`). Any judging uses `judgeLLM()` (`JUDGE_PROVIDER`/`JUDGE_MODEL`). Both default to Surplus `gpt-6-luna`, with OpenAI as the fallback.
@@ -167,11 +167,11 @@ Seeded runs are bit-for-bit replayable. A test diffs two runs, and the CLI metri
 
 ## Results
 
-All results were recorded on 2026-10-05 with Bun 1.4.2.
+These results were recorded on 2026-10-05. The original toolchain and command are in the [historical revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/packages/sim/README.md).
 
 ### Validation
 
-The bun:test suite recorded here on 2026-10-05 was deleted on 2026-10-08 (simulations only). Its scenario checks (every scenario passes against the stub, pass^3, the leaky-network negative control) run in `bun run sim`, block "network".
+The original test suite recorded here on 2026-10-05 was deleted on 2026-10-08 (simulations only). Its scenario checks (every scenario passes against the stub, pass^3, the leaky-network negative control) run in `pnpm run sim`, block "network".
 
 ### Deterministic run
 
