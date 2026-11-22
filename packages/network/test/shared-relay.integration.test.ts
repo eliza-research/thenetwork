@@ -376,13 +376,14 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }
   const person=(await service.accounts.personFor(sender))!,other=(await service.accounts.personFor(recipient))!;
   const from=(await service.people.getMembership(person.id,"slop"))!.memberId,to=(await service.people.getMembership(other.id,"slop"))!.memberId;
-  await fixturePair(false,"slop",[from,to]);
+  const matchId="slop.relay-photo-pair";
+  await fixturePair(false,"slop",[from,to],matchId);
   // Synthetic JPEG storage boundary; all ownership, consent, reviews, queue and replay state use real Postgres.
   const upload=await service.photos.upload(person.id,"slop",Uint8Array.from([255,216,255,218,0,2,1,255,217]),PHOTO_CONSENT.version);
   expect(upload.ok).toBe(true);if(!upload.ok)throw Error(JSON.stringify(upload));
-  expect(await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016")).toBeUndefined();
+  expect(await service.photoRelay.select("slop",person.id,matchId,upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016")).toBeUndefined();
   photoPolicyEnabled=true;await restart();
-  const selected=await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016");
+  const selected=await service.photoRelay.select("slop",person.id,matchId,upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016");
   expect(selected?.state).toBe("pending");if(!selected)throw Error("normal selected item refused");
   const beforeAuditRead=storageReads;
   failPreviewAudit=true;
@@ -420,7 +421,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   expect(posts).toBe(before+1);const delivered=sent.at(-1)!;expect(delivered.approvedPhotos).toEqual(saved.approved_photos);
   expect(delivered.approvedPhotos![0]).toMatchObject({itemId:selected.itemId,photoId:upload.value.id,senderMemberId:from,recipientMemberId:to});
   expect(JSON.stringify(saved.approved_photos)).not.toContain("https:");
-  await expect(sql.begin(tx=>(service.runtimeFor("slop")!.adapter as CloudChannelAdapter).queue.enqueue(tx as unknown as SQL,[{id:`relay:${selected.itemId}`,memberId:to,to:recipient,kind:"transactional",text:delivered.text,oppId:"relay-pair",city:"nyc",approvedPhotos:[{...saved.approved_photos[0],sha256:"a".repeat(64)}]}]))).rejects.toThrow("outbound id reused");
+  await expect(sql.begin(tx=>(service.runtimeFor("slop")!.adapter as CloudChannelAdapter).queue.enqueue(tx as unknown as SQL,[{id:`relay:${selected.itemId}`,memberId:to,to:recipient,kind:"transactional",text:delivered.text,oppId:matchId,city:"nyc",approvedPhotos:[{...saved.approved_photos[0],sha256:"a".repeat(64)}]}]))).rejects.toThrow("outbound id reused");
   expect((await sql`select approved_photos from platform.outbound where id=${`relay:${selected.itemId}`}`)[0]!.approved_photos).toEqual(saved.approved_photos);
   const review=(await service.photoRelay.item(selected.itemId))!.reviewId;
   await restart();expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(review);
@@ -434,7 +435,7 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   clock.advance(MINUTE);
   // Normal recipient engagement resets the real unanswered-send guard; the relay policy stays unchanged.
   expect((await post(TURN_PATH,{...turn(recipient,`photo-recipient-engaged-${refusal}`,"Sounds good, thanks"),app:"slop"})).status).toBe(200);
-  const next=await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,`fixture-select-next-${refusal}-20261016`);expect(next).toBeDefined();if(!next)throw Error("second selection refused");
+  const next=await service.photoRelay.select("slop",person.id,matchId,upload.value.id,"relay-fixture-v1",true,`fixture-select-next-${refusal}-20261016`);expect(next).toBeDefined();if(!next)throw Error("second selection refused");
   const rt=service.runtimeFor("slop")!,checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.leaks!;
   let resume!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>{resume=r;}),atGate=new Promise<void>(r=>{entered=r;});
   checks.leaks=async row=>{const result=await original(row);if(row.id===`relay:${next.itemId}`){entered();await gate;}return result;};
