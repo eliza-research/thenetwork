@@ -51,6 +51,8 @@ pure def lawHighRiskHelpTakesPrecedence(homeEntry: bool): bool =
 A home-entry configuration needs at least two helpers, or one helper already
 known to the requester. A home-entry request for one unfamiliar helper needs a
 second helper.
+Rank only helpers with current shared presence. An unavailable acquaintance
+cannot stand in for a second eligible helper.
 
 ```quint
 pure def homeHelperSetAllowed(helperCount: int, knownSingleton: bool): bool =
@@ -58,6 +60,12 @@ pure def homeHelperSetAllowed(helperCount: int, knownSingleton: bool): bool =
 
 pure def needsSecondHomeHelper(homeEntry: bool, requestedHelpers: int, knownSingleton: bool): bool =
   homeEntry and requestedHelpers == 1 and not(knownSingleton)
+
+pure def boundedHelperCanRank(eligible: bool, commonPresence: bool): bool =
+  eligible and commonPresence
+
+pure def lawBoundedHelperNeedsCommonPresence(eligible: bool): bool =
+  not(boundedHelperCanRank(eligible, false))
 
 pure def lawUnfamiliarHomeSingletonIsDisallowed(helperCount: int): bool =
   helperCount < 2 implies not(homeHelperSetAllowed(helperCount, false))

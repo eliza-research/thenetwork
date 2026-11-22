@@ -3,7 +3,7 @@
 // whose pairs all have a searched pair value. ORDER IS PART OF THE CONTRACT: the run log's
 // funnel.byGenerator serializes in this order, and network_growth consumes the intents that the
 // earlier generators left unmatched.
-import { needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
+import { boundedHelperCanRank, needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
 import { welcomePairMayRank } from "../../../../core/src/generated/currentPairRestrictions.ts";
 import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
@@ -247,7 +247,8 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
           const id = profile.memberId;
           const covered = coverage(want.seeks, memberTags(w, id).offers);
           if ((want.seeks.length > 0 && covered === 0) || !w.get(id)?.m.prefs.formats.includes(format)
-            || memberReason(w, id, { category: "help", role: "helper", format, timeSensitive: false })) return [];
+            || !boundedHelperCanRank(memberReason(w, id, { category: "help", role: "helper", format, timeSensitive: false }) === null,
+              w.canMeet([a, id]))) return [];
           const acquainted = w.edgeHas(a, id, "met") || w.edgeHas(a, id, "knows") || w.edgeHas(a, id, "helped");
           return [{ profile, value, covered, acquainted, offer: coveringOffer(w, id, want.seeks) }];
         }).sort((x, y) => y.covered - x.covered || Number(home && y.acquainted) - Number(home && x.acquainted)
@@ -255,7 +256,8 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
       };
       let need = helpersNeeded(text);
       let ranked = rankHelpers(need > 1 ? "small_group" : "one_to_one");
-      if (needsSecondHomeHelper(home, need, ranked[0]?.acquainted === true)) {
+      if (home && need === 1) ranked = ranked.filter(helper => helper.acquainted);
+      if (needsSecondHomeHelper(home, need, ranked.length > 0)) {
         need = 2;
         ranked = rankHelpers("small_group");
       }
@@ -264,7 +266,9 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
       const floor = groupPairFloor(asker.lane, need + 1);
       ranked = ranked.filter(h => h.value >= floor);
       if (ranked.length < need) { ctx.unmatchedIntents.add(intent.id); continue; }
-      const fits = (helpers: readonly Helper[], h: Helper) => helpers.every(g => searchedValue(ctx, g.profile, h.profile) >= floor);
+      const fits = (helpers: readonly Helper[], h: Helper) =>
+        helpers.every(g => searchedValue(ctx, g.profile, h.profile) >= floor)
+        && w.canMeet([a, ...helpers.map(g => g.profile.memberId), h.profile.memberId]);
       // Up to three helper-set variants so one busy helper does not sink the whole request.
       const seenSets = new Set<string>();
       let proposed = false;
@@ -274,7 +278,7 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
           if (helpers.length >= need) break;
           if (fits(helpers, h)) helpers.push(h);
         }
-        if (helpers.length < need) break;
+        if (helpers.length < need) continue;
         const setKey = helpers.map(h => h.profile.memberId).sort().join(",");
         if (seenSets.has(setKey)) continue;
         seenSets.add(setKey);
