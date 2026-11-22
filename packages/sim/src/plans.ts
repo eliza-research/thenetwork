@@ -229,14 +229,7 @@ export function parsePlanPicks(text: string, options: readonly { key: string }[]
 /** "Would you do this again?" asked after a plan (on a feedback_request). */
 export const PLAN_AGAIN_RE = /\bwould you do (this|that|it) again\b/i;
 
-/** Reference parser for the persona's answer to "Would you do this again?". */
-export function planAgainAnswer(text: string): "yes" | "no" | "unclear" {
-  const t = text.toLowerCase().replace(/[‘’]/g, "'");
-  if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed)\b/.test(t)) return "unclear";
-  if (/\b(probably not|not really|no\b|nah|wouldn'?t)\b/.test(t)) return "no";
-  if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again)\b/.test(t)) return "yes";
-  return "unclear";
-}
+export { planAgainOf as planAgainAnswer } from "@thenetwork/core";
 
 /** Persona words for "Would you do this again?" (facts first, then the answer). */
 export function planAgainText(f: { showed: boolean; othersShowed: boolean; again: boolean }, rng: Rng): string {
