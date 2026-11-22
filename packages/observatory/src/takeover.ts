@@ -4,7 +4,7 @@
 import { MINUTE, type MemberId } from "@thenetwork/core";
 import { decide, type AgentReply, type PersonaAgent, type PersonaContext, type SimMessage } from "@thenetwork/sim";
 // The Network's own reader (refusal first): the simulator's parseYesNo read "absolutely not" as yes.
-import { parseYesNo } from "@thenetwork/network";
+import { normText, parseYesNo } from "@thenetwork/network";
 import type { PlayerPrompt } from "./types.ts";
 
 interface Pending { prompt: PlayerPrompt; ctx: PersonaContext; msg: SimMessage; resolve: (r: AgentReply) => void }
@@ -62,7 +62,7 @@ export class TakeoverAgent implements PersonaAgent {
     const mem = ctx.memory;
     const pid = msg.meta?.proposalId ?? d.proposalId;
     const base: AgentReply = { ...d, action: "reply", text, delayMs: 2 * MINUTE, proposalId: pid };
-    if (CANT_MAKE_IT.test(text)) {
+    if (CANT_MAKE_IT.test(normText(text))) {
       const upcoming = Object.entries(mem.proposals).find(([, pr]) => pr.decision !== "decline" && pr.at && pr.at > ctx.now)?.[0] ?? pid;
       if (upcoming && mem.proposals[upcoming]) mem.proposals[upcoming]!.plannedShow = false;
       return { ...base, intent: "flake_notice", decision: "none", proposalId: upcoming };
