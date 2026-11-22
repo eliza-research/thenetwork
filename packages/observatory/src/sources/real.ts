@@ -17,6 +17,7 @@ import {
 import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
+import { confirmedProactiveDeliveryStatuses } from "../../../core/src/generated/consolePanels.ts";
 import { runEngineSummarized } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
@@ -302,7 +303,7 @@ export class RealSource implements DataSource {
     const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv] = await Promise.all([
       sql`select id, name, home_city, home_area, account_status, participation_state, opted_out, age, invited_by, community, occupation, joined_at from network.members where app_id = ${app}`,
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
-            count(*) filter (where direction = 'outbound' and proactive and status = 'delivered')::int as proactive
+            count(*) filter (where direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive
           from network.messages where app_id = ${app} and not system group by member_id`,
       sql`with held as (
             select o.id from network.opportunities o
@@ -328,7 +329,7 @@ export class RealSource implements DataSource {
             (select count(*) from network.messages where app_id = ${app} and not system)::int as messages,
             (select count(*) from network.messages where app_id = ${app} and not system and direction = 'inbound')::int as inbound,
             (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound')::int as outbound,
-            (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound' and proactive and status = 'delivered')::int as proactive,
+            (select count(*) from network.messages where app_id = ${app} and not system and direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive,
             (select count(*) from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal')::int as invites,
             (select count(*) from network.opportunities where app_id = ${app} and meeting_at is not null)::int as meetings_scheduled,
             (select count(*) from network.events where app_id = ${app} and type = 'member_blocked')::int as blocks,

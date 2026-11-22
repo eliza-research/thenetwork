@@ -354,6 +354,20 @@ pure def inviterMark(known: bool, sharePercent: int): ShareMark =
 pure def lawTwoMessagesAWeekDoNotWarn(rateHundredths: int): bool = rateHundredths <= 200 implies not(proactiveWarns(rateHundredths))
 ```
 
+### Confirmed proactive delivery contributes to the staff rate
+
+Use the [provider receipt lifecycle](outboundReceipt.md) for proactive delivery evidence. Count each delivered message once, including when its status advances to read. An accepted or sent status alone does not establish delivery. Use the same status set for member counters, app totals, and the attention score.
+
+```quint
+pure val confirmedProactiveDeliveryStatuses: List[str] = List("delivered", "read")
+
+pure def confirmsProactiveDelivery(status: str): bool =
+  confirmedProactiveDeliveryStatuses.foldl(false, (confirmed, candidate) => confirmed or status == candidate)
+
+pure def lawAcceptedProactiveDeliveryIsUnconfirmed(status: str): bool =
+  (status == "queued" or status == "accepted" or status == "sent") implies not(confirmsProactiveDelivery(status))
+```
+
 ## Story: Follow events in the feed and the pipeline
 
 > As a staff member, I want to filter the feed by kind of event and see the pipeline by state, so that I find the events and the opportunities that need me.

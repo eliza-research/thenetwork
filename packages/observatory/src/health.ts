@@ -3,6 +3,7 @@
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
 import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearReviewDeadline, safetyDueAt, safetyOverdue, waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import { confirmsProactiveDelivery } from "../../core/src/generated/consolePanels.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
@@ -139,7 +140,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     const inbound = ms.filter(m => m.direction === "inbound").map(m => m.ts);
     const stop = x.optOutAt.get(id);
     for (const m of ms) {
-      if (m.direction !== "outbound" || !m.proactive || m.status !== "delivered") continue;
+      if (m.direction !== "outbound" || !m.proactive || !confirmsProactiveDelivery(m.status)) continue;
       if (x.now - m.ts < ANSWER_WINDOW && !inbound.some(t => t > m.ts)) continue; // still inside its window
       proactive++;
       const answered = inbound.some(t => t > m.ts && t - m.ts <= ANSWER_WINDOW);
@@ -177,7 +178,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
   const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
-  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && m.status === "delivered").length;
+  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && confirmsProactiveDelivery(m.status)).length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
   return [
