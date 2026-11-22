@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { filesUnder, sha, tokenize, writeWhole } from "./util.ts";
+import { evaluatorIdentity } from "./installed.ts";
 import { NEEDS_DAFNY, exec, onPath, stamp } from "./run.ts";
 
 /** Load an operator's publishing credential only for the exact cache endpoint it belongs to. */
@@ -118,7 +119,12 @@ const dafnySaid = (version: string | undefined, stopped?: string, out = "") => {
  * Dafny's files and their stamps with Z3's on the PATH, as installed now: read once for each check (`steady`), and on
  * every call outside one.
  */
-const checking = new AsyncLocalStorage<{ installation?: { files?: string[]; at: string } }>();
+interface Check {
+  installation?: { files?: string[]; at: string };
+  evaluators: Map<string, string>;
+  evaluatorChanged?: boolean;
+}
+const checking = new AsyncLocalStorage<Check>();
 function installation() {
   const now = () => {
     const files = dafnyFiles();
@@ -134,7 +140,16 @@ function installation() {
   return scope ? (scope.installation ??= now()) : now();
 }
 /** Run a check, which reads Dafny's installation once: a reinstall during it is seen by the next check, and by `verifiedNow`. */
-export const steady = <T>(run: () => Promise<T>) => checking.run({}, run);
+export const steady = <T>(run: () => Promise<T>) => checking.run({ evaluators: new Map() }, run);
+
+export function evaluatorForCheck(root: string): string | undefined {
+  const scope = checking.getStore();
+  const known = scope?.evaluators.get(root);
+  if (known) return known;
+  const id = evaluatorIdentity(root);
+  if (id) scope?.evaluators.set(root, id);
+  return id;
+}
 
 /**
  * What is read of Dafny once for its installation as it is now: its launchers, its assemblies and Z3 on the PATH. A
@@ -321,7 +336,7 @@ async function toolchainId(stage: Stage): Promise<string> {
 /** The remembered results of one check: whether it may read them, and every entry it read or wrote. */
 export interface Memory { root: string; fresh: boolean; used: Set<string> }
 /** An entry of `.spec-cache`: JSON, compressed, since a run of the simulator says megabytes. */
-interface Entry { name: string; file: string }
+interface Entry { name: string; file: string; evaluator?: string | null }
 const localCache = (root: string) => path.join(root, ".spec-cache");
 const actionEntry = /^action-[a-f0-9]{24}\.json\.gz$/;
 const formalCache = new AsyncLocalStorage<{ directory: string; used: Set<string> }>();
@@ -337,9 +352,10 @@ export async function withFormalCache<T>(directory: string, run: () => Promise<T
   }
 }
 
-export async function entry(root: string, stage: Stage, key: string[]): Promise<Entry> {
-  const name = `${stage}-${sha(await toolchainId(stage), ...key).slice(0, 24)}.json.gz`;
-  return { name, file: cacheFile(root, name) };
+export async function entry(root: string, stage: Stage, key: string[], evaluates = ["simulate", "tests", "traces", "explore"].includes(stage)): Promise<Entry> {
+  const evaluator = evaluates ? evaluatorForCheck(root) ?? null : undefined;
+  const name = `${stage}-${sha(await toolchainId(stage), ...evaluator ? [evaluator] : [], ...key).slice(0, 24)}.json.gz`;
+  return { name, file: cacheFile(root, name), evaluator };
 }
 /** Entries are deleted when unused for a while (see collectGarbage), so a hit says the entry is in use. */
 function use(memory: Memory, name: string) {
@@ -348,9 +364,9 @@ function use(memory: Memory, name: string) {
   try { const now = new Date(); fs.utimesSync(cacheFile(memory.root, name), now, now); } catch { /* still a hit */ }
 }
 /** What an entry holds, or undefined. An entry that cannot be read, cut short by a kill or a full disk, is deleted and is a miss. */
-export function recall<T>(memory: Memory, { name, file }: Entry): T | undefined {
+export function recall<T>(memory: Memory, { name, file, evaluator }: Entry): T | undefined {
   memory.used.add(name);
-  if (memory.fresh) return undefined;
+  if (memory.fresh || evaluator === null) return undefined;
   let bytes: Buffer;
   try {
     bytes = fs.readFileSync(file);
@@ -367,12 +383,16 @@ export function recall<T>(memory: Memory, { name, file }: Entry): T | undefined 
   }
 }
 /** Remember `value` under an entry, unless this process cannot say which tools computed it: then the next check computes it again. */
-export function store(memory: Memory, { name, file }: Entry, value: unknown) {
+export function store(memory: Memory, { name, file, evaluator }: Entry, value: unknown) {
   memory.used.add(name);
-  if (!unsure) {
-    writeWhole(file, gzipSync(JSON.stringify(value)));
-    sharedCache(name)?.used.add(name);
+  const scope = checking.getStore();
+  if (unsure || evaluator === null || (evaluator !== undefined && scope?.evaluatorChanged)) return;
+  if (evaluator !== undefined && evaluatorIdentity(memory.root) !== evaluator) {
+    if (scope) scope.evaluatorChanged = true;
+    return;
   }
+  writeWhole(file, gzipSync(JSON.stringify(value)));
+  sharedCache(name)?.used.add(name);
 }
 
 /**
