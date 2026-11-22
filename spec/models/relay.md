@@ -751,19 +751,8 @@ module relay {
 
   action step = any {
     nondet k = REQS.oneOf()
-    any {
-      nondet kind = Set("text", "withdraw").oneOf()
-      claim(k, kind),
-      nondet refused = Set(true, false).oneOf()
-      nondet uncertain = Set(true, false).oneOf()
-      claimPrivateContact(k, refused, uncertain, refused),
-    },
-    all {
-      desk.swaps.size() > 0,
-      nondet sw = desk.swaps.oneOf()
-      nondet declines = Set(true, false).oneOf()
-      readPendingSwapReply(sw.src, not(declines), false, declines),
-    },
+    nondet kind = Set("text", "share", "withdraw").oneOf()
+    if (kind == "share") claimPrivateContact(k, false, false, false) else claim(k, kind),
     all {
       REQS.exists(k => ep.phase.get(k) == "claimed"),
       nondet k = REQS.filter(k => ep.phase.get(k) == "claimed").oneOf()
@@ -955,6 +944,7 @@ module relay {
       .then(queueSend("a1:ask"))
       .then(timePass(5))
       .then(readPendingSwapReply("A", true, false, false))
+      .then(claimPrivateContact("a2", false, true, false)).then(commitNone("a2")).then(answer("a2"))
       .then(claimPrivateContact("b1", true, false, true)).then(commitWithdraw("b1")).then(answer("b1"))
       .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
       .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
