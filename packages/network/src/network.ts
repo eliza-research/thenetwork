@@ -52,7 +52,7 @@ import {
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInAnswerCurrent, dayOfCheckInDue, dayOfCheckInWindow, dayOfReplyAccepted, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
   meetingFeedbackCandidate, meetingFeedbackCanSettle, meetingFeedbackReplyAllowed, meetingFeedbackWindow, restoreAttendance,
-  settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement, verifiedMeetingValueAllowed,
+  settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement, type AttendanceMark, verifiedMeetingValueAllowed,
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalBookingCurrent, lateArrivalBookingReceiptCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalReportTimeCurrent, lateArrivalText } from "../../core/src/generated/groupLateArrival.ts";
 import { isLateArrivalPairBooking, isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
@@ -602,6 +602,8 @@ interface Opp {
     worthwhile?: true; confirmedRoster?: true; repeatProof?: { revision: number; settledBooking?: true } }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
+  /** Findings from receipt-backed attendance settlement. Older states may lack these marks. */
+  settledAttendance?: Partial<Record<MemberId, AttendanceMark>>;
   /**
    * peon (#9): the engine proposed a job seat. `id` is the seat (`job:<posting>`), `manager` the hiring
    * manager who owns it and stands in for it here: they get the blind review after the candidate's
@@ -1646,7 +1648,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       for (const set of [o.primed, o.contacted, o.reminded, o.feedbackFrom]) set.delete(id);
       o.status.delete(id); delete o.explanations[id];
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
-      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "feedbackPromptedAt", "lateArrivalReported"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
+      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "feedbackPromptedAt", "lateArrivalReported", "settledAttendance"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
       for (const k of ["explicit", "confirmed", "bookedTold", "dayBeforeReminded", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
       if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
@@ -4161,6 +4163,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       return { p, vouchers, organizerVerified, finding };
     });
+    o.settledAttendance = Object.fromEntries(findings.map(({ p, finding }) => [p, finding.mark]));
     const present = findings.filter(({ finding }) => finding.mark === "Attended").map(({ p }) => p);
     const origin = this.originOf(o);
     for (const { p, vouchers, organizerVerified, finding } of findings) {

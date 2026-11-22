@@ -438,4 +438,41 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     expect(await have()).toEqual(want());
     expect((await store.sql`select 1 from network.participations where member_id = ${alt}`).length).toBe(0);
   }, T);
+
+  test("participations: only settled attendance evidence changes the stored status", async () => {
+    // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+    const store = new PgStore(TEST_URL);
+    stores.push(store);
+    const people = [climber("attendance-a", "Ana Diaz"), climber("attendance-b", "Ben Ito"), climber("attendance-c", "Cy Moss")];
+    const ids = people.map(person => person.id);
+    for (const p of people) await store.sql`insert into network.members (id, name, home_city) values (${p.id}, ${p.name}, 'nyc')`;
+    const w = new Mini(people, { plans: false, growth: false });
+    await w.onboard(...ids);
+    const oppId = w.propose(ids);
+    await w.answerProbes(ids);
+    const start = w.meetings.find(meeting => meeting.proposalId === oppId)!.at;
+    expect(await w.runUntil(() => ids.every(id => w.to(id).some(message =>
+      message.meta.type === "reminder" && message.meta.proposalId === oppId)), 7 * DAY)).toBe(true);
+    for (const id of ids) await w.say(id, "Yes, I'll be there.");
+    expect(await w.runUntil(() => ids.every(id => w.to(id).some(message =>
+      message.meta.type === "feedback_request" && message.meta.proposalId === oppId)), 7 * DAY)).toBe(true);
+    const statuses = async () => (await store.sql`select status from network.participations
+      where opportunity_id = ${oppId} order by member_id`).map(row => row.status);
+    await store.save(w.net.exportState());
+    const waiting = await statuses();
+    await runStored(w.net, store, () => w.say(ids[0]!, "It was great, but Ben did not come."));
+    await runStored(w.net, store, () => w.say(ids[1]!, "I couldn't make it."));
+    w.restart();
+    w.clock.set(start + 4 * DAY);
+    expect(await runTick(w.net, store, w.clock.now())).toBe(true);
+    const settled = (await store.load())!.opps.find(opp => opp.id === oppId)!;
+    expect(settled.finalized).toBe(true);
+    expect(settled.post?.[ids[0]!]?.came).toBe(true);
+    expect(settled.post?.[ids[1]!]?.came).toBe(false);
+    expect(settled.post?.[ids[2]!]).toBeUndefined();
+    expect([waiting, await statuses()]).toEqual([
+      ["accepted", "accepted", "accepted"],
+      ["attended", "no_show", "accepted"],
+    ]);
+  }, T);
 });
