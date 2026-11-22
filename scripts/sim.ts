@@ -35,8 +35,6 @@
 //   audit     regression gates for the 2026-10-08 audit's P0/P1 fixes that lost their tests in the cleanup
 //             (docs/audit/2026-10-09-platform-status.md): NYC world (seed 3, 9 days), trust, plans, the four
 //             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
-//   matching  the generic match core on planted worlds, engine only, per pack and lane: exactness against brute force
-//             (seeds 1-10, N 100/200/400), pair-check cost (N 1k/10k/100k), parity, reciprocity, stability, circles
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
