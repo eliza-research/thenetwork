@@ -54,3 +54,4 @@
 {"text":"stop and go","match":"likely"}
 {"text":"stop and unsubscribe","match":"likely"}
 {"text":"unsubscribe and stop","match":"likely"}
+{"text":"Don't stop calling and leave me alone","match":"likely"}
