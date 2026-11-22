@@ -16,7 +16,7 @@ import { baseMember, emptyInput, randomWorld } from "../../packages/engine/src/t
 import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, evaluateExpectations, loadScenario, runScenario as runSimScenario, runScenarioPassK, runWorld, scenarioWorldOptions } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -109,6 +109,47 @@ export async function scenarioRepetitionGate(b: Block): Promise<void> {
   });
 }
 
+export async function scenarioAttendanceEvidenceGates(b: Block): Promise<void> {
+  const template = await loadScenario(`${import.meta.dirname}/../../packages/sim/scenarios/group-flake-morning-of.json`);
+  const network = () => new StubNetwork({ randomIntros: false });
+  await b.run("scenario held evidence needs a second attendee even when one is named", async () => {
+    for (const seed of [2, 9, 15]) for (const flake of [false, true]) {
+      const s = structuredClone(template);
+      s.personas = s.personas.slice(0, 2);
+      for (const p of s.personas) p.preferredGroupSize = 2;
+      s.actions = s.actions.filter(a => a.do !== "force_flake" || flake);
+      for (const a of s.actions) {
+        if (a.do === "force_flake") { a.persona = "dinner-1"; a.how = "no_show"; }
+        if (a.do === "propose") {
+          a.participants = s.personas.map(p => p.ref);
+          a.kind = "intro";
+          a.objective = "dinner for two";
+        }
+      }
+      s.expectations = [{ check: "meeting_held", personas: ["dinner-2"], min: 1 }];
+      const result = await runSimScenario(s, { seed, network });
+      expect(result.world.metrics.meetings.held).toBe(flake ? 0 : 1);
+      expect(result.results[0]?.status).toBe(flake ? "fail" : "pass");
+    }
+  });
+
+  await b.run("scenario cancellation evidence needs delivery to each remaining participant", async () => {
+    for (const seed of [2, 7, 29]) for (const noShow of [false, true]) for (const failureRate of [0, 0.1]) {
+      const scenario = structuredClone(template);
+      if (noShow) scenario.actions.unshift({ at: { day: 0, hour: 20 }, do: "force_flake", persona: "dinner-5", how: "no_show" });
+      const w = await runWorld({ ...scenarioWorldOptions(scenario, { seed, network }), failureRate });
+      const outcome = w.records.find(r => r.type === "outcome");
+      const booking = w.records.findLast(r => r.type === "meeting_scheduled");
+      expect(outcome?.attendance["dinner-4"]?.cancelledWithNotice).toBe(true);
+      expect(w.metrics.meetings.held).toBe(1);
+      const recipients = booking!.participants.filter(id => id !== "dinner-4" && !outcome!.attendance[id]?.cancelledWithNotice);
+      const grade = evaluateExpectations(scenario, w, "stub").find(r => r.expectation.check === "others_notified_of_drop");
+      expect(grade?.status).toBe(failureRate ? "fail" : "pass");
+      expect(grade?.detail).toBe(`${recipients.length - (failureRate ? 1 : 0)}/${recipients.length} notified`);
+    }
+  });
+}
+
 export async function humanReviewGate(b: Block): Promise<void> {
   await b.run("human review (PRD 32.8): nothing probed until approved; reject and SLA expiry send nothing", async () => {
     const { w, net, records, start } = await world(3, 3, { review: "human" });
@@ -152,6 +193,7 @@ export async function humanReviewGate(b: Block): Promise<void> {
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
+  await scenarioAttendanceEvidenceGates(b);
   await inviteRootGate(b);
   await vouchPeriodGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
