@@ -23,6 +23,8 @@ export type InteractionOutcome =
 export interface InteractionRecord {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[];
   at: number; outcome: InteractionOutcome; declinedBy?: MemberId[]; contributors?: MemberId[];
+  /** Each refusing member's reply time. Older records use the interaction time. */
+  declinedAt?: Record<MemberId, number>;
   /** The saved opportunity shared by multiple attendance observations. */
   opportunityId?: string;
   /** Members whose absence this record directly attributes. An old row may have no attribution. */

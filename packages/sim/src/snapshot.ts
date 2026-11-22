@@ -4,6 +4,7 @@
 // the agent things in confidence) so engines can be tested for privacy leaks.
 import { DAY, HOUR, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
+import { matchingHistoryOutcome } from "../../core/src/generated/matchingHistory.ts";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
 import { hash32 } from "@thenetwork/core";
 import { desireById, SKILLS } from "./taxonomy.ts";
@@ -62,6 +63,7 @@ export interface SimInteraction {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[]; at: number;
   outcome: "pending" | "accepted" | "declined" | "expired" | "completed" | "no_show";
   declinedBy?: MemberId[]; acceptedBy?: MemberId[]; noResponse?: MemberId[];
+  declinedAt?: Record<MemberId, number>;
 }
 export interface SimFeedback { id: string; from: MemberId; about: MemberId; opportunityId: string; at: number; sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain: boolean }
 export type SimOpenOpportunity = import("@thenetwork/core").OpenOpportunity;
@@ -297,12 +299,14 @@ export function publicEvents(snap: Pick<WorldSnapshot, "now" | "members" | "face
 export function networkStateFromRecords(records: readonly RunRecord[], now: number): Required<Pick<SimSnapshot, "interactions" | "feedback" | "openOpportunities" | "unsentProposalIds">> {
   const props = new Map<string, Proposal>();
   const skipped = new Set<string>();
-  const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
+  const declines = new Map<string, Map<MemberId, number>>();
+  const yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
   const scheduled = new Map<string, { at: number; participants: MemberId[] }>();
   const outcome = new Map<string, Extract<RunRecord, { type: "outcome" }>>();
   const answered = new Set<string>();
   // The open thread per member: the last delivered Network message that expects an answer.
-  const thread = new Map<MemberId, { type?: string; proposalId?: string }>();
+  const thread = new Map<MemberId, { memberId: MemberId; type?: string; proposalId?: string }>();
+  const sent = new Map<string, { memberId: MemberId; type?: string; proposalId?: string }>();
   const said: { from: MemberId; pid: string; at: number; text: string }[] = [];
   for (const r of records) {
     if (r.t > now) break;
@@ -311,17 +315,28 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     else if (r.type === "message" && !r.msg.system) {
       const m = r.msg;
       if (m.direction === "outbound") {
+        if (m.status !== "delivered") continue;
         const pid = m.meta?.proposalId;
-        if (m.status === "delivered" && m.meta?.type === "proposal" && pid) { if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(m.memberId, m.ts); }
-        if (m.status === "delivered" && m.meta?.type && !["info", "confirmation"].includes(m.meta.type)) thread.set(m.memberId, { type: m.meta.type, proposalId: pid });
-      } else if (!m.keyword) {
-        const th = thread.get(m.memberId);
+        const outgoing = { memberId: m.memberId, type: m.meta?.type, proposalId: pid };
+        if (outgoing.type === "proposal" && pid) {
+          if (!invited.has(pid)) invited.set(pid, new Map());
+          invited.get(pid)!.set(m.memberId, m.ts);
+          sent.set(m.id, outgoing);
+        }
+        if (outgoing.type && !["info", "confirmation"].includes(outgoing.type)) thread.set(m.memberId, outgoing);
+      } else if (m.status === "delivered" && !m.keyword) {
+        const inReplyTo = m.meta?.inReplyTo;
+        const th = typeof inReplyTo === "string" ? sent.get(inReplyTo) : thread.get(m.memberId);
+        if (th?.memberId !== m.memberId) continue;
         const key = `${th?.proposalId}|${m.memberId}`;
         if (th?.type !== "proposal" || !th.proposalId || answered.has(key)) continue;
         const a = inviteAnswer(m.body);
         if (!a) continue;
         answered.add(key);
-        if (a === "no") { if (!declines.has(th.proposalId)) declines.set(th.proposalId, []); declines.get(th.proposalId)!.push(m.memberId); }
+        if (a === "no") {
+          if (!declines.has(th.proposalId)) declines.set(th.proposalId, new Map());
+          declines.get(th.proposalId)!.set(m.memberId, m.ts);
+        }
         else { if (!yes.has(th.proposalId)) yes.set(th.proposalId, new Set()); yes.get(th.proposalId)!.add(m.memberId); }
       }
     } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, { at: r.at, participants: r.participants });
@@ -338,23 +353,46 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
       if (answered.has(`${pid}|${id}`)) { if (yes.get(pid)?.has(id)) acceptedBy.push(id); }
       else if (now - ts > 48 * HOUR) noResponse.push(id); // an expired invite is an implicit no
     }
-    let out: SimInteraction["outcome"] = "pending";
     let at = p.createdAt;
     const dec = declines.get(pid);
     const o = outcome.get(pid);
     const sched = scheduled.get(pid);
-    if (dec?.length) out = "declined";
-    else if (o) {
-      const shows = Object.values(o.attendance).filter(a => a.showed).length;
-      out = shows >= 2 ? "completed" : "no_show"; at = o.at;
-    } else if (sched) {
-      out = "accepted";
-      if (sched.at > now) openOpportunities.push({ id: pid, participants: [...p.participants], stage: "scheduled", until: sched.at });
-    } else if (now - p.createdAt > 3 * DAY) out = "expired";
-    else openOpportunities.push({ id: pid, participants: [...p.participants], stage: "inviting", until: p.createdAt + 3 * DAY });
+    let participants = [...p.participants];
+    const roster = (ids: MemberId[]) => {
+      const included = new Set(ids);
+      return [...new Set([...p.participants, ...ids])].filter(id => included.has(id));
+    };
+    const shows = o ? Object.keys(o.attendance).filter(id => o.attendance[id]!.showed) : [];
+    const evidence = matchingHistoryOutcome(!!o, shows.length >= 2, !!sched, !!dec?.size, now - p.createdAt > 3 * DAY);
+    let out: SimInteraction["outcome"];
+    switch (evidence) {
+      case "HistoryCompleted":
+      case "HistoryNoShow":
+        out = evidence === "HistoryCompleted" ? "completed" : "no_show";
+        at = o!.at;
+        participants = roster(evidence === "HistoryCompleted" ? shows : Object.keys(o!.attendance));
+        break;
+      case "HistoryBooked":
+        out = "accepted";
+        participants = roster(sched!.participants);
+        if (sched!.at > now) openOpportunities.push({ id: pid, participants: [...participants], stage: "scheduled", until: sched!.at });
+        break;
+      case "HistoryDeclined":
+        out = "declined";
+        at = Math.max(...dec!.values());
+        break;
+      case "HistoryExpired":
+        out = "expired";
+        break;
+      case "HistoryInviting":
+        out = "pending";
+        openOpportunities.push({ id: pid, participants: [...participants], stage: "inviting", until: p.createdAt + 3 * DAY });
+        break;
+    }
     interactions.push({
-      id: pid, kind: p.kind, category: p.category ?? "social", participants: [...p.participants], at, outcome: out,
-      ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(noResponse.length ? { noResponse } : {}),
+      id: pid, kind: p.kind, category: p.category ?? "social", participants, at, outcome: out,
+      ...(dec?.size ? { declinedBy: [...dec.keys()], declinedAt: Object.fromEntries(dec) } : {}),
+      ...(acceptedBy.length ? { acceptedBy } : {}), ...(out === "expired" || noResponse.length ? { noResponse } : {}),
     });
   }
   for (const f of said) {
