@@ -90,3 +90,7 @@
 {"text":"I'm 5.5","minor":false}
 {"text":"I'm 5 1/2, slim","minor":false}
 {"text":"i'm 6.5 and i work out","minor":false}
+{"text":"I'm 5.5 years old","minor":true,"age":5,"declined":true}
+{"text":"I'm 7 1/2 years old","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7 1/2","minor":true,"age":7,"declined":true}
+{"text":"I just turned 7.5","minor":true,"age":7,"declined":true}

@@ -74,7 +74,7 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
 },60_000);
 
 // spec/memberAge.md, "Commit a stated age before projecting it across apps"
-test("a sports score leaves a verified adult's age intact across signed app turns", async () => {
+test("signed app turns distinguish a sports score and height from stated ages", async () => {
   const phone = "+12125550198";
   for (const app of [APPS.friends, APPS.slop]) {
     await service.accounts.invite(app, phone);
@@ -88,11 +88,14 @@ test("a sports score leaves a verified adult's age intact across signed app turn
   expect((await post(score)).status).toBe(200);
   const person = (await service.accounts.personFor(phone))!;
   expect(await service.accounts.lowestAge(phone, person)).toBe(29);
+  const height = turn("height-keeps-adult", phone, "I'm 5.5", "friends");
+  expect((await post(height)).status).toBe(200);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(29);
   const age = turn("sports-real-age", phone, "I am 17 years old and my team won.", "friends");
   expect((await post(age)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(17);
-  const birthday = turn("sports-birthday-age", phone, "I just turned 12 and I am undefeated.", "friends");
-  expect((await post(birthday)).status).toBe(200);
+  const fraction = turn("fraction-states-age", phone, "I'm 7.5 years old.", "friends");
+  expect((await post(fraction)).status).toBe(200);
   expect(await service.accounts.lowestAge(phone, (await service.accounts.personFor(phone))!)).toBe(13);
 }, 60_000);
 

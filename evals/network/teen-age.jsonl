@@ -272,3 +272,7 @@
 {"text":"I'm 5 1/2, slim","teen":false}
 {"text":"I'm 15 and a half minutes away","teen":false}
 {"text":"I'm 13.5 miles away","teen":false}
+{"text":"I'm 5.5 years old","teen":true,"age":5}
+{"text":"I'm 7 1/2 years old","teen":true,"age":7}
+{"text":"I just turned 7 1/2","teen":true,"age":7}
+{"text":"I just turned 7.5","teen":true,"age":7}
