@@ -560,14 +560,14 @@ export function extractProfile(body: string): Profile {
     const x = s.text;
     const quotedAt = (at: number) => quoteStillOpen(t.slice(0, s.at + at));
     const cues = (pattern: RegExp) => [...x.matchAll(pattern)].filter(m => !quotedAt(m.index));
-    const seeks = cues(SEEKING);
-    const selfClaims = cues(DIRECT_SKILL_CLAIM);
-    const otherSubjects = cues(OTHER_SKILL_SUBJECT);
+    const seeks = cues(SEEKING).reverse();
+    const selfClaims = cues(DIRECT_SKILL_CLAIM).reverse();
+    const otherSubjects = cues(OTHER_SKILL_SUBJECT).reverse();
     const learnableSkillAt = (at: number) => {
-      const seeking = seeks.findLast(m => m.index < at)?.index ?? -1;
-      const selfClaim = selfClaims.findLast(m => m.index <= at
+      const seeking = seeks.find(m => m.index < at)?.index ?? -1;
+      const selfClaim = selfClaims.find(m => m.index <= at
         && SKILL_TITLE_PREFIX.test(x.slice(m.index + m[0].length, at)))?.index ?? -1;
-      const otherSubject = otherSubjects.findLast(m => m.index < at)?.index ?? -1;
+      const otherSubject = otherSubjects.find(m => m.index < at)?.index ?? -1;
       return profileSkillMayLearn(quotedAt(at), otherSubject > selfClaim, seeking >= 0, selfClaim > seeking);
     };
     let nextPartOffset = 0;

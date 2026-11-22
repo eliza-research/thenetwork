@@ -184,6 +184,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
     history.push({ at: record.t, participants, alternates });
     rosters.set(id, history);
   }
+  for (const history of rosters.values()) history.reverse();
   const namesIn = simulatedNameMatcher(personas.values());
   const concerns = (message: LoggedMessage, id: MemberId, scope: "participants" | "includingAlternates" | "none"): boolean => {
     const meta = message.meta as SimMeta | undefined;
@@ -191,7 +192,7 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
     if (scope !== "none") {
       const roster = [meta?.participants, meta?.probe?.participants].find(Array.isArray);
       const key = meta?.proposalId ?? meta?.probe?.key ?? meta?.plan?.planId ?? meta?.booked?.proposalId;
-      const recorded = key && roster === undefined ? rosters.get(key)?.findLast(entry => entry.at <= message.ts) : undefined;
+      const recorded = key && roster === undefined ? rosters.get(key)?.find(entry => entry.at <= message.ts) : undefined;
       if ((roster ?? recorded?.participants)?.includes(id) || (scope === "includingAlternates" && recorded?.alternates?.includes(id))) return true;
     }
     return message.memberId !== id && namesIn(message.body).includes(id);

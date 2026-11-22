@@ -226,7 +226,7 @@ export class World {
   }
 
   private upcomingBooking(proposalId: string, memberId: MemberId, now: number, at?: number) {
-    return [...this.meetings.values()].findLast(meeting => meeting.proposalId === proposalId && meeting.at > now
+    return [...this.meetings.values()].reverse().find(meeting => meeting.proposalId === proposalId && meeting.at > now
       && (at === undefined || meeting.at === at) && meeting.participants.includes(memberId));
   }
 
