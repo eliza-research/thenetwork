@@ -19,6 +19,7 @@ import { appBanner, APPS, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHo
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
+import { welcomeMissionRecentAttendee } from "../../../core/src/generated/simulatedWelcomeMission.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, safetyInfo, scorecard } from "../health.ts";
 import { Projector } from "../projector.ts";
 import { evaluateMissions, POINTS, scoreboard } from "../scoring.ts";
@@ -77,7 +78,6 @@ const ZERO: ScoreComponents = {
 };
 export const SPEEDS = { hour: HOUR, sixHours: 6 * HOUR, day: DAY, twoDays: 2 * DAY } as const;
 const MAX_STRIKES = 3;
-const NEWCOMER_DAYS = 30;
 
 interface Profile { bio?: string; occupation?: string; neighborhood?: string; pronouns?: string; availability?: string; datasetJoinedAt?: number }
 
@@ -453,7 +453,10 @@ export class GameSource implements DataSource {
     this.missions = evaluateMissions(this.store.opps.values(), {
       now, start: this.start, scores,
       community: id => this.store.member(id)?.community,
-      newcomer: id => { const j = this.profiles.get(id)?.datasetJoinedAt; return j !== undefined ? this.start - j <= NEWCOMER_DAYS * DAY : (this.personas.get(id)?.joinDay ?? 0) > 0; },
+      newcomer: (id, at) => {
+        const joinedAt = this.profiles.get(id)?.datasetJoinedAt ?? this.store.member(id)?.joinedAt;
+        return joinedAt !== undefined && welcomeMissionRecentAttendee(joinedAt, at);
+      },
     }, this.missions);
     return {
       sparksLeft: Math.max(0, this.opts.sparksPerDay - (this.sparksUsed.get(this.dayIndex()) ?? 0)), sparksPerDay: this.opts.sparksPerDay,
