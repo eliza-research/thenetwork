@@ -266,17 +266,19 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
 async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<ClaimCheck> {
   const refused = { ok: false, reason: "meeting_feedback_changed" } as const;
   if (!row.memberId || !row.oppId || row.kind !== "transactional") return refused;
+  // An accepted seat can receive a prompt while attendance is still open.
+  // The console records attendance only after settlement.
   const [meeting] = await tx<{ meeting_at: Date | null; revision: number; lane: string | null; open: boolean; accepted: boolean }[]>`select
       opp.meeting_at,coalesce(schedule."scheduleRevision",0) as revision,schedule.lane,
       (opp.state='COMPLETED' and schedule.stage='done' and not coalesce(schedule.finalized,false)
         and not coalesce(schedule."feedbackFrom" ? ${row.memberId},false)) as open,
-      (seat.role='participant' and seat.status='attended') as accepted
+      (seat.role='participant' and coalesce(schedule.status @> jsonb_build_array(jsonb_build_array(msg.member_id,'yes'::text)),false)) as accepted
     from network.messages msg
     join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
     join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
     join lateral jsonb_to_recordset(saved.state->'opps') as schedule(id text,"scheduleRevision" int,lane text,stage text,
-      finalized boolean,"feedbackFrom" jsonb) on schedule.id=opp.id
+      finalized boolean,"feedbackFrom" jsonb,status jsonb) on schedule.id=opp.id
     where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.opportunity_id=${row.oppId}
       and msg.direction='outbound' and msg.type='feedback_request' and msg.body=${row.text}`;
   if (!meeting?.meeting_at) return refused;
