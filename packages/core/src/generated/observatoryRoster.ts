@@ -51,6 +51,19 @@ export function lawOneAttendeeIsNotAHeldMeeting(attendees: number): boolean {
   return !(attendees <= 1) || !observatoryMeetingHeld(attendees);
 }
 
+/** Story: F35 — Inspect a member's experience as staff / Reviewed offers contribute to a member's proposal activity after approval (spec/observatoryRoster.md) */
+//@ pure
+export function observatoryProposalCounts(reviewed: boolean, approved: boolean, invalidated: boolean, published: boolean): boolean {
+  return !reviewed || (approved && (!invalidated || published));
+}
+
+/** Story: F35 — Inspect a member's experience as staff / Reviewed offers contribute to a member's proposal activity after approval (spec/observatoryRoster.md) */
+//@ pure
+export function lawPendingReviewCannotAddProposal(approved: boolean, invalidated: boolean, published: boolean): boolean {
+  //@ ensures \result === true
+  return !(!approved) || !observatoryProposalCounts(true, approved, invalidated, published);
+}
+
 /** Story: F35 — Inspect a member's experience as staff / A due cancelled booking remains in completion (spec/observatoryRoster.md) */
 //@ pure
 export function observatoryCompletionBooking(bookingStage: string, hasStart: boolean, start: number, now: number): boolean {
