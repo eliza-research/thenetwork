@@ -441,9 +441,17 @@ module safety_trust {
     }
   }
 
+  // The planned roster decides which opportunity is erased. A feedback interaction uses its actual roster.
+  pure def forgetEncounterHistory(st: State, m: Mid): State = {
+    ...st,
+    opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
+      if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
+    inters: st.inters.filter(i => not(i.parts.contains(m))),
+  }
+
   // network.ts:916 forget (leave one app: service.ts:821 forget -> forgetMember)
   pure def forget(st: State, m: Mid): State = {
-    ...st,
+    ...forgetEncounterHistory(st, m),
     live: st.live.set(m, false),
     trust: ALL_MIDS.mapBy(x => if (x == m) NO_TRUST else {
       val t = st.trust.get(x)
@@ -453,9 +461,6 @@ module safety_trust {
     minorF: st.minorF.set(m, false),
     blocks: st.blocks.filter(b => not(b.contains(m))),
     contextualBlocks: st.contextualBlocks.filter(b => b._1 != m and b._2 != m),
-    opps: OPP_IDS.mapBy(k => { val o = st.opps.get(k)
-      if (o.parts.contains(m)) { ...o, stage: "deleted" } else o }),
-    inters: st.inters.filter(i => not(i.parts.contains(m))),
     // reports about them stay; a reporter who left is not named (reporterId = "")
     reports: st.reports.map(r => if (r.reporter == m) { ...r, reporter: NOBODY } else r),
     restricted: st.restricted.exclude(Set(m)),
@@ -1165,13 +1170,18 @@ module safety_trust {
   // network.ts attributes a no-show to the exact self-report. An unattributed older row cannot count.
   val noShowCountsAbsentOnly = ALL_MIDS.forall(m => s.live.get(m) implies
     noShowDateIds(s, m).subseteq(OPP_IDS.filter(k =>
-      s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted")))
+      s.opps.get(k).absent.contains(m))))
   val attendanceCountsOncePerBooking = ALL_MIDS.forall(m =>
-    dates(s, m) + noShows(s, m) <= OPP_IDS.filter(k =>
-      s.opps.get(k).stage == "done" and s.opps.get(k).going.contains(m)).size())
-  // Recorded interactions use the participants who remained accepted. Booking evidence may retain earlier seats.
-  val feedbackHistoryUsesActiveRoster = s.inters.forall(i =>
-    i.parts == s.opps.get(i.opportunityId).going)
+    dates(s, m) + noShows(s, m) <= OPP_IDS.filter(k => {
+      val o = s.opps.get(k)
+      (o.stage == "done" or o.stage == "deleted") and o.going.contains(m)
+    }).size())
+  // A removed opportunity retains only ghost attendance facts in this model. An interaction can survive
+  // if it did not name the erased member, even when the planned roster included that member.
+  val feedbackHistoryUsesActiveRoster = s.inters.forall(i => {
+    val o = s.opps.get(i.opportunityId)
+    i.parts.forall(m => s.live.get(m)) and (o.stage != "deleted" implies i.parts == o.going)
+  })
 
   // The Slop profile reads completed attendance using the booked meeting time in its local zone.
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
@@ -1577,6 +1587,12 @@ module safety_trust {
       .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
       .expect(feedbackHistoryUsesActiveRoster and s.inters.size() == 2 and s.inters.forall(i => i.parts.size() == 3)
         and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
+      .then(s' = forgetEncounterHistory(s, { app: "slop", p: "fourth", g: 0 }))
+      .expect(s.opps.get("o1").stage == "deleted" and s.inters.size() == 2 and
+        feedbackHistoryUsesActiveRoster and attendanceCountsOncePerBooking and noShowCountsAbsentOnly
+        and noShows(s, BEN_S) == 1 and dates(s, ANA_S) == 1)
+      .then(leave("slop", "ben"))
+      .expect(feedbackHistoryUsesActiveRoster and s.inters == Set())
 
   // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =

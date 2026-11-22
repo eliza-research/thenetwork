@@ -59,6 +59,13 @@ test("a booked group that continues after a withdrawal records only its active p
   world.net.importState(legacy);
   expect(rows()).toMatchObject(history);
   expect(opportunity().participants).toEqual(planned);
+
+  world.net.forgetMember("dee");
+  world.restart();
+  expect(opportunity()).toBeUndefined();
+  expect(rows()).toMatchObject(history);
+  world.net.forgetMember("ben");
+  expect(rows()).toEqual([]);
 });
 
 const scenes = ["fresh consent", "expired delivery", "withdrawn identity", "deferred booking roster", "changed queued availability", "expired generic invite"] as const;
