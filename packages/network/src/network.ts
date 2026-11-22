@@ -124,7 +124,7 @@ import { presenceWindowCovers, presenceWindowsOverlap, presenceWindowValid } fro
 import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
-  immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision,
+  immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
   reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
@@ -157,6 +157,18 @@ import { confirmPosting, postingDraftCurrent } from "../../core/src/generated/po
 import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { hireSeatCurrent, readHireEvidence, type HireSeat } from "./peon-hire-dispatch.ts";
 import { checkInReport, emergencyCheckInReportKind, reportKindOf, statesImmediateDanger, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
+
+export interface PendingReportChoice { askedAt: number; targetId: MemberId; kind: ReportKind }
+
+const safetyName = (text: string) => text.normalize("NFKC").toLowerCase()
+  .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
+
+export function pendingReportReplyName(text: string): string | undefined {
+  const body = text.trim();
+  if (ACK_ONLY.test(body) || /^(?:block|report)\s/i.test(body) || consentOf(body).answer !== "unclear") return;
+  const name = safetyName(body.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
+  return /^\p{L}[\p{L}\p{M}'.-]*(?: \p{L}\p{M}*)?$/u.test(name) ? name : undefined;
+}
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
 export type Origin = "engine" | "request" | "plans" | "planner" | "second_encounter" | "newcomer_welcome" | "player";
@@ -919,14 +931,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   private now() { return this.ctx.clock.now(); }
 
   // ================================================================== inbound
-  async onInbound(msg: InboundMessage, queueCofounderIntent?: (intent: Intent) => void): Promise<"handled" | "open"> {
+  async onInbound(msg: InboundMessage, queueCofounderIntent?: (intent: Intent) => void, reportChoice?: PendingReportChoice): Promise<"handled" | "open"> {
     if (this.declinedIds.has(msg.memberId)) return "handled"; // declined under 13: never answered again, nothing stored
     const fromThread = outreachEngagementSource(msg.source ?? "thread");
     const currentDanger = immediateDangerReply(fromThread && !msg.keyword && !msg.reaction, statesImmediateDanger(msg.body));
     const privateInviteTurn = !currentDanger && this.isPrivateInviteTurn(msg);
     if (privateInviteTurn) this.opts.onPrivateInviteTurn?.(msg.memberId, msg.id);
     // The LLM reader runs before anything changes, so the unit below stays one synchronous step.
-    const u = privateInviteTurn || currentDanger || interruptionFeedbackAnswer(msg.body) ? undefined : await this.understandSafely(msg);
+    const u = reportChoice || privateInviteTurn || currentDanger || interruptionFeedbackAnswer(msg.body) ? undefined : await this.understandSafely(msg);
     if (this.declinedIds.has(msg.memberId)) return "handled";
     // What a member says can change the snapshot (a trip, a setting): read it fresh, never up to 20 minutes stale.
     this.dirty = true;
@@ -956,7 +968,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.replyTo = m.id;
     this.memberReply = fromThread && !msg.keyword;
     this.understood = u;
-    try { return this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, priorInboundAt, queueCofounderIntent) === "open" ? "open" : "handled"; }
+    try { return this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, priorInboundAt, queueCofounderIntent, reportChoice) === "open" ? "open" : "handled"; }
     finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
@@ -1073,7 +1085,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, replyOpen: boolean, currentDanger: boolean,
-    priorInboundAt: number, queueCofounderIntent?: (intent: Intent) => void) {
+    priorInboundAt: number, queueCofounderIntent?: (intent: Intent) => void, reportChoice?: PendingReportChoice) {
     const now = this.now();
     if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; m.interruptionSurvey = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
@@ -1136,6 +1148,18 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
     // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
     if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
+    if (reportChoice) {
+      const name = pendingReportReplyName(body);
+      const matches = this.memberReply && !msg.reaction && name && msg.signedReceivedAt !== undefined
+        ? this.pendingReportChoices(m.id, name, msg.signedReceivedAt) : [];
+      const current = matches[0];
+      if (matches.length === 1 && current?.askedAt === reportChoice.askedAt
+        && current.targetId === reportChoice.targetId && current.kind === reportChoice.kind) {
+        m.pendingSafety = undefined;
+        this.applyBlock(m, "report", current.kind, this.members.get(current.targetId));
+      }
+      return;
+    }
     // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
     if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
@@ -2378,6 +2402,23 @@ export class ConsentNetwork implements NetworkUnderTest {
     return list.map(x => (firsts.filter(f => f === x.first).length > 1 ? x.display : x.first));
   }
 
+  /** Exact displayed choices in the saved question that still name a current counterpart. */
+  pendingReportChoices(memberId: MemberId, name: string, receivedAt: number): PendingReportChoice[] {
+    const pending = this.members.get(memberId)?.pendingSafety;
+    const now = this.now();
+    if (pending?.verb !== "report" || !reportClarificationTimeCurrent(pending.at, receivedAt, now, now - DAY)) return [];
+    const offered = (pending.targets ?? []).flatMap(id => {
+      const target = this.members.get(id);
+      return target ? [target] : [];
+    });
+    if (offered.length !== pending.targets?.length) return [];
+    const counterparts = new Set(this.counterparts(memberId).map(candidate => candidate.m.id));
+    const names = this.namesFor(offered);
+    return offered.flatMap((target, index) => counterparts.has(target.id) && safetyName(names[index]!) === name
+      ? [{ askedAt: pending.at, targetId: target.id, kind: pending.kind }]
+      : []);
+  }
+
   /**
    * The member's answer to "Who do you mean?" (within a day). A bare yes can confirm the one
    * person named in the question if another action is not also waiting for a reply.
@@ -2387,10 +2428,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.pendingSafety = undefined;
     if (this.now() - p.at > DAY) return false;
     const text = body.trim();
-    const nameOf = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
-    const name = nameOf(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
+    const name = safetyName(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
     const exact = this.resolveTarget(m, name, p.verb === "report").target;
-    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && nameOf(value) === name) ? exact : undefined;
+    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && safetyName(value) === name) ? exact : undefined;
     const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
     const confirmed = !competing && p.targets?.length === 1
       && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)

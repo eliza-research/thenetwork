@@ -149,6 +149,28 @@ pure def lawArchivedHoldRequiresExactSubject(matchingRestriction: bool): bool =
   not(archivedReportHoldAllowed(false, matchingRestriction))
 ```
 
+### A unique offered report name routes back to its app
+
+An explicit app choice or dedicated line sets the app. The shared-line fallback can use a current report question to route the verified member's own signed text. The text must name exactly one counterpart shown in the stored question across the member's app memberships. The counterpart must still belong to that question and be a current counterpart. The reply must arrive at or after the question and no later than processing, within one day of the question. Apply the report in the question's app only if the same member and choice remain current at the write. With no matching question, use the ordinary routing rules. With several matching questions, preserve them for an explicit app choice.
+
+```quint
+type SharedReportRoute = NoReportRoute | UniqueReportRoute | AmbiguousReportRoute
+
+pure def sharedReportRoute(signedMember: bool, choices: int): SharedReportRoute =
+  if (not(signedMember) or choices <= 0) NoReportRoute
+  else if (choices == 1) UniqueReportRoute
+  else AmbiguousReportRoute
+
+pure def reportClarificationTimeCurrent(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
+  oldestPrompt <= askedAt and askedAt <= receivedAt and receivedAt <= asOf
+
+pure def lawSharedReportRequiresOneChoice(signedMember: bool, choices: int): bool =
+  sharedReportRoute(signedMember, choices) == UniqueReportRoute implies signedMember and choices == 1
+
+pure def lawReportReplyCannotPredateQuestion(askedAt: int, receivedAt: int, asOf: int, oldestPrompt: int): bool =
+  reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) implies receivedAt >= askedAt
+```
+
 ### A ban allows only carrier commands and app leave
 
 A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.
