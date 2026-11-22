@@ -19,7 +19,7 @@ In the Date and Hire engine runs, a pair must pass the [pair value gate](../pair
 [Standing intent freshness](../standingIntent.md) governs matching
 evidence, judgment views, probe order, and cached matching profiles. The [repeat encounter rules](../repeatEncounter.md) require consent tied to the same completed meeting before a repeat candidate exists.
 
-[Booked meeting settlement](../meetingSettlement.md#a-liked-date-paces-new-proposals-from-its-booked-start) supplies the date for Slop's proposal pause. The model records the date at the meeting transition and later accepts a member's feedback.
+[Booked meeting settlement](../meetingSettlement.md#a-liked-date-paces-new-proposals-from-its-booked-start) supplies the date for Slop's proposal pause. The model records the date at the meeting transition and associates accepted feedback with its exact opportunity. It uses one opportunity per pair. The backend regression covers the fallback for older feedback without an opportunity ID.
 
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -99,8 +99,8 @@ module matching_engine {
 
   // ------------------------------------------------------------------ types
   type Ob = { core: bool, loc: bool, confirmed: bool, readBacks: int, db: bool, noDb: bool, goal: bool }
-  type Opp = { stage: str, at: int, everBooked: bool, meetingAt: int, feedbackFrom: Set[str] }
-  type SlopDate = { meetingAt: int, liked: bool }
+  type Opp = { stage: str, at: int, everBooked: bool, meetingAt: int, feedbackFrom: Set[str], likedBy: Set[str] }
+  type SlopDate = { meetingAt: int, opportunity: (str, str), liked: bool }
   type Slop = {
     minor: str -> bool, held: str -> bool, ob: str -> Ob, tags: str -> Set[str],
     // awaiting: the open wait ("none", "readback", "question"); askedField: what the last ask was about
@@ -271,8 +271,8 @@ module matching_engine {
       pendingAsk: SLOP_MEMBERS.mapBy(m => false), askedField: SLOP_MEMBERS.mapBy(m => "none"),
       locAskAt: SLOP_MEMBERS.mapBy(m => NONE), locAnswered: SLOP_MEMBERS.mapBy(m => false),
       lastBasicsAsk: SLOP_MEMBERS.mapBy(m => NONE), basicsAsks: SLOP_MEMBERS.mapBy(m => 0),
-      opp: PAIRS.mapBy(p => { stage: "none", at: NONE, everBooked: false, meetingAt: NONE, feedbackFrom: Set() }),
-      lastDate: SLOP_MEMBERS.mapBy(_ => { meetingAt: NONE, liked: false }),
+      opp: PAIRS.mapBy(p => { stage: "none", at: NONE, everBooked: false, meetingAt: NONE, feedbackFrom: Set(), likedBy: Set() }),
+      lastDate: SLOP_MEMBERS.mapBy(_ => { meetingAt: NONE, opportunity: ("a", "b"), liked: false }),
       netDeclAt: PAIRS.mapBy(p => NONE), engDeclAt: PAIRS.mapBy(p => NONE),
       sentTimes: SLOP_MEMBERS.mapBy(m => []), billed: PAIRS.mapBy(p => []),
       judgeOn: judgeOn, judgeLast: PAIRS.mapBy(p => NONE), judgeCalls: 0,
@@ -480,17 +480,19 @@ module matching_engine {
     sh' = sh, keepPeon, keepOther, now' = now, lastAction' = "slopMeet",
   }
 
-  // This transition receives each member's first accepted feedback for the completed pair.
+  // This transition receives each member's first accepted feedback and its exact booked opportunity.
   action slopFeedback(p: (str, str), from: str, liked: bool): bool = {
     val o = slop.opp.get(p)
     all {
       o.stage == "met", has(p, from), not(o.feedbackFrom.contains(from)), now - o.meetingAt < 7,
       slop' = { ...slop,
-        opp: slop.opp.set(p, { ...o, feedbackFrom: o.feedbackFrom.union(Set(from)) }),
+        opp: slop.opp.set(p, { ...o, feedbackFrom: o.feedbackFrom.union(Set(from)),
+                              likedBy: if (liked) o.likedBy.union(Set(from)) else o.likedBy }),
         lastDate: SLOP_MEMBERS.mapBy(m => {
           val prior = slop.lastDate.get(m)
-          if (not(has(p, m)) or prior.meetingAt > o.meetingAt or (prior.meetingAt == o.meetingAt and m != from)) prior
-          else { meetingAt: o.meetingAt, liked: m == from and liked }
+          if (not(has(p, m)) or prior.meetingAt > o.meetingAt
+              or (prior.meetingAt == o.meetingAt and (prior.opportunity != p or m != from))) prior
+          else { meetingAt: o.meetingAt, opportunity: p, liked: m == from and liked }
         }) },
       sh' = sh, keepPeon, keepOther, now' = now, lastAction' = "slopFeedback",
     }
@@ -786,9 +788,12 @@ module matching_engine {
   val activityFitsSlot = not(sh.hikeAtNight)
   val lawKnownDatePacingUsesBooking = SLOP_MEMBERS.forall(m => {
     val latest = slop.lastDate.get(m)
-    latest.liked implies PAIRS.exists(p => has(p, m) and slop.opp.get(p).feedbackFrom.contains(m)
-      and slop.opp.get(p).meetingAt == latest.meetingAt)
+    latest.liked implies slop.opp.get(latest.opportunity).meetingAt == latest.meetingAt
       and (now - latest.meetingAt < LIKED_DATE_DAYS implies not(engineMemberOk(m)))
+  })
+  val lawFeedbackForAnotherDateCannotPace = SLOP_MEMBERS.forall(m => {
+    val latest = slop.lastDate.get(m)
+    latest.liked implies slop.opp.get(latest.opportunity).likedBy.contains(m)
   })
 
   // jobs.ts closedReason; jobs.ts "no new candidates are sent": a closed post stays closed. SD-114.
@@ -821,7 +826,7 @@ module matching_engine {
   val safety = all {
     minorNeverCandidate, heldNeverCandidate, proposedPairValued, locatedBeforeMatch, deletedFieldClearsTag,
     answersReachLoop, askTerminates, engineAgreesWithGate, unsentNotBilled, budgetAcrossAssign,
-    activityFitsSlot, lawKnownDatePacingUsesBooking,
+    activityFitsSlot, lawKnownDatePacingUsesBooking, lawFeedbackForAnotherDateCannotPace,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
     declineScopedToJob, engineNeverSelectsHeld, seatCapacity, candidateProfileRequiresConfirmation, hireBookingMatchesApprovedPosting,
     probeFlowProgresses, planSeatHonorsHoldout, judgeCacheReused,
@@ -967,6 +972,16 @@ module matching_engine {
     .then(tick(1)).then(slopFeedback(("a", "b"), "b", false))
     .then(tick(7)).expect(slopDatePacing("a") and not(slopDatePacing("b")) and lawKnownDatePacingUsesBooking)
     .then(tick(1)).expect(not(slopDatePacing("a")) and enginePairs.contains(("a", "c")))
+
+  run slopLateFeedbackKeepsSourceMeetingTest = initWith("prod", false, "slop")
+    .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
+    .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), true)).then(slopProbe(("a", "b"), "yes", "drinks", "eve"))
+    .then(tick(1)).then(slopMeet(("a", "b"))).then(slopFeedback(("a", "b"), "b", false))
+    .then(slopDailyRun(("a", "c"))).then(slopReview(("a", "c"), true)).then(slopProbe(("a", "c"), "yes", "drinks", "eve"))
+    .then(tick(3)).then(slopMeet(("a", "c")))
+    .then(slopFeedback(("a", "b"), "a", true)).then(tick(1)).then(slopFeedback(("a", "c"), "c", false))
+    .expect(slop.lastDate.get("a").opportunity == ("a", "c") and not(slopDatePacing("a")) and lawFeedbackForAnotherDateCannotPace)
+    .then(slopFeedback(("a", "c"), "a", true)).expect(slopDatePacing("a") and lawFeedbackForAnotherDateCannotPace)
 
   // SD-207 fixed (scripts/sim/slop.ts gate): two proposals for a in one week (both sent); a is not
   // usable in selection until the budget period ends.

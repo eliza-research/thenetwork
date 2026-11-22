@@ -129,6 +129,58 @@ test("Slop availability and pacing follow the booked time in the meeting's zone"
   }
 });
 
+test("Slop pacing uses feedback about the latest completed date", async () => {
+  const firstMeetingAt = Date.UTC(2026, 9, 11, 22);
+  const latestMeetingAt = Date.UTC(2026, 9, 14, 23);
+  const world = new Mini([
+    { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
+    { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
+    { id: "cy", name: "Cy", age: 30, romance: { is: "man", seeks: ["woman"] } },
+  ], { app: "slop", plans: false, growth: false, hooks: {
+    timeOptions: opportunity => {
+      const start = opportunity.participants.includes("cy") ? latestMeetingAt : firstMeetingAt;
+      return [{ start, end: start + HOUR }];
+    },
+  } });
+  world.clock.set(Date.UTC(2026, 9, 9, 15));
+  await world.onboard("rae", "sam", "cy");
+  const book = async (counterpart: string) => {
+    const pair = ["rae", counterpart];
+    const id = world.propose(pair, { category: "romance", objective: "a coffee date" });
+    await world.answerProbes(pair, () => "Yes, the first time works.");
+    return id;
+  };
+  const tickAt = async (at: number) => {
+    world.clock.set(at);
+    await world.net.tick(at);
+  };
+  const first = await book("sam");
+  await tickAt(firstMeetingAt + 16 * HOUR);
+  await world.say("sam", "We both came.");
+  await world.say("rae", "Thanks.");
+  const latest = await book("cy");
+  expect(world.meetings).toMatchObject([{ at: firstMeetingAt }, { at: latestMeetingAt }]);
+
+  // Rae answers the old prompt after the second date has started, before its check-in is due.
+  await tickAt(latestMeetingAt + HOUR);
+  await world.say("rae", "We both came. It was great. I would meet again.");
+  await tickAt(latestMeetingAt + 15 * HOUR);
+  await world.say("cy", "We both came.");
+  const evidence = world.net.engineInput(world.clock.now());
+  expect(evidence.feedback).toContainEqual(expect.objectContaining({ from: "rae", about: "sam", opportunityId: first, wouldMeetAgain: true }));
+  expect(evidence.feedback).toContainEqual(expect.objectContaining({ from: "cy", about: "rae", opportunityId: latest }));
+  expect(slopProfiles(evidence).get("rae")?.history).toMatchObject({ lastDateAt: latestMeetingAt, lastDateLiked: undefined });
+  const earlyAnswer = evidence.feedback!.find(reply => reply.from === "rae")!;
+  const likedDateWith = (reply: typeof earlyAnswer) => slopProfiles({ ...evidence, feedback: [reply] }).get("rae")?.history.lastDateLiked;
+  expect(likedDateWith({ ...earlyAnswer, about: "cy" })).toBeUndefined();
+  expect(likedDateWith({ ...earlyAnswer, opportunityId: undefined })).toBeUndefined();
+  expect(likedDateWith({ ...earlyAnswer, opportunityId: undefined, about: "cy" })).toBe(true);
+
+  world.clock.advance(HOUR);
+  await world.say("rae", "We both came. I would meet again.");
+  expect(slopProfiles(world.net.engineInput(world.clock.now())).get("rae")?.history.lastDateLiked).toBe(true);
+});
+
 describe.skipIf(!pgAvailable)("slop.date: join to report after the date (NetworkService, Postgres)", () => {
   beforeAll(async () => {
     await devPgUp();

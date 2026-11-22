@@ -14,9 +14,9 @@ export interface MeetingSettlement { phase: SettlementPhase }
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export type MeetingFeedbackClaim = "SendMeetingFeedback" | "WaitForMeetingBookingReceipt" | "RefuseMeetingFeedback";
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean; receivedFeedbackPrompt: boolean }
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
@@ -349,6 +349,19 @@ export function completedDatePacingAt(knownBooking: boolean, bookedAt: number, f
 export function lawKnownDatePacingUsesBooking(bookedAt: number, feedbackAt: number): boolean {
   //@ ensures \result === true
   return completedDatePacingAt(true, bookedAt, feedbackAt) === bookedAt;
+}
+
+/** Story: Ask for feedback and close attendance once / Pacing feedback follows its own date (spec/meetingSettlement.md) */
+//@ pure
+export function completedDateFeedbackMatches(feedbackAt: number, meetingAt: number, hasOpportunity: boolean, sameOpportunity: boolean, isCounterpart: boolean): boolean {
+  return feedbackAt >= meetingAt && (hasOpportunity ? sameOpportunity : isCounterpart);
+}
+
+/** Story: Ask for feedback and close attendance once / Pacing feedback follows its own date (spec/meetingSettlement.md) */
+//@ pure
+export function lawFeedbackForAnotherDateCannotPace(feedbackAt: number, meetingAt: number, isCounterpart: boolean): boolean {
+  //@ ensures \result === true
+  return !completedDateFeedbackMatches(feedbackAt, meetingAt, true, false, isCounterpart);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
