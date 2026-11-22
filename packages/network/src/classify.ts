@@ -11,6 +11,7 @@ import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, par
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
+import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -125,6 +126,11 @@ export function sentencesOf(t: string, preserveDecimals = false): { text: string
   return out.length ? out : [{ text: t, at: 0 }];
 }
 
+const POLITE_SAFETY_REQUEST = /^(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?(?=(?:block|report)\s)/i;
+const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:date|match))\b(?:\s+please)?\s*(?:[.!?]*$|[,;:])/i;
+const SAFETY_REQUEST_CONDITION = /\b(?:if|unless|whenever|suppose|assuming|hypothetically|in case|in the event)\b/i;
+const SAFETY_REQUEST_DELAY = /(?:^[^,;:]*|[,;:]\s*)\b(?:when|after|later|tomorrow|maybe|possibly|perhaps)\b/i;
+
 export function classify(body: string): Classified {
   // The RX patterns spell an apostrophe as "'": a phone's curly one ("can’t", "what’s") must match too.
   const t = body.trim().replace(/[‘’ʼ`´]/g, "'");
@@ -158,7 +164,18 @@ export function classify(body: string): Classified {
   const other = otherAgeStated(t);
   if (other !== undefined) out.otherAge = other;
 
-  const blk = RX.block.exec(t), rep = RX.report.exec(t);
+  // spec/safetyCase.md, "Direct polite safety requests use the existing counterpart chooser"
+  const polite = POLITE_SAFETY_REQUEST.exec(t);
+  const command = polite ? t.slice(polite[0].length) : t;
+  const counterpart = COUNTERPART_SAFETY_REQUEST.exec(command);
+  const directCommand = !!polite || !!counterpart;
+  const qualified = directCommand && (SAFETY_REQUEST_CONDITION.test(t) || SAFETY_REQUEST_DELAY.test(t));
+  const useNewForm = safetyRequestMayResolveTarget(directCommand, qualified);
+  if (useNewForm && counterpart) {
+    return { ...out, kind: /^block$/i.test(counterpart[1]!) ? "block" : "report", target: counterpart[2]!.replace(/\s+/g, " ") };
+  }
+  const safetyText = useNewForm && polite ? command.replace(/\s+please[.!?]*$/i, "") : t;
+  const blk = RX.block.exec(safetyText), rep = RX.report.exec(safetyText);
   if (blk) return { ...out, kind: "block", target: blk[1]!.trim() };
   if (rep) return { ...out, kind: "report", target: rep[1]!.replace(/[,;:.!?].*$/, "").trim() };
   const absence = attendanceAbsences(t);

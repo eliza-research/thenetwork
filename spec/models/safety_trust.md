@@ -690,7 +690,8 @@ module safety_trust {
     }
   }
 
-  // "block X" / "report X" (handleBlock 1412). route() (service.ts:1085): a member of several apps whose text
+  // An explicit block/report command reaches handleBlock. safetyCase.md models the polite prefix and conditional refusal.
+  // route() (service.ts:1085): a member of several apps whose text
   // names a counterpart goes to the app of the newest meeting with them (SD-250); else any app of theirs (the
   // newest item or the last writer). The target is looked up on that app. `ambiguous`: two possible people,
   // so "Who do you mean?" (pendingSafety).

@@ -168,6 +168,19 @@ export function lawEmergencyCheckInNeedsReceipt(attributedReport: boolean): bool
   return !emergencyCheckInReport(false, attributedReport);
 }
 
+/** Story: Block or report a person directly / Direct polite safety requests use the existing counterpart chooser (spec/safetyCase.md) */
+//@ pure
+export function safetyRequestMayResolveTarget(directCommand: boolean, conditionalOrDelayed: boolean): boolean {
+  return directCommand && !conditionalOrDelayed;
+}
+
+/** Story: Block or report a person directly / Direct polite safety requests use the existing counterpart chooser (spec/safetyCase.md) */
+//@ pure
+export function lawConditionalSafetyRequestCannotResolveTarget(directCommand: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyRequestMayResolveTarget(directCommand, true);
+}
+
 /** Story: Resolve a report with its own disposition / A hold, ban, or dismissal updates the matching report (spec/safetyCase.md) */
 //@ pure
 export function reportAfterDecision(reportPhase: ReportPhase, decision: ReportDecision, sameMember: boolean, reportMatches: boolean): ReportPhase {

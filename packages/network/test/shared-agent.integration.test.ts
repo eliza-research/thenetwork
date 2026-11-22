@@ -581,6 +581,67 @@ test("a signed member open turn records activity once, and STOP revokes replay w
   expect(escaped).toBe(before);
 },60_000);
 
+// spec/safetyCase.md, "Direct polite safety requests use the existing counterpart chooser"
+test("explicit polite safety requests use the signed member's current counterpart choices", async () => {
+  const reporterPhone = "+12125550396";
+  const join = (phone: string, firstName: string) => service.accounts.join(
+    APPS.friends, { e164: phone, personId: null }, {
+      firstName, age: 31, homeCity: "nyc", consent: { sms: true, wording: APPS.friends.consent.text },
+    },
+  );
+  const [reporter, past, current] = await Promise.all([
+    join(reporterPhone, "Mina"), join("+12125550397", "Nico"), join("+12125550398", "Zoe"),
+  ]);
+  if (!reporter.ok || !past.ok || !current.ok) throw new Error("Could not join the safety fixtures");
+  const rt = service.runtimeFor("friends")!, reporterId = reporter.membership.memberId;
+  // These are already delivered bookings. The journey exercises the signed text reader and durable safety actions.
+  const booked = (otherId: string, stage: "done" | "scheduled") => rt.unitOfWork(n => {
+    const state = n.exportState(), ids = [reporterId, otherId], now = clock.now();
+    const meetingAt = now + (stage === "done" ? -DAY : DAY);
+    const opp: NetworkState["opps"][number] = {
+      id: `polite-safety-${stage}`, origin: "engine", kind: "intro", category: "social", objective: "Coffee", detail: "Coffee",
+      participants: ids, alternates: [], primed: [], status: ids.map(id => [id, "yes"]), explanations: {},
+      stage, meetingAt, deadline: now + DAY, createdAt: now - 2 * DAY,
+      bookedTold: ids, bookedAt: Object.fromEntries(ids.map(id => [id, now - 2 * DAY])),
+      score: 0.8, generator: "fixture",
+      components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 },
+      exploration: false, review: { queuedAt: now - 3 * DAY, deadline: now - 2 * DAY, decision: "approve", reviewer: "fixture" },
+      sameDay: false, contacted: ids, reminded: [], feedbackFrom: [], tags: [], replacements: 0,
+    };
+    state.opps.push(opp);
+    n.importState(state);
+  });
+  const say = async (id: string, text: string) => {
+    clock.advance(MINUTE);
+    const response = await post(turn(`polite-safety-${id}`, reporterPhone, text, "friends"));
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const reports = () => rt.readState(n => n.safetyReports().filter(r => r.reporterId === reporterId));
+  const blocks = () => sql`select to_id from network.edges where app_id='friends' and type='blocked' and from_id=${reporterId} order by to_id`;
+  await booked(past.membership.memberId, "done");
+  const hypothetical = await say("conditional", "Could you report Nico if I ask later?");
+  expect((hypothetical.replies ?? []).join(" ")).not.toMatch(/Who do you mean/i);
+  expect(await reports()).toEqual([]);
+  expect(await blocks()).toEqual([]);
+  expect(await say("request-report", "Could you report my date, he was rude?")).toMatchObject({
+    outcome: "handled", replies: [expect.stringMatching(/^Who do you mean: Nico\?/)],
+  });
+  expect(await reports()).toEqual([]);
+  await say("confirm-target", "Nico");
+  expect(await reports()).toEqual([expect.objectContaining({ subjectId: past.membership.memberId, kind: "harassment" })]);
+
+  await booked(current.membership.memberId, "scheduled");
+  await say("calendar", "Can you block my calendar?");
+  await say("delayed", "Can you block Zoe tomorrow?");
+  expect(await blocks()).toEqual([{ to_id: past.membership.memberId }]);
+  expect(await say("request-block", "Can you block my match?")).toMatchObject({
+    outcome: "handled", replies: [expect.stringMatching(/^Done\./)],
+  });
+  expect((await blocks()).map(row => row.to_id).sort()).toEqual([past.membership.memberId, current.membership.memberId].sort());
+  expect(await reports()).toHaveLength(1);
+}, 60_000);
+
 test("a committed collection followed by a fault stays unresolved and is never automatically rerun",async()=>{
   const original=service.inbound.bind(service);let handled=0;
   service.inbound=async(...args)=>{handled++;await original(...args);throw new Error("synthetic after-effect fault");};
