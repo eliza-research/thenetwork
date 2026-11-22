@@ -39,12 +39,6 @@ export function poolEligible(adult: boolean): boolean {
 
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
-export function extensionAllowed(alreadyIncluded: boolean, compatible: boolean): boolean {
-  return !alreadyIncluded && compatible;
-}
-
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
-//@ pure
 export function startSearch(g: Formation, forcedEligible: boolean, hostRequired: boolean): Formation {
   //@ ensures (inv(g) && canStartSearch(g, forcedEligible)) ==> alwaysPrimaryRequiredAfterSearch(\result)
   //@ ensures (inv(g) && canStartSearch(g, forcedEligible)) ==> alwaysPrimaryCircleCoherent(\result)
@@ -63,12 +57,6 @@ export function canStartSearch(g: Formation, forcedEligible: boolean): boolean {
 //@ pure
 export function groupLocationAllowed(hasOverlap: boolean, requiresCity: boolean, matchingCity: boolean): boolean {
   return hasOverlap && (!requiresCity || matchingCity);
-}
-
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
-//@ pure
-export function groupFitAllowed(hasPairs: boolean, belowPairFloor: boolean): boolean {
-  return !hasPairs || !belowPairFloor;
 }
 
 /** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */

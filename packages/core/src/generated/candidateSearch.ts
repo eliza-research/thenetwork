@@ -131,6 +131,19 @@ export function lawSearchTouchesStayWithinLimit(touches: number, budget: number)
   return !searchMayTouch(touches, budget) || exact_candidateSearch(touches + 1) <= exact_candidateSearch(searchTouchesPerCheck * budget);
 }
 
+/** Story: Search only where a pair can have a value / A pack class cap bounds the pack term of every partner the walk did not touch (spec/candidateSearch.md) */
+//@ pure
+export function searchUntouchedSharesNoTag(openAffinity: number, openComplement: number, openReturned: number): boolean {
+  return openAffinity === 0 && openComplement === 0 && openReturned === 0;
+}
+
+/** Story: Search only where a pair can have a value / A pack class cap bounds the pack term of every partner the walk did not touch (spec/candidateSearch.md) */
+//@ pure
+export function lawUntouchedSharesNoTag(openAffinity: number, openComplement: number, openReturned: number, affinityHits: number, complementHits: number, returnedHits: number): boolean {
+  //@ ensures \result === true
+  return !(0 <= affinityHits && affinityHits <= openAffinity && 0 <= complementHits && complementHits <= openComplement && 0 <= returnedHits && returnedHits <= openReturned && searchUntouchedSharesNoTag(openAffinity, openComplement, openReturned)) || (affinityHits === 0 && complementHits === 0 && returnedHits === 0);
+}
+
 /** Story: Keep the best candidates within a fixed number of pair checks / A search starts once with a positive limit and a budget no smaller than the limit (spec/candidateSearch.md) */
 //@ pure
 export function canBeginSearch(s: CandidateSearch, limit: number, budget: number): boolean {
@@ -174,6 +187,36 @@ export function candidateRanksAbove(candidate: RankedCandidate, other: RankedCan
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
 //@ pure
+export function alwaysKeptWithinLimit(s: CandidateSearch): boolean {
+  return s.kept.length <= s.limit;
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function alwaysKeptValuesAreRealPairs(s: CandidateSearch): boolean {
+  return !s.kept.some((c: RankedCandidate) => !(c.value >= 0));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function alwaysDroppedOnlyWhenFull(s: CandidateSearch): boolean {
+  return !(s.bestDropped > pairValue_noPairValue) || s.kept.length === s.limit;
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function alwaysKeptOrdinalsDistinct(s: CandidateSearch): boolean {
+  return !s.kept.some((c: RankedCandidate) => !(s.kept.filter((d: RankedCandidate) => d.ordinal === c.ordinal).length === 1));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function alwaysKeptBeatDropped(s: CandidateSearch): boolean {
+  return !s.kept.some((c: RankedCandidate) => !(c.value >= s.bestDropped));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
 export function stepEachCheckCountsOnce(before: CandidateSearch, via: string, after: CandidateSearch): boolean {
   return via === "checkCandidate" ? after.checks === exact_candidateSearch(before.checks + 1) : after.checks === before.checks;
 }
@@ -206,36 +249,6 @@ export function worstKeptScan(kept: RankedCandidate[]): WorstKeptScan {
 //@ pure
 export function canCheckCandidate(s: CandidateSearch, ordinal: number): boolean {
   return s.phase === "Scanning" && s.checks < s.budget && !s.kept.some((c: RankedCandidate) => c.ordinal === ordinal);
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function alwaysKeptWithinLimit(s: CandidateSearch): boolean {
-  return s.kept.length <= s.limit;
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function alwaysKeptValuesAreRealPairs(s: CandidateSearch): boolean {
-  return !s.kept.some((c: RankedCandidate) => !(c.value >= 0));
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function alwaysDroppedOnlyWhenFull(s: CandidateSearch): boolean {
-  return !(s.bestDropped > pairValue_noPairValue) || s.kept.length === s.limit;
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function alwaysKeptOrdinalsDistinct(s: CandidateSearch): boolean {
-  return !s.kept.some((c: RankedCandidate) => !(s.kept.filter((d: RankedCandidate) => d.ordinal === c.ordinal).length === 1));
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function alwaysKeptBeatDropped(s: CandidateSearch): boolean {
-  return !s.kept.some((c: RankedCandidate) => !(c.value >= s.bestDropped));
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
