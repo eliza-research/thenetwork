@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { entry, executableDigest, recall, store, verifiedNow, verifierIdentity, type Memory } from "./cache.ts";
+import { packageLocation, packageRoots } from "./installed.ts";
 import { NEEDS_DAFNY, bin, exec, stamp } from "./run.ts";
 import { SIMULATOR, TABLE } from "./simulator.ts";
 
@@ -19,22 +20,13 @@ export const completed = (r: Ran) => (r.ok || violated(r)) && Object.keys(r.file
 /** Dafny's closing line, with the failures it counts beside its errors. */
 const DAFNY_SUMMARY = /^Dafny program verifier finished with \d+ verified, \d+ errors?((?:, \d+ [a-z ]+)*)$/m;
 
-/** Where Node would find a package from `from`, as installed. */
-function installed(name: string, from: string): string | undefined {
-  for (let dir = from; ; dir = path.dirname(dir)) {
-    const at = path.join(dir, "node_modules", name);
-    if (path.basename(dir) !== "node_modules" && fs.existsSync(path.join(at, "package.json"))) return fs.realpathSync(at);
-    if (dir === path.dirname(dir)) return undefined;
-  }
-}
-
 /** A package and every package it may load, by name and version. */
 function packages(dir: string, found = new Map<string, string>()): Map<string, string> {
   if (found.has(dir)) return found;
   const { name, version, dependencies, optionalDependencies } = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   found.set(dir, `${name}@${version}`);
   for (const dep of Object.keys({ ...dependencies, ...optionalDependencies })) {
-    const at = installed(dep, dir);
+    const at = packageLocation(dep, dir);
     if (at) packages(at, found);
   }
   return found;
@@ -48,7 +40,7 @@ const programs = new Map<string, Promise<string>>();
  * beside the executable, or, for one a package manager exposes from a dependency of these tools, where they load it.
  */
 export function installedPackages(exe: string, name: string): string[] {
-  const at = installed(name, path.resolve(exe, "../../..")) ?? installed(name, import.meta.dirname);
+  const [at] = packageRoots(exe, name);
   const found = at && packages(at);
   if (!found || /@undefined$/.test(found.get(at)!)) throw new Error(`no ${name} with a version is installed beside ${exe} or these tools; run pnpm install`);
   return [...found.values()].sort();
@@ -112,7 +104,8 @@ export async function act(memory: Memory, tool: keyof typeof TOOLS, args: string
   const key = `${program.join("\0")}\0${since}`;
   if (installs && !programs.has(key)) programs.set(key, Promise.resolve(exe).then((exe) => [packaged(exe, installs), ...program.slice(1).map(executableDigest)].join(" ")).catch((e) => { programs.delete(key); throw e; }));
   const id = installs ? await programs.get(key)! : await verifierIdentity();
-  const at = await entry(memory.root, "action", [id, JSON.stringify(args), ...Object.keys(files).sort().flatMap((f) => [f, files[f].key])]);
+  const evaluates = (tool === "quint" || tool === "simulator") && args[0] === "run";
+  const at = await entry(memory.root, "action", [id, JSON.stringify(args), ...Object.keys(files).sort().flatMap((f) => [f, files[f].key])], evaluates);
   const known = recall<Ran>(memory, at);
   if (known) return known;
   const where = path.resolve(memory.root, dir);

@@ -30,34 +30,50 @@ export function weightedTerms(weights: LaneWeights, hasTraits: boolean, hasPackV
   ];
 }
 
-/** Mean closeness over trait dimensions (floor). `distances[d]` pairs with `costs[d]`. */
-export function meanCloseness(distances: readonly number[], costs: readonly number[]): number {
+function closenessOf(a: MatchProfile, b: MatchProfile, costs: readonly number[]): number {
   if (costs.length === 0) return pairValueScale;
   let total = 0;
-  for (let d = 0; d < costs.length; d++) total += closenessValue(distances[d], costs[d]);
+  for (let d = 0; d < costs.length; d++) total += closenessValue(a.traits[d] - b.traits[d], costs[d]);
   return Math.floor(total / costs.length);
 }
 
 /** The value `a` receives from `b`: coverage of a's seeks by b's offers. */
 const complementOf = (a: MatchProfile, b: MatchProfile): number => coverageValue(intersectCount(a.seeks, b.offers), a.seeks.length);
 
-export function utilityTerms(
-  a: MatchProfile, b: MatchProfile, weights: LaneWeights, traitCosts: readonly number[], packValue: number | undefined,
-): UtilityTerm[] {
-  return weightedTerms(weights, traitCosts.length > 0, packValue !== undefined, {
-    complement: complementOf(a, b),
-    affinity: coverageValue(intersectCount(a.interests, b.interests), a.interests.length),
-    closeness: meanCloseness(a.traits.map((x, d) => x - b.traits[d]), traitCosts),
+function sideTerms(a: MatchProfile, weights: LaneWeights, complement: number, sharedInterests: number, closeness: number, hasTraits: boolean, packValue: number | undefined): UtilityTerm[] {
+  return weightedTerms(weights, hasTraits, packValue !== undefined, {
+    complement,
+    affinity: coverageValue(sharedInterests, a.interests.length),
+    closeness,
     pack: packValue ?? pairValueScale,
   });
 }
 
-/** a's side of the pair (a, b). */
-export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonly number[], packValue: number | undefined): PairSide {
+export function utilityTerms(
+  a: MatchProfile, b: MatchProfile, weights: LaneWeights, traitCosts: readonly number[], packValue: number | undefined,
+): UtilityTerm[] {
+  return sideTerms(a, weights, complementOf(a, b), intersectCount(a.interests, b.interests),
+    closenessOf(a, b, traitCosts), traitCosts.length > 0, packValue);
+}
+
+function side(a: MatchProfile, complement: number, sharedInterests: number, closeness: number, hasTraits: boolean, packValue: number | undefined): PairSide {
   return {
-    utility: directedUtility(utilityTerms(a, b, laneWeights(a.lane), traitCosts, packValue)),
-    standing: a.standing, uncertainty: a.uncertainty, exchange: complementOf(a, b),
+    utility: directedUtility(sideTerms(a, laneWeights(a.lane), complement, sharedInterests, closeness, hasTraits, packValue)),
+    standing: a.standing, uncertainty: a.uncertainty, exchange: complement,
   };
+}
+
+export function pairSideOf(a: MatchProfile, b: MatchProfile, traitCosts: readonly number[], packValue: number | undefined): PairSide {
+  return side(a, complementOf(a, b), intersectCount(a.interests, b.interests),
+    closenessOf(a, b, traitCosts), traitCosts.length > 0, packValue);
+}
+
+export function laneValueOf(a: MatchProfile, b: MatchProfile, costs: readonly number[], packA: number | undefined, packB: number | undefined): number {
+  const sharedInterests = intersectCount(a.interests, b.interests);
+  const closeness = closenessOf(a, b, costs);
+  const hasTraits = costs.length > 0;
+  return lanePairValue(a.lane, side(a, complementOf(a, b), sharedInterests, closeness, hasTraits, packA), a.side,
+    side(b, complementOf(b, a), sharedInterests, closeness, hasTraits, packB), b.side);
 }
 
 /** `a` reaches `b`: either has no segment, or b's segment is one a can pair with. */
@@ -92,9 +108,9 @@ export const packValueOf = (w: World, vectors: PackVectors, a: MatchProfile, b: 
 export function pairValueOf(w: World, a: MatchProfile, b: MatchProfile): number {
   const vectors = vectorsOf(w);
   const costs = vectors.traits?.costs ?? [];
-  const value = lanePairValue(
-    a.lane, pairSideOf(a, b, costs, packValueOf(w, vectors, a, b)), a.side,
-    pairSideOf(b, a, costs, packValueOf(w, vectors, b, a)), b.side);
-  // The gate runs after the arithmetic only because it is the slower part; the result is the same.
+  return admittedPairValue(w, a, b, laneValueOf(a, b, costs, packValueOf(w, vectors, a, b), packValueOf(w, vectors, b, a)));
+}
+
+export function admittedPairValue(w: World, a: MatchProfile, b: MatchProfile, value: number): number {
   return value >= 0 && eligiblePair(w, a, b) === null ? value : noPairValue;
 }

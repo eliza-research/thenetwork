@@ -4,7 +4,7 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { migrate, migrations } from "../../observatory/db/migrate.ts";
+import { migrate, migrations, withDevMigrationLock } from "../../observatory/db/migrate.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
 const T = 120_000;
@@ -68,25 +68,30 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     const upTo = all.findIndex(m => m.id === "0007_friends_platform_safety");
     // Apply 0001-0006 by hand, as a dev database had them before 0007.
     const sql = new SQL({ url, max: 1 });
-    try {
-      for (const m of all.slice(0, upTo)) await sql.unsafe(await fileAt(m.file).text());
-      await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
-      for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
-      const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
-      await sql`insert into platform.phone_identities (e164, person_id, verified_at, method) values ('+12125550161', ${p.id}, now(), 'otp_sms')`;
-      await sql`insert into platform.memberships (app_id, person_id, member_id, state, first_name) values ('buddies', ${p.id}, 'buddies_m1', 'active', 'Bea')`;
-      await sql`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550161', 'buddies', 'opted_in', 'web_form', now())`;
-      await sql`insert into platform.audit (app_id, actor, action) values ('buddies', 'staff@x', 'read')`;
-      await sql.begin(async tx => {
-        await tx`select set_config('app.app_id', 'buddies', true)`;
-        await tx`insert into network.members (id, app_id, name, home_city, person_id) values ('buddies_m1', 'buddies', 'Bea', 'nyc', ${p.id})`;
-        await tx`insert into network.facets (id, app_id, member_id, kind, value, privacy_scope, provenance) values ('f1', 'buddies', 'buddies_m1', 'interest', 'chess', 'matchable', 'said')`;
-      });
-      await sql`insert into network.network_state (id, version, state) values ('buddies:nyc', 1, '{}'::jsonb)`;
-      await sql`insert into network.staff_audit (actor, action, app_id) values ('staff@x', 'review', 'buddies')`;
-    } finally { await sql.close(); }
-    const r = await migrate(url);
+    await withDevMigrationLock(url, async () => {
+      try {
+        for (const m of all.slice(0, upTo)) await sql.unsafe(await fileAt(m.file).text());
+        await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
+        for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
+        const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
+        await sql`insert into platform.phone_identities (e164, person_id, verified_at, method) values ('+12125550161', ${p.id}, now(), 'otp_sms')`;
+        await sql`insert into platform.memberships (app_id, person_id, member_id, state, first_name) values ('buddies', ${p.id}, 'buddies_m1', 'active', 'Bea')`;
+        await sql`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550161', 'buddies', 'opted_in', 'web_form', now())`;
+        await sql`insert into platform.audit (app_id, actor, action) values ('buddies', 'staff@x', 'read')`;
+        await sql.begin(async tx => {
+          await tx`select set_config('app.app_id', 'buddies', true)`;
+          await tx`insert into network.members (id, app_id, name, home_city, person_id) values ('buddies_m1', 'buddies', 'Bea', 'nyc', ${p.id})`;
+          await tx`insert into network.facets (id, app_id, member_id, kind, value, privacy_scope, provenance) values ('f1', 'buddies', 'buddies_m1', 'interest', 'chess', 'matchable', 'said')`;
+        });
+        await sql`insert into network.network_state (id, version, state) values ('buddies:nyc', 1, '{}'::jsonb)`;
+        await sql`insert into network.staff_audit (actor, action, app_id) values ('staff@x', 'review', 'buddies')`;
+      } finally { await sql.close(); }
+    });
+    const parallel = await Promise.all(["rename_parallel_a", "rename_parallel_b"].map(emptyDb));
+    urls.push(...parallel);
+    const [r, ...fresh] = await Promise.all([url, ...parallel].map(database => migrate(database)));
     expect(r.applied).toContain("0007_friends_platform_safety");
+    for (const result of fresh) expect(result.applied).toEqual(all.map(migration => migration.id));
     const db = new SQL({ url, max: 1 });
     try {
       const appIds = async (q: Promise<any[]>) => [...new Set((await q).map((x: any) => x.app_id))];

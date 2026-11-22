@@ -9,6 +9,7 @@ import { stripTypeScriptTypes } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { gunzipSync } from "node:zlib";
 import { Miniflare } from "miniflare";
@@ -24,7 +25,7 @@ import { BUILTINS, LIST_HELPERS, OPERATORS } from "./gen/print.ts";
 import { mirrorGen } from "./units.ts";
 import { conformance as checkTraces, conformanceFound } from "./conform.ts";
 import { explore, explored, pageInputs } from "./explore.ts";
-import { harnessFiles, search } from "./simulate.ts";
+import { harnessFiles, search, simulation } from "./simulate.ts";
 import { acceptContracts, acceptReviews, NODE, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./pipeline.ts";
 
 const project = path.join(import.meta.dirname, "..");
@@ -654,6 +655,35 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(result.broken, true, result.again);
     assert.match(result.again, /--max-samples 32 --max-steps 40\b/);
     assert.equal(result.traces[0]?.at(-1)?.state, 38);
+  });
+
+  test("a concrete witness uses the original guards and rules and supplies its steps to replay", async () => {
+    const modelSource = `pure val initial: int = 0
+pure def publish(n: int, amount: int): int = amount
+pure def canPublish(n: int, amount: int): bool = n == 0 and amount > 0
+pure def finish(n: int): int = n + 1
+pure def canFinish(n: int): bool = n > 0 and n < 42
+pure def alwaysSafe(n: int): bool = n <= 42
+pure def sometimesDone(n: int): bool = n == 42`;
+    const simulateExample = async (source: string, example: string) => {
+      const root = oneRule("journey", "Publish then finish", `${source}\npure val witness_sometimesDone = ${example}`);
+      const spec = readSpecs(root)[0];
+      const model = await gen(root, spec);
+      const domain = await import(pathToFileURL(path.join(root, "gen", "journey.ts")).href);
+      return simulation({ root, fresh: false, used: new Set() }, spec, [spec], model, domain, 1);
+    };
+    const [reached, denied, unsafe, mistyped] = await Promise.all([
+      simulateExample(modelSource, '(("publish", 41), "finish")'),
+      simulateExample(modelSource.replace("n == 42", "n == 1"), '("publish", -1)'),
+      simulateExample(modelSource, '(("publish", 43), "finish")'),
+      simulateExample(modelSource, '("publish", "unknown")'),
+    ]);
+    assert.ok(reached.said.some((r) => r.ok && r.summary === "sometimesDone is reachable"), JSON.stringify(reached.said));
+    assert.ok(reached.said.some((r) => r.ok && r.stage === "replay"), JSON.stringify(reached.said));
+    assert.deepEqual(reached.tested?.journeys[0]?.events, [{ type: "publish", amount: 41 }, { type: "finish" }]);
+    assert.ok(denied.said.some((r) => r.ok && r.summary === "sometimesDone is reachable"), JSON.stringify(denied.said));
+    assert.ok(unsafe.said.some((r) => !r.ok && r.stage === "always" && r.detail.includes('publish{"amount":43}')), JSON.stringify(unsafe.said));
+    assert.ok(mistyped.said.some((r) => !r.ok && /Couldn't unify (?:int and str|str and int)/.test(r.detail)), JSON.stringify(mistyped.said));
   });
 
   test("hand-written code that changes what it is checked against is refused or flagged", async () => {
@@ -2146,19 +2176,41 @@ function eachCheck() {
     fs.unlinkSync(scope);
     fs.mkdirSync(path.dirname(manifest), { recursive: true });
     fs.writeFileSync(manifest, original);
-    const install = (build: string) => fs.writeFileSync(shim, `#!/bin/sh\necho ${build} >> '${log}'\necho '{}' > ir.json\n`, { mode: 0o755 });
+    const manager = path.join(scope, "quint/dist/src/rust/binaryManager.js");
+    fs.mkdirSync(path.dirname(manager), { recursive: true });
+    fs.writeFileSync(manager, "exports.QUINT_EVALUATOR_VERSION = 'v1';");
+    const quintHome = path.join(root, "quint-home");
+    const native = path.join(quintHome, "rust-evaluator-v1/quint_evaluator");
+    fs.mkdirSync(path.dirname(native), { recursive: true });
+    const formal = path.join(root, "formal");
+    const install = (build: string) => fs.writeFileSync(shim, `#!/bin/sh\necho ${build} >> '${log}'\necho '{}' > ir.json\nif [ "$1" = run ]; then echo '{}' > 0.itf.json; [ -x '${native}' ] || { echo initial > '${native}'; chmod +x '${native}'; }; fi\n`, { mode: 0o755 });
     install("first");
     const script = [
       'const fs = await import("node:fs");',
       `const { act } = await import(${JSON.stringify(path.join(root, "vibestack/action.ts"))});`,
-      `const { entry } = await import(${JSON.stringify(path.join(root, "vibestack/cache.ts"))});`,
+      `const { entry, steady, withFormalCache } = await import(${JSON.stringify(path.join(root, "vibestack/cache.ts"))});`,
       'const memory = { root: ".", fresh: false, used: new Set() };',
       `const runs = async () => { await act(memory, "quint", ["typecheck"], "typed", { "a.qnt": { text: "module a {}", key: "a" } }); return fs.readFileSync(${JSON.stringify(log)}, "utf8").trim().split("\\n"); };`,
       'const simulation = async () => (await entry(".", "simulate", ["same"])).name;',
       'const said = { before: [await runs(), await runs()], simulation: await simulation() };',
       `fs.writeFileSync(${JSON.stringify(shim)}, fs.readFileSync(${JSON.stringify(shim)}, "utf8").replace("first", "second"));`,
       `fs.writeFileSync(${JSON.stringify(manifest)}, JSON.stringify({ ...JSON.parse(fs.readFileSync(${JSON.stringify(manifest)}, "utf8")), version: "0.0.0-reinstalled" }));`,
-      'console.log(JSON.stringify({ ...said, after: [await runs(), await runs()], reinstalled: await simulation() }));',
+      'const reinstalled = { after: [await runs(), await runs()], reinstalled: await simulation() };',
+      `process.env.QUINT_HOME = ${JSON.stringify(quintHome)};`,
+      `const native = ${JSON.stringify(native)}, formal = ${JSON.stringify(formal)};`,
+      'const evaluate = () => withFormalCache(formal, () => steady(async () => {',
+      '  const key = await entry(".", "simulate", ["native"]);',
+      '  const result = await act(memory, "quint", ["run"], "simulated", {});',
+      '  if (!result.ok) throw Error(result.out);',
+      `  const runs = fs.readFileSync(${JSON.stringify(log)}, "utf8").trim().split("\\n").length;`,
+      '  const actions = fs.existsSync(formal) ? fs.readdirSync(formal).filter(name => name.startsWith("action-")).length : 0;',
+      '  return { key: key.name, runs, actions };',
+      '}));',
+      'const bootstrap = await evaluate(), installed = await evaluate(), warm = await evaluate();',
+      'fs.writeFileSync(native, "replacement"); const replaced = await evaluate(); fs.writeFileSync(native, "replacement");',
+      'const identical = await evaluate(); process.env.QUINT_HOME = "quint-home";',
+      'const relative = await evaluate();',
+      'console.log(JSON.stringify({ ...said, ...reinstalled, evaluations: { bootstrap, installed, warm, replaced, identical, relative } }));',
     ].join("\n");
     const r = await exec(process.execPath, ["--input-type=module", "--eval", script], root);
     assert.equal(r.status, 0, r.stderr);
@@ -2166,6 +2218,18 @@ function eachCheck() {
     assert.deepEqual(said.before, [["first"], ["first"]], "a run is remembered");
     assert.deepEqual(said.after, [["first", "second"], ["first", "second"]], "the Quint installed since runs, and its run is remembered");
     assert.notEqual(said.reinstalled, said.simulation, "a simulation is keyed by the Quint installed now");
+
+    const { bootstrap, installed, warm, replaced, identical, relative } = said.evaluations;
+    assert.equal(bootstrap.actions, 0, "a run that installed its evaluator does not save a receipt for a missing one");
+    assert.equal(installed.actions, 1);
+    assert.equal(installed.runs, bootstrap.runs + 1);
+    assert.deepEqual(warm, installed, "a second invocation reuses the raw action");
+    assert.equal(replaced.runs, warm.runs + 1);
+    assert.equal(replaced.actions, 2);
+    assert.notEqual(replaced.key, warm.key, "changing only evaluator bytes changes the simulation identity");
+    assert.deepEqual(identical, replaced, "identical evaluator bytes still reuse the raw action");
+    assert.equal(relative.runs, identical.runs + 1);
+    assert.equal(relative.actions, identical.actions, "a child-relative Quint home does not supply a portable cache key");
 
     const shims = path.join(scratch({}), "node_modules/.bin");
     fs.mkdirSync(shims, { recursive: true });

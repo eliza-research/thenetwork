@@ -150,7 +150,14 @@ function exactness(w: World, s: LaneStats, at: string): void {
 // segments only as a superset of its pair rules, so no pair the segment check refuses is one that
 // the pack rules and geo rule (pairReason) admit. The oracle uses the same gate, so only this catches it.
 function segmentSuperset(w: World, s: LaneStats, p: MatchProfile, at: string): void {
-  for (const other of partnerBlock(w.match.index, p)?.profiles ?? []) {
+  const block = partnerBlock(w.match.index, p);
+  if (!block) return;
+  const expected = block.segments.filter(span => segmentReaches(p, block.profiles[span.start]!));
+  const indexed = block.reachableSegments(p.segment?.partners);
+  if (indexed.length !== expected.length || indexed.some((span, i) => span !== expected[i])) {
+    fault(s.segmentSuperset, `${at} ${p.id}: segment index differs from the ordered scan`);
+  }
+  for (const other of block.profiles) {
     if (eligiblePair(w, p, other) !== "segment_unreachable") continue;
     s.segmentRefused++;
     if (pairReason(w, p.memberId, other.memberId, laneCategory(p.lane), p.lane) === null) {
@@ -307,7 +314,10 @@ function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
     // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits": the search
     // reads only the segments the profile reaches (reach depends only on the other's segment).
     const block = partnerBlock(w.match.index, profile);
-    if (block) segmentShare += block.segments.reduce((t, x) => t + (segmentReaches(profile, block.profiles[x.start]!) ? x.end - x.start : 0), 0) / block.profiles.length;
+    if (block) {
+      const reached = block.reachableSegments(profile.segment?.partners);
+      segmentShare += reached.reduce((total, span) => total + span.end - span.start, 0) / block.profiles.length;
+    }
     // Keep the cost run subquadratic while exercising real budgeted results in large worlds.
     if (!result.exact && sampled < 3) {
       checkCertificate(w, s, profile, result, at);

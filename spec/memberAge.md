@@ -53,6 +53,8 @@ pure def lawMatchingNeedsAdultAge(age: int): bool =
 
 Commit the age to the verified person's record and phone age floor in the same transaction as the conversation that read it. An under-age statement that leads to staff review keeps the app's minimum join age. A confirmed refusal keeps the stated age. Another app uses the lower age even when later cleanup fails.
 
+If the signed relay action extracts the member's text from an open turn, check that text for the sender's own direct minor age. Commit that age in the same transaction as the relay refusal. Stop participation through the ordinary minor transition. Other people's ages, quoted words, school estimates and moderation flags cannot lower the sender's durable age.
+
 ```quint
 pure def recordedChatAge(age: int, appMinimum: int, declined: bool): int =
   if (declined or age >= appMinimum) age else appMinimum

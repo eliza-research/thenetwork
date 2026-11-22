@@ -4,14 +4,24 @@ lemma GroupFormationDivMonotone(low: int, high: int, size: int)
 {
   var lowQuotient := low / size;
   var highQuotient := high / size;
-  assert low == lowQuotient * size + low % size;
-  assert high == highQuotient * size + high % size;
   if lowQuotient > highQuotient {
+    var lowRemainder := low % size;
+    var highRemainder := high % size;
+    assert 0 <= lowRemainder < size;
+    assert 0 <= highRemainder < size;
     assert lowQuotient * size >= (highQuotient + 1) * size by {
       assert lowQuotient - (highQuotient + 1) >= 0;
       assert (lowQuotient - (highQuotient + 1)) * size >= 0;
     }
-    assert (highQuotient + 1) * size == highQuotient * size + size;
+    calc {
+      high;
+      == highQuotient * size + highRemainder;
+      < highQuotient * size + size;
+      == (highQuotient + 1) * size;
+      <= lowQuotient * size;
+      <= lowQuotient * size + lowRemainder;
+      == low;
+    }
     assert false;
   }
 }
