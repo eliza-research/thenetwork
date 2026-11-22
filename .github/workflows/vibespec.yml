@@ -97,7 +97,8 @@ jobs:
   full-check:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'vibestack')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # A cold full run was still replaying the pinned models when the 30-minute limit ended.
+    timeout-minutes: 120
     env:
       REQUIRE_PG: "1"
     services:
@@ -127,4 +128,12 @@ jobs:
       - run: npm install --global corepack@0.35.0 && corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run spec:setup
+      - name: Reuse content-keyed full formal tool actions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spec-cache/formal
+          key: formal-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-${{ hashFiles('spec/**', 'scripts/spec-snapshots.ts', 'scripts/vibestack.ts', 'tools/vibestack/vibestack/**') }}
+          restore-keys: |
+            formal-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
+            formal-actions-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}-
       - run: pnpm run check
