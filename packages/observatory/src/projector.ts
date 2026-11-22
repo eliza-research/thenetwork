@@ -12,8 +12,16 @@ const TERMINAL: ReadonlySet<OppState> = new Set<OppState>([
   "COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED",
 ]);
 export const isTerminal = (s: OppState) => TERMINAL.has(s);
+// Acceptance credit follows saidYes in spec/models/console_views.md.
+export const ACCEPTED_PARTICIPATION_STATUSES: readonly ParticipantStatus[] = [
+  "accepted", "confirmed", "attended", "no_show", "cancelled_with_notice",
+];
+export function countsAsAcceptance(status: ParticipantStatus | undefined): boolean {
+  return status !== undefined && ACCEPTED_PARTICIPATION_STATUSES.includes(status);
+}
+
 /** The statuses that hold a counted yes which a flake notice can take back. */
-const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set<ParticipantStatus>(["accepted", "countered", "confirmed"]);
+const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set(["accepted", "confirmed"]);
 
 export interface ProjectorOptions {
   /** State a member takes when they join (from their profile: normal, quiet...). */
@@ -49,6 +57,17 @@ export class Projector {
     this.store.touchMember(id);
     return m.counters;
   }
+
+  private setParticipantStatus(o: ObsOpportunity, id: MemberId, status: ParticipantStatus) {
+    const prior = o.status[id];
+    o.status[id] = status;
+    const delta = Number(countsAsAcceptance(status)) - Number(countsAsAcceptance(prior));
+    if (delta === 0) return;
+    this.store.counts.accepts += delta;
+    const member = this.counters(id);
+    if (member) member.accepted += delta;
+  }
+
   /** State each opportunity was in when last seen (time in state). */
   private lastState = new Map<string, OppState>();
   private changed(o: ObsOpportunity, rec: RunRecord) {
@@ -145,17 +164,13 @@ export class Projector {
           else if (said === "counter") st = "countered";
           else if (said === "ignore" || said === "ack" || said === "none") st = "ignored";
         } else if (r.intent === "flake_notice" && YES_BEFORE_FLAKE.has(o.status[r.memberId]!)) {
-          // Cancelled with notice is a yes taken back (spec/models/console_views.md, saidYes), and the
-          // c.accepts counter already holds that yes. A member with no yes (declined, ignored, dropped) keeps
-          // the status, so a status count of yes answers (sources/real.ts) equals c.accepts.
+          // A cancellation with notice preserves credit for an earlier yes.
           st = "cancelled_with_notice";
         }
         if (!st || isTerminal(o.state) && st !== "cancelled_with_notice") return;
-        const prev = o.status[r.memberId];
-        if (prev === st) return;
-        o.status[r.memberId] = st;
-        if (st === "accepted" || st === "countered") { c.accepts++; const k = this.counters(r.memberId); if (k) k.accepted++; }
-        if (st === "declined") { c.declines++; if (prev === "accepted" || prev === "countered" || prev === "confirmed") c.accepts--; }
+        if (o.status[r.memberId] === st) return;
+        this.setParticipantStatus(o, r.memberId, st);
+        if (st === "declined") c.declines++;
         if (st === "accepted" || st === "declined") {
           s.pushFeed({ t: r.t, kind: st === "accepted" ? "accept" : "decline", text: `${this.name(r.memberId)} ${st === "accepted" ? "said yes to" : "passed on"} ${o.participants.length > 2 ? "a group" : "meeting " + this.names(o.participants.filter(x => x !== r.memberId))}`, members: [r.memberId], opportunityId: o.id, severity: st === "accepted" ? "good" : undefined });
         }
@@ -170,10 +185,8 @@ export class Projector {
         this.setState(o, "SCHEDULED");
         o.meetingAt = r.at;
         for (const id of r.participants) {
-          // A booked plan (attention v1.2) is booked before anyone is told: a member who had not said yes in
-          // words is in by default (silence = in), so they count as a yes here.
-          if (o.status[id] !== "accepted" && o.status[id] !== "countered" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
-          if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
+          // The booking establishes the roster. A late addition can emit another record for the same meeting.
+          if (o.status[id] !== "cancelled_with_notice") this.setParticipantStatus(o, id, "confirmed");
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
         this.changed(o, r);
@@ -188,7 +201,7 @@ export class Projector {
           if (!a.showed && o?.status[id] === "declined") continue;
           if (a.showed) c.attended++; else if (a.cancelledWithNotice) c.cancelledWithNotice++; else c.noShows++;
           if (o) {
-            o.status[id] = a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show";
+            this.setParticipantStatus(o, id, a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show");
             if (a.showed) o.enjoyment[id] = a.enjoyment;
           }
           if (a.showed) {
@@ -516,7 +529,7 @@ export class Projector {
   private recomputeConsent(o: ObsOpportunity, r: RunRecord) {
     if (o.state === "SCHEDULED" || isTerminal(o.state)) return;
     const sts = o.participants.map(id => o.status[id]);
-    const yes = o.participants.filter(id => o.status[id] === "accepted" || o.status[id] === "countered");
+    const yes = o.participants.filter(id => o.status[id] === "accepted");
     const group = o.participants.length > 2;
     if (!group && sts.includes("declined")) { this.setState(o, "DECLINED", "declined"); return; }
     const quorum = group ? Math.max(3, Math.ceil(o.participants.length * 0.66)) : 2;
@@ -528,6 +541,7 @@ export class Projector {
           this.store.addEdge({ from: yes[i]!, to: yes[j]!, type: "introduced", strength: 0.3, createdAt: r.t, origin: "learned" });
       }
     } else if (yes.length) this.setState(o, "PARTIALLY_ACCEPTED");
+    else if (o.state === "PARTIALLY_ACCEPTED" || o.state === "MUTUALLY_ACCEPTED" || o.state === "QUORUM_MET") this.setState(o, "INVITING");
   }
 
   /** PRD 32.13 edge learning from a held meeting. */
