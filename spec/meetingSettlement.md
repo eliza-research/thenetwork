@@ -242,6 +242,25 @@ pure def lawWeekdayMeetingSlotNeedsEvening(localWeekday: int, localHour: int): b
   (localWeekday < 5 and localHour < 17) implies completedMeetingSlot(localWeekday, localHour) == -1
 ```
 
+### Count one attendance outcome per person and booked date
+
+Slop counts each booked date once in a member's history, even when both people reply. It keeps each reply and learns the booked slot once per attendee. Count an absence only for a participant with direct attribution. An exact self-reported absence takes precedence over completed-date evidence for that participant and booking. For an older reply, use the saved opportunity, feedback author and self-reported attendance when they are available. An absence with no attribution does not affect either member. A standalone interaction without an opportunity ID uses its own record ID.
+
+```quint
+pure def slopCompletedDateCounts(completed: bool, exactAbsence: bool): bool =
+  completed and not(exactAbsence)
+
+pure def slopNoShowCounts(exactAttribution: bool, onRoster: bool): bool =
+  exactAttribution and onRoster
+
+pure def lawSlopCannotCountCompletionAndAbsence(completed: bool, exactAttribution: bool, onRoster: bool): bool =
+  not(slopCompletedDateCounts(completed, slopNoShowCounts(exactAttribution, onRoster)) and
+      slopNoShowCounts(exactAttribution, onRoster))
+
+pure def lawSlopUnattributedAbsenceCannotCount(onRoster: bool): bool =
+  not(slopNoShowCounts(false, onRoster))
+```
+
 ### A liked date paces new proposals from its booked start
 
 Slop measures its existing post-date pause from the start of the completed date the member liked. A later feedback timestamp does not move that start. The pause ends at the configured age of the booking, ten days by default. An older engine record without a separate booking time keeps its recorded event time.

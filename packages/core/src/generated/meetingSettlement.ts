@@ -338,6 +338,32 @@ export function lawWeekdayMeetingSlotNeedsEvening(localWeekday: number, localHou
   return !(localWeekday < 5 && localHour < 17) || completedMeetingSlot(localWeekday, localHour) === -1;
 }
 
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function slopCompletedDateCounts(completed: boolean, exactAbsence: boolean): boolean {
+  return completed && !exactAbsence;
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function slopNoShowCounts(exactAttribution: boolean, onRoster: boolean): boolean {
+  return exactAttribution && onRoster;
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function lawSlopCannotCountCompletionAndAbsence(completed: boolean, exactAttribution: boolean, onRoster: boolean): boolean {
+  //@ ensures \result === true
+  return !(slopCompletedDateCounts(completed, slopNoShowCounts(exactAttribution, onRoster)) && slopNoShowCounts(exactAttribution, onRoster));
+}
+
+/** Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date (spec/meetingSettlement.md) */
+//@ pure
+export function lawSlopUnattributedAbsenceCannotCount(onRoster: boolean): boolean {
+  //@ ensures \result === true
+  return !slopNoShowCounts(false, onRoster);
+}
+
 /** Story: Ask for feedback and close attendance once / A liked date paces new proposals from its booked start (spec/meetingSettlement.md) */
 //@ pure
 export function completedDatePacingAt(knownBooking: boolean, bookedAt: number, feedbackAt: number): number {

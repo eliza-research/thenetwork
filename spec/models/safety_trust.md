@@ -98,7 +98,7 @@ module safety_trust {
   }
   type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
-  type Inter = { parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
+  type Inter = { opportunityId: str, parts: Set[Mid], outcome: str, at: int, meetingAt: int, by: Mid, hour: int, slot: int }
   // A staff lift reads the decision identifiers, then commits the durable and runtime changes together.
   type Lift = { m: Mid, scope: str, expectedLocal: int, expectedGlobal: int, stage: str }
   type Src = { msgs: int, reporters: Set[Mid], staff: bool, other: int }
@@ -234,9 +234,14 @@ module safety_trust {
     nextHold: st.nextHold + 1,
     globalHoldReleases: if (scope == "*") st.globalHoldReleases.filter(x => x._1 != p) else st.globalHoldReleases,
   }
-  // engine slop profile.ts histories: a check-in record (by) counts for the member who gave it (SD-222)
-  pure def noShows(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "no_show").size()
-  pure def dates(st: State, m: Mid): int = st.inters.filter(i => i.by == m and i.outcome == "completed").size()
+  // profile.ts and meetingSettlement.md: group by exact opportunity. NOBODY is missing legacy attribution.
+  pure def noShowDateIds(st: State, m: Mid): Set[str] =
+    st.inters.filter(i => i.by == m and i.parts.contains(m) and i.outcome == "no_show").map(i => i.opportunityId)
+  pure def completedDateIds(st: State, m: Mid): Set[str] =
+    st.inters.filter(i => i.parts.contains(m) and i.outcome == "completed").map(i => i.opportunityId)
+      .exclude(noShowDateIds(st, m))
+  pure def noShows(st: State, m: Mid): int = noShowDateIds(st, m).size()
+  pure def dates(st: State, m: Mid): int = completedDateIds(st, m).size()
   // profile.ts: one directed block per member with settled same-app encounter evidence at block time.
   pure def blockedBy(st: State, m: Mid): int = st.contextualBlocks.filter(b => b._2 == m).size()
   // slop rules.ts with SLOP_DEFAULT_OPTIONS trust { blockedBy: 2, noShows: 2 }
@@ -611,8 +616,8 @@ module safety_trust {
   }
 
   // Feedback keeps its receipt day. The dating slot comes from the booked meeting's local day and hour.
-  pure def recordOf(o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
-    { parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
+  pure def recordOf(k: str, o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
+    { opportunityId: k, parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
       hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour) }
 
   // The answer to the check-in after a meeting (onFeedback 2636). `intent`: what the member means ("fine",
@@ -634,7 +639,7 @@ module safety_trust {
     // postDateReports on slop and peon (SD-221); never for a plan
     val reportKind = if (o.kind == "date") reader else "none"
     val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-      inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow", s0.now))) }
+      inters: s0.inters.union(Set(recordOf(k, o, m, intent == "selfNoShow", s0.now))) }
     // checkInReported -> blockAndReport for each other (SD-229); the member means the person of the date
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
@@ -674,7 +679,7 @@ module safety_trust {
     val first = not(o.feedbackFrom.contains(m))
     val s1 = if (first) { ...s0,
         opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-        inters: s0.inters.union(Set(recordOf(o, m, false, s0.now))) } else s0
+        inters: s0.inters.union(Set(recordOf(k, o, m, false, s0.now))) } else s0
     all {
       s.live.get(m), inboundOk(s, p), lvl(s0, m) != "hold", meant != p, REPORT_KINDS.contains(kind),
       if (win == Set())
@@ -1161,10 +1166,13 @@ module safety_trust {
   // trust.ts:4-5 "Watch lasts until the score decays below 3: 14 days from 3". SD-141 (fixed in db176ce).
   val watchLasts14Days = not(s.earlyWatchExit)
 
-  // network.ts o.post "came: !f.selfNoShow": a no-show counts against the person who did not come. SD-222
-  // (fixed in 581888d).
+  // network.ts attributes a no-show to the exact self-report. An unattributed older row cannot count.
   val noShowCountsAbsentOnly = ALL_MIDS.forall(m => s.live.get(m) implies
-    noShows(s, m) <= OPP_IDS.filter(k => s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted").size())
+    noShowDateIds(s, m).subseteq(OPP_IDS.filter(k =>
+      s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted")))
+  val attendanceCountsOncePerBooking = ALL_MIDS.forall(m =>
+    dates(s, m) + noShows(s, m) <= OPP_IDS.filter(k =>
+      s.opps.get(k).stage == "done" and s.opps.get(k).told.contains(m)).size())
 
   // The Slop profile reads completed attendance using the booked meeting time in its local zone.
   val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
@@ -1213,6 +1221,7 @@ module safety_trust {
     reportersCounted,
     watchLasts14Days,
     noShowCountsAbsentOnly,
+    attendanceCountsOncePerBooking,
     slotFromMeeting,
     everyMetReportFiled,
     relayBlockReachesSafety,
@@ -1522,6 +1531,24 @@ module safety_trust {
       .then(meet("o1", Set(BEN_S)))
       .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
       .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 1)
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .expect(attendanceCountsOncePerBooking and dates(s, ANA_S) == 1 and dates(s, BEN_S) == 0)
+
+  run completedDateRepliesCountOnceTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "fine", "none"))
+      .then(tick(1))
+      .then(checkIn("o1", BEN_S, "fine", "none"))
+      .expect(s.inters.size() == 2 and attendanceCountsOncePerBooking and dates(s, ANA_S) == 1 and dates(s, BEN_S) == 1)
+
+  run legacyNoShowWithoutAttributionTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set(BEN_S)))
+      .then(s' = { ...s, inters: Set(recordOf("o1", s.opps.get("o1"), NOBODY, true, s.now)) })
+      .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 0)
 
   // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =

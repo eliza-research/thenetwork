@@ -23,6 +23,10 @@ export type InteractionOutcome =
 export interface InteractionRecord {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[];
   at: number; outcome: InteractionOutcome; declinedBy?: MemberId[]; contributors?: MemberId[];
+  /** The saved opportunity shared by multiple attendance observations. */
+  opportunityId?: string;
+  /** Members whose absence this record directly attributes. An old row may have no attribution. */
+  noShowBy?: MemberId[];
   /** The meeting's start and zone, independent of the feedback receipt in at. Null means a legacy reply has no surviving booking. */
   bookedMeeting?: { at: number; timeZone: string } | null;
   /** Invitees who said yes (engine-visible responsiveness history; v1.2 acceptance estimate). */
