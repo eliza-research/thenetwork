@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
+import { enableCompileCache } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +10,7 @@ import { scanSpec } from "../tools/vibestack/vibestack/scan.ts";
 export const root = resolve(import.meta.dirname, "..");
 const toolkit = join(root, "tools/vibestack");
 const cli = join(toolkit, "vibestack/spec.ts");
+const formalCache = join(root, ".spec-cache/formal");
 const excludedTrees = new Set(["models", "product"]);
 const conformanceTrees = ["test/drivers", "test/traces", "test/counterexamples"];
 const counterexamples = "test/counterexamples";
@@ -197,6 +199,23 @@ export function assertUnchanged(files: Map<string, string>): void {
 }
 
 export async function runSpec(project: string, args: string[]): Promise<number> {
+  const [command, ...options] = args;
+  if (command === "gen" || (command === "check" && !options.includes("--nightly"))) {
+    const compiled = enableCompileCache();
+    if (compiled.directory) process.env.NODE_COMPILE_CACHE ??= compiled.directory;
+    const [{ withFormalCache }, { main }] = await Promise.all([
+      import("../tools/vibestack/vibestack/cache.ts"),
+      import("../tools/vibestack/vibestack/pipeline.ts"),
+    ]);
+    const priorStatus = process.exitCode;
+    process.exitCode = 0;
+    try {
+      await withFormalCache(formalCache, () => main([command, ...options, project]));
+      return Number(process.exitCode);
+    } finally {
+      process.exitCode = priorStatus;
+    }
+  }
   return await new Promise((done, fail) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd: project, stdio: "inherit" });
     child.once("error", fail);
@@ -269,7 +288,11 @@ async function main([command, ...args]: string[]) {
   try {
     prepareProject(project, files, !["gen", "new", "conformance"].includes(command));
     if (["check", "accept", "conformance"].includes(command)) earlierCounterexamples = projectConformance(project, module);
-    if (module !== undefined) return await checkConformance(project, module, args[1] === "--nightly");
+    if (module !== undefined) {
+      if (args[1] === "--nightly") return await checkConformance(project, module, true);
+      const { withFormalCache } = await import("../tools/vibestack/vibestack/cache.ts");
+      return await withFormalCache(formalCache, () => checkConformance(project, module, false));
+    }
     if (studio) console.log(`Studio is editing a copy at ${join(project, "spec")}. The repository’s spec/ remains authoritative.`);
     let previous = files;
     const watcher = command === "watch" ? watch(join(root, "spec"), { recursive: true }, () => {

@@ -692,9 +692,9 @@ async function watch(root: string) {
 }
 
 /** The `spec` command, on `process.argv`. */
-export async function main() {
+export async function main(argv = process.argv.slice(2)) {
   let root = process.cwd();
-  const [command, ...args] = process.argv.slice(2);
+  const [command, ...args] = argv;
   const takes = (...allowed: string[][]) => allowed.some((a) => a.length === args.length && a.every((x, i) => x === "*" || x === args[i]));
   try {
     if (Number(process.versions.node.split(".")[0]) < NODE) throw new Error(`spec needs Node ${NODE} or later; this is Node ${process.versions.node}`);
