@@ -40,3 +40,22 @@ pure def hireAnswerAllowed(direct: bool, delivered: bool, receivedAt: int, deliv
 pure def lawHireAnswerRequiresDelivery(direct: bool, receivedAt: int, deliveredAt: int, at: int, deadline: int): bool =
   not(hireAnswerAllowed(direct, false, receivedAt, deliveredAt, at, deadline))
 ```
+
+### A closed application keeps its recorded answers
+
+Keep the candidate's and employer's own answers after the exact reply checks above. If a reviewed application closes before booking, attribute each recorded answer to its participant. An explicit no records a decline for the participant who answered. A timeout or an administrative closure supplies no answer on its own. Review rejection and expiry supply no application history.
+
+```quint
+type HireProbeHistory = HireProbeUnrecorded | HireProbeAccepted | HireProbeDeclined
+
+pure def hireClosedProbeReply(answer: str): HireProbeHistory =
+  if (answer == "yes") HireProbeAccepted
+  else if (answer == "no") HireProbeDeclined
+  else HireProbeUnrecorded
+
+pure def hireProbeWasDeclined(existingDecline: bool, recordedDecline: bool): bool =
+  existingDecline or recordedDecline
+
+pure def lawUnrecordedHireReplyAddsNoAttribution(answer: str): bool =
+  not(answer == "yes" or answer == "no") implies hireClosedProbeReply(answer) == HireProbeUnrecorded
+```

@@ -77,7 +77,7 @@ import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGather
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt } from "../../core/src/generated/peonCapacity.ts";
-import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
+import { hireAnswerAllowed, hireClosedProbeReply, hireContactAllowed, hireProbeWasDeclined } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
 import { engineQuestionDeliveryPrefix } from "../../core/src/generated/engineAsks.ts";
@@ -626,6 +626,8 @@ interface Opp {
   seat?: HireSeat;
   /** The time both sides' agreements committed the reviewed job introduction. */
   seatAcceptedAt?: number;
+  /** Direct answers to the admitted candidate and employer probes for this introduction. */
+  seatProbeReplies?: Partial<Record<MemberId, "yes" | "no">>;
 }
 /** A member request. The member's own words are not kept: only what the classifier read from them. */
 interface Request {
@@ -1712,7 +1714,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       for (const set of [o.primed, o.contacted, o.reminded, o.feedbackFrom]) set.delete(id);
       o.status.delete(id); delete o.explanations[id];
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
-      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "feedbackPromptedAt", "lateArrivalReported", "settledAttendance"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
+      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "feedbackPromptedAt", "lateArrivalReported", "settledAttendance", "seatProbeReplies"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
       for (const k of ["explicit", "confirmed", "bookedTold", "dayBeforeReminded", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
       if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
@@ -3532,6 +3534,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const current = participantProbe(o.status.get(m.id));
     if (!canRecordReply(current)) return;
     const answered = stepProbe(current, { type: "recordReply", agreed: yes });
+    if (o.seat && o.participants.includes(m.id)) (o.seatProbeReplies ??= {})[m.id] = yes ? "yes" : "no";
     const retry = !!o.timeRetry?.includes(m.id);
     if (!retry) this.sampleInterruption(m, o.id);
     const offered = o.offered?.[m.id] ?? [];
@@ -3917,7 +3920,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     // A review rejection or expiry is not something the members did: no interaction record.
-    if (!wasReview) this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: reason === "declined" ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy: o.participants.filter(p => o.status.get(p) === "no") });
+    if (!wasReview) {
+      const hireReplies = o.seat && wasProbing ? o.seatProbeReplies : undefined;
+      const recorded = hireReplies && o.participants.map(id => ({ id, reply: hireClosedProbeReply(hireReplies[id] ?? "") }));
+      const acceptedBy = recorded?.filter(x => x.reply === "HireProbeAccepted").map(x => x.id);
+      const declinedBy = recorded?.filter(x => x.reply === "HireProbeDeclined").map(x => x.id)
+        ?? o.participants.filter(id => o.status.get(id) === "no");
+      const declined = hireProbeWasDeclined(reason === "declined", recorded !== undefined && declinedBy.length > 0);
+      this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(),
+        outcome: declined ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy, ...(acceptedBy?.length ? { acceptedBy } : {}) });
+    }
     this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", {
       proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason,
       ...(wasProbing ? { alternates: [...o.alternates] } : {}),

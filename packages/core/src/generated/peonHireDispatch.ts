@@ -1,6 +1,8 @@
 // GENERATED from spec/peonHireDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
+/** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */
+export type HireProbeHistory = "HireProbeUnrecorded" | "HireProbeAccepted" | "HireProbeDeclined";
 
 
 /** Story: Stay in charge of a Peon job search / A review covers this candidate search and these posting terms (spec/peonHireDispatch.md) */
@@ -47,4 +49,23 @@ export function lawEmployerCannotBeContactedFirst(evidenceCurrent: boolean, revi
 export function lawHireAnswerRequiresDelivery(direct: boolean, receivedAt: number, deliveredAt: number, at: number, deadline: number): boolean {
   //@ ensures \result === true
   return !hireAnswerAllowed(direct, false, receivedAt, deliveredAt, at, deadline);
+}
+
+/** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */
+//@ pure
+export function hireProbeWasDeclined(existingDecline: boolean, recordedDecline: boolean): boolean {
+  return existingDecline || recordedDecline;
+}
+
+/** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */
+//@ pure
+export function hireClosedProbeReply(answer: string): HireProbeHistory {
+  return answer === "yes" ? "HireProbeAccepted" : (answer === "no" ? "HireProbeDeclined" : "HireProbeUnrecorded");
+}
+
+/** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */
+//@ pure
+export function lawUnrecordedHireReplyAddsNoAttribution(answer: string): boolean {
+  //@ ensures \result === true
+  return !(!(answer === "yes" || answer === "no")) || hireClosedProbeReply(answer) === "HireProbeUnrecorded";
 }
