@@ -163,8 +163,10 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   w.restart();
   await w.say("requester", "I still need help moving a couch from my apartment.");
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
-  await w.say("requester", "Find someone to help move a couch and babysit my child.");
-  expect(w.sent.at(-1)?.body).toContain("won't look for it");
+  for (const task of ["babysit my child", "watch my 6 y.o. Saturday", "pick my two kids up"]) {
+    await w.say("requester", "Find someone to help move a couch and " + task + ".");
+    expect(w.sent.at(-1)?.body).toContain("won't look for it");
+  }
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
   expect(w.net.reviewQueue()).toEqual([]);
   expect(w.net.exportState().requests).toEqual([]);

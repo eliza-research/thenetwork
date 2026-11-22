@@ -24,6 +24,11 @@ service has no approved private venue to offer. A repeat request uses the open
 case. Only an adult's request opens a case. The case has a reason code and no
 address, message text or trust penalty. Ordinary bounded help uses the reviewed member request flow.
 
+Requests for child care and transport enter the high-risk route when the child
+and task are stated. The request reader accepts common forms of a child's age
+and phrasing such as “pick my kids up” or “drop my child off.” An object
+pickup or a casual reference to children does not give this signal.
+
 ```quint
 type BoundedHelpRoute = SearchPublicHelp | ReviewHomeEntryHelp | RefuseHighRiskHelp
 

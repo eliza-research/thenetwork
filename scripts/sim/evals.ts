@@ -14,6 +14,8 @@ import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, lookingFor, type AppId } from "../../packages/platform/src/apps.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { riskTerms } from "../../packages/engine/src/filters.ts";
 import { Block, expect } from "./gate.ts";
 import { planAgainOf } from "../../packages/network/src/classify.ts";
 
@@ -22,6 +24,20 @@ const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export async function evalsBlock(b: Block): Promise<void> {
+  await b.run("child-care requests recognize stated ages and split transport verbs", () => {
+    const cfg = resolveConfig();
+    const risky = [
+      ...["6yo", "6 y/o", "6 y.o.", "6 y o", "6 y-old", "6 yrs old", "six-year-old", "sixteen-year-old"]
+        .map(age => "watch my " + age + " Saturday"),
+      "pick my kid up", "who can pick my two kids up", "drop my kid off",
+      "dropping the kids off", "drop my 5 y.o. off", "pick up my kid",
+    ];
+    const benign = ["parents with young kids", "watch my kidney stone symptoms", "watch my 6 y.o. startup",
+      "pick a book for my child up", "pick the parcel up", "pick me up at the airport", "dog sitter available"];
+    expect(risky.filter(body => riskTerms(cfg, body).length === 0)).toEqual([]);
+    expect(benign.filter(body => riskTerms(cfg, body).length > 0)).toEqual([]);
+  });
+
   await b.run("Settings consent: paused is not STOP; global STOP and newer app START project independently", async () => {
     let at = Date.parse("2026-10-09T12:00:00Z");
     const e164 = "+12125550301", store = new MemoryPeopleStore();
