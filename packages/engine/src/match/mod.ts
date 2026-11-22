@@ -1,10 +1,10 @@
 // The generic, pack-free matching core.
 export {
   buildProfiles, internTags, isEntityId, laneCategory, partnerSide,
-  type EntityId, type EntityStanding, type EntityTags, type MatchEntity, type MatchProfile, type Membership,
+  type EntityId, type EntityMask, type EntityStanding, type EntityTags, type MatchEntity, type MatchProfile, type Membership,
   type PackTraits, type PackVectors, type TagInterner, type TagSet,
 } from "./profile.ts";
-export { eligiblePair, intersectCount, pairSideOf, pairValueOf, utilityTerms } from "./pair.ts";
+export { eligiblePair, intersectCount, maskRefusesAdmitted, pairSideOf, pairValueOf, utilityTerms } from "./pair.ts";
 export { buildCandidateIndex, partnerBlock, type CandidateBlock, type CandidateIndex, type Postings } from "./index.ts";
 export {
   bruteForceCandidates, emptySearchTally, mutualEdges, searchCandidates, tallySearch,

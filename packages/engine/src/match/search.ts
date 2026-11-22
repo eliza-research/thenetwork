@@ -3,37 +3,43 @@
 // candidateSearch machine, which keeps the top `searchLimit` and certifies when nothing unchecked
 // can beat them.
 import {
-  enabled, initial, searchMayTouch, searchWindowHigh, searchWindowLow, step, unseenValueBound,
+  enabled, initial, searchMayTouch, searchStopsExact, searchWindowHigh, searchWindowLow, step, unseenValueBound,
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
 } from "../../../core/src/generated/candidateSearch.ts";
-import { lanePairValue, laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
+import { laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
 import { coverageValue, directedUtility, noPairValue, pairValueScale } from "../../../core/src/generated/pairValue.ts";
 import type { SearchTally } from "../types.ts";
 import { pairKey, type World } from "../world.ts";
 import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings, type Span } from "./index.ts";
-import { pairSideOf, pairValueOf, vectorsOf, weightedTerms } from "./pair.ts";
-import { compareText, type EntityId, type MatchProfile, type TagSet } from "./profile.ts";
+import { gatePair, masksAdmit, packValueOf, pairArithmetic, pairValueOf, vectorsOf, weightedTerms, type PairCheck } from "./pair.ts";
+import { compareText, wholeNumber, type EntityId, type MatchProfile, type TagSet } from "./profile.ts";
 
 export interface RankedProfile { readonly profile: MatchProfile; readonly value: number }
+export interface SearchCounters {
+  bounds: number; checksAfterSettled: number; boundViolations: number; packBoundViolations: number; memoHits: number;
+  readonly refusals: Record<string, number>;
+}
 export interface SearchResult {
-  /** Best first: value desc, then ordinal asc. */
   readonly kept: readonly RankedProfile[];
   readonly checks: number;
-  /** Posting entries (and window entries) the walk visited. */
   readonly touches: number;
-  /** True: `kept` equals bruteForceCandidates. False: anything missed has a value <= unseenBound. */
   readonly exact: boolean;
   readonly unseenBound: number;
+  readonly budgetedBy?: "checks" | "touches";
+  readonly counters: SearchCounters;
 }
 
 const byRank = (x: RankedCandidate, y: RankedCandidate): number => y.value - x.value || x.ordinal - y.ordinal;
 
-function resultOf(block: CandidateBlock | undefined, search: CandidateSearch, touches: number): SearchResult {
+const noCounters = (): SearchCounters => ({ bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, memoHits: 0, refusals: {} });
+
+function resultOf(block: CandidateBlock | undefined, search: CandidateSearch, touches: number, counters = noCounters()): SearchResult {
   const kept = [...search.kept].sort(byRank).flatMap(c => {
     const profile = block?.byOrdinal.get(c.ordinal);
     return profile ? [{ profile, value: c.value }] : [];
   });
-  return { kept, checks: search.checks, touches, exact: search.phase === "Exact", unseenBound: search.unseenBound };
+  const budgetedBy = search.phase !== "Budgeted" ? undefined : search.checks >= search.budget ? "checks" : "touches";
+  return { kept, checks: search.checks, touches, exact: search.phase === "Exact", unseenBound: search.unseenBound, ...(budgetedBy ? { budgetedBy } : {}), counters };
 }
 
 /** First index in [lo, hi) whose value is >= `x` (hi when none) in an ascending run read through `at`. */
@@ -117,7 +123,7 @@ export function searchWindowMetrics(block: CandidateBlock, profile: MatchProfile
  * The best `searchLimit` partners of `profile`, with at most `searchBudget` pair checks and at most
  * `searchTouchesPerCheck x searchBudget` posting entries visited.
  */
-export function searchCandidates(w: World, index: CandidateIndex, profile: MatchProfile): SearchResult {
+export function searchCandidates(w: World, index: CandidateIndex, profile: MatchProfile, memo?: PairMemo): SearchResult {
   const limits = laneLimits(profile.lane), { rules } = limits;
   let search = step(initial, { type: "beginSearch", limit: limits.searchLimit, budget: limits.searchBudget });
   const block = partnerBlock(index, profile);
@@ -160,14 +166,14 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
     return unseenValueBound(mine, theirs, complement, returned, rules);
   };
 
-  // spec/candidateSearch.md, "lawCandidateBoundSound": the pair value with the pack term at full
-  // value. Tags, closeness, standings and exchanges are exact, a higher utility never lowers the pair
-  // value, and the pair gate only turns a value into noPairValue, so the bound is never below it.
-  const fullPack = hasPackValue ? pairValueScale : undefined;
+  const packBound = (a: MatchProfile, b: MatchProfile): number | undefined =>
+    !hasPackValue ? undefined : vectors.packBound ? wholeNumber(vectors.packBound(w, a, b), "pack bound") : pairValueScale;
+  const counters = noCounters();
+  const refuse = (reason: string): void => { counters.refusals[reason] = (counters.refusals[reason] ?? 0) + 1; };
+  const known = memo?.begin(profile);
   const pending = new CandidateHeap();
   const touched = new Set<number>();
   let touches = 0, walked = 0, walkSpent = false;
-  /** Touches the positions of `spans`; false when the touch limit stops it first. */
   const visit = (spans: readonly Span[], positionAt: (i: number) => number): boolean => {
     for (const { start, end } of spans) for (let i = start; i < end; i++) {
       if (!searchMayTouch(touches, limits.searchBudget)) return false;
@@ -177,23 +183,43 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       touched.add(position);
       const other = block.profiles[position];
       if (other.memberId === profile.memberId) continue;
-      const bound = lanePairValue(profile.lane, pairSideOf(profile, other, traitCosts, fullPack), profile.side,
-        pairSideOf(other, profile, traitCosts, fullPack), other.side);
-      if (bound >= 0) pending.push({ other, bound });
+      if (!masksAdmit(profile, other)) { refuse("mask_refused"); continue; }
+      counters.bounds++;
+      const packAB = packBound(profile, other), packBA = packBound(other, profile);
+      const bound = pairArithmetic(profile, other, traitCosts, packAB, packBA);
+      if (bound >= 0) pending.push({ other, bound, packAB, packBA });
     }
     return true;
   };
 
-  // Check the best touched candidate while no untouched one can beat its bound. If the pack's
-  // enabled terms still allow an untagged pair after the postings shorter than the window, walk the
-  // whole window.
+  const check = (top: BoundedCandidate): void => {
+    const other = top.other;
+    const reused = known?.get(other);
+    let checked: PairCheck;
+    if (reused !== undefined) {
+      counters.memoHits++;
+      checked = typeof reused === "number" ? { value: reused, refusal: null } : { value: noPairValue, refusal: reused };
+    } else if (!hasPackValue) {
+      checked = gatePair(w, profile, other, top.bound);
+    } else {
+      const packAB = packValueOf(w, vectors, profile, other), packBA = packValueOf(w, vectors, other, profile);
+      if (top.packAB !== undefined && packAB !== undefined && packAB > top.packAB) counters.packBoundViolations++;
+      if (top.packBA !== undefined && packBA !== undefined && packBA > top.packBA) counters.packBoundViolations++;
+      checked = gatePair(w, profile, other, pairArithmetic(profile, other, traitCosts, packAB, packBA));
+    }
+    if (reused === undefined) memo?.keep(profile, other, checked);
+    if (checked.value > top.bound) counters.boundViolations++;
+    if (checked.refusal !== null) refuse(checked.refusal);
+    search = step(search, { type: "checkCandidate", value: checked.value, ordinal: other.ordinal });
+  };
+
   for (;;) {
     const untouched = untouchedBound();
     const top = pending.peek();
     const topBound = top?.bound ?? noPairValue;
     const unseen = Math.max(topBound, untouched);
     const stop: SearchEvent = { type: "closeExact", unseenBound: unseen };
-    if (enabled(search, stop)) return resultOf(block, step(search, stop), touches);
+    if (enabled(search, stop)) return resultOf(block, step(search, stop), touches, counters);
     if (untouched > topBound && !walkSpent) {
       // A range at least as long as the window costs no less than the window, which leaves no one untouched.
       const range = walk[walked];
@@ -203,15 +229,15 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       else walkSpent = true;
       continue;
     }
-    if (!top || search.checks >= limits.searchBudget) {
-      return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent, touchedLeft: top !== undefined }), touches);
-    }
+    const close: SearchEvent = { type: "closeBudgeted", unseenBound: unseen, walkSpent, touchedBound: topBound };
+    if (!top || enabled(search, close)) return resultOf(block, step(search, close), touches, counters);
+    if (searchStopsExact(search, topBound)) counters.checksAfterSettled++;
     pending.pop();
-    search = step(search, { type: "checkCandidate", value: pairValueOf(w, profile, top.other), ordinal: top.other.ordinal });
+    check(top);
   }
 }
 
-interface BoundedCandidate { readonly other: MatchProfile; readonly bound: number }
+interface BoundedCandidate { readonly other: MatchProfile; readonly bound: number; readonly packAB: number | undefined; readonly packBA: number | undefined }
 const ranksAbove = (x: BoundedCandidate, y: BoundedCandidate): boolean =>
   x.bound > y.bound || (x.bound === y.bound && x.other.ordinal < y.other.ordinal);
 
@@ -245,6 +271,25 @@ class CandidateHeap {
   }
 }
 
+export class PairMemo {
+  private readonly waiting = new Map<MatchProfile, Map<MatchProfile, number | string>>();
+  private readonly searched = new Set<MatchProfile>();
+
+  begin(profile: MatchProfile): ReadonlyMap<MatchProfile, number | string> | undefined {
+    this.searched.add(profile);
+    const known = this.waiting.get(profile);
+    this.waiting.delete(profile);
+    return known;
+  }
+
+  keep(a: MatchProfile, b: MatchProfile, checked: PairCheck): void {
+    if (this.searched.has(b)) return;
+    let known = this.waiting.get(b);
+    if (!known) { known = new Map(); this.waiting.set(b, known); }
+    known.set(a, checked.refusal ?? checked.value);
+  }
+}
+
 /**
  * Oracle for the simulator gate only: the same pair function over the whole partner block, no
  * pruning, no segment window (the pair gate refuses pairs whose segments do not reach each other).
@@ -259,9 +304,15 @@ export function bruteForceCandidates(w: World, index: CandidateIndex, profile: M
     .slice(0, laneLimits(profile.lane).searchLimit);
 }
 
-export const emptySearchTally: SearchTally = { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1 };
+export const emptySearchTally: SearchTally = {
+  members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1,
+  bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, touchClosed: 0, checkClosed: 0, memoHits: 0, refusals: {},
+};
 
 export function tallySearch(tally: SearchTally, result: SearchResult): SearchTally {
+  const { counters } = result;
+  const refusals = { ...tally.refusals };
+  for (const [reason, count] of Object.entries(counters.refusals)) refusals[reason] = (refusals[reason] ?? 0) + count;
   return {
     members: tally.members + 1,
     checks: tally.checks + result.checks,
@@ -270,6 +321,14 @@ export function tallySearch(tally: SearchTally, result: SearchResult): SearchTal
     budgeted: tally.budgeted + (result.exact ? 0 : 1),
     empty: tally.empty + (result.kept.length === 0 ? 1 : 0),
     largestUnseenBound: result.exact ? tally.largestUnseenBound : Math.max(tally.largestUnseenBound, result.unseenBound),
+    bounds: (tally.bounds ?? 0) + counters.bounds,
+    checksAfterSettled: (tally.checksAfterSettled ?? 0) + counters.checksAfterSettled,
+    boundViolations: (tally.boundViolations ?? 0) + counters.boundViolations,
+    packBoundViolations: (tally.packBoundViolations ?? 0) + counters.packBoundViolations,
+    touchClosed: (tally.touchClosed ?? 0) + (result.budgetedBy === "touches" ? 1 : 0),
+    checkClosed: (tally.checkClosed ?? 0) + (result.budgetedBy === "checks" ? 1 : 0),
+    memoHits: (tally.memoHits ?? 0) + counters.memoHits,
+    refusals,
   };
 }
 

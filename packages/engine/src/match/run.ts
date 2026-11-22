@@ -9,7 +9,7 @@ import { buildCircles, type Circle } from "./circles.ts";
 import { buildCandidateIndex, type CandidateIndex } from "./index.ts";
 import { pairValueOf } from "./pair.ts";
 import { buildProfiles, compareText, type EntityId, type MatchProfile } from "./profile.ts";
-import { emptySearchTally, mutualEdges, searchCandidates, tallySearch, type MatchEdge, type SearchResult } from "./search.ts";
+import { emptySearchTally, mutualEdges, PairMemo, searchCandidates, tallySearch, type MatchEdge, type SearchResult } from "./search.ts";
 import { standingKey } from "./standing.ts";
 
 const existingFriendPlanProfiles = new WeakMap<World, ReadonlyMap<MemberId, MatchProfile>>();
@@ -36,6 +36,7 @@ export class MatchRun {
   private readonly byId = new Map<EntityId, MatchProfile>();
   private readonly byMember = new Map<MemberId, MatchProfile[]>();
   private readonly searches = new Map<EntityId, SearchResult>();
+  private readonly memo = new PairMemo();
   private readonly laneEdges = new Map<MatchLane, readonly MatchEdge[]>();
   private readonly laneCircles = new Map<MatchLane, readonly Circle[]>();
 
@@ -66,7 +67,7 @@ export class MatchRun {
   candidates(profile: MatchProfile): SearchResult {
     const done = this.searches.get(profile.id);
     if (done) return done;
-    const result = searchCandidates(this.w, this.index, profile);
+    const result = searchCandidates(this.w, this.index, profile, this.memo);
     this.searches.set(profile.id, result);
     return result;
   }

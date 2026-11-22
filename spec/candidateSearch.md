@@ -46,9 +46,21 @@ pure def lawSegmentBlockingComplete(reachesOther: bool, otherReaches: bool): boo
   segmentPairAllowed(reachesOther, otherReaches) implies reachesOther
 ```
 
+### Mutual acceptance masks never drop a pair the pack rules admit
+
+A pack can give a membership one mask per dimension: an integer bitset of what the member is (`own`) and an integer bitset of what the member accepts (`accepts`). Age bands, stated dealbreakers and pools are examples. A member accepts another when, in every dimension, the member's `accepts` shares a bit with the other's `own`. The one pair gate admits a pair only when each member accepts the other, and the search tests the same masks when it touches a candidate, before any arithmetic. So the search and the brute-force oracle agree, and a refused candidate costs one touch and no bound.
+
+A pack gives masks only as a superset of its own pair rules: a mask never refuses a pair that the pack rules admit. As for segments, the exactness check cannot see a mask that breaks this, because the search and the oracle use the same gate. The engine therefore exposes a monitor that tells, for one pair, whether the masks refuse it and the pack rules admit it. It must find no such pair. This rule is new: a pack can now refuse a candidate with a few bit operations at the touch, before the search computes a bound, and the gate applies the same test so that the oracle still agrees.
+
+```quint
+pure def maskPairAllowed(acceptsOther: bool, otherAccepts: bool): bool = acceptsOther and otherAccepts
+```
+
 ### A bound is never below the value of the pair it covers
 
-The shell bounds the value of each candidate before it checks the candidate. For a candidate it touched, it knows both tag sets, both standings and both exchanges, so it computes the lane pair value with each utility replaced by an upper bound: the tag terms and the closeness are exact, and only the pack term, which the shell does not read before a check, counts at full value. The pair gate (minors, blocks, holds) can only lower a value to `noPairValue`. A higher utility never lowers the pair value: the floors are the only admission conditions that read a utility, and the harmonic value does not decrease when either utility increases. So the bound is never below the pair value (`lawCandidateBoundSound`).
+The shell bounds the value of each candidate before it checks the candidate. For a candidate it touched, it knows both tag sets, both standings and both exchanges, so it computes the lane pair value with each utility replaced by an upper bound: the tag terms and the closeness are exact, and only the pack term, which the shell does not read before a check, counts at full value or at the pack bound (below). When the pack gives no pack value, the bound is the pair arithmetic itself, and the check adds only the pair gate. The pair gate (minors, blocks, holds) can only lower a value to `noPairValue`. A higher utility never lowers the pair value: the floors are the only admission conditions that read a utility, and the harmonic value does not decrease when either utility increases. So the bound is never below the pair value (`lawCandidateBoundSound`).
+
+A pack that supplies a pack value can also supply a pack bound for a touched candidate: an upper bound on its directed pack value that it computes before the check. The shell then uses the pack bound in place of the full value. The pack must keep every pack value at or below its pack bound. A weighted term does not fall when its value rises (`lawPackBoundSound`), so the utility with the pack bound is at least the utility with the pack value, and `lawCandidateBoundSound` covers the pair. The search counts each check whose value is above the bound it used, and each pack value above its pack bound; both counts must be 0. This rule changed in two ways: the pack bound (`lawPackBoundSound`) replaces the full pack value when the pack supplies one, so that a touched bound can fall below the floor and the check is not made; and without a pack value the check reuses the bound as the arithmetic, so that the shell does not compute the same pair value twice.
 
 For a candidate it did not touch, the shell knows only upper bounds of the two utilities and the two exchanges. When a bound is below a required floor, no such pair has a value. Otherwise the harmonic mean of the utility bounds covers the pair because the standing penalty is nonnegative (`lawUnseenBoundSound`). The common bound remains sound when the shell can supply a higher lower bound on the penalty (`lawBucketBoundSound`).
 
@@ -78,6 +90,11 @@ pure def lawCandidateBoundSound(side: PairSide, other: PairSide, offset: int, ru
   (side.utility <= utilityBound and other.utility <= otherUtilityBound) implies
     pairValue(side, other, offset, rules)
       <= pairValue({ ...side, utility: utilityBound }, { ...other, utility: otherUtilityBound }, offset, rules)
+
+pure def lawPackBoundSound(weight: int, packValue: int, packBound: int): bool =
+  packValue <= packBound implies
+    utilityTermWeight({ weight: weight, value: packValue }) * boundedValue(packValue)
+      <= utilityTermWeight({ weight: weight, value: packBound }) * boundedValue(packBound)
 
 pure def lawUnseenBoundSound(side: PairSide, other: PairSide, offset: int, rules: PairRules, utilityBound: int, otherUtilityBound: int, exchangeBound: int, otherExchangeBound: int): bool =
   and {
@@ -229,15 +246,17 @@ pure def sometimesExact(s: CandidateSearch): bool = s.phase == Exact and s.unsee
 
 ### A search that spends its budget or its posting walk before it is exact reports the value it may have missed
 
-A search that cannot stop exactly closes as Budgeted when it reaches its check budget, or when the shell has spent its posting walk (`walkSpent`) and has no touched candidate left to check. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). It never fills the gap with a pair that has no pair value. A closed search does not change.
+A search that cannot stop exactly closes as Budgeted when it reaches its check budget, or when the shell has spent its posting walk (`walkSpent`) and no touched candidate can still enter the kept list. The shell passes as `touchedBound` the highest bound of the touched candidates it has not checked, or `noPairValue` when none is left. No touched candidate can enter when that bound is below every kept value of a full list, the same test as an exact stop (`searchStopsExact`). More checks could then only drop candidates, so the search closes with the kept list that the checks would leave. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). It never fills the gap with a pair that has no pair value. A closed search does not change. This rule changed: before, a search whose walk was spent closed only when no touched candidate was left, so it spent its whole check budget on candidates that could no longer enter; now it closes when none of them can enter, with the same kept list.
 
-One search makes at most `budget` pair checks (`alwaysChecksWithinBudget`). In addition to the touch limit, the shell locates its posting ranges with binary searches, sorts those ranges by length, and ranks each touched candidate at most once in a heap.
+One search makes at most `budget` pair checks (`alwaysChecksWithinBudget`). The pair value is symmetric ([`lawPairValueSymmetric`](pairValue.md)), so a run keeps the value of each checked pair until the other member's search checks it, and that search reuses the value. A reused value still counts as one check. The reuse is sound only because the pair gate is symmetric too: the core checks (minors, blocks, holds, segments, masks) test both directions, and a pack pair rule must refuse a pair exactly when it refuses the reversed pair. A pair rule that tests only one direction breaks the reuse, and the exactness check against brute force would not show it on the reused pairs. The reuse is new: it removes the second computation of a pair value that the other side already checked. In addition to the touch limit, the shell locates its posting ranges with binary searches, sorts those ranges by length, and ranks each touched candidate at most once in a heap.
 
 ```quint
-pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedLeft: bool): bool =
-  s.phase == Scanning and (s.checks >= s.budget or (walkSpent and not(touchedLeft))) and not(searchStopsExact(s, unseenBound))
+pure val touchedBoundValues = Set(-1, 2, 4, 6)
 
-pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedLeft: bool): CandidateSearch =
+pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedBound: int): bool =
+  s.phase == Scanning and (s.checks >= s.budget or (walkSpent and searchStopsExact(s, touchedBound))) and not(searchStopsExact(s, unseenBound))
+
+pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedBound: int): CandidateSearch =
   { ...s, phase: Budgeted, unseenBound: unseenBound }
 
 pure def stepClosedSearchStaysClosed(before: CandidateSearch, after: CandidateSearch): bool =
