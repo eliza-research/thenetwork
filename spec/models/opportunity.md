@@ -88,7 +88,7 @@ module opportunity {
   pure val FEEDBACK_DUE = 168  // N:2590
 
   // What the member really says (the readers see only the text).
-  pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel",
+  pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel", "past_time",
                          "fb_good", "fb_other_noshow", "fb_self_noshow", "ack", "job_post")
   // Intents that are consent to meet (AGENTS.md decision 11: only answer "yes" is consent, a counter is
   // not a yes). "yes, but none of those times" is a yes to the meeting.
@@ -450,7 +450,8 @@ module opportunity {
   // parseProbeReply with time options (classify.ts:669-731) merged by the probe branch (N:766-777).
   // A bare "counter" ("how about next week instead?") is "unclear" (consentOf, classify.ts:598, SD-041); a
   // counter with a yes word ("sounds fun! how about next week") is a yes with no time, the same reading as
-  // "yes_other_times"; "it was great" -> yes (an affirmation); "I couldn't make it" -> no (a can't);
+  // "yes_other_times". "Saturday was great" is a qualified time reference and stays unclear, even
+  // with a model yes. "I couldn't make it" reads no in this historical oracle.
   // "ok" -> yes, unclear after two of our messages in a row (N:774), and unclear when another message
   // followed the unclarified probe: the "ok" or "Thanks! 👍" answers that message, not the probe.
   pure def readProbe(intent: str, outboundBefore: int, answersOther: bool): str =
@@ -1170,6 +1171,19 @@ module opportunity {
       .then(answer("b", "fb_good", ALL_OPEN)).then(settled)
       .then(tick(1, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").finalized and s.req.outcome == "fulfilled" and safety)
+
+  run pastTimeCannotAcceptProbeTest =
+    init
+      .then(submit("o1")).then(settled)
+      .then(approve("o1", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "past_time", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "probing" and stat(s, "o1", "b") == "probing"
+        and op(s, "o1").revealSent == Set() and mm(s, "b").aw.kind == "probe" and safety)
+      .then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "scheduled" and op(s, "o1").revealSent == Set("a", "b") and safety)
 
   // A reject closes the item and nobody is contacted (decide, reject).
   run rejectTest =

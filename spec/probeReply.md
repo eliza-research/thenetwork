@@ -34,6 +34,18 @@ pure def pickedTimes(chosen: List[str], offered: List[str]): List[str] =
   if (chosen.length() > 0) chosen else offered
 ```
 
+### A past time reference leaves the offered time open
+
+A clause that describes a past time or a past option does not select or refuse an offered time. Keep a separate current choice or clear refusal in the same reply. When the reply has only a past time reference and no current choice or clear refusal, ask again. Treat the past time reference as a qualified signal so a model reading cannot select a time for it.
+
+```quint
+pure def historicalProbeTimeClause(describesPast: bool, timeReference: bool): bool =
+  describesPast and timeReference
+
+pure def lawPresentProbeTimeKeepsItsClause(timeReference: bool): bool =
+  not(historicalProbeTimeClause(false, timeReference))
+```
+
 ### A suggested alternative needs a separate yes before asking for new times
 
 A counter-offer alone does not accept the opportunity. A clear yes stated before a request for a different time may lead to a new time offer, when the previous offer included times. It does not accept any of the old times.
