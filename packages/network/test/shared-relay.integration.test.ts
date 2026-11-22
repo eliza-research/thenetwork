@@ -13,6 +13,7 @@ import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {loadSnapshot} from "../service/snapshot.ts";
+import {importPublicEvents} from "../service/import-public-events.ts";
 import {PgAudit} from "../../observatory/src/staff.ts";
 import type {AuditEntry} from "../../observatory/src/types.ts";
 import type {NetworkState} from "../src/network.ts";
@@ -195,13 +196,21 @@ test("an explicit attempt to get a private number directly starts a watch and pr
     expect(await request.json()).toMatchObject({outcome:"handled"});
     expect(await rt.readState(n=>[n.trust.level(fromId),n.eligible(fromId,undefined,true)])).toEqual(["watch",false]);
     clock.advance(MINUTE);
+    const title = "Saturday nature walk";
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{
+      guid: "202", title, categories: "Nature | All ages", location: "McCarren Park",
+      coordinates: "40.7206,-73.9518", starttime: "2026-10-10T14:00:00", endtime: "2026-10-10T15:00:00",
+      link: { url: "https://www.nycgovparks.org/events/2026/10/10/relay-fixture-202" },
+    }]))).toEqual({ published: true, events: 1 });
     const plans=await post(TURN_PATH,turn(a,"contact-bypass-concierge","Anything fun this weekend in Williamsburg?"));
     expect(plans.status).toBe(200);
     const answer=await plans.json();
-    expect(answer).toMatchObject({outcome:"handled"});
-    expect(JSON.stringify(answer.replies)).toContain("A few ideas nearby");
+    expect(answer).toMatchObject({outcome:"handled",reason:"solo_events"});
+    expect(answer.replies[0]).toContain(title);
     expect(posts).toBe(before);
   } finally {
+    clock.advance(MINUTE);
+    await importPublicEvents(sql, clock, async () => Response.json([]));
     await rt.unitOfWork(n=>n.trust.forget(fromId));
     await fixturePair();
   }
