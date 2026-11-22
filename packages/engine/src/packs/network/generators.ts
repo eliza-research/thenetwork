@@ -8,6 +8,7 @@ import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts
 import { welcomePairMayRank } from "../../../../core/src/generated/currentPairRestrictions.ts";
 import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
+import { directIntentKeepsHobby } from "../../../../core/src/generated/networkIntentLane.ts";
 import { recentRepeatSource, repeatEventMayAnchor, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
@@ -130,7 +131,9 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
 function anchoredCandidate(w: World, pair: AnchoredPair, rest: Pick<MatchedFields, "kind" | "generator" | "channels" | "via" | "warm">, prefix: string): Candidate {
   const { profile, partner, value, intent, offer, cofounderIntents } = pair;
   const a = profile.memberId, b = partner.memberId;
-  const category = laneCategory(profile.lane);
+  // spec/networkIntentLane.md, "A direct introduction keeps its hobby purpose"
+  const hobby = directIntentKeepsHobby(rest.generator === "intent_to_capability", profile.lane === "Friend", intent.category === "hobby");
+  const category = hobby ? "hobby" : laneCategory(profile.lane);
   return pairCandidate(w, profile, partner, value, {
     ...rest, category, roles: { [a]: roleOf(profile), [b]: roleOf(partner) }, format: "one_to_one",
     objective: cofounderIntents ? "Meet a potential cofounder" : `${prefix}: ${label(offer) ?? CATEGORY_LABEL[category]}`,

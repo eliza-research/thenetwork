@@ -107,7 +107,7 @@ import { chooseFriendsPlanWindow, friendsPlanOfferedWindows, friendsPlanProbeDel
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { publicEventRevision } from "./public-event-revision.ts";
 import {
-  cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
+  cachedStandingIntentsCurrent, canQueueEngineOpportunity, knownWantCategory, learnedIntentDays, learnedIntentMayProject,
   standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue, standingPresencePhase,
 } from "../../core/src/generated/standingIntent.ts";
 import {
@@ -133,7 +133,7 @@ import { bookingWithdrawalAcknowledgmentAllowed } from "../../core/src/generated
 import { recommendationLocation } from "../../core/src/generated/plansLocation.ts";
 import { currentPairAllowed } from "../../core/src/generated/currentPairRestrictions.ts";
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
-import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
@@ -2972,7 +2972,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (def) {
       const strong = def.needsSkills.find(sk => k.strongSkills.has(sk));
       const skill = def.needsSkills.find(sk => k.skills.has(sk));
-      const pool = def.pool && [...k.desires].some(d => desireById.get(d)?.pool === def.pool);
+      const pool = def.pool && [...k.desires.keys()].some(d => desireById.get(d)?.pool === def.pool);
       const interest = def.needsInterests.filter(t => k.interests.has(t));
       if (strong) { s = 1; why = said(strong, theySkill(strong)); }
       else if (pool) { s = 0.85; }
@@ -5891,15 +5891,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     const me = known.get(id);
     if (!me) return 0;
     let best = 0;
-    for (const d of me.desires) {
+    for (const [d, categories] of me.desires) {
       const def = desireById.get(d);
-      if (!def || def.category !== category) continue;
+      if (!def || !categories.has(category)) continue;
       for (const o of others) {
         const k = known.get(o);
         if (!k) continue;
         if (def.category === "romance") continue; // the engine owns romance opt-in checks
         if (def.needsSkills.some(sk => k.strongSkills.has(sk))) best = Math.max(best, 1);
-        else if (def.pool && [...k.desires].some(x => desireById.get(x)?.pool === def.pool)) best = Math.max(best, 0.85);
+        else if (def.pool && [...k.desires].some(([other, peerCategories]) => peerCategories.has(category) && desireById.get(other)?.pool === def.pool)) best = Math.max(best, 0.85);
         else if (def.needsSkills.some(sk => k.skills.has(sk))) best = Math.max(best, 0.6);
         else if (def.needsInterests.some(t => k.interests.has(t))) best = Math.max(best, 0.45);
       }
@@ -5937,9 +5937,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       : { help: (t: string) => `${pair ? "they" : "someone here"} can help you ${t}`, both: (t: string) => `${pair ? "you're both" : "others here are"} into ${t}` };
     // Only what the others allowed us to share (network-consent-11): a skill or an interest on a
     // shareable facet. Their wants are never quoted ("who also wants to ..."): wants are matchable only.
-    for (const d of me.desires) {
+    for (const [d, categories] of me.desires) {
       const def = desireById.get(d);
-      if (!def || def.category !== o.category || def.category === "romance") continue;
+      if (!def || !categories.has(o.category) || def.category === "romance") continue;
       if (others.some(k => def.needsSkills.some(sk => k.strongSkills.has(sk) && k.sharedSkills.has(sk)))) return say.help(def.text);
     }
     const shared = [...me.interests].find(t => others.some(k => k.sharedInterests.has(t)));
@@ -6181,7 +6181,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const def = desireById.get(d);
         if (!def || !this.learnedLive(m.id, d, statedAt, now, snap.intents)) continue;
         // The intent is as old as the member's statement, not refreshed on every run.
-        intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: learnedIntentDays, status: "active", createdAt: statedAt });
+        intents.push(learnedStandingIntent(m.id, def, statedAt));
       }
     }
     const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
@@ -6290,7 +6290,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const tags = def ? def.needsInterests : r.tags;
       const area = this.member(r.memberId).area;
       const helper = [...this.members.values()].find(x => x.id !== r.memberId && ready(x) && (this.minutesBetween(area, x.area) ?? Infinity) <= 30
-        && (tags.some(t => known.get(x.id)?.interests.has(t)) || (def?.pool && [...(known.get(x.id)?.desires ?? [])].some(d => desireById.get(d)?.pool === def.pool))));
+        && (tags.some(t => known.get(x.id)?.interests.has(t)) || (def?.pool && [...(known.get(x.id)?.desires.keys() ?? [])].some(d => desireById.get(d)?.pool === def.pool))));
       if (helper) ask(helper, copy.growthGap(area, def ? def.text.replace(/^(find|meet|get|be part of|try|learn to|start) /, "") : "people to hang out with"), "gap");
     }
     for (const m of this.members.values()) {
@@ -7114,7 +7114,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.knownCache && cachedStandingIntentsCurrent(this.knownCache.firstIntentExpiry, now)) return this.knownCache.profiles;
     let firstIntentExpiry = Infinity;
     const map = new Map<MemberId, KnownProfile>();
-    const get = (id: MemberId) => { let x = map.get(id); if (!x) { x = { interests: new Set(), skills: new Set(), strongSkills: new Set(), desires: new Set(), intents: 0, sharedInterests: new Set(), sharedSkills: new Set() }; map.set(id, x); } return x; };
+    const get = (id: MemberId) => { let x = map.get(id); if (!x) { x = { interests: new Set(), skills: new Set(), strongSkills: new Set(), desires: new Map(), intents: 0, sharedInterests: new Set(), sharedSkills: new Set() }; map.set(id, x); } return x; };
+    const ontology = (this.opts.pack ?? networkPack).ontology;
+    let config: ReturnType<typeof resolveConfig> | undefined;
+    // spec/standingIntent.md, "Use the matching category for known want evidence"
+    const addDesire = (profile: KnownProfile, def: DesireDef, intent: Intent) => {
+      const relabelled = intent.category === "growth"
+        ? ontology.relabelIntent?.(intent, config ??= resolveConfig(this.effectiveEngineConfig()))
+        : undefined;
+      const category = knownWantCategory(intent.category, relabelled ?? "") as Category;
+      const categories = profile.desires.get(def.id) ?? new Set<Category>();
+      categories.add(category);
+      profile.desires.set(def.id, categories);
+    };
     const skillSources = new Map<string, Set<string>>();
     const interestTags = new Set(INTERESTS.map(i => i.tag)), skillTags = new Set(SKILLS.map(s => s.tag));
     for (const f of snap.facets) {
@@ -7148,7 +7160,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       firstIntentExpiry = Math.min(firstIntentExpiry, standingIntentDeadline(i));
       const x = get(i.memberId); x.intents++;
       const def = [...desireById.values()].find(d => d.text === i.objective);
-      if (def) x.desires.add(def.id);
+      if (def) addDesire(x, def, i);
     }
     for (const m of this.members.values()) {
       const x = get(m.id);
@@ -7156,7 +7168,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.vouchedSkills.get(m.id)?.forEach(t => x.strongSkills.add(t));
       for (const [d, at] of m.learned.desires) if (this.learnedLive(m.id, d, at, now, snap.intents)) {
         firstIntentExpiry = Math.min(firstIntentExpiry, standingIntentDeadline({ createdAt: at, horizonDays: learnedIntentDays }));
-        x.desires.add(d);
+        const def = desireById.get(d);
+        if (def) addDesire(x, def, learnedStandingIntent(m.id, def, at));
         x.intents++;
       }
     }
@@ -7859,7 +7872,13 @@ export function forbiddenProvider(net: ConsentNetwork, memberOf?: (to: string) =
  * (facet scope "shareable"). Only these may appear in a message to someone else (network-consent-11);
  * the rest is for matching only.
  */
-interface KnownProfile { interests: Set<string>; skills: Set<string>; strongSkills: Set<string>; desires: Set<string>; intents: number; sharedInterests: Set<string>; sharedSkills: Set<string> }
+interface KnownProfile { interests: Set<string>; skills: Set<string>; strongSkills: Set<string>; desires: Map<string, Set<Category>>; intents: number; sharedInterests: Set<string>; sharedSkills: Set<string> }
+
+function learnedStandingIntent(memberId: MemberId, desire: DesireDef, statedAt: number): Intent {
+  const tags = [...desire.needsInterests, ...desire.needsSkills, desire.pool ?? ""].filter(Boolean);
+  return { id: `${memberId}:li:${desire.id}`, memberId, objective: desire.text, category: desire.category,
+    details: `format: ${desire.format}; tags: ${tags.join(",")}`, horizonDays: learnedIntentDays, status: "active", createdAt: statedAt };
+}
 
 // ------------------------------------------------------------------ relay views (relay.ts)
 /** A member as the relay sees them: the lowest known age (undefined when unsure: fails closed), opt-out and holds. */
