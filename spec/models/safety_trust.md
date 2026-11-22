@@ -178,8 +178,6 @@ module safety_trust {
   pure val REPORT_KINDS = Set("harassment", "no_show", "minor")
   // New York local hours of a meeting: a weekend afternoon, a 7 pm and an 8 pm date
   pure val HOURS = Set(14, 19, 20)
-  // New York is UTC-4 (summer) or UTC-5 (winter); the model uses -4 (the smaller shift)
-  pure val NY_UTC_SHIFT = 4
   // ghost persons a member can mean: a member, or somebody who is not a member (a boss, a landlord)
   pure val MEANT = Set("ana", "ben", "cy", "boss")
 
@@ -195,17 +193,13 @@ module safety_trust {
   pure def imin(a: int, b: int): int = if (a < b) a else b
   pure def imax(a: int, b: int): int = if (a > b) a else b
 
-  // engine slop profile.ts:224 slotOf: weekday evenings 0..4, Saturday 5 / 6, Sunday 7 / 8, else none (-1).
-  // Day 0 is a Monday.
-  pure def slotFor(dow: int, eve: bool): int =
-    if (dow <= 4) (if (eve) dow else -1) else if (dow == 5) (if (eve) 6 else 5) else (if (eve) 8 else 7)
-  // The rule: the slot of the meeting where the members are (New York local time).
-  pure def slotNY(day: int, hour: int): int = slotFor(day % 7, hour >= 17)
-  // The code: slotOf reads getUTCDay and getUTCHours (W3-237, SD-442 remainder).
-  pure def slotUTC(day: int, hour: int): int = {
-    val h = hour + NY_UTC_SHIFT
-    slotFor((day + h / 24) % 7, h % 24 >= 17)
-  }
+  // meetingSettlement.md: completedMeetingSlot in the booked zone. The model stores local day and hour
+  // directly. The runtime resolves IANA zones and DST outside the model. Day 0 is a Monday.
+  pure def slotFromLocalParts(dow: int, hour: int): int =
+    if (dow < 0 or dow > 6 or hour < 0 or hour > 23) -1
+    else if (dow < 5) (if (hour >= 17) dow else -1)
+    else if (dow == 5) (if (hour >= 17) 6 else 5)
+    else if (hour >= 17) 8 else 7
   // decisions.ts:109 outboundKind (a proved LemmaScript core; the model calls it, it does not re-prove it)
   pure def outboundKind(reply: bool, causal: bool, replyingTo: bool, safetyMeta: bool, proactive: bool): str =
     if (reply and (causal or replyingTo)) "reply" else if (safetyMeta) "safety" else if (proactive) "proactive" else "transactional"
@@ -620,11 +614,10 @@ module safety_trust {
     }
   }
 
-  // onFeedback's record: one per answer, about this member (by), at the meeting time (SD-222, SD-442), with the
-  // people the booked plan reached (bookedTold, SD-044), and the slot that slotOf reads from it (UTC, W3-237).
-  pure def recordOf(o: Opp, m: Mid, selfNoShow: bool): Inter =
-    { parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: o.meetingAt, meetingAt: o.meetingAt, by: m,
-      hour: o.meetHour, slot: slotUTC(o.meetingAt, o.meetHour) }
+  // Feedback keeps its receipt day. The dating slot comes from the booked meeting's local day and hour.
+  pure def recordOf(o: Opp, m: Mid, selfNoShow: bool, feedbackAt: int): Inter =
+    { parts: o.told, outcome: if (selfNoShow) "no_show" else "completed", at: feedbackAt, meetingAt: o.meetingAt, by: m,
+      hour: o.meetHour, slot: slotFromLocalParts(o.meetingAt % 7, o.meetHour) }
 
   // The answer to the check-in after a meeting (onFeedback 2636). `intent`: what the member means ("fine",
   // "report", "selfNoShow"); `reader`: checkInReport's output (an oracle). After SD-067 a happy answer reads
@@ -645,7 +638,7 @@ module safety_trust {
     // postDateReports on slop and peon (SD-221); never for a plan
     val reportKind = if (o.kind == "date") reader else "none"
     val s1 = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-      inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow"))) }
+      inters: s0.inters.union(Set(recordOf(o, m, intent == "selfNoShow", s0.now))) }
     // checkInReported -> blockAndReport for each other (SD-229); the member means the person of the date
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
@@ -685,7 +678,7 @@ module safety_trust {
     val first = not(o.feedbackFrom.contains(m))
     val s1 = if (first) { ...s0,
         opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-        inters: s0.inters.union(Set(recordOf(o, m, false))) } else s0
+        inters: s0.inters.union(Set(recordOf(o, m, false, s0.now))) } else s0
     all {
       s.live.get(m), inboundOk(s, p), lvl(s0, m) != "hold", meant != p, REPORT_KINDS.contains(kind),
       if (win == Set())
@@ -1187,11 +1180,9 @@ module safety_trust {
   val noShowCountsAbsentOnly = ALL_MIDS.forall(m => s.live.get(m) implies
     noShows(s, m) <= OPP_IDS.filter(k => s.opps.get(k).absent.contains(m) and s.opps.get(k).stage != "deleted").size())
 
-  // profile.ts attendedSlots are the slots the member attended: the meeting's slot, not the answer's (days of
-  // the week; the UTC hour that slotOf still reads is not modelled). SD-442 (fixed in 581888d, in part).
-  // W3-225: the model now has the New York hour and slotOf's UTC reading; this rule fails for an 8 pm or a 2 pm
-  // meeting (W3-237, SD-442 remainder; engine slop profile.ts:224-230).
-  val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies i.slot == slotNY(i.meetingAt, i.hour))
+  // The Slop profile reads completed attendance using the booked meeting time in its local zone.
+  val slotFromMeeting = s.inters.forall(i => i.outcome == "completed" implies
+    i.slot == slotFromLocalParts(i.meetingAt % 7, i.hour))
 
   // PRD F23 "'report' from any channel ... Reports create a safety case"; the slop and peon check-in copy. A
   // report about someone the member met is filed, as met, whatever app the message comes in on. SD-220
@@ -1557,14 +1548,14 @@ module safety_trust {
       .then(checkIn("o1", BEN_S, "selfNoShow", "none"))
       .expect(noShowCountsAbsentOnly and noShows(s, ANA_S) == 0 and noShows(s, BEN_S) == 1)
 
-  // SD-442 (fixed in part): the answer comes the next day; the record has the meeting day.
+  // SD-442: the answer comes the next day. The record keeps the feedback day and the earlier booked slot.
   run sd442SlotTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set()))
       .then(tick(1))
       .then(checkIn("o1", ANA_S, "fine", "none"))
-      .expect(slotFromMeeting and s.inters.forall(i => i.at == 0))
+      .expect(slotFromMeeting and s.inters.forall(i => i.at == 1 and i.meetingAt == 0 and i.slot == 0))
 
   // Upstream PR #496: ben shares his profile, then staff ban him. The ban revokes the grant and the pending text in
   // its transaction. A later report or share text is held; "leave <app>" still works.
@@ -1766,14 +1757,13 @@ module safety_trust {
       .then(tick(14))
       .expect(credibleT(s.trust.get(ANA_S), s.now))
 
-  // W3-225, W3-237 (SD-442 remainder): an 8 pm New York date on a Monday is 00:00 UTC on Tuesday; slotOf gives
-  // no evening slot.
+  // 8 pm in New York on Monday is midnight UTC on Tuesday during daylight saving time.
   run w3_237SlotZoneTest =
     init
       .then(bookDateAt("o1", "slop", "ana", "ben", 20, false))
       .then(meet("o1", Set()))
       .then(checkIn("o1", ANA_S, "fine", "none"))
-      .expect(not(slotFromMeeting) and s.inters.exists(i => i.slot == -1))
+      .expect(slotFromMeeting and s.inters.exists(i => i.slot == 0))
 
   run relaySelfAgeCommitsBeforeDispatchTest =
     init

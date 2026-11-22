@@ -18,8 +18,9 @@
 // NO RACE OR ETHNICITY: there is no field for it; tags that look like one are dropped here, so no
 // rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched, DAY, temporaryPresenceWindow } from "@thenetwork/core";
+import { canBeMatched, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
+import { completedMeetingSlot } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
@@ -231,15 +232,6 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
 const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
-/** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */
-function slotOf(t: number): number | undefined {
-  const d = new Date(t);
-  const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
-  const eve = d.getUTCHours() >= 17;
-  if (dow <= 4) return eve ? dow : undefined;
-  return dow === 5 ? (eve ? 6 : 5) : (eve ? 8 : 7);
-}
-
 function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, History> {
   const out = new Map<MemberId, History>();
   const h = (id: MemberId) => { let x = out.get(id); if (!x) { x = emptyHistory(); out.set(id, x); } return x; };
@@ -255,10 +247,14 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "declined") for (const id of r.declinedBy ?? []) h(C(id)).no++;
     if (r.outcome === "cancelled") for (const id of r.declinedBy ?? []) h(C(id)).backouts++;
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
-    if (r.outcome === "completed") for (const id of r.participants) {
-      const x = h(C(id)); x.dates++;
-      const s = slotOf(r.at);
-      if (s !== undefined) x.attendedSlots.push(s);
+    if (r.outcome === "completed") {
+      // Older direct engine inputs, including the dating world's UTC calendar, store the meeting start in at.
+      const parts = r.bookedMeeting === null ? undefined : localParts(r.bookedMeeting?.at ?? r.at, r.bookedMeeting?.timeZone ?? "UTC");
+      const slot = parts ? completedMeetingSlot(parts.weekday, parts.hour) : -1;
+      for (const id of r.participants) {
+        const x = h(C(id)); x.dates++;
+        if (slot >= 0) x.attendedSlots.push(slot);
+      }
     }
     if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
   }

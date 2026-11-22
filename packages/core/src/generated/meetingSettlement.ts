@@ -325,6 +325,19 @@ export function lawFeedbackReplyCannotReopenAttendance(receivedElapsedMs: number
   return !meetingFeedbackCanSettle(true, receivedElapsedMs, handledElapsedMs);
 }
 
+/** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
+//@ pure
+export function completedMeetingSlot(localWeekday: number, localHour: number): number {
+  return localWeekday < 0 || localWeekday > 6 || localHour < 0 || localHour > 23 ? -1 : (localWeekday < 5 ? (localHour >= 17 ? localWeekday : -1) : (localWeekday === 5 ? (localHour >= 17 ? 6 : 5) : (localHour >= 17 ? 8 : 7)));
+}
+
+/** Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time (spec/meetingSettlement.md) */
+//@ pure
+export function lawWeekdayMeetingSlotNeedsEvening(localWeekday: number, localHour: number): boolean {
+  //@ ensures \result === true
+  return !(localWeekday < 5 && localHour < 17) || completedMeetingSlot(localWeekday, localHour) === -1;
+}
+
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): boolean {
@@ -339,17 +352,17 @@ export function attendanceBookingReceived(accepted: boolean, exactReceipt: boole
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
-export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
-  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
-  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
-  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
+export function lawAttendanceNeedsExactBookingReceipt(accepted: boolean, receiptAt: number, settledAt: number): boolean {
+  //@ ensures \result === true
+  return !attendanceBookingReceived(accepted, false, receiptAt, settledAt);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
-export function lawAttendanceNeedsExactBookingReceipt(accepted: boolean, receiptAt: number, settledAt: number): boolean {
-  //@ ensures \result === true
-  return !attendanceBookingReceived(accepted, false, receiptAt, settledAt);
+export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
+  const local_1 = evidence.reportedMissing && evidence.receivedFeedbackPrompt;
+  const local_2: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && local_1 ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
+  return { mark: local_2, logFeedback: local_2 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_2 !== "Attended" && !evidence.hasFeedback && local_1 };
 }
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
