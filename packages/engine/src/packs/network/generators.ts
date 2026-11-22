@@ -8,7 +8,7 @@ import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts
 import { welcomePairMayRank } from "../../../../core/src/generated/currentPairRestrictions.ts";
 import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
-import { recentRepeatSource, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
+import { recentRepeatSource, repeatEventMayAnchor, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import type { GeneratorName } from "../../config.ts";
@@ -385,16 +385,25 @@ export function secondEncounter(ctx: GenCtx): Candidate[] {
     if (!wantsRepeat(a, b, r.id) || !wantsRepeat(b, a, r.id)) continue;
     const ma = w.get(a), mb = w.get(b);
     const pair = bestLanePair(ctx, a, b);
-    if (!ma || !mb || !pair) continue;
+    if (!ma || !mb || !pair || !w.canMeet([a, b])) continue;
+    const matchesFormat = (category: Category, format: Format) =>
+      ma.m.prefs.formats.includes(format) && mb.m.prefs.formats.includes(format)
+      && pairReason(w, a, b, category, pair.a.lane) === null
+      && memberReason(w, a, { category, role: "peer", format, timeSensitive: false }) === null
+      && memberReason(w, b, { category, role: "peer", format, timeSensitive: false }) === null;
     // Next context: the upcoming event with the most shared interests (earliest first on a tie).
     const theirs = memberTags(w, b).interests;
     const hits = new Map<NetworkEvent, number>();
     for (const tag of memberTags(w, a).interests) if (theirs.has(tag)) for (const ev of eventsByTag.get(tag) ?? []) hits.set(ev, (hits.get(ev) ?? 0) + 1);
-    const event = [...hits].sort((x, y) => y[1] - x[1] || x[0].start - y[0].start || compareText(x[0].id, y[0].id))[0]?.[0];
+    const event = [...hits].sort((x, y) => y[1] - x[1] || x[0].start - y[0].start || compareText(x[0].id, y[0].id))
+      .find(([ev]) => {
+        const overlap = w.overlap([a, b], ev.start, ev.end, ev.city);
+        const covers = overlap?.city === ev.city && overlap.intervals.some(([start, end]) => start <= ev.start && end >= ev.end);
+        return repeatEventMayAnchor(matchesFormat(ev.category, "event"), covers);
+      })?.[0];
     const category: Category = event?.category ?? laneCategory(pair.a.lane);
     const format: Format = event ? "event" : "one_to_one";
-    if (memberReason(w, a, { category, role: "peer", format, timeSensitive: false })
-      || memberReason(w, b, { category, role: "peer", format, timeSensitive: false })) continue;
+    if (!event && !matchesFormat(category, format)) continue;
     const shared = ma.share.find(f => f.tags.some(t => mb.share.some(g => g.tags.includes(t))));
     out.push(pairCandidate(w, pair.a, pair.b, pair.value, {
       kind: "second_encounter", generator: "second_encounter", category,

@@ -50,6 +50,19 @@ export function lawRepeatNeedsBothResponses(firstYes: boolean, eligible: boolean
   return !queueRepeat(firstYes, false, eligible, pairAvailable, alreadyQueued);
 }
 
+/** Story: Consider another meeting after a mutual positive experience / Use a public event only when both members can attend it (spec/repeatEncounter.md) */
+//@ pure
+export function repeatEventMayAnchor(bothEligible: boolean, coversEvent: boolean): boolean {
+  return bothEligible && coversEvent;
+}
+
+/** Story: Consider another meeting after a mutual positive experience / Use a public event only when both members can attend it (spec/repeatEncounter.md) */
+//@ pure
+export function lawRepeatEventNeedsFullPresence(bothEligible: boolean): boolean {
+  //@ ensures \result === true
+  return !repeatEventMayAnchor(bothEligible, false);
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_repeatEncounter(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
