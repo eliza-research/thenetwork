@@ -10,7 +10,7 @@ import { scanSpec } from "../tools/vibestack/vibestack/scan.ts";
 export const root = resolve(import.meta.dirname, "..");
 const toolkit = join(root, "tools/vibestack");
 const cli = join(toolkit, "vibestack/spec.ts");
-export const formalCache = join(root, ".spec-cache/formal");
+const formalCache = join(root, ".spec-cache/formal");
 const excludedTrees = new Set(["models", "product"]);
 const conformanceTrees = ["test/drivers", "test/traces", "test/counterexamples"];
 const counterexamples = "test/counterexamples";
