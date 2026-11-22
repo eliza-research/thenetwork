@@ -1,3 +1,4 @@
+import { observatoryCompletionBooking, observatoryMeetingHeld } from "../../core/src/generated/observatoryRoster.ts";
 // Health alerts (admin-console 3.10), the PRD 28.2 scorecard and growth, computed the same way in
 // both modes. Each source gathers the inputs (game: run records and the Network; real: rows and
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
@@ -99,7 +100,6 @@ export interface ScoreInput {
 }
 
 const HELD = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
-const AGREED = new Set(["MUTUALLY_ACCEPTED", "QUORUM_MET", "SCHEDULED", "COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED"]);
 const ANSWER_WINDOW = 72 * HOUR;
 const FIRST_VALUE_DAYS = 14;
 const REPEAT_DAYS = 60;
@@ -148,9 +148,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     }
   }
 
-  // Completion: held meetings over mutually accepted opportunities whose meeting time has passed.
-  const agreed = opps.filter(o => AGREED.has(o.state) && !(o.state === "SCHEDULED" && (o.meetingAt ?? 0) > x.now) && o.state !== "MUTUALLY_ACCEPTED" && o.state !== "QUORUM_MET");
-  const held = opps.filter(o => HELD.has(o.state));
+  const agreed = opps.filter(o => observatoryCompletionBooking(o.state, o.meetingAt !== undefined, o.meetingAt ?? 0, x.now));
+  const held = agreed.filter(o => HELD.has(o.state) && observatoryMeetingHeld(o.participants.filter(id => o.status[id] === "attended").length));
 
   // Repeat edges: pairs whose first held meeting was positive for both, who met again within 60 days.
   const meetings = held.map(o => ({ t: o.meetingAt ?? o.updatedAt, ids: o.participants.filter(id => o.status[id] === "attended"), o })).sort((a, b) => a.t - b.t);

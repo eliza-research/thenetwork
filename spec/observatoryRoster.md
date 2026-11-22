@@ -47,3 +47,16 @@ pure def observatoryMeetingHeld(attendees: int): bool =
 pure def lawOneAttendeeIsNotAHeldMeeting(attendees: int): bool =
   attendees <= 1 implies not(observatoryMeetingHeld(attendees))
 ```
+
+### A due cancelled booking remains in completion
+
+The completion rate uses bookings whose meeting start has arrived. A scheduled, completed, feedback-collected, abandoned, or cancelled booking with a recorded start can enter that count. A cancellation before booking or before the recorded start supplies no completion evidence. Only a held meeting counts as completed.
+
+```quint
+pure def observatoryCompletionBooking(bookingStage: str, hasStart: bool, start: int, now: int): bool =
+  hasStart and start <= now and (bookingStage == "SCHEDULED" or bookingStage == "COMPLETED" or
+    bookingStage == "FEEDBACK_COLLECTED" or bookingStage == "ABANDONED" or bookingStage == "CANCELLED")
+
+pure def lawFutureBookingCannotCountForCompletion(bookingStage: str, hasStart: bool, start: int, now: int): bool =
+  start > now implies not(observatoryCompletionBooking(bookingStage, hasStart, start, now))
+```

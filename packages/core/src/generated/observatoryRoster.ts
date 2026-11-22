@@ -50,3 +50,16 @@ export function lawOneAttendeeIsNotAHeldMeeting(attendees: number): boolean {
   //@ ensures \result === true
   return !(attendees <= 1) || !observatoryMeetingHeld(attendees);
 }
+
+/** Story: F35 — Inspect a member's experience as staff / A due cancelled booking remains in completion (spec/observatoryRoster.md) */
+//@ pure
+export function observatoryCompletionBooking(bookingStage: string, hasStart: boolean, start: number, now: number): boolean {
+  return hasStart && start <= now && (bookingStage === "SCHEDULED" || bookingStage === "COMPLETED" || bookingStage === "FEEDBACK_COLLECTED" || bookingStage === "ABANDONED" || bookingStage === "CANCELLED");
+}
+
+/** Story: F35 — Inspect a member's experience as staff / A due cancelled booking remains in completion (spec/observatoryRoster.md) */
+//@ pure
+export function lawFutureBookingCannotCountForCompletion(bookingStage: string, hasStart: boolean, start: number, now: number): boolean {
+  //@ ensures \result === true
+  return !(start > now) || !observatoryCompletionBooking(bookingStage, hasStart, start, now);
+}
