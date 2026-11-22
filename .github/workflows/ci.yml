@@ -7,9 +7,9 @@
 name: ci
 
 on:
-  # Pull requests cover feature commits; main pushes retain post-merge validation.
+  # Pull requests cover feature commits; pushes validate both maintained branches.
   push:
-    branches: [main]
+    branches: [main, vibestack]
   pull_request:
   workflow_dispatch:
 
@@ -91,12 +91,20 @@ jobs:
         run: pnpm exec tsc --noEmit -p sites/tsconfig.json
         timeout-minutes: 5
       - name: Simulations other than matching
-        # The simulations: evals corpora, the Network in the NYC world, slop, peon and friends, each
-        # with its gates on pinned seeds, and the Postgres blocks on throwaway databases. No LLM.
-        # Exits 1 on any blocking gate failure.
+        # Run the in-memory NYC world alongside the other blocks on the same runner.
+        shell: bash
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run sim --skip matching --json sim-gates.json
+          (pnpm run sim --only network | sed -u 's/^/[network] /') &
+          network_pid=$!
+          core_status=0
+          pnpm run sim --skip matching,network --json sim-gates.json || core_status=$?
+          network_status=0
+          wait "$network_pid" || network_status=$?
+          if (( core_status || network_status )); then
+            echo "Simulation failure (core=$core_status, network=$network_status)"
+            exit 1
+          fi
         timeout-minutes: 30
       - name: No Postgres gate was skipped
         # A Postgres block that cannot reach Postgres records a tracked "skipped" gate. With REQUIRE_PG=1

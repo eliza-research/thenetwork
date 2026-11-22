@@ -2,7 +2,7 @@ name: Vibestack
 
 on:
   push:
-    branches: [main]
+    branches: [main, vibestack]
     paths:
       - 'spec/**'
       - 'packages/core/src/generated/**'
@@ -51,6 +51,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vibespec-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   generation:
     runs-on: ubuntu-24.04
@@ -87,7 +91,7 @@ jobs:
       - run: npm install --global corepack@0.35.0 && corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run spec:setup
-      - run: pnpm --dir tools/vibestack exec playwright install --with-deps chromium
+      - run: pnpm --dir tools/vibestack exec playwright install --with-deps --no-shell chromium
       - run: pnpm run spec:explore
 
   full-check:

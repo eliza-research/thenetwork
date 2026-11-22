@@ -6,12 +6,12 @@ import {
   enabled, initial, searchMayTouch, searchWindowHigh, searchWindowLow, step, unseenValueBound,
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
 } from "../../../core/src/generated/candidateSearch.ts";
-import { lanePairValue, laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
+import { laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
 import { coverageValue, directedUtility, noPairValue, pairValueScale } from "../../../core/src/generated/pairValue.ts";
 import type { SearchTally } from "../types.ts";
 import { pairKey, type World } from "../world.ts";
 import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings, type Span } from "./index.ts";
-import { pairSideOf, pairValueOf, vectorsOf, weightedTerms } from "./pair.ts";
+import { admittedPairValue, laneValueOf, pairValueOf, vectorsOf, weightedTerms } from "./pair.ts";
 import { compareText, type EntityId, type MatchProfile, type TagSet } from "./profile.ts";
 
 export interface RankedProfile { readonly profile: MatchProfile; readonly value: number }
@@ -55,10 +55,7 @@ function windowSpans(block: CandidateBlock, profile: MatchProfile, band: number)
   const high = searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
   const standingAt = (i: number) => block.profiles[i].standing;
   const spans: Span[] = [];
-  for (const segment of block.segments) {
-    // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits": the same
-    // test as segmentReaches(profile, other) for every other in the segment.
-    if (profile.segment && segment.segment !== undefined && !profile.segment.partners.has(segment.segment)) continue;
+  for (const segment of block.reachableSegments(profile.segment?.partners)) {
     const start = lowerBound(segment.start, segment.end, standingAt, low);
     const end = lowerBound(start, segment.end, standingAt, high + 1);
     if (end === start) continue;
@@ -177,8 +174,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       touched.add(position);
       const other = block.profiles[position];
       if (other.memberId === profile.memberId) continue;
-      const bound = lanePairValue(profile.lane, pairSideOf(profile, other, traitCosts, fullPack), profile.side,
-        pairSideOf(other, profile, traitCosts, fullPack), other.side);
+      const bound = laneValueOf(profile, other, traitCosts, fullPack, fullPack);
       if (bound >= 0) pending.push({ other, bound });
     }
     return true;
@@ -207,7 +203,8 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent, touchedLeft: top !== undefined }), touches);
     }
     pending.pop();
-    search = step(search, { type: "checkCandidate", value: pairValueOf(w, profile, top.other), ordinal: top.other.ordinal });
+    const value = hasPackValue ? pairValueOf(w, profile, top.other) : admittedPairValue(w, profile, top.other, top.bound);
+    search = step(search, { type: "checkCandidate", value, ordinal: top.other.ordinal });
   }
 }
 
