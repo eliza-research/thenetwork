@@ -15,6 +15,7 @@
 // do not), at most 2 booked meetups per member per week and never two in one slot. Proposals past a
 // cap lose that member silently. A proposal naming a member with a CLAIMED age under 18 is dropped
 // and counted (policy violation; must be 0).
+import { requireSimulationCount } from "../../input.ts";
 import { canBeMatched, type MemberId } from "@thenetwork/core";
 import type { Crew } from "@thenetwork/engine/src/plans.ts";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
@@ -96,6 +97,7 @@ const dk = (a: MemberId, b: MemberId) => `${a}>${b}`;
 
 export function createFriendsWorld(o: Omit<FriendsRunOptions, "matcher">): FriendsWorld {
   const weeks = o.weeks ?? 8;
+  requireSimulationCount(weeks, "weeks", 1);
   const personas = o.personas ?? generateFriendsPersonas({ ...o, seed: o.seed });
   return {
     seed: o.seed, weeks, personas, oracle: new FriendsOracle(personas, o.seed, { ...ORACLE_PARAMS, ...(o.params ?? {}) }), state: emptyFriendsState(),

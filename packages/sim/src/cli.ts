@@ -8,6 +8,7 @@
 // Models (founder decision 2026-10-05): persona agents and LLM persona bios use defaultLLM()
 // (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, default Surplus gpt-6-luna); judging uses judgeLLM()
 // (JUDGE_PROVIDER / JUDGE_MODEL, default Surplus gpt-6-luna).
+import { requirePositiveSimulationValue, requireSimulationCount, requireSimulationShare, simulationNumber } from "./input.ts";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { defaultLLM, judgeLLM } from "@thenetwork/core";
@@ -98,6 +99,19 @@ async function loadEngine(): Promise<Engine | undefined> {
   return engine;
 }
 
+const judgeCount = a.judge === undefined ? undefined : simulationNumber(a.judge);
+if (judgeCount !== undefined) requireSimulationCount(judgeCount, "--judge", 1);
+const n = simulationNumber(a.personas), days = simulationNumber(a.days), speed = simulationNumber(a.speed);
+const adversarialRate = a["adversarial-rate"] === undefined ? undefined : simulationNumber(a["adversarial-rate"]);
+const minorShare = a["minor-share"] === undefined ? undefined : simulationNumber(a["minor-share"]);
+if (!a.scenario) {
+  requireSimulationCount(n, "--personas", 0);
+  requirePositiveSimulationValue(days, "world days");
+  if (mode === "accelerated") requirePositiveSimulationValue(speed, "accelerated speed");
+  requireSimulationShare(adversarialRate, "adversarialRate");
+  requireSimulationShare(minorShare, "minorShare");
+}
+
 const engine = await loadEngine();
 const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
 const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] || a["trip-clock"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: a["quality-churn"], tripClock: a["trip-clock"] }) : undefined;
@@ -114,16 +128,14 @@ if (a.scenario) {
   process.exit(res.passK ? 0 : 1);
 }
 
-const n = Number(a.personas), days = Number(a.days);
 const genOpts = {
-  n, seed, adversarialRate: a["adversarial-rate"] ? Number(a["adversarial-rate"]) : undefined,
-  minorShare: a["minor-share"] !== undefined ? Number(a["minor-share"]) : undefined, joinSpreadDays: Math.min(7, days),
+  n, seed, adversarialRate, minorShare, joinSpreadDays: Math.min(7, days),
   ...(a.richness ? { richness: true } : {}),
 };
 const personas = a["llm-personas"] && llm ? await generateLLMPersonas({ ...genOpts, llm }) : generatePersonas(genOpts);
 
 const res = await runWorld({
-  seed, personas, days, mode, speed: Number(a.speed), network: makeNetwork(engine), engine, agent,
+  seed, personas, days, mode, speed, network: makeNetwork(engine), engine, agent,
   writeLog: !a["no-log"],
   ...(a["stable-decisions"] || a.logistics ? { oracle: { stableDecisions: a["stable-decisions"], logistics: a.logistics } } : {}),
   onDay: d => { if (!a.json) process.stderr.write(`  day ${d}/${days}\r`); },
@@ -135,7 +147,7 @@ else {
   console.log(`\nsim events=${res.events} wall=${res.wallMs}ms${agent ? ` llmCalls=${(agent as LLMPersonaAgent).calls} llmFailures=${(agent as LLMPersonaAgent).failures}` : ""}`);
   if (res.dir) console.log(`run log: ${res.dir}`);
 }
-if (a.judge) await judgeRun(res.records, Number(a.judge));
+if (judgeCount !== undefined) await judgeRun(res.records, judgeCount);
 
 /**
  * LLM judges over a deterministic, evenly spaced sample of every delivered Network message (not only

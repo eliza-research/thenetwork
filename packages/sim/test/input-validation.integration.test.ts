@@ -3,6 +3,12 @@ import { promisify } from "node:util";
 import { expect, test } from "vitest";
 import { generateFriendsPersonas } from "../src/apps/friends/persona.ts";
 import { generatePeonPopulation } from "../src/apps/peon/persona.ts";
+import { createFriendsWorld } from "../src/apps/friends/world.ts";
+import { createPeonWorld } from "../src/apps/peon/world.ts";
+import { createSlopWorld } from "../src/apps/slop/world.ts";
+import { generatePersonas } from "../src/generator.ts";
+import { StubNetwork } from "../src/stubNetwork.ts";
+import { runWorld } from "../src/world.ts";
 
 const run = promisify(execFile);
 const cli = (path: string, args: string[]) => run(process.execPath,
@@ -61,3 +67,42 @@ test.each([["--preset", "missing"], ["--preset=constructor"], ["--preset="]])("S
   await expect(cli("packages/sim/src/apps/slop/packEval.ts", ["--seeds", "1", "--weeks", "1", "--per-city", "2", "--arms", "slop", ...args]))
     .rejects.toMatchObject({ code: 2, stderr: expect.stringContaining("unknown Slop preset:"), stdout: "" });
 }, 100_000);
+
+
+test.each([
+  { option: "--judge=0", reason: "--judge must be a positive safe integer" },
+  { option: "--personas=", reason: "--personas must be a non-negative safe integer" },
+  { option: "--adversarial-rate=NaN", reason: "adversarialRate must be a finite number" },
+  { option: "--minor-share=", reason: "minorShare must be a finite number" },
+  { option: "--days=0", reason: "world days must be a positive finite number" },
+  { option: "--speed=0", reason: "accelerated speed must be a positive finite number" },
+])("world CLI refuses $option before generating evidence", async ({ option, reason }) => {
+  await expect(cli("packages/sim/src/cli.ts", ["--personas", "2", "--days", "1", "--mode", "accelerated", "--no-log", "--json", option]))
+    .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(reason), stdout: "" });
+}, 100_000);
+
+test("native simulation inputs reject invalid values and support intentional empty populations", async () => {
+  const seed = 7;
+  const network = new StubNetwork({ seed });
+  for (const days of [0, -1, NaN, Infinity]) {
+    await expect(runWorld({ seed, days, personas: [], network })).rejects.toThrow(/world days/);
+  }
+  for (const speed of [0, -1, NaN, Infinity]) {
+    await expect(runWorld({ seed, speed, mode: "accelerated", days: 1, personas: [], network })).rejects.toThrow(/accelerated speed/);
+  }
+  expect(() => generatePersonas({ seed, n: 2.5 })).toThrow(/personas/);
+  for (const field of ["adversarialRate", "minorShare", "disclosureRate"] as const) {
+    expect(() => generatePersonas({ seed, n: 2, [field]: Infinity })).toThrow(field);
+  }
+  expect(generatePersonas({ seed, n: 0, adversarialRate: 0, minorShare: 1, disclosureRate: 1 })).toEqual([]);
+  const control = await runWorld({ seed, days: 0.5, personas: [], network, writeLog: false });
+  expect(control.records.filter(record => record.type === "persona")).toEqual([]);
+});
+
+test("all three weekly worlds reject partial or empty rounds before reading their populations", () => {
+  for (const weeks of [0, -1, 1.5, NaN, Infinity]) {
+    expect(() => createFriendsWorld({ seed: 7, weeks })).toThrow(/weeks must be a positive safe integer/);
+    expect(() => createPeonWorld({ seed: 7, weeks })).toThrow(/weeks must be a positive safe integer/);
+    expect(() => createSlopWorld({ seed: 7, weeks })).toThrow(/weeks must be a positive safe integer/);
+  }
+});

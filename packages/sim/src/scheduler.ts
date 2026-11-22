@@ -1,5 +1,6 @@
 // Discrete-event scheduler over a SimClock. Events are ordered by (time, insertion seq), so
 // simultaneous events run in the order they were scheduled: deterministic and replayable.
+import { requirePositiveSimulationValue } from "./input.ts";
 import type { SimClock } from "@thenetwork/core";
 
 export type RunMode = "discrete" | "accelerated" | "realtime";
@@ -62,7 +63,9 @@ export class Scheduler {
   readonly queue = new EventQueue();
   private handlers = new Map<string, (ev: ScheduledEvent<any>) => void | Promise<void>>();
   processed = 0;
-  constructor(readonly clock: SimClock, private opts: SchedulerOptions) {}
+  constructor(readonly clock: SimClock, private opts: SchedulerOptions) {
+    if (opts.mode === "accelerated" && opts.speed !== undefined) requirePositiveSimulationValue(opts.speed, "accelerated speed");
+  }
 
   on<T>(kind: string, handler: (ev: ScheduledEvent<T>) => void | Promise<void>) { this.handlers.set(kind, handler as any); }
   at<T>(t: number, kind: string, data: T) { return this.queue.push(Math.max(t, this.clock.now()), kind, data); }

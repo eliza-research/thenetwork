@@ -13,6 +13,7 @@
 //   - adversaries: scam employers (most fail verification; some pass by impersonating a real brand,
 //     and some of those show a scam cue), discriminatory employers (reject a sealed group when they
 //     can see it), ghosting employers, fake candidates (inflated claims, low true skills).
+import { requireSimulationCount } from "../../input.ts";
 import type { City, MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { AREAS, FAMILIES, FAMILY, ZIPS, payMid } from "./skills.ts";
@@ -132,8 +133,8 @@ export interface PeonPopulation { candidates: Candidate[]; companies: Company[];
 
 export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
   const perCity = o.perCity ?? 400, jobsPerCity = o.jobsPerCity ?? 80;
-  if (!Number.isSafeInteger(perCity) || perCity < 0) throw new RangeError("Peon candidates per city must be a non-negative safe integer.");
-  if (!Number.isSafeInteger(jobsPerCity) || jobsPerCity < 0) throw new RangeError("Peon jobs per city must be a non-negative safe integer.");
+  requireSimulationCount(perCity, "Peon candidates per city", 0);
+  requireSimulationCount(jobsPerCity, "Peon jobs per city", 0);
   const candidates: Candidate[] = [], companies: Company[] = [], jobs: Job[] = [];
   const sealed = new Map<MemberId, Sealed>();
   const cities: City[] = ["nyc", "sf"];

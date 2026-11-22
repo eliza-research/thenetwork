@@ -25,6 +25,7 @@
 //     declined / ignored roles and ghosted applications lower it, an employer yes raises it);
 //   - timing: stronger candidates leave the market faster (hired elsewhere); roles close at a
 //     deadline (8 / 6 / 4 weeks by urgency) or are filled through another channel (4% a week).
+import { requireSimulationCount } from "../../input.ts";
 import { DAY, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
@@ -133,6 +134,7 @@ export interface PeonRunOptions extends Omit<PeonGenOptions, "seed"> {
 
 export function createPeonWorld(o: Omit<PeonRunOptions, "matcher">): PeonWorld {
   const weeks = o.weeks ?? 8;
+  requireSimulationCount(weeks, "weeks", 1);
   const pop = o.pop ?? generatePeonPopulation({ ...o, seed: o.seed });
   const oracle = new PeonOracle(pop, o.seed);
   const state: PeonNetworkState = {

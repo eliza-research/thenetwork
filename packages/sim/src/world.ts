@@ -2,6 +2,7 @@
 // drives a NetworkUnderTest through the simulated channel, lets persona agents live by
 // their routines and reply latencies, decides meeting outcomes from hidden truth, and writes
 // a replayable JSONL run log to runs/<runId>/.
+import { requirePositiveSimulationValue } from "./input.ts";
 import { writePath } from "../../core/src/runtime/files.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -128,6 +129,7 @@ export class World {
   readonly end: number;
 
   constructor(private opts: WorldOptions) {
+    requirePositiveSimulationValue(opts.days, "world days");
     this.start = opts.start ?? DEFAULT_START;
     this.clock = new SimClock(this.start);
     this.channel = new SimChannel(this.clock, { seed: opts.seed, failureRate: opts.failureRate });

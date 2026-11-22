@@ -10,6 +10,7 @@
 //   5. feedback, a possible second date, safety reports.
 // Caps: each member gets at most `capPerWeek` initial invites a week (first probe or partner probe;
 // decision 3) and at most one booked date a week. Proposals past a cap are dropped and counted.
+import { requireSimulationCount } from "../../input.ts";
 import { DAY, HOUR, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
@@ -97,6 +98,7 @@ export const slotTime = (week: number, slot: number) =>
 
 export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const weeks = o.weeks ?? 4;
+  requireSimulationCount(weeks, "weeks", 1);
   const personas = o.personas ?? generateSlopPersonas({ ...o, seed: o.seed, weeks });
   const oracle = new SlopOracle(personas, o.seed, o.bodyTypes);
   return {
