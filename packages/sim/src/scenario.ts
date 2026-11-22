@@ -4,6 +4,7 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { DAY, MINUTE, type City, type OpportunityKind, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
+import { observatoryMeetingHeld } from "../../core/src/generated/observatoryRoster.ts";
 import type { Metrics } from "./judge/metrics.ts";
 import { generatePersonas } from "./generator.ts";
 import type { AdversarialKind, Archetype, Persona, Responsiveness, Trip } from "./persona.ts";
@@ -185,8 +186,11 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       }
       case "meeting_held": {
         const need = e.min ?? e.personas.length;
-        const hit = recs.find(r => r.type === "outcome" && e.personas.filter(id => r.attendance[id]?.showed).length >= need);
-        return ok(!!hit, hit ? `meeting ${(hit as any).meetingId}` : `no meeting with >= ${need} of them attending`);
+        const named = [...new Set(e.personas)];
+        const hit = recs.find(r => r.type === "outcome"
+          && observatoryMeetingHeld(Object.values(r.attendance).filter(a => a.showed).length)
+          && named.filter(id => r.attendance[id]?.showed).length >= need);
+        return ok(!!hit, hit ? `meeting ${hit.meetingId}` : `no held meeting with >= ${need} of them attending`);
       }
       case "flake_notice": {
         const hit = recs.find(r => r.type === "outcome" && r.attendance[e.persona]?.cancelledWithNotice);
