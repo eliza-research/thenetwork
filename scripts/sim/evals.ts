@@ -138,6 +138,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`areas: recall >= 0.9 (n ${areas.length})`, areas.length >= 190 && areaRecall >= 0.9, areaRecall.toFixed(3));
   const defaulted = unknown.filter(l => extractProfile(l.text).area !== undefined).map(l => l.text);
   b.gate("areas: an unknown place is never defaulted", defaulted.length === 0 && extractProfile("I live in Hoboken").areaUnknown === true, defaulted.slice(0, 5).join(" | "));
+  // spec/planFormation.md, "A known trip must fit the member's travel limit"
+  await b.run("areas: recognize Fort Greene's abbreviations in a member's home area", () => {
+    const inputs = ["based in Ft Greene", "I'm in ft. greene", "live in ft greene near the park",
+      "I live in Fort Greene", "I work in Ft. Greene", "I live in Ft. Green"];
+    expect(inputs.map(text => extractProfile(text).area))
+      .toEqual(["Fort Greene", "Fort Greene", "Fort Greene", "Fort Greene", undefined, undefined]);
+  });
 
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
