@@ -17,9 +17,13 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
+import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
+import { historyOf } from "../../packages/engine/src/packs/peon/profile.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
+import { World } from "../../packages/engine/src/world.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
 import { appWiring } from "../../packages/network/service/packs.ts";
@@ -245,6 +249,40 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   }
   b.gate("a hiring candidate never consumes their own opening and can still join another employer", ownerRows.every(r =>
     r.selectedOwn === 0 && r.selectedExpected === 1 && r.queued === 1 && r.beforeReview && r.candidateFirst && r.managerAfterYes && r.result && r.restored), JSON.stringify({ rows: ownerRows }));
+
+  await b.run("a closed Peon application keeps the candidate and employer's own answers", async () => {
+    for (const employerDeclines of [true, false]) {
+      const world = new SeatWorld();
+      world.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      world.add("candidate", "Casey Bell", 29, { candidate: true });
+      for (const member of world.members) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) {
+        await world.say(member.id, answer);
+      }
+      await world.say("manager", POST.replace("2 openings", "1 opening"));
+      await world.say("manager", "yes");
+      expect(await world.runUntil(() => world.net.reviewQueue().length === 1)).toBe(true);
+      const id = world.net.reviewQueue()[0]!.oppId, seat = world.opp(id)!.seat!.id;
+      expect(world.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await world.runUntil(() => world.probedFor("candidate", id))).toBe(true);
+      await world.say("candidate", "yes");
+      world.restart();
+      expect(await world.runUntil(() => world.probedFor("manager", id))).toBe(true);
+      if (employerDeclines) await world.say("manager", "no");
+      expect(await world.runUntil(() => world.opp(id)?.stage === "closed")).toBe(true);
+      const expected = { outcome: employerDeclines ? "declined" : "expired", acceptedBy: ["candidate"],
+        declinedBy: employerDeclines ? [seat] : [], noResponse: undefined };
+      for (let restart = 0; restart < 2; restart++) {
+        const input = world.net.packInput(world.clock.now());
+        const records = input.interactions!.filter(r => r.id === id);
+        const view = new World(input, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+        expect(records.map(({ outcome, acceptedBy, declinedBy, noResponse }) => ({ outcome, acceptedBy, declinedBy, noResponse }))).toEqual([expected]);
+        expect(historyOf(view, seat).answered).toBe(employerDeclines ? 1 : 0);
+        expect(historyOf(view, "candidate").inFlight).toBe(0);
+        expect(world.meetings).toEqual([]);
+        world.restart();
+      }
+    }
+  });
 
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     // No posting is stored yet: the lookup an update or close reads from finds nothing.
