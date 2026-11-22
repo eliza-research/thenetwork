@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, ageBeforeConjunction, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -166,7 +166,7 @@ const SELF_AGE = `\\b(?:${ME}\\s+(?:only |just |literally |barely |like |about )
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : wordNum(value);
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
-  { rx: new RegExp(`${SELF_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageNumber(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`${SELF_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageBeforeConjunction(ageNumber(m[1] ?? ""), m.input.slice(m.index + m[0].length)), strict: true },
   { rx: new RegExp(`${SELF_AGE}${LOOSE_END}`), age: m => {
     const age = ageNumber(m[1] ?? "");
     return canJoin(age) ? age : NaN;

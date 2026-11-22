@@ -28,7 +28,13 @@ export const canBeMatched = (age: unknown): boolean => typeof age === "number" &
 export const UNDER_MIN_AGE_DECLINE =
   "Thanks for your interest in The Network. You need to be at least 13 to join, so we can't sign you up right now. We'd love to hear from you when you're older.";
 
-export const AGE_AND_CLAUSE = "(?=\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b)";
+const ageAndSpeaker = "\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b";
+export const AGE_AND_CLAUSE = `(?=${ageAndSpeaker})`;
+const sportsCountSuffix = new RegExp(`^${ageAndSpeaker}\\s+(?:undefeated|won|winning|record|bracket|season|team|score)\\b`);
+export function ageBeforeConjunction(age: number, suffix: string): number {
+  return !canJoin(age) && sportsCountSuffix.test(suffix) ? NaN : age;
+}
+
 export const AGE_HALF = "(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\.5(?!\\d)|\\s+1/2\\b)";
 export const AGE_LOOSE_TAIL = "and\\b(?!\\s+(?:\\d|(?:a|one)\\s+half\\b))|now\\b|too\\b";
 export const ARTICLE_AGE_END =
