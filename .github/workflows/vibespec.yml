@@ -102,7 +102,7 @@ jobs:
   full-check:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'vibestack')
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 30
     concurrency:
       group: vibestack-full-check-${{ github.ref }}
       cancel-in-progress: false
@@ -151,6 +151,14 @@ jobs:
           mkdir -p "$directory"
           tar -xzf "$archive" -C "$directory" quint_evaluator
           test -x "$directory/quint_evaluator"
+      - name: Require the synthetic Postgres service
+        run: |
+          bin="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
+          test -x "$bin/pg_ctl"
+          export PATH="$bin:$PATH"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/pg_isready" -h localhost -p 54339
+          node --import tsx scripts/require-pg.ts
       - name: Restore completed formal actions
         id: formal-cache
         if: github.event_name != 'workflow_dispatch' || !inputs.cold_formal_cache
@@ -170,7 +178,7 @@ jobs:
           find .spec-cache/formal -maxdepth 1 -type f -name 'action-*.json.gz' -printf '%f\n' |
             sort > "$RUNNER_TEMP/formal-actions-before"
           # End the check before the job deadline so completed actions can be uploaded.
-          timeout --kill-after=15s 30m pnpm run check
+          timeout --kill-after=15s 27m pnpm run check
       - name: Prepare completed actions for upload
         if: ${{ !cancelled() && (steps.check.outcome == 'success' || steps.check.outcome == 'failure') }}
         id: ready
