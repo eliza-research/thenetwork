@@ -26,15 +26,18 @@ pure def chooseFiringPlan(e: FiringEvidence): FiringPlan =
 
 ### An absent alert resolves after a successful notice
 
-The current alert list determines whether a key is still active. A missing key with an open episode and a prior successful post queues a resolved notice. A missing key with no successful post closes quietly. A closed key or a key still in the current list stays as it is.
+An absent key leaves its episode as it is when its source read fails. A completed read of another source can resolve that source's own alerts in the same round. An absent key with a readable source and a prior successful post queues a resolved notice. An absent key with a readable source and no successful post closes quietly. Closed keys and keys still in the current list stay as they are during this step.
 
 ```quint
 type MissingPlan = KeepEpisode | CloseQuietly | SendResolution
 
-pure def chooseMissingPlan(episodeOpen: bool, seenThisRound: bool, postedBefore: bool): MissingPlan =
-  if (not(episodeOpen) or seenThisRound) KeepEpisode
+pure def chooseMissingPlan(episodeOpen: bool, seenThisRound: bool, postedBefore: bool, sourceReadable: bool): MissingPlan =
+  if (not(episodeOpen) or seenThisRound or not(sourceReadable)) KeepEpisode
   else if (postedBefore) SendResolution
   else CloseQuietly
+
+pure def lawUnreadSourceKeepsEpisode(episodeOpen: bool, seenThisRound: bool, postedBefore: bool): bool =
+  chooseMissingPlan(episodeOpen, seenThisRound, postedBefore, false) == KeepEpisode
 ```
 
 ### One batch consumes one attempt in the rolling hour

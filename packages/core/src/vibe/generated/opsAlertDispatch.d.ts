@@ -49,7 +49,9 @@ export declare function inv(current: AlertDispatch): boolean;
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 export declare function chooseFiringPlan(e: FiringEvidence): FiringPlan;
 /** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
-export declare function chooseMissingPlan(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean): MissingPlan;
+export declare function chooseMissingPlan(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean, sourceReadable: boolean): MissingPlan;
+/** Story: Receive useful operations alerts without duplicate notices / An absent alert resolves after a successful notice (spec/opsAlertDispatch.md) */
+export declare function lawUnreadSourceKeepsEpisode(episodeOpen: boolean, seenThisRound: boolean, postedBefore: boolean): boolean;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export declare function canPrepareDispatch(s: AlertDispatch): boolean;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */

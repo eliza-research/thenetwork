@@ -22,11 +22,13 @@ The [platform retention rules](../platformRetention.md) set the account
 and inbox cutoffs and retain counters needed for STOP hints.
 
 The [alert dispatch spec](../opsAlertDispatch.md) drives the VibeLang
-shell under the existing alert-store transaction. The backend
-evaluates the alerts it could collect, may close a missing episode without
-a prior successful post, and can still ping its heartbeat after a failed
-alert delivery. The retained model below describes different behavior for
-those cases.
+shell under the existing alert-store transaction. The backend keeps missing
+episodes open while their source is unreadable. The model represents one
+network and its read warning. Production checks each network, the shared line
+and the cost ledger separately. With a readable source, the backend may close
+a missing episode without a prior successful post. The backend can still ping
+its heartbeat after a failed alert delivery. The retained model below describes
+different behavior for failed posts and the heartbeat.
 
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
 eligibility, and aggregate outcome rules. The backend reads saved
@@ -478,7 +480,7 @@ module runtime_ops {
     val cur = current(s, readOk)
     val truth = current(s, true)
     val prev = s.al.st
-    // ops.ts unread(): a failed read of the network leaves its keys unknown; they neither resolve nor close (SD-113 fix, 7717e2b).
+    // opsAlertDispatch.md: a failed read of the network leaves its condition keys unknown. The read warning is current evidence.
     val known = ALERT_KEYS.filter(k => readOk or k == "read")
     val firing = ALERT_KEYS.filter(k => and { cur.get(k).on, isDue(nextA(prev.get(k), cur.get(k)), cur.get(k), s.now) })
     // failedWhileOpen is lastFailedAt: an alert whose post failed is resolved with a notice, never closed quietly (SD-235 fix, 0f6ca0f).
