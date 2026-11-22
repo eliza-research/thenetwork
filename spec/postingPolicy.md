@@ -20,11 +20,22 @@ pure def missingPostingFields(isClose: bool, hasTitle: bool, hasPay: bool): List
 
 The opening count is an integer. The shell validates the numeric type before calling this rule.
 
+An omitted count defaults to one. When text supplies an invalid count, ask for a valid count before showing the draft for confirmation. The text reader records an invalid numeric form as zero so it remains distinct from an omitted count. Closing a post uses the existing terms and does not ask for a count.
+
 ```quint
 pure val maxOpenings: int = 50
 
 pure def openingsInRange(openings: int): bool =
   openings >= 1 and openings <= maxOpenings
+
+pure def openingCountNeedsCorrection(isClose: bool, supplied: bool, openings: int): bool =
+  not(isClose) and supplied and not(openingsInRange(openings))
+
+pure def lawOmittedCountUsesDefault(isClose: bool, openings: int): bool =
+  not(openingCountNeedsCorrection(isClose, false, openings))
+
+pure def lawInvalidStatedCountNeedsCorrection(openings: int): bool =
+  not(openingsInRange(openings)) implies openingCountNeedsCorrection(false, true, openings)
 ```
 
 ### The low end of the pay range comes first

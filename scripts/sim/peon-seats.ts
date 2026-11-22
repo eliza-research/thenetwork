@@ -223,14 +223,17 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   w.net.holdMember("c6", "sim_staff", "held for the gate");
 
   await b.run("intake: an invalid stated opening count needs a correction before read-back", async () => {
+    const draftWorld = new SeatWorld();
+    draftWorld.add("manager", "Sam Patel", 34, { verified: "Acme" });
+    for (const answer of ["hi", "Work", "Weekends mostly", "One-on-one"]) await draftWorld.say("manager", answer);
     for (const invalid of ["0", "1.5"]) {
-      await w.say("hm1", POST.replace("2 openings", `${invalid} openings`));
-      expect(w.last("hm1")).toMatch(/How many openings/);
-      expect(w.saved.length).toBe(0);
+      await draftWorld.say("manager", POST.replace("2 openings", `${invalid} openings`));
+      expect(draftWorld.last("manager")).toMatch(/How many openings/);
+      expect(draftWorld.saved.length).toBe(0);
     }
-    await w.say("hm1", "two");
-    expect(w.last("hm1")).toMatch(/2 openings.*Reply yes/);
-    expect(w.saved.length).toBe(0);
+    await draftWorld.say("manager", "two");
+    expect(draftWorld.last("manager")).toMatch(/2 openings.*Reply yes/);
+    expect(draftWorld.saved.length).toBe(0);
   });
 
   await b.run("intake: read back first, saved only on the manager's yes", async () => {

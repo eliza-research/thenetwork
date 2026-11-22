@@ -17,6 +17,26 @@ export function openingsInRange(openings: number): boolean {
   return openings >= 1 && openings <= maxOpenings;
 }
 
+/** Story: Publish a job with a clear pay range / A posting has between one and fifty openings (spec/postingPolicy.md) */
+//@ pure
+export function openingCountNeedsCorrection(isClose: boolean, supplied: boolean, openings: number): boolean {
+  return !isClose && supplied && !openingsInRange(openings);
+}
+
+/** Story: Publish a job with a clear pay range / A posting has between one and fifty openings (spec/postingPolicy.md) */
+//@ pure
+export function lawOmittedCountUsesDefault(isClose: boolean, openings: number): boolean {
+  //@ ensures \result === true
+  return !openingCountNeedsCorrection(isClose, false, openings);
+}
+
+/** Story: Publish a job with a clear pay range / A posting has between one and fifty openings (spec/postingPolicy.md) */
+//@ pure
+export function lawInvalidStatedCountNeedsCorrection(openings: number): boolean {
+  //@ ensures \result === true
+  return !(!openingsInRange(openings)) || openingCountNeedsCorrection(false, true, openings);
+}
+
 /** Story: Publish a job with a clear pay range / The low end of the pay range comes first (spec/postingPolicy.md) */
 //@ pure
 export function payRangeAllowed(low: number, high: number): boolean {
