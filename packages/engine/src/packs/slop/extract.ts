@@ -16,6 +16,7 @@
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
+import { slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
 import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
@@ -167,22 +168,33 @@ const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}(?:(?:only|just|liter
 const SELF_AGE = `(?:${SELF_CURRENT_AGE}|\\bi (?:just )?turned\\s+)(\\d{1,2}|${NUM_WORD_RX})\\b`;
 const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
-const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : wordNum(value);
+const readNumericPhrase = (value: string) => /^\d/.test(value) ? Number(value) : wordNum(value);
+const LETTER_FIRST_AGE = /(?:^|[\s,(])(f|m)\s*\/?\s*(\d{2})(?![\d'])(?!\s*(?:mi|miles|km|min))/;
+const AGE_RANGE_TAIL = /^\s*(?:-|to)\s*\d/;
+const SEEK_BEFORE_SHORTHAND = /\b(?:seeking|look(?:ing|in'?)?\s+(?:for|4)|searching for|lf|into|interested in|attracted to|prefer|open to)[\s,(]*$/;
+
+function selfLetterAge(text: string, match: RegExpExecArray): boolean {
+  return slopSelfShorthandAllowed(
+    SEEK_BEFORE_SHORTHAND.test(text.slice(0, match.index + 1)),
+    AGE_RANGE_TAIL.test(text.slice(match.index + match[0].length)),
+  );
+}
+
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
-  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageNumber(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}(?!'|\\s*(?:-|to)\\s*\\d)(?:${AGE_HALF}(?:${FRACTION_AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
   { rx: new RegExp(`${SELF_AGE}${NOT_UPCOMING_AGE}${LOOSE_END}`), age: m => {
-    const age = ageNumber(m[1] ?? "");
+    const age = readNumericPhrase(m[1] ?? "");
     return canJoin(age) ? age : NaN;
   }, strict: true },
   { rx: new RegExp(`^\\s*(?:(?:hi|hey|hello)[\\s,!]+)?(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },
-  { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => ageNumber(m[1] ?? ""), strict: true },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => readNumericPhrase(m[1] ?? ""), strict: true },
   { rx: /\b(?:my age is|age\s*[:=-]|age is)\s*(\d{1,2})\b|(?:^|[,.(]\s*)age\s+(\d{1,2})\b/, age: m => Number(m[1] ?? m[2]), strict: true },
-  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => precedingBirthdayAge(ageNumber(m[1] ?? "")), strict: false },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => precedingBirthdayAge(readNumericPhrase(m[1] ?? "")), strict: false },
   { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD_RX})\\s+(?:in|on|next|this|soon)\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   // Shorthand "27f", "27 m", "27/nb", "f27", "m 31": an age and a gender together.
   { rx: /(?:^|[\s,(\/])(\d{2})\s*\/?\s*(?:f|m|nb|enby|w)(?![a-z0-9'])/, age: m => Number(m[1]), strict: false },
-  { rx: /(?:^|[\s,(])(?:f|m)\s*\/?\s*(\d{2})(?![\d'])(?!\s*(?:mi|miles|km|min))/, age: m => Number(m[1]), strict: false },
+  { rx: LETTER_FIRST_AGE, age: m => Number(m[2]), strict: false },
   // "straight guy here, 34", "woman, 29", "29, woman", "m4w 31".
   { rx: new RegExp(`(?:\\b(?:${G_WOMAN}|${G_MAN}|${G_NB})|\\bhere|\\b[mwf]4[mwfa])\\s*[,\\/:-]?\\s*(\\d{2})(?![\\d'])(?!\\s*(?:-|to)\\s*\\d)(?!\\s*(?:mi\\b|miles|km|min|mins|minutes|blocks|hours|%))`), age: m => Number(m[1]), strict: false },
   { rx: new RegExp(`^\\W*(\\d{2})\\s*[,\\/]\\s*(?:(?:${ADJ_LITE})\\s+)?(?:${G_WOMAN}|${G_MAN}|${G_NB})\\b`), age: m => Number(m[1]), strict: false },
@@ -203,6 +215,7 @@ function readAge(t: string): { age?: Cand<number>; strict?: boolean; minor?: Can
   const out: { age?: Cand<number>; strict?: boolean; minor?: Cand<true> } = {};
   for (const s of sentences(normalizeAgeInitialism(t))) {
     for (const r of AGE_RULES) for (const m of all(r.rx, s.text)) {
+      if (r.rx === LETTER_FIRST_AGE && !selfLetterAge(s.text, m)) continue;
       const lead = m[0].length - m[0].trimStart().length;
       if (quoteStillOpen(t.slice(0, s.start + m.index + lead)) || NOT_NOW.test(s.text.slice(Math.max(0, m.index - 24), m.index + lead))) continue;
       if (KIN_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
@@ -274,7 +287,9 @@ function readGender(t: string, asked?: OnboardField): GenderReading {
     }
     // Shorthand: "27f", "f27", "(m)", "m4w" (self + seek).
     for (const m of all(/(?:^|[\s,(\/])\d{2}\s*\/?\s*(f|m|nb|enby)(?![a-z0-9'])/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
-    for (const m of all(/(?:^|[\s,(])(f|m)\s*\/?\s*\d{2}(?![\d'])(?!\s*(?:mi|miles|km|min))/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : "man", s, m, 0.9);
+    for (const m of all(LETTER_FIRST_AGE, s.text)) {
+      if (selfLetterAge(s.text, m)) out.gender = cand(m[1] === "f" ? "woman" : "man", s, m, 0.9);
+    }
     for (const m of all(/\((f|m|nb)\)/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
     for (const m of all(/\b(m|w|f|nb)4(?:m|w|f|nb|a|any|mw|wm|all)\b/, s.text)) out.gender = cand(m[1] === "m" ? "man" : m[1] === "nb" ? "nonbinary" : "woman", s, m, 0.9);
     // Orientation said alone: "I'm bi", "gay btw", "straight here", "I'm a woman, lesbian".
@@ -288,7 +303,7 @@ function readGender(t: string, asked?: OnboardField): GenderReading {
 // ------------------------------------------------------------------------------------------ seeking
 
 const SEEK_WORD: [RegExp, Gender][] = [
-  [/^(?:wom[ae]n|womens|womxn|wmn|womyn|wimmin|woemn|womn|girls?|grls|gals?|ladies|lady|females?|chicks?|w)$/, "woman"],
+  [/^(?:wom[ae]n|womens|womxn|wmn|womyn|wimmin|woemn|womn|girls?|grls|gals?|ladies|lady|females?|chicks?|w|f)$/, "woman"],
   [/^(?:men|man|guys?|gusy|guyz|dudes?|boys?|males?|gents|gentlemen|bros|m)$/, "man"],
   [/^(?:nonbinary|nonbinery|non-binary|nb|nbs|enby|enbies|genderqueer)$/, "nonbinary"],
 ];
@@ -530,10 +545,14 @@ function mergeDistance(previous: Distance | undefined, next: Distance): Distance
   return next;
 }
 
+const DISTANCE_RX = new RegExp("(?<![\\d.$])(\\d{1,3}(?:\\.\\d+)?|\\b(?:(?:one|a) hundred|" + NUM_WORD_RX
+  + "|one|two|three|four|five|six|seven|eight|nine)\\b)\\s*(?:(?:-|to|or)\\s*(\\d{1,3}))?\\s*(?:ish\\s*)?"
+  + "(mi\\b|mis\\b|miles?\\b|mile\\b|mls\\b|miels\\b|km\\b|kms\\b|kilomet(?:er|re)s?\\b|k\\b(?=\\s*(?:radius|max|away|tops)))");
+
 function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance> | undefined {
   let best: Cand<Distance> | undefined;
   for (const s of sentences(t)) {
-    for (const m of all(/(?<![\d.$])(\d{1,3}(?:\.\d+)?)\s*(?:(?:-|to|or)\s*(\d{1,3}))?\s*(?:ish\s*)?(mi\b|mis\b|miles?\b|mile\b|mls\b|miels\b|km\b|kms\b|kilomet(?:er|re)s?\b|k\b(?=\s*(?:radius|max|away|tops)))/, s.text)) {
+    for (const m of all(DISTANCE_RX, s.text)) {
       const around = s.text;
       const pos = /\b(?:within|radius|away|max|tops|or less|or closer|up to|no more than|not more than|no further|under|travel|go|is fine|works|ok|okay|of|from|around|near|distance|far|willing|limit|range|date|dating|meet)\b/.test(around);
       const negCtx = /\b(?:run|ran|running|walk|walked|bike|biked|biking|commute|marathon|hike|hiked|drive to work|swim)\b/.test(around);
@@ -541,7 +560,8 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
       const short = s.text.trim().split(/\s+/).length <= 5 || (!!seg && seg.text.trim().split(/\s+/).length <= 3);
       if (asked !== "distance" && (!(pos || short) || negCtx) && !/^\s*(?:like\s+|maybe\s+|about\s+|within\s+)?\d{1,3}\s*(?:mi|miles?)\b\W*$/.test(around)) continue;
       if (negated(s.text, m.index, 2) && !/\b(?:no more than|not more than|not over|no further than|not further than)\s*$/.test(s.text.slice(0, m.index))) continue;
-      let n = Math.max(Number(m[1]), m[2] ? Number(m[2]) : 0);
+      const value = m[1]!;
+      let n = Math.max(/ hundred$/.test(value) ? 100 : readNumericPhrase(value), m[2] ? Number(m[2]) : 0);
       if (/^k/.test(m[3]!)) n = Math.round(n * 0.621);
       if (!(n >= 1 && n <= 200)) continue;
       best = cand<Distance>(mergeDistance(best?.value, { mode: "radius", miles: Math.round(n) }), s, m, /^k/.test(m[3]!) ? 0.85 : 0.95);

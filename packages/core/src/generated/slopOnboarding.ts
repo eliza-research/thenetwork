@@ -25,6 +25,26 @@ export function inv(current: PromptRun): boolean {
   return alwaysReadyHasReason(current);
 }
 
+/** Story: Review the information used for dating / Keep a match preference separate from self-description (spec/slopOnboarding.md) */
+//@ pure
+export function slopSelfShorthandAllowed(namesTarget: boolean, startsRange: boolean): boolean {
+  return !(namesTarget || startsRange);
+}
+
+/** Story: Review the information used for dating / Keep a match preference separate from self-description (spec/slopOnboarding.md) */
+//@ pure
+export function lawSlopTargetShorthandDoesNotDescribeMember(startsRange: boolean): boolean {
+  //@ ensures \result === true
+  return !slopSelfShorthandAllowed(true, startsRange);
+}
+
+/** Story: Review the information used for dating / Keep a match preference separate from self-description (spec/slopOnboarding.md) */
+//@ pure
+export function lawSlopRangeDoesNotSetOwnAge(namesTarget: boolean): boolean {
+  //@ ensures \result === true
+  return !slopSelfShorthandAllowed(namesTarget, true);
+}
+
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 //@ pure
 export function readbackEligible(hardComplete: boolean, confirmed: boolean, skipped: boolean, belowAskCap: boolean): boolean {

@@ -25,6 +25,11 @@ evidence, judgment views, probe order, and cached matching profiles. The [repeat
 
 The [profile skill rule](../profileSkillLearning.md) applies to the offline reader. The Network adds eligible skills to the member's matching facets and retains previously learned skills. The model takes the reader's clause evidence as input. The optional model reader has its own prompt and validator and is outside this transition.
 
+The [Slop onboarding reader rules](../slopOnboarding.md) distinguish a
+possible match's gender and age range from member facts. The resulting
+profile state uses only the member's own age for the age gate. A spelled
+distance and its equivalent in digits produce the same radius input.
+
 [Job posting policy](../postingPolicy.md#a-post-with-a-workplace-needs-a-supported-area) makes a supported site a condition of in-person read-back and publication. The Peon model below covers onsite and hybrid posts. A direct area answer can complete an unconfirmed draft, and an early yes leaves it open. The signed integration also covers an update to remote mode, which does not require a site.
 
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
