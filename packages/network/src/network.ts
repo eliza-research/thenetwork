@@ -5856,11 +5856,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     const local = new Set(snap.members.filter(m => markets.has(m.homeCity) && !this.declinedIds.has(m.id)).map(m => m.id));
     const facets: Facet[] = snap.facets.filter(f => local.has(f.memberId));
     const intents: Intent[] = snap.intents.filter(i => local.has(i.memberId));
+    const facetTags = new Map<MemberId, Set<string>>();
+    for (const facet of facets) {
+      let tags = facetTags.get(facet.memberId);
+      if (!tags) { tags = new Set(); facetTags.set(facet.memberId, tags); }
+      for (const tag of facet.tags) tags.add(tag);
+    }
     for (const m of this.members.values()) {
       if (!local.has(m.id)) continue;
-      const have = new Set(facets.filter(f => f.memberId === m.id).flatMap(f => f.tags));
+      const have = facetTags.get(m.id);
       const add = (kind: Facet["kind"], tag: string, value: string) => {
-        if (have.has(tag)) return;
+        if (have?.has(tag)) return;
         facets.push({ id: `${m.id}:l:${tag}`, memberId: m.id, kind, value, tags: [tag], scope: "matchable", provenance: "said", confidence: 0.85, validFrom: now, source: "chat", observedAt: now, inferred: false, confirmedByMember: true });
       };
       m.learned.interests.forEach(t => add("interest", t, interestLabel(t)));
