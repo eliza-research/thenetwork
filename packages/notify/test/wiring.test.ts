@@ -219,6 +219,42 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     if (channel === "imessage") expect(next.text).toContain("https://claude.ai/new?q=");
   });
 
+  test.each(["acted", "ignored"] as const)("a failed signal write leaves the %s delivery open for retry", async outcome => {
+    // spec/notificationAcknowledgement.md, "Count a delivery action only when the store closes a pending delivery"
+    const { clock, now, store, notifier, r } = await setup();
+    const deliveryId = "fixture-surface-write-" + outcome;
+    await notifier.recordSent(req(r.personId, outcome), { deliveryId, channel: "imessage", countsTowardCap: false, sentAt: now() });
+    if (outcome === "ignored") clock.advance(notifier.cfg.outcomeWindowMs + 1);
+    const apply = () => outcome === "acted" ? notifier.threadReply(r.personId, "imessage", now()) : notifier.sweep(now());
+
+    await sql`create function notify.fixture_reject_surface_count() returns trigger language plpgsql as $$
+      begin
+        if new.acted > coalesce(old.acted, 0) or new.ignored > coalesce(old.ignored, 0) then
+          raise exception 'fixture surface count unavailable';
+        end if;
+        return new;
+      end;
+    $$`;
+    await sql`create trigger fixture_reject_surface_count before insert or update on notify.surface_signals
+      for each row execute function notify.fixture_reject_surface_count()`;
+    try {
+      await expect(apply()).rejects.toThrow("fixture surface count unavailable");
+      expect((await store.getDelivery(deliveryId))?.outcome).toBeUndefined();
+      expect((await store.signals(r.personId)).every(signal => signal.acted === 0 && signal.ignored === 0)).toBe(true);
+    } finally {
+      await sql`drop trigger fixture_reject_surface_count on notify.surface_signals`;
+      await sql`drop function notify.fixture_reject_surface_count()`;
+    }
+
+    await Promise.all([apply(), apply()]);
+    expect((await store.getDelivery(deliveryId))?.outcome).toBe(outcome);
+    expect((await store.signals(r.personId)).find(signal => signal.surface === "imessage")).toMatchObject({
+      acted: outcome === "acted" ? 1 : 0,
+      ignored: outcome === "ignored" ? 1 : 0,
+      ignoredStreak: outcome === "ignored" ? 1 : 0,
+    });
+  });
+
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {
     const { now, store, notifier, sink, r } = await setup();
     await notifier.add(req(r.personId, "m1", "You have a new match."), now());

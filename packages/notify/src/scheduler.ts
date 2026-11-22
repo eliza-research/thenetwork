@@ -304,14 +304,6 @@ export class Notifier {
     });
   }
 
-  private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
-    const outcome = stepAcknowledgement(acknowledgementInitial, {
-      type: "readDeliveryClosure",
-      deliveryClosed: !!deliveryId && await this.store.actOnDelivery(deliveryId, on, now),
-    });
-    if (outcome.phase === "DeliveryActed") await this.store.recordOutcome(personId, on, "acted", now);
-  }
-
   /** Resolve a token for its owner. null for unknown, expired or foreign tokens (shown as "no update"). */
   private async redeem(token: string, callerPersonId: string, surface: Surface, now: number, app?: string): Promise<InboxItem[] | null> {
     const t = await this.store.getToken(token.trim().toUpperCase());
@@ -320,7 +312,8 @@ export class Notifier {
       && appAllowsInboxItem(app !== undefined, item.app === app) && !inboxItemExpired(item.expiresAt !== undefined, item.expiresAt ?? 0, now));
     if (!inboxTokenMayRecordRedemption(items.length)) return null;
     await this.store.markTokenRedeemed(t.token, surface, now);
-    await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, callerPersonId, now);
+    const deliveryId = items.find(i => i.deliveryId)?.deliveryId;
+    if (deliveryId) await this.store.actOnDelivery(deliveryId, surface, now);
     return items;
   }
 
@@ -370,7 +363,7 @@ export class Notifier {
   /** The member wrote in the thread: every pending delivery counts as acted on the channel. */
   async threadReply(personId: string, channel: Channel, now: number) {
     await this.store.touch(personId, channel, now);
-    for (const d of await this.store.pendingDeliveries(personId)) await this.acted(d.deliveryId, channel, personId, now);
+    for (const d of await this.store.pendingDeliveries(personId)) await this.store.actOnDelivery(d.deliveryId, channel, now);
   }
 
   /** Grant or key issued (true) or revoked (false) for an assistant. */
@@ -380,7 +373,6 @@ export class Notifier {
 
   /** Close deliveries whose outcome window passed with no action; run with dispatch. */
   async sweep(now: number) {
-    for (const d of await this.store.expireDeliveries(now - this.cfg.outcomeWindowMs, now))
-      await this.store.recordOutcome(d.personId, d.target, "ignored", now);
+    await this.store.expireDeliveries(now - this.cfg.outcomeWindowMs, now);
   }
 }

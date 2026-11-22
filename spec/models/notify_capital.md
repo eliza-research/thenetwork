@@ -12,7 +12,7 @@ Production uses the generated [notification delivery rules](../notificationDeliv
 
 The model records the chosen outcome surface. It abstracts an assistant deep link and a button page with that assistant first as the same target. The VibeLang dispatch shell rechecks the recipient before recording. The Postgres store locks the selected items in ID order, checks that each still belongs to the recipient and remains pending, and records the claim and notice flags in one transaction. The machine treats that transaction's response as an effect result.
 
-The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger. This model's plan action represents two accepted seats with booking receipts. Its feedback action represents an exact prompt and a timely reply. Factual confirmation and worthwhile feedback are separate parts of that reply.
+The model records each pending delivery's outcome and its effect on the surface signal in one step. The store commits both changes together. The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger. This model's plan action represents two accepted seats with booking receipts. Its feedback action represents an exact prompt and a timely reply. Factual confirmation and worthwhile feedback are separate parts of that reply.
 
 The generated [Capital ledger spec](../capitalLedger.md) governs event admission, contribution qualification, append-only reversals, and which entries count against the rolling credit cap. The [Capital levers](../capitalLevers.md) use admitted credits to calculate allowances. The signed [contribution history](../contributionHistory.md) replays committed app events and projects only the current adult member's verified acts.
 
@@ -337,7 +337,7 @@ module notify_capital {
   }
 
   // sweep (scheduler.ts sweep): an open scheduler delivery past the outcome window is "ignored",
-  // and the target surface's streak goes up (pg-store.ts recordOutcome).
+  // and the target surface's streak goes up (pg-store.ts expireDeliveries).
   action sweepOne(k: Set[int]): bool = all {
     ntf.keys().contains(k), ntf.get(k).outcome == "open",
     ntf' = ntf.set(k, { ...ntf.get(k), outcome: "ignored" }),

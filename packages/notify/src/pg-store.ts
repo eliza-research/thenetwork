@@ -148,10 +148,18 @@ export class PgNotifyStore implements NotifyStore {
     return rows.map((r: Row) => ms(r.sent_at)!);
   }
 
-  async actOnDelivery(id: string, _on: Surface, at: number) {
+  async actOnDelivery(id: string, on: Surface, at: number) {
     const rows = await this.sql`
-      update notify.deliveries set outcome = 'acted', outcome_at = ${new Date(at)}
-      where delivery_id = ${id} and outcome is null returning delivery_id`;
+      with settled as (
+        update notify.deliveries set outcome = 'acted', outcome_at = ${new Date(at)}
+        where delivery_id = ${id} and outcome is null returning delivery_id, person_id
+      ), counted as (
+        insert into notify.surface_signals (person_id, surface, acted, last_used_at)
+        select person_id, ${on}, 1, ${new Date(at)} from settled
+        on conflict (person_id, surface) do update
+          set acted = notify.surface_signals.acted + 1, ignored_streak = 0, last_used_at = excluded.last_used_at
+      )
+      select delivery_id from settled`;
     return rows.length > 0;
   }
 
@@ -162,8 +170,18 @@ export class PgNotifyStore implements NotifyStore {
 
   async expireDeliveries(before: number, at: number) {
     const rows = await this.sql`
-      update notify.deliveries set outcome = 'ignored', outcome_at = ${new Date(at)}
-      where outcome is null and sent_at < ${new Date(before)} returning *`;
+      with settled as (
+        update notify.deliveries set outcome = 'ignored', outcome_at = ${new Date(at)}
+        where outcome is null and sent_at < ${new Date(before)} returning *
+      ), counted as (
+        insert into notify.surface_signals (person_id, surface, ignored, ignored_streak)
+        select person_id, target, count(*)::int, count(*)::int from settled
+        group by person_id, target order by person_id, target
+        on conflict (person_id, surface) do update
+          set ignored = notify.surface_signals.ignored + excluded.ignored,
+              ignored_streak = notify.surface_signals.ignored_streak + excluded.ignored_streak
+      )
+      select * from settled`;
     return rows.map(delivery);
   }
 
@@ -206,18 +224,5 @@ export class PgNotifyStore implements NotifyStore {
     await this.sql`
       insert into notify.surface_signals (person_id, surface, last_used_at) values (${personId}, ${surface}, ${new Date(at)})
       on conflict (person_id, surface) do update set last_used_at = excluded.last_used_at, ignored_streak = 0`;
-  }
-
-  async recordOutcome(personId: string, surface: Surface, outcome: "acted" | "ignored", at: number) {
-    if (outcome === "acted")
-      await this.sql`
-        insert into notify.surface_signals (person_id, surface, acted, last_used_at) values (${personId}, ${surface}, 1, ${new Date(at)})
-        on conflict (person_id, surface) do update
-          set acted = notify.surface_signals.acted + 1, ignored_streak = 0, last_used_at = excluded.last_used_at`;
-    else
-      await this.sql`
-        insert into notify.surface_signals (person_id, surface, ignored, ignored_streak) values (${personId}, ${surface}, 1, 1)
-        on conflict (person_id, surface) do update
-          set ignored = notify.surface_signals.ignored + 1, ignored_streak = notify.surface_signals.ignored_streak + 1`;
   }
 }
