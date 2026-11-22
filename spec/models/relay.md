@@ -8,7 +8,7 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. A condition on the recipient's assent or a later time supplies uncertainty to the private request rule. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -300,7 +300,7 @@ module relay {
   }
 
   // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
-  // signals after claiming the receipt. Only a private request the reader has identified as explicit gets here.
+  // signals after claiming the receipt. It includes conditions and timing in the uncertainty signal.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
@@ -949,6 +949,14 @@ module relay {
       .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
       .then(queueSend("a1")).then(queueSend("b2"))
       .expect(numberSent("A") and numberSent("B") and safety)
+
+  // The reader found a qualified contact request and separately an explicit text relay. The
+  // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.
+  run qualifiedRequestAndQuotedTextTest =
+    init
+      .then(claimPrivateContact("a1", false, true, false)).then(commitNone("a1")).then(answer("a1"))
+      .then(claim("a2", "text")).then(commitText("a2", "block", false)).then(answer("a2"))
+      .expect(desk.swaps.size() == 0 and desk.log.get("a2").decision == "block" and queue.rows.keys().size() == 0 and safety)
 
   run pendingSwapPronounWithdrawalTest =
     init

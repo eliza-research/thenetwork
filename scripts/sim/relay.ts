@@ -180,8 +180,20 @@ export async function relayBlock(b: Block): Promise<void> {
     expect(relayItem(num!, baseCtx()).decision).toBe("pass");
     expect(relayItem(pic!, baseCtx()).decision).toBe("pass");
     expect(relayItem(msg!, baseCtx()).rendered).toBe('Sam says: "I\'m running 10 min late"');
-    for (const t of ["should I send them my number?", "don't send my number yet", "how are you?"]) expect([t, mk(t, "r4")]).toEqual([t, null]);
+    for (const t of ["should I send them my number?", "don't send my number yet", "send them my number if she asks", "send them this photo next week", "how are you?"]) {
+      expect([t, mk(t, "r4")]).toEqual([t, null]);
+    }
     expect(relayItemFromRequest({ kind: "contact_share" }, { id: "r5", from: "a", to: "b", at })).toBeNull();
+
+    const quoted = '"I will send you my number when we meet."';
+    expect(mk(`tell them ${quoted}`, "quoted-shared-text")).toMatchObject({ kind: "text", text: quoted });
+    const scheduling = mk('tell them "I can meet Friday if that works for you."', "quoted-schedule");
+    expect(relayItem(scheduling!, baseCtx()).decision).toBe("pass");
+    const contactInQuote = mk('tell them "I will send you my number +1 (212) 555-0147 when we meet."', "quoted-private-contact");
+    expect(contactInQuote?.kind).toBe("text");
+    const checked = relayItem(contactInQuote!, baseCtx());
+    expect(checked.decision).not.toBe("pass");
+    expect(checked.rendered).toBe("");
   });
 
   await b.run("relay: the LLM hook runs only on items the rules pass; a flag or an error holds", async () => {
