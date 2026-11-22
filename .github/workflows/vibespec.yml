@@ -2,7 +2,7 @@ name: Vibestack
 
 on:
   push:
-    branches: [main, vibestack]
+    branches: [main, develop]
     paths:
       - 'spec/**'
       - 'packages/core/src/generated/**'
@@ -100,7 +100,7 @@ jobs:
       - run: pnpm run spec:explore
 
   full-check:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'vibestack')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
