@@ -115,6 +115,18 @@ pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRos
   startAt <= now implies not(upcomingCancellationEligible(proposal, onRoster, accepted, startKnown, startAt, now))
 ```
 
+### A number-swap refusal does not decline the booked meeting
+
+Withdrawing a number swap changes number-sharing consent. Keep the booking unless the text separately and directly declines attendance. A separate affirmative booking answer can still confirm the plan. The text reader distinguishes that answer or refusal from the transfer clause before the booked reply uses it.
+
+```quint
+pure def bookedReplyDeclines(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool): bool =
+  if (swapWithdrawal) directAttendanceDecline else ordinaryDecline
+
+pure def lawSwapWithdrawalAloneDoesNotCancel(ordinaryDecline: bool): bool =
+  not(bookedReplyDeclines(ordinaryDecline, true, false))
+```
+
 ### A new minor signal closes an unbooked opportunity involving that person
 
 Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster. A booked opportunity also closes when the minor received a probe for it and was replaced before the booking: a minor who was asked stays on its roster, so a reminder or feedback request about it describes them. Decision 2026-11-17 (NYC world, seed 3): a member who stated 20 declined a probe, was replaced, and was found to be 16 the next day; the two adults then got 4 messages about the booked plan.

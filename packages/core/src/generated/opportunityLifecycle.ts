@@ -167,6 +167,19 @@ export function lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle
   return !(startAt <= now) || !upcomingCancellationEligible(proposal, onRoster, accepted, startKnown, startAt, now);
 }
 
+/** Story: Book and conclude a proposal that comes together / A number-swap refusal does not decline the booked meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function bookedReplyDeclines(ordinaryDecline: boolean, swapWithdrawal: boolean, directAttendanceDecline: boolean): boolean {
+  return swapWithdrawal ? directAttendanceDecline : ordinaryDecline;
+}
+
+/** Story: Book and conclude a proposal that comes together / A number-swap refusal does not decline the booked meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawSwapWithdrawalAloneDoesNotCancel(ordinaryDecline: boolean): boolean {
+  //@ ensures \result === true
+  return !bookedReplyDeclines(ordinaryDecline, true, false);
+}
+
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {

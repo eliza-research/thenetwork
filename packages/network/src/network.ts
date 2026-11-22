@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -68,7 +68,7 @@ import {
 } from "./rescheduling.ts";
 import {
   bookedReplyCurrent, closesForBlock, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
-  acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
+  acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, bookedReplyDeclines, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
 import { gatheringRepeatMayAnswer, gatheringRepeatMayBook, gatheringRepeatMayStage, gatheringRepeatOppPrefix, gatheringRepeatSourceMatches } from "../../core/src/generated/gatheringRepeat.ts";
@@ -519,6 +519,22 @@ export function explicitBookingCancellation(text: string): BookingCancellation |
   const booking = BOOKING_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
+}
+
+const ATTENDANCE_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i\s+)?(?:can'?t|cannot|won'?t|will not)\s+(?:make it|come|attend)|(?:i'?m\s+|i am\s+)?not\s+(?:coming|attending|comfortable meeting)|i\s+(?:need|have)\s+to\s+(?:cancel|call it off))(?:\s+anymore)?[.,!]*$/i;
+const ATTENDANCE_JOIN = /[.!;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
+const NO_SWAP_OR_MEETING = /^(?:please[,]?\s+)?(?:i\s+(?:do not|don'?t)\s+want to|i'?m\s+not)\b[^.!?;]+\b(?:or|nor)\s+meet(?:ing)?\s+(?:you|them)\b[.!]*$/i;
+
+function declinesAttendanceAlongsideSwap(body: string): boolean {
+  const text = body.toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"');
+  if (NO_SWAP_OR_MEETING.test(text) && !/["“”]/.test(text)) return true;
+  const boundaries = [...text.matchAll(ATTENDANCE_JOIN)];
+  let start = 0;
+  for (const end of boundaries) {
+    if (!quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start, end.index).trim())) return true;
+    start = end.index + end[0].length;
+  }
+  return !quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start).trim());
 }
 
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
@@ -1351,7 +1367,10 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.awaiting = undefined;
       } else {
         const yn = this.yesNoOf(body);
-        const declines = c.kind === "cancel" || yn === "no";
+        const swapWithdrawal = this.memberReply && !msg.reaction && withdrawsSwap(body);
+        // spec/opportunityLifecycle.md, "A number-swap refusal does not decline the booked meeting"
+        const declines = bookedReplyDeclines(c.kind === "cancel" || yn === "no", swapWithdrawal,
+          swapWithdrawal && declinesAttendanceAlongsideSwap(body));
         const confirms = yn === "yes" || c.kind === "ack";
         if (checkIn && (declines || confirms)) {
           const receipt = this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", o.id, m.id, checkIn.revision));
@@ -1364,7 +1383,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           }
         }
         if (declines) {
-          return this.handleDrop(m, o, true, !msg.reaction && (c.kind === "cancel" || consentOf(body).answer === "no"));
+          return this.handleDrop(m, o, true, !msg.reaction && (swapWithdrawal || c.kind === "cancel" || consentOf(body).answer === "no"));
         }
         if (confirms) {
           m.awaiting = undefined;
@@ -1374,7 +1393,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
-    if (!msg.reaction && !c.pastAbsence && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
+    if (!msg.reaction && !c.pastAbsence && !withdrawsSwap(body) && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {
       const directAnswer = this.memberReply && !msg.reaction;

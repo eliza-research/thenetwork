@@ -65,3 +65,32 @@ test("multiple future bookings require a unique explicit local start and never i
   expect(bothBooked()).toEqual(["scheduled", "closed"]);
   expect(w.log("booked_cancelled").map(entry => entry.detail.oppId)).toEqual(["second"]);
 });
+
+
+test.each([
+  ["I don't want to share my number yet", false, true],
+  ["I'd rather not share my number before we meet", false, true],
+  ["No, not my number", false, true],
+  ["I need to cancel the number swap", false, true],
+  ["Yes! But don't share my number yet", false, false],
+  ["Don't give out my number - I'm not coming", true, false],
+  ["Please don't share my number, I'm not comfortable meeting", true, false],
+  ["I’m not sharing my number and not coming", true, false],
+  ["I don't want to share my number or meet you", true, false],
+  ["Don't give out my number. I can't make it.", true, false],
+  ['Don’t share my number. The message said "I’m not coming. Bye."', false, true],
+] as const)("keeps the private swap and booking consents separate (%s)", async (body, cancelled, awaiting) => {
+  const { w, booked } = await bookedPair();
+  const request = await w.net.relayRequest({ itemId: "my-number-swap", from: "a", kind: "contact_share", matchId: booked.id }, {
+    contactOf: id => id === "a" ? "+12125550147" : "+12125550148",
+  });
+  expect(request.decision).toBe("held");
+  expect(w.net.exportState().relay?.swaps.map(swap => swap.from)).toEqual(["a"]);
+  const marker = w.mark();
+  await w.say("a", body);
+  expect(w.net.exportState().relay?.swaps).toEqual([]);
+  expect(w.net.opps.get(booked.id)?.stage).toBe(cancelled ? "closed" : "scheduled");
+  expect(w.net.memberList().find(member => member.id === "a")?.awaiting?.kind === "booked").toBe(awaiting);
+  const notices = w.to("b", marker).filter(send => send.meta.type === "cancellation");
+  expect(notices.map(send => send.meta.proposalId)).toEqual(cancelled ? [booked.id] : []);
+});
