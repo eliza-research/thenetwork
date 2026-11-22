@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
-export type CoordinatedStop = "FirstStops" | "LastStops" | "NeitherStops";
-/** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
 export type StopConjunct = "ExplicitStop" | "CompleteNegation" | "IncompleteNegation" | "OtherClause";
+/** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */
+export type CoordinatedStop = "FirstStops" | "LastStops" | "NeitherStops";
 
 
 /** Story: Stop texts across apps and resume an app / Courtesy or urgency can accompany a whole-message STOP command (spec/carrierConsent.md) */
@@ -31,6 +31,26 @@ export function textRefusalStops(hasDeterminer: boolean, permanentEnding: boolea
 export function lawBareTextRefusalNeedsPermanence(permanentEnding: boolean): boolean {
   //@ ensures \result === true
   return textRefusalStops(false, permanentEnding) === permanentEnding;
+}
+
+/** Story: Stop texts across apps and resume an app / Direct repeated and permanent refusals stop the shared line (spec/carrierConsent.md) */
+//@ pure
+export function sharedLineStopStatementStops(direct: boolean, repeated: boolean, permanent: boolean): boolean {
+  return direct && (repeated || permanent);
+}
+
+/** Story: Stop texts across apps and resume an app / Direct repeated and permanent refusals stop the shared line (spec/carrierConsent.md) */
+//@ pure
+export function lawAnIndirectStopStatementCannotStop(repeated: boolean, permanent: boolean): boolean {
+  //@ ensures \result === true
+  return !sharedLineStopStatementStops(false, repeated, permanent);
+}
+
+/** Story: Stop texts across apps and resume an app / Direct repeated and permanent refusals stop the shared line (spec/carrierConsent.md) */
+//@ pure
+export function lawARecognizedDirectStopStatementStops(repeated: boolean, permanent: boolean): boolean {
+  //@ ensures \result === true
+  return !(repeated || permanent) || sharedLineStopStatementStops(true, repeated, permanent);
 }
 
 /** Story: Stop texts across apps and resume an app / An independent STOP joined to a negation still takes effect (spec/carrierConsent.md) */

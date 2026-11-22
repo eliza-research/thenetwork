@@ -2,7 +2,7 @@
 // gateway (PRD 32.2, 34.2 "Channel gateway"): timestamps from the Clock, carrier-level
 // STOP/START/HELP keywords, outbound idempotency, seeded delivery failures, and a
 // per-recipient log. The Network under test talks to members only through this.
-import { HELP_TEXT, KEYWORDS, keywordKey, STOP_CONFIRMATION, type Clock, type MemberId } from "@thenetwork/core";
+import { HELP_TEXT, isDirectSharedLineStop, KEYWORDS, keywordKey, STOP_CONFIRMATION, type Clock, type MemberId } from "@thenetwork/core";
 import { Rng } from "@thenetwork/core";
 
 export type { ChannelKind, DeliveryStatus, Direction, Keyword, MenuOption, Reaction, SimItem, SimMessage, SimMeta, TimeOption } from "@thenetwork/core";
@@ -20,7 +20,7 @@ export { HELP_TEXT, STOP_CONFIRMATION };
 
 export function detectKeyword(body: string): Keyword | undefined {
   const t = keywordKey(body);
-  if (STOP_WORDS.has(t)) return "STOP";
+  if (STOP_WORDS.has(t) || isDirectSharedLineStop(body)) return "STOP";
   if (START_WORDS.has(t)) return "START";
   if (HELP_WORDS.has(t)) return "HELP";
   return undefined;
