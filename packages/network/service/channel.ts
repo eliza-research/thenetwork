@@ -157,16 +157,31 @@ function receivedBookingNotice(receipt: BookingReceipt, now: number): boolean {
   return bookingNoticeReceived(receipt.status, receipt.sent_at?.getTime() ?? -1, now);
 }
 
+type BookingReceiptRequest = { oppId: string; memberId: MemberId; revision: number; lane: string | null };
+
+export async function currentBookingReceipts(tx: SQL, app: string, bookings: readonly BookingReceiptRequest[]): Promise<Map<number, BookingReceipt | undefined>> {
+  const expected = bookings.map(({ oppId, memberId, revision, lane }, idx) => {
+    const key = rescheduleUpdateKey(oppId, revision, memberId);
+    return { idx, opp_id: oppId, member_id: memberId, kind: revision === 0 ? "proposal" : "scheduling",
+      notice_id: revision === 0 ? null : lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key };
+  });
+  const notices = await tx<(BookingReceipt & { idx: number })[]>`select expected.idx, exact.status, exact.sent_at
+    from jsonb_to_recordset(${expected}::jsonb) as expected(idx int,opp_id text,member_id text,kind text,notice_id text)
+    cross join lateral (
+      select receipt.status,receipt.sent_at from network.messages notice
+      join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
+      where notice.app_id=${app} and notice.opportunity_id=expected.opp_id and notice.member_id=expected.member_id
+        and notice.direction='outbound' and notice.type=expected.kind and (expected.notice_id is null or notice.id=expected.notice_id)
+      order by notice.id limit 2 for share of receipt
+    ) as exact`;
+  const receipts = new Map<number, BookingReceipt | undefined>();
+  for (const notice of notices) receipts.set(notice.idx, receipts.has(notice.idx) ? undefined : notice);
+  return receipts;
+}
+
 export async function currentBookingReceipt(tx: SQL, app: string, oppId: string, memberId: MemberId,
   revision: number, lane: string | null): Promise<BookingReceipt | undefined> {
-  const key = rescheduleUpdateKey(oppId, revision, memberId);
-  const changed = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key;
-  const notices = await tx<BookingReceipt[]>`select receipt.status,receipt.sent_at from network.messages notice
-    join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
-    where notice.app_id=${app} and notice.opportunity_id=${oppId} and notice.member_id=${memberId}
-      and notice.direction='outbound' and ${revision === 0 ? tx`notice.type='proposal'` : tx`notice.type='scheduling' and notice.id=${changed}`}
-    order by notice.id limit 2 for share of receipt`;
-  return notices.length === 1 ? notices[0] : undefined;
+  return (await currentBookingReceipts(tx, app, [{ oppId, memberId, revision, lane }])).get(0);
 }
 
 async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, memberId: string,

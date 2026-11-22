@@ -52,6 +52,21 @@ pure def lawSlopPairRevealNeedsCurrentConsent(approved: bool, pairCurrent: bool,
   slopPairContactAllowed(approved, pairCurrent, true, bothConsented) implies (approved and pairCurrent and bothConsented)
 ```
 
+### A mutual named introduction stays in first-date history
+
+Use a positive receipt from each member's exact original named booking on the same reviewed Slop opportunity. Record one accepted introduction at the later receipt time. Keep it if the booking changes, is cancelled, or receives no feedback. Other receipts and anonymous probes leave first-date history open. An accepted introduction records exposure to the other member's name. Attended-meeting evidence and an explicit mutual request to meet again use their own rules.
+
+```quint
+pure def slopFirstIntroductionAt(firstCollected: int, firstReceived: int, secondCollected: int, secondReceived: int, asOf: int): int =
+  if (firstCollected >= 0 and secondCollected >= 0 and firstReceived >= firstCollected and
+      secondReceived >= secondCollected and firstReceived <= asOf and secondReceived <= asOf) {
+    if (firstReceived >= secondReceived) firstReceived else secondReceived
+  } else -1
+
+pure def lawSlopIntroductionNeedsBothReceipts(firstCollected: int, firstReceived: int, secondCollected: int, asOf: int): bool =
+  slopFirstIntroductionAt(firstCollected, firstReceived, secondCollected, -1, asOf) == -1
+```
+
 ### Only encounter-backed blocks inform a member review
 
 Every block keeps both members apart. A block can inform the separate dating review only when the same two members already shared a recorded completed or no-show encounter in this app. Count each qualifying blocker once. Anonymous proposals and later encounters provide no evidence for the earlier block. Other safety and staff decisions apply independently.

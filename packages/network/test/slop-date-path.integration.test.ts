@@ -401,6 +401,85 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await judgeCost("after-complete-date-path");
   }, T);
 
+  test("only two exact named booking receipts preserve a Slop introduction after cancellation and restart", async () => {
+    await svc?.close();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const secret = "synthetic-slop-introduction-history-turn";
+    const makeService = () => new NetworkService({
+      url: URL_, clock, log: () => {}, photoStorage: null, notify: false,
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "slop:nyc", matchingEnabled: false }], adapter: () => new DryRunAdapter(() => {}),
+    });
+    let s = svc = makeService();
+    await s.start();
+    const people = [];
+    for (const [e164, firstName] of [[RAE, "Rae"], [SAM, "Sam"]] as const) {
+      const result = await s.accounts.join(APPS.slop, { e164, personId: null }, {
+        firstName, age: 30, consent: { sms: true, wording: APPS.slop.consent.text },
+      });
+      if (!result.ok) throw new Error("Fixture could not join");
+      people.push({ id: result.membership.memberId, name: firstName, age: 30, e164 });
+    }
+    const ids = people.map(person => person.id);
+    const world = new Mini(people, { app: "slop", plans: false, growth: false, review: "human" });
+    await world.onboard(...ids);
+    const oppId = world.propose(ids, { category: "romance", objective: "a coffee date" });
+    expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
+    expect(world.net.decide(oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+    await world.answerProbes(ids);
+    const seed = world.net.exportState();
+    const booked = seed.opps.find(opp => opp.id === oppId)!;
+    expect(booked).toMatchObject({ stage: "scheduled", bookedTold: expect.arrayContaining(ids) });
+    clock.set(world.clock.now());
+    const rt = () => s.runtimeFor("slop")!;
+    await rt().unitOfWork(net => net.importState({ ...net.exportState(), members: seed.members, opps: [booked] }));
+
+    const queue = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records receipts"); } } });
+    const first = { id: "slop-introduction-first", to: people[0]!.e164, memberId: people[0]!.id, type: "proposal", text: "You're both in: a first date with Sam." };
+    const second = { id: "slop-introduction-second", to: people[1]!.e164, memberId: people[1]!.id, type: "proposal", text: "You're both in: a first date with Rae." };
+    const notices = [first, second,
+      { ...second, id: "unrelated-schedule-notice", type: "scheduling" }];
+    await sql.begin(async tx => {
+      for (const item of notices) {
+        await tx`insert into network.messages (app_id,id,member_id,direction,channel,body,type,status,opportunity_id,proactive,system,ts)
+          values ('slop',${item.id},${item.memberId},'outbound','imessage',${item.text},${item.type},'collected',${oppId},false,false,${new Date(clock.now())})`;
+        await queue.recordCollected(tx, [{ id: item.id, memberId: item.memberId, to: item.to, kind: "transactional", text: item.text }]);
+      }
+      await queue.collectedReceipt(tx, [notices[0]!.id, notices[2]!.id], "accepted", clock.now());
+    });
+    const introductionId = `${oppId}:introduced`;
+    const history = () => rt().unitOfWork(net => net.engineInput(clock.now()).interactions?.filter(item => item.id === introductionId) ?? []);
+    const pairGate = () => rt().unitOfWork(net => {
+      const view = new World(net.packInput(clock.now()), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
+      const [first, second] = ids as [string, string];
+      return slopPack.eligibility.pairRules.find(rule => rule.id === "already_introduced")!
+        .check(view, first, second, "romance", view.get(first)!, view.get(second)!);
+    });
+    expect(await history()).toEqual([]);
+    expect(await pairGate()).toBeNull();
+
+    clock.advance(MINUTE);
+    const acceptedAt = clock.now();
+    await sql.begin(tx => queue.collectedReceipt(tx, [second.id], "accepted", acceptedAt));
+    await signedText(s, clock, secret, RAE, "slop-first-date-cancel", "I can't make it anymore.");
+    const retired = await rt().pg.load();
+    expect(retired?.opps.find(opp => opp.id === oppId)?.stage).toBe("closed");
+    expect(retired?.interactions.filter(item => item.id === introductionId)).toMatchObject([
+      { at: acceptedAt, outcome: "accepted", participants: ids },
+    ]);
+    await s.close();
+    await sql`delete from platform.outbound where app_id='slop' and id in ${sql([first.id, second.id])}`;
+    clock.advance(32 * DAY);
+    s = svc = makeService();
+    await s.start();
+    await expect(history()).resolves.toMatchObject([{ id: introductionId, at: acceptedAt, outcome: "accepted", participants: ids }]);
+    expect(await pairGate()).toBe("already_introduced");
+    expect((await rt().pg.load())?.feedback).toEqual([]);
+    await s.close(); svc = undefined;
+  }, T);
+
   test.each([
     { scenario: "while answering feedback", answer: "I came, but Rae couldn't make it.", missing: true, report: true },
     { scenario: "while a later booking awaits a reply", answer: "Rae bailed on me.", missing: true, report: false },

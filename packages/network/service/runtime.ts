@@ -45,7 +45,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -59,7 +59,7 @@ import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { BlooioAdapter, currentBookingReceipt, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { BlooioAdapter, currentBookingReceipt, currentBookingReceipts, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
@@ -931,6 +931,19 @@ export class NetworkRuntime {
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
+    if (this.app.id === "slop" && state) {
+      const originalNotices = pendingSlopIntroductions(state.opps, state.interactions).flatMap(opp =>
+        opp.participants.map(memberId => ({ oppId: opp.id, memberId, revision: 0, lane: null })));
+      if (originalNotices.length) await this.scoped(async tx => {
+        const receipts = await currentBookingReceipts(tx, this.app.id, originalNotices);
+        for (const [index, receipt] of receipts) {
+          const at = receipt?.sent_at?.getTime();
+          if (!receipt || at === undefined || !bookingNoticeReceived(receipt.status, at, now)) continue;
+          const { oppId, memberId } = originalNotices[index]!;
+          this.initialInviteReceipts.set(bookingNoticeReceiptKey(oppId, memberId), { kind: "accepted", at });
+        }
+      });
+    }
     const bookingReceiptsNeeded = (state?.opps ?? []).filter(opp => {
       if (opp.seat || opp.meetingAt === undefined) return false;
       const elapsed = now - opp.meetingAt;

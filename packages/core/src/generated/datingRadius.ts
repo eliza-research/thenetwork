@@ -50,6 +50,19 @@ export function lawSlopPairRevealNeedsCurrentConsent(approved: boolean, pairCurr
   return !slopPairContactAllowed(approved, pairCurrent, true, bothConsented) || (approved && pairCurrent && bothConsented);
 }
 
+/** Story: Find a date within both travel limits / A mutual named introduction stays in first-date history (spec/datingRadius.md) */
+//@ pure
+export function slopFirstIntroductionAt(firstCollected: number, firstReceived: number, secondCollected: number, secondReceived: number, asOf: number): number {
+  return firstCollected >= 0 && secondCollected >= 0 && firstReceived >= firstCollected && secondReceived >= secondCollected && firstReceived <= asOf && secondReceived <= asOf ? (firstReceived >= secondReceived ? firstReceived : secondReceived) : -1;
+}
+
+/** Story: Find a date within both travel limits / A mutual named introduction stays in first-date history (spec/datingRadius.md) */
+//@ pure
+export function lawSlopIntroductionNeedsBothReceipts(firstCollected: number, firstReceived: number, secondCollected: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return slopFirstIntroductionAt(firstCollected, firstReceived, secondCollected, -1, asOf) === -1;
+}
+
 /** Story: Find a date within both travel limits / Only encounter-backed blocks inform a member review (spec/datingRadius.md) */
 //@ pure
 export function slopRecordedBlockContext(encounterResult: string): boolean {
