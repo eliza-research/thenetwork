@@ -2,6 +2,7 @@
 // Postgres version (pg-store.ts, schema in db/schema.sql) keeps the same rules as this in-memory
 // one, and the same tests run against both.
 
+import { pendingDeliveryMayClose, pendingDeliveryMayExpire } from "../../core/src/generated/notificationAcknowledgement.ts";
 import { digestItemSetCanBeRecorded, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
@@ -52,11 +53,11 @@ export interface NotifyStore {
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */
   capSendsSince(personId: string, since: number): Promise<number[]>;
-  /** Close a pending delivery as acted (on `on`), if it is still pending. Returns its target. */
+  /** Close a pending delivery as acted and count it on the surface that acted. */
   actOnDelivery(deliveryId: string, on: Surface, at: number): Promise<boolean>;
   /** Pending deliveries of a person (no outcome yet). */
   pendingDeliveries(personId: string): Promise<DeliveryRecord[]>;
-  /** Close deliveries sent before `before` with no outcome as ignored. Returns how many. */
+  /** Close pending deliveries sent before `before` as ignored and count each on its recorded target. */
   expireDeliveries(before: number, at: number): Promise<DeliveryRecord[]>;
 
   /** False when the token already exists (the caller draws another). */
@@ -69,8 +70,6 @@ export interface NotifyStore {
   setActive(personId: string, surface: Surface, active: boolean): Promise<void>;
   /** The member used this surface: lastUsedAt = at, and its ignored streak ends (surface.ts: a dropped surface comes back). */
   touch(personId: string, surface: Surface, at: number): Promise<void>;
-  /** acted: +1 acted, streak reset, lastUsed = at. ignored: +1 ignored, +1 streak. */
-  recordOutcome(personId: string, surface: Surface, outcome: "acted" | "ignored", at: number): Promise<void>;
 }
 
 const blankSignal = (surface: Surface): SurfaceSignal => ({ surface, active: false, acted: 0, ignored: 0, ignoredStreak: 0 });
@@ -150,11 +149,10 @@ export class MemoryNotifyStore implements NotifyStore {
     return [...this.deliveries.values()].filter(d => d.personId === personId && d.countsTowardCap && d.sentAt >= since).map(d => d.sentAt).sort((a, b) => a - b);
   }
 
-  async actOnDelivery(id: string, _on: Surface, at: number) {
+  async actOnDelivery(id: string, on: Surface, at: number) {
     const d = this.deliveries.get(id);
-    if (!d || d.outcome) return false;
-    d.outcome = "acted";
-    d.outcomeAt = at;
+    if (!d || !pendingDeliveryMayClose(d.outcome === undefined)) return false;
+    this.settleDelivery(d, on, "acted", at);
     return true;
   }
 
@@ -165,9 +163,8 @@ export class MemoryNotifyStore implements NotifyStore {
   async expireDeliveries(before: number, at: number) {
     const out: DeliveryRecord[] = [];
     for (const d of this.deliveries.values()) {
-      if (d.outcome || d.sentAt >= before) continue;
-      d.outcome = "ignored";
-      d.outcomeAt = at;
+      if (!pendingDeliveryMayExpire(d.outcome === undefined, d.sentAt, before)) continue;
+      this.settleDelivery(d, d.target, "ignored", at);
       out.push(copyDelivery(d));
     }
     return out;
@@ -211,8 +208,10 @@ export class MemoryNotifyStore implements NotifyStore {
     s.ignoredStreak = 0;
   }
 
-  async recordOutcome(personId: string, surface: Surface, outcome: "acted" | "ignored", at: number) {
-    const s = this.sig(personId, surface);
+  private settleDelivery(delivery: DeliveryRecord, surface: Surface, outcome: "acted" | "ignored", at: number) {
+    delivery.outcome = outcome;
+    delivery.outcomeAt = at;
+    const s = this.sig(delivery.personId, surface);
     if (outcome === "acted") { s.acted++; s.ignoredStreak = 0; s.lastUsedAt = at; }
     else { s.ignored++; s.ignoredStreak++; }
   }
