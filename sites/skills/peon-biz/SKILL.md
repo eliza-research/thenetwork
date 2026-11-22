@@ -44,7 +44,7 @@ The steps differ by device. If you cannot tell which the person is on, ask once.
 - **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
   settings. Do step 1. Show the exact prepared text with `join peon` on the first line and the draft
   profile on the lines below. Start the draft with their confirmed first name and stated age, for
-  example `My name is Ari. I am 29 years old.` Once they approve, give them one link starting with
+  example `My name is Ari. I am 29 years old.` The text line reads the age from this text. Once they approve, give them one link starting with
   `sms:{{TEXT_LINE}}?&body=` followed by the entire prepared text URL-encoded (the start is
   `join%20peon%0A`). Tell them that the text is ready for them to send themselves.
 - **On a computer.** If this app's connector tools (`check_status` and `submit_profile`) are not
@@ -70,8 +70,8 @@ The person signs up through you, in this conversation:
    Message and data rates may apply. Reply STOP to stop and HELP for help. Consent is not a condition of any purchase."
    Show the [text terms](https://peon.biz/terms#sms), [terms](https://peon.biz/terms) and [Privacy Policy](https://peon.biz/privacy).
 2. Give them one link to confirm their own phone (prefill it as described in "A shorter browser handoff"): https://peon.biz/join?via=agent. On that page they type
-   their own number and code, review their first name and age, and agree to the texts. You
-   never see the number or the code.
+   their own number and code, review their first name, type their birthday, and agree to the texts. You
+   never see the number, the code or the birthday.
 3. Ask the person to return to this same agent conversation when they finish on the site. <!-- agentSignup ConnectorHandoff: checkSiteStatus submitProfile confirmProfile -->
    If this app's MCP tools are not available, they must add https://ntwrk.party/mcp/peon in their client's connector settings.
    In ChatGPT, add https://ntwrk.party/mcp/peon/openai instead; the path without /openai does not authorize ChatGPT clients.
@@ -134,11 +134,12 @@ to share a base profile. Nobody can learn whether a phone number uses peon.biz.
 
 Ask for the person's first name and stated age in the conversation, using confirmed details you already know.
 Ask only for missing details. Never infer age. Read back the profile and get approval.
-For web verification, prefill only these approved details in the URL fragment:
-`https://peon.biz/join?via=agent#firstName=Alex&age=28`.
-Replace the example values and URL-encode each value. Never put them in the query string.
-Never include a phone, code, consent, preferences or biography in that link.
-The person reviews these fields and checks the consent box themselves.
+For web verification, prefill only the approved first name in the URL fragment:
+`https://peon.biz/join?via=agent#firstName=Alex`.
+Replace the example value and URL-encode it. Never put it in the query string.
+Never include a birthday, an age, a phone, code, consent, preferences or biography in that link.
+Never put a birthday or an age in a link or in a tool call.
+The person reviews the name, types their birthday on the page and checks the consent box themselves.
 Interests, location and app-specific preferences stay in this conversation until the approved profile submission.
 On mobile, the person can send the approved profile by text; do not also send them through web verification.
 After web signup, return here and follow the connector steps above. Signup alone does not mean the profile was submitted.

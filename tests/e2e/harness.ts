@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SimClock } from "../../packages/core/src/clock.ts";
+import { calendarDateOfDay, signupClockDay } from "../../packages/core/src/generated/authorizationPages.ts";
 import { createBackend, ipOf, loadConfig } from "../../deploy/backend/backend.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
 import { createMcpHandler, platformHooks, type McpHandler } from "../../packages/mcp/src/index.ts";
@@ -230,6 +231,12 @@ export async function signIn(st: Stack, app: AppId, phone: string, b: Browser) {
   return `sid_${app}`;
 }
 
+export function birthdateAged(now: number, age: number): string {
+  const today = calendarDateOfDay(signupClockDay(now));
+  const day = today.month === 2 && today.day === 29 ? 28 : today.day;
+  return [String(today.year - age).padStart(4, "0"), String(today.month).padStart(2, "0"), String(day).padStart(2, "0")].join("-");
+}
+
 /** The web join: sign in, then POST /api/join with the app's canonical opt-in version. */
 export async function webJoin(st: Stack, app: AppId, phone: string, o: { age: number; firstName?: string; interests?: string[]; browser?: Browser } & Partial<Record<"about" | "neighborhood" | "homeCity" | "zip", string>>) {
   const b = o.browser ?? new Browser();
@@ -239,7 +246,7 @@ export async function webJoin(st: Stack, app: AppId, phone: string, o: { age: nu
   const profile = Object.fromEntries((["about", "neighborhood", "homeCity", "zip"] as const).filter(k => o[k] !== undefined).map(k => [k, o[k]]));
   const res = await st.site(app, "/api/join", {
     browser: b,
-    json: { firstName: o.firstName ?? "Rae", age: o.age, consent: { sms: true, version: info.consent.version }, ...(o.interests ? { interests: o.interests } : {}), ...profile },
+    json: { firstName: o.firstName ?? "Rae", birthdate: birthdateAged(st.clock.now(), o.age), consent: { sms: true, version: info.consent.version }, ...(o.interests ? { interests: o.interests } : {}), ...profile },
   });
   return { b, res, body: (await res.json()) as Record<string, any> };
 }

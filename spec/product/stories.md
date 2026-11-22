@@ -511,7 +511,7 @@ Spec: [site pages](../sitePages.md), "Story: Let my agent read the signup skill 
 
 ## Story F42 — Join peon.biz in the browser
 
-> As a person whose agent sent me to the peon.biz join page, I want to confirm my own phone, check my first name and age and agree to the texts, so that I join with the details that I approved and nobody else confirms my phone.
+> As a person whose agent sent me to the peon.biz join page, I want to confirm my own phone, check my first name, type my birthday and agree to the texts, so that I join with the details that I approved and nobody else confirms my phone.
 
 ### The page shows the step that the session allows and sends each form once
 
@@ -519,13 +519,13 @@ The server owns the join rules and the code limits ([site enrollment](../siteEnr
 
 Acceptance:
 
-- The link `https://peon.biz/join?via=agent#firstName=..&age=..` fills the form. The page keeps at most 50 characters of the name, and keeps the age only when it has one to three digits and is not more than 120. The page removes the fragment from the address before it loads anything.
+- The link `https://peon.biz/join?via=agent#firstName=..` fills the first name. The page keeps at most 50 characters of the name. It never takes a birthday or an age from the link: the person types the birthday on the page. The page removes the fragment from the address before it loads anything.
 - After a loading step, a signed-out person, or a session that the page cannot read, sees the phone step. A person who can join sees the profile step. A member sees the "already in" step. A person who cannot join sees the blocked step with a reason. "Invite only" is the reason for an invite-only app when the server gives none.
 - When the server answers "cloud", the phone step shows one "Continue with your phone" button and no number field. With any other answer, or a failed lookup, the page uses text codes. The security check shows only with text codes and only when the site has a check key.
 - The page refuses a number that is not a 10-digit US mobile number. It sends no number while the security check runs or after it failed. Each server answer uses up the check.
 - The page refuses a code with fewer than 4 or more than 8 digits. A wrong code keeps the code step and shows why.
-- The page sends the profile only with a first name, a whole age from 1 to 120 and the text consent ticked. The server decides the join age. "Under age", "invite only" and "review" show the blocked step with that reason.
-- The approved name and age stay through the first sign-in. The page clears them when it loses or replaces the account that it shows.
+- The form has a "Birthday" date field, not an age field. The page sends the profile only with a first name, a birthday that exists and is not after today, and the text consent ticked. It sends the birthday (`birthdate`), never an age. The server counts the age and decides the join age. "Under age", "invite only" and "review" show the blocked step with that reason. "Invalid birthday" shows the error on the birthday field. After any server answer, the birthday field is empty.
+- The approved name stays through the first sign-in. The page clears them when it loses or replaces the account that it shows.
 - The done step shows only after a saved profile with consent. When the person came from an agent link, it tells the person to go back to the same chat.
 - A form that waits for an answer refuses a second submit. One request runs at a time.
 

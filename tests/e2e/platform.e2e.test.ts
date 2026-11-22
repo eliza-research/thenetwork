@@ -16,7 +16,7 @@ import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { SET_STATE_PATH, TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
-import { Browser, connectMcp, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
+import { birthdateAged, Browser, connectMcp, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 import { slopProfiles, type SlopProfile } from "../../packages/engine/src/packs/slop/profile.ts";
 import { mutualMarkets, makeSlopPack, SLOP_ENGINE_DEFAULTS } from "../../packages/engine/src/packs/slop/index.ts";
@@ -112,7 +112,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       await local.staff("/apps/ntwrk/invite", { phone });
       await signIn(local, "ntwrk", phone, browser);
       const info = await (await local.site("ntwrk", "/api/app")).json() as any;
-      expect((await local.site("ntwrk", "/api/join", { browser, json: { firstName: "Theo", age: 32, homeCity: "nyc", neighborhood: "Astoria", consent: { sms: true, version: info.consent.version } } })).status).toBe(200);
+      expect((await local.site("ntwrk", "/api/join", { browser, json: { firstName: "Theo", birthdate: birthdateAged(local.clock.now(), 32), homeCity: "nyc", neighborhood: "Astoria", consent: { sms: true, version: info.consent.version } } })).status).toBe(200);
       const [member] = await db`select * from network.members where app_id='ntwrk'`;
       // Reproduce the actual pre-fix join shape: explicit region retained, runtime city used as home.
       await db`update network.members set home_area='Bay Area' where id=${member.id}`;
@@ -142,7 +142,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const otherPhone = newPhone(), otherBrowser = new Browser();
       await local.staff("/apps/ntwrk/invite", { phone: otherPhone });
       await signIn(local, "ntwrk", otherPhone, otherBrowser);
-      expect((await local.site("ntwrk", "/api/join", { browser: otherBrowser, json: { firstName: "Mira", age: 31, homeCity: "nyc", consent: { sms: true, version: info.consent.version } } })).status).toBe(200);
+      expect((await local.site("ntwrk", "/api/join", { browser: otherBrowser, json: { firstName: "Mira", birthdate: birthdateAged(local.clock.now(), 31), homeCity: "nyc", consent: { sms: true, version: info.consent.version } } })).status).toBe(200);
       const [other] = await db`select * from network.members where app_id='ntwrk' and id<>${member.id}`;
       expect((await local.site("ntwrk", "/api/me/home", { browser, json: { ...correction, memberId: other.id } })).status).toBe(400);
       expect((await db`select * from network.members where id=${other.id}`)[0]).toEqual(other);
@@ -184,7 +184,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       await local.staff("/apps/ntwrk/invite", { phone });
       await signIn(local, "ntwrk", phone, browser);
       const info = await (await local.site("ntwrk", "/api/app")).json() as any;
-      expect((await local.site("ntwrk", "/api/join", { browser, json: { firstName: "Mira", age: 31, homeCity: "nyc", neighborhood: "Astoria", consent: { sms: true, version: info.consent.version } } })).status).toBe(200);
+      expect((await local.site("ntwrk", "/api/join", { browser, json: { firstName: "Mira", birthdate: birthdateAged(local.clock.now(), 31), homeCity: "nyc", neighborhood: "Astoria", consent: { sms: true, version: info.consent.version } } })).status).toBe(200);
       const before = await (await local.site("ntwrk", "/api/me/export", { browser })).json();
       const states = await db`select id,state from network.network_state order by id`;
       const response = await local.site("ntwrk", "/api/me/home", { browser, json: { homeCity: "sf", neighborhood: "Bay Area" } });
@@ -204,7 +204,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       await signIn(local, "ntwrk", phone, browser);
       const info = await (await local.site("ntwrk", "/api/app")).json() as any;
       const joined = await local.site("ntwrk", "/api/join", { browser, json: {
-        firstName: "Theo", age: 32, neighborhood: "Bay Area",
+        firstName: "Theo", birthdate: birthdateAged(local.clock.now(), 32), neighborhood: "Bay Area",
         consent: { sms: true, version: info.consent.version },
       }});
       expect(joined.status).toBe(200);
@@ -259,13 +259,13 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       await local.staff("/apps/ntwrk/invite", {phone:conflictPhone});
       await signIn(local,"ntwrk",conflictPhone,conflictBrowser);
       for (const homeCity of ["nyc", "unknown"]) {
-        expect((await local.site("ntwrk", "/api/join", {browser:conflictBrowser,json:{firstName:"Mira",age:31,homeCity,neighborhood:"Bay Area",consent:{sms:true,version:info.consent.version}}})).status).toBe(400);
+        expect((await local.site("ntwrk", "/api/join", {browser:conflictBrowser,json:{firstName:"Mira",birthdate: birthdateAged(local.clock.now(), 31),homeCity,neighborhood:"Bay Area",consent:{sms:true,version:info.consent.version}}})).status).toBe(400);
       }
       expect((await db`select * from network.members where app_id='ntwrk'`).length).toBe(1);
       const nycPhone = newPhone(), nycBrowser = new Browser();
       await local.staff("/apps/ntwrk/invite", {phone:nycPhone});
       await signIn(local,"ntwrk",nycPhone,nycBrowser);
-      expect((await local.site("ntwrk", "/api/join", {browser:nycBrowser,json:{firstName:"Mira",age:31,homeCity:"NYC",neighborhood:"Astoria",consent:{sms:true,version:info.consent.version}}})).status).toBe(200);
+      expect((await local.site("ntwrk", "/api/join", {browser:nycBrowser,json:{firstName:"Mira",birthdate: birthdateAged(local.clock.now(), 31),homeCity:"NYC",neighborhood:"Astoria",consent:{sms:true,version:info.consent.version}}})).status).toBe(200);
       const [nyc] = await db`select * from network.members where app_id='ntwrk' and name='Mira'`;
       expect(nyc.home_city).toBe("nyc");
       expect(await local.svc.runtimeFor("ntwrk")!.unitOfWork(n => n.inNyc(nyc.id,local.clock.now(),local.clock.now()+DAY))).toBe(true);
@@ -282,7 +282,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       await local.staff("/apps/ntwrk/invite",{phone});
       await signIn(local,"ntwrk",phone,browser);
       const info = await (await local.site("ntwrk","/api/app")).json() as any;
-      expect((await local.site("ntwrk","/api/join",{browser,json:{firstName:"Theo",age:32,homeCity:"sf",consent:{sms:true,version:info.consent.version}}})).status).toBe(200);
+      expect((await local.site("ntwrk","/api/join",{browser,json:{firstName:"Theo",birthdate: birthdateAged(local.clock.now(), 32),homeCity:"sf",consent:{sms:true,version:info.consent.version}}})).status).toBe(200);
       const [sf] = await db`select * from network.members where app_id='ntwrk'`;
       expect((await local.svc.runtimeOfMember("ntwrk",sf.id))?.id).toBe("ntwrk:sf");
       expect(await local.svc.runtimeFor("ntwrk","sf")!.sharedContext(sf.id)).toMatchObject({city:"sf",singlePlayer:true});

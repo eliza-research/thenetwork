@@ -92,7 +92,7 @@ const mounted = (device: DeviceKind) => landingStep(landingStart, { type: "mount
 
 /** The join page after it read the app and the session, as the generated join machine reaches it. */
 function joinAt(view: "SignedOut" | "MayJoin", checkOn: boolean): JoinPage {
-  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false });
   const loaded = joinStep(opened, { type: "loaded", view: { result: view, account: view === "SignedOut" ? 0 : 1, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
   return view === "SignedOut" ? joinStep(loaded, { type: "readAuthMode", lookup: "ModeOtp", checkOn }) : loaded;
 }
@@ -170,6 +170,12 @@ describe.each(SITES)("$domain", (s) => {
     const ageText = text(s.app === "peon" ? renderJoin(profile, joinOptions(s)) : read(s, "SKILL.md"));
     expect(ageText).toMatch(/13(?: or older|\s*\+)/);
     expect(ageText).toMatch(/18(?: and older|\s*\+)/);
+    if (s.app === "peon") {
+      const html = renderJoin(profile, joinOptions(s));
+      expect(html).toMatch(/<input[^>]*name="birthdate"[^>]*>/);
+      expect(html.match(/<input[^>]*name="birthdate"[^>]*>/)?.[0]).toContain('type="date"');
+      expect(html).not.toContain('name="age"');
+    }
   });
 
   test("STOP stops every app; 'leave <app>' stops one (PRD 40.3). No page says STOP ALL", () => {

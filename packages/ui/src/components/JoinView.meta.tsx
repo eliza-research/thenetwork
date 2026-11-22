@@ -11,7 +11,7 @@ const page = (fields: Partial<JoinPage>): JoinPage => ({ ...initial, addressClea
 export const meta: ComponentMeta<JoinViewProps> = {
   args: {
     page: page({ screen: "Phone" }),
-    values: { firstName: "", age: "", consent: false },
+    values: { firstName: "", birthdate: "", consent: false },
     phone: "",
     code: "",
     phoneShown: "(•••) •••-0123",
@@ -34,13 +34,21 @@ export const meta: ComponentMeta<JoinViewProps> = {
     Cloud: { page: page({ screen: "Phone", auth: "CloudMode" }) },
     Code: { page: page({ screen: "Code" }) },
     "New code sent": { page: page({ screen: "Code", formError: "NewCodeSent" }) },
-    Profile: { page: page({ screen: "Profile", account: 1, formHasValues: true }), values: { firstName: "Ana", age: "30", consent: false } },
+    Profile: { page: page({ screen: "Profile", account: 1, formHasValues: true, birthdayGiven: true }), values: { firstName: "Ana", birthdate: "1996-03-14", consent: false } },
+    "Birthday refused": { page: page({ screen: "Profile", account: 1, formHasValues: true, consented: true, formError: "InvalidBirthdate" }), values: { firstName: "Ana", birthdate: "", consent: true } },
     "Request failed": { page: page({ screen: "Profile", account: 1, formError: "RequestFailed" }), failure: "server" },
     Member: { page: page({ screen: "Member", account: 1 }) },
     Blocked: { page: page({ screen: "Blocked", account: 1, reason: "InviteOnly" }) },
     "Done from agent": { page: page({ screen: "Done", account: 1, consented: true, viaAgent: true }) },
   },
   play: {
+    "Birthday refused": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      const birthday = within(canvasElement).getByLabelText<HTMLInputElement>("Birthday");
+      await expect(birthday.value).toBe("");
+      await expect(birthday.getAttribute("aria-invalid")).toBe("true");
+      await expect(within(canvasElement).getByText("Enter your birthday. It must be a real date, not after today.")).toBeTruthy();
+      await expect(canvasElement.querySelector("form [role=alert]")).toBeNull();
+    },
     "Invalid phone": ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByRole("alert").textContent).toBe("Enter a 10-digit US mobile number."),
     Blocked: ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByText("peon.biz is not open to new members right now. Please try again later.")).toBeTruthy(),
     "Done from agent": ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByText("Go back to the same chat to finish setting up your profile.")).toBeTruthy(),

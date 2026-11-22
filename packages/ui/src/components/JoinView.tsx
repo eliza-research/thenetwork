@@ -2,6 +2,7 @@
 import { type ComponentProps, type ReactNode, useCallback, useRef } from "react";
 import {
   agentReturnShown,
+  birthdateErrorShown,
   type BlockReason,
   formBusy,
   type InlineError,
@@ -44,7 +45,8 @@ const inlineErrors: Readonly<Record<Exclude<InlineError, "RequestFailed">, strin
   RateLimited: apiMessages.rate_limited,
   CodeFormat: "Enter the code from the text we sent.",
   InvalidCode: apiMessages.invalid_code,
-  ProfileIncomplete: "Enter your first name and your age, and tick the box to agree to texts.",
+  ProfileIncomplete: "Enter your first name and your birthday, and tick the box to agree to texts.",
+  InvalidBirthdate: apiMessages.invalid_birthdate,
   CloudUnavailable: "Sign-in is unavailable. Try again.",
 };
 
@@ -150,7 +152,8 @@ export function JoinView({
               minJoinAge={minJoinAge}
               consentText={consentText}
               loading={loading}
-              error={error}
+              error={birthdateErrorShown(page) ? undefined : error}
+              birthdateError={birthdateErrorShown(page) ? error : undefined}
               onSubmitProfile={() => onSubmitProfile(consentText)}
             />
           ),

@@ -14,7 +14,6 @@ import {
   canReadAuthMode,
   enabled,
   type Event,
-  fragmentAgeAccepted,
   fragmentNameKept,
   initial,
   type JoinPage,
@@ -22,6 +21,7 @@ import {
   type SessionView,
   step,
 } from "../../../core/src/generated/browserJoin.ts";
+import { type CalendarDate, calendarDateOfDay, signupClockDay } from "../../../core/src/generated/authorizationPages.ts";
 import type { ApiError } from "../api/client.ts";
 import { joinApp, maskPhone, readApp, readAuthLookup, readSession, type SessionAnswer, startCloud, startCode, toE164, verifyCode } from "../api/join.ts";
 import type { ProfileValues } from "../components/ProfileStep.tsx";
@@ -66,7 +66,7 @@ export interface JoinController {
 
 type JoinData = Omit<JoinController, `on${string}` | "siteKey">;
 
-const emptyValues: ProfileValues = { firstName: "", age: "", consent: false };
+const emptyValues: ProfileValues = { firstName: "", birthdate: "", consent: false };
 
 const cloudReceiptKey = "peon-cloud-join-receipt";
 
@@ -85,7 +85,6 @@ function saveCloudReceipt(receipt: string): void {
 interface LinkFields {
   viaAgent: boolean;
   name: string;
-  age: string;
   invitation?: PrivateInvitation;
 }
 
@@ -102,7 +101,6 @@ function readLink(): LinkFields {
   return {
     viaAgent: new URLSearchParams(window.location.search).get("via") === "agent",
     name: suppliedName.slice(0, fragmentNameKept(suppliedName.length)),
-    age: fields.get("age") ?? "",
     ...(invites.length > 0 ? { invitation: {
       // A 32-byte base64url token has 43 characters and zero trailing padding bits.
       token: value && /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(value) ? value : undefined,
@@ -114,9 +112,11 @@ function clearFragment(): void {
   if (window.location.hash !== "") window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
 }
 
-const wholeNumber = (text: string): number => {
-  const value = Number(text.trim());
-  return text.trim() !== "" && Number.isSafeInteger(value) ? value : 0;
+const noDate: CalendarDate = { year: 0, month: 0, day: 0 };
+
+const calendarDateOf = (text: string): CalendarDate => {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text.trim());
+  return parts ? { year: Number(parts[1]), month: Number(parts[2]), day: Number(parts[3]) } : noDate;
 };
 
 /** Runs the browser join flow: each API answer becomes one event of the generated machine, and nothing here decides what the machine decides. */
@@ -152,7 +152,8 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       const page = step(before.page, event);
       if (!browserInvitationKeepsAccount(before.page.account, page.account)) invitation.current = undefined;
       const merged = { ...before, ...fields, page };
-      commit(page.formHasValues ? merged : { ...merged, values: emptyValues });
+      const values = !page.formHasValues ? emptyValues : page.birthdayGiven ? merged.values : { ...merged.values, birthdate: "" };
+      commit({ ...merged, values });
       return page;
     };
     const viewOf = (session: SessionAnswer): SessionView => {
@@ -179,24 +180,21 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
     };
     const open = async () => {
       const link = readLink();
-      const ageDigitsOnly = /^\d+$/.test(link.age);
-      const fragmentAge = ageDigitsOnly ? Number(link.age) : 0;
-      const ageAccepted = fragmentAgeAccepted(ageDigitsOnly, link.age.length, fragmentAge);
       const opened = send(
-        { type: "openPage", viaAgent: link.viaAgent, fragmentName: link.name !== "", ageDigitsOnly, ageDigitCount: link.age.length, fragmentAge },
-        { values: { firstName: link.name, age: ageAccepted ? link.age : "", consent: false } },
+        { type: "openPage", viaAgent: link.viaAgent, fragmentName: link.name !== "" },
+        { values: { firstName: link.name, birthdate: "", consent: false } },
       );
       if (!opened) return;
       invitation.current = link.invitation;
       clearFragment();
       const receipt = takeCloudReceipt();
-      const presentedReceipt = browserPrefillMayPresentReceipt(link.viaAgent, link.name !== "", link.age !== "", !!link.invitation)
+      const presentedReceipt = browserPrefillMayPresentReceipt(link.viaAgent, link.name !== "", !!link.invitation)
         ? receipt : undefined;
       const [app, session] = await Promise.all([readApp(), readSession(presentedReceipt)]);
       const view = readAccount(session);
       const prefill = session.joinPrefill;
-      if (prefill) send({ type: "restoreCloudPrefill", view, fromAgent: prefill.viaAgent, hasFields: !!(prefill.firstName || prefill.age) },
-        { values: { firstName: prefill.firstName, age: prefill.age, consent: false } });
+      if (prefill) send({ type: "restoreCloudPrefill", view, fromAgent: prefill.viaAgent, hasFields: prefill.firstName !== "" },
+        { values: { firstName: prefill.firstName, birthdate: "", consent: false } });
       const loaded = send(
         { type: "loaded", view, appUnreachable: !app.read && app.unreachable, inviteOnly: app.read ? app.inviteOnly : pageInviteOnly },
         { minJoinAge: minJoinAgeShown(app.read, app.read ? app.minJoinAge : pageMinAge, pageMinAge) },
@@ -239,8 +237,7 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       onContinueWithPhone: async () => {
         const next = send({ type: "continueWithPhone" });
         if (!next || !canAnswerCloudStart(next)) return;
-        const { firstName, age } = current.current.values;
-        const answer = await startCloud(returnPath, { firstName, age, viaAgent: next.viaAgent });
+        const answer = await startCloud(returnPath, { firstName: current.current.values.firstName, viaAgent: next.viaAgent });
         const after = send({ type: "answerCloudStart", opened: answer.ok }, answer.ok ? {} : { failure: answer.error });
         if (answer.ok && after?.screen === "LeftForCloud") {
           invitation.current = undefined;
@@ -249,14 +246,16 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
         }
       },
       onValuesChange: (values: Partial<ProfileValues>) => {
-        send({ type: "editProfile" }, { values: { ...current.current.values, ...values } });
+        const next = { ...current.current.values, ...values };
+        send({ type: "editProfile", birthdayGiven: next.birthdate !== "" }, { values: next });
       },
       onSubmitProfile: async (consentWording: string) => {
         const { values } = current.current;
         const view = signupView.current;
         const firstName = values.firstName.trim();
-        const age = wholeNumber(values.age);
-        const next = send({ type: "submitProfile", form: { nameGiven: firstName !== "", age, consentTicked: values.consent } });
+        const birthdate = values.birthdate.trim();
+        const today = calendarDateOfDay(signupClockDay(Date.now()));
+        const next = send({ type: "submitProfile", form: { nameGiven: firstName !== "", birthday: calendarDateOf(birthdate), today, consentTicked: values.consent } });
         if (!next || !canAnswerJoin(next)) return;
         const pending = invitation.current;
         const sameAccount = view !== undefined && pending?.signupView === view;
@@ -269,7 +268,7 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
           ...(view ? { signupView: view } : {}),
           ...(pending?.token ? { inviteToken: pending.token } : {}),
           firstName,
-          age,
+          birthdate,
           consent: { sms: true, wording: consentWording },
         });
         if (!browserInvitationMayRetry(answer.result)) invitation.current = undefined;
