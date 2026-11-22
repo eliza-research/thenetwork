@@ -51,7 +51,7 @@ import {
 // deployed image (real mode only) does not contain.
 import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
-import type { DataSource } from "./sources/source.ts";
+import { historyQuery, type DataSource } from "./sources/source.ts";
 import type { AppHealth, AuditEntry, ControlCommand, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
 
 export interface ServerOptions {
@@ -555,10 +555,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/member/:id": guard(async (req, u, app) => {
+        const historyBefore = historyQuery(req.url);
+        if (historyBefore === null) return json({ error: "invalid history cursor" }, 400);
         const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_member");
         if (read instanceof Response) return read;
         const { id, readMode, grant } = read;
-        const d = await (await source(readMode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app) });
+        const d = await (await source(readMode, app)).member(id, { reveal: !!grant, truth: truthFor(u, app), historyBefore });
         if (!d) return json({ error: "not found" }, 404);
         // Dating facts stay hidden until a reveal; scores and ratings never leave (admin-console 3.3.1).
         d.facets = memberFacets(app, d.facets, !!grant);
@@ -570,10 +572,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         return memberReadRefusal(u, app, read) ?? json(d);
       }),
       "/api/member/:id/timeline": guard(async (req, u, app) => {
+        const historyBefore = historyQuery(req.url);
+        if (historyBefore === null) return json({ error: "invalid history cursor" }, 400);
         const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_timeline");
         if (read instanceof Response) return read;
         const { id, readMode, grant } = read;
-        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant });
+        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant, historyBefore });
         if (!t) return json({ error: "not found" }, 404);
         return memberReadRefusal(u, app, read) ?? json(grant ? { ...t, revealed: { until: grant.until } } : t);
       }),
@@ -611,13 +615,18 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }, ["safety"]),
       },
       "/api/opportunity/:id": guard(async (req, u, app) => {
+        const historyBefore = historyQuery(req.url);
+        if (historyBefore === null) return json({ error: "invalid history cursor" }, 400);
         const id = decodeURIComponent(req.params.id!);
         const no = await record(u, app, { action: "read_opportunity", targetType: "opportunity", targetId: id, ok: true });
         if (no) return no;
-        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app) });
+        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app), historyBefore });
         if (!d) return json({ error: "not found" }, 404);
         // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
-        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [] });
+        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({
+          ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [],
+          historyBefore: d.historyBefore?.events ? { events: d.historyBefore.events } : undefined,
+        });
         // What a member wrote only for staff who may open that member (4.1); others get its length.
         const may = new Map<string, boolean>();
         for (const m of d.messages) {

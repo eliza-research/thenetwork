@@ -35,7 +35,8 @@ import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, t
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import type { GatheringRequest } from "../gatherings.ts";
 import { staffSearchHitVisible } from "../../../core/src/generated/staffSearch.ts";
-import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
+import { staffHistoryHasEarlier, staffHistoryPageSize } from "../../../core/src/generated/staffHistory.ts";
+import { Listeners, searchPattern, snippet, type DataSource, type HistoryCursor, type ViewOptions } from "./source.ts";
 
 export interface RealOptions {
   url?: string;
@@ -62,6 +63,17 @@ const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() :
 export const HIDDEN_MESSAGE = "[member message hidden]";
 
 interface MessageEvidenceKey { id: string; member_id: string; direction: string; system: boolean; status: string }
+interface HistoryRow { id: string; history_at: string }
+type MessageHistoryRow = MessageEvidenceKey & HistoryRow;
+type EventHistoryRow = EventRow & HistoryRow;
+
+function historyPage<Row extends HistoryRow>(rows: Row[], membersEvents = false) {
+  const page = rows.slice(0, staffHistoryPageSize(membersEvents));
+  const oldest = page.at(-1);
+  const before = oldest && staffHistoryHasEarlier(rows.length, membersEvents)
+    ? Buffer.from(JSON.stringify([oldest.history_at, oldest.id])).toString("base64url") : undefined;
+  return { rows: page.reverse(), before };
+}
 interface DeliveryEvidence {
   app_id: AppId; member_id: string; message_id: string; status: string | null; reason: DeliveryReason | null;
   leak_stopped: boolean; staff_released: boolean; attempted: boolean;
@@ -680,14 +692,14 @@ export class RealSource implements DataSource {
     if (!m || !this.sql) return undefined;
     const sql = this.sql;
     const rv = this.reveal || !!opts.reveal;
-    const [prof, facets, intents, presence, msgs] = await Promise.all([
+    const [prof, facets, intents, presence, messages] = await Promise.all([
       sql`select name, bio, occupation, home_area from network.members where app_id = ${this.app} and id = ${id}`,
       sql`select * from network.facets where app_id = ${this.app} and member_id = ${id} order by kind, id`,
       sql`select * from network.intents where app_id = ${this.app} and member_id = ${id} order by created_at`,
       sql`select * from network.presence where app_id = ${this.app} and member_id = ${id}`,
-      this.messages(id, rv),
+      this.messages(id, rv, "member", opts.historyBefore?.messages),
     ]);
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
+    const evidence = await this.deliveryEvidence(messages.rows);
     const p = (prof as any[])[0] ?? {};
     return {
       member: rv && p.name ? { ...m, name: p.name } : m,
@@ -698,17 +710,21 @@ export class RealSource implements DataSource {
       presence: (presence as any[]).map(presenceOf),
       edges: [...this.store.edges.values()].filter(e => e.from === id || e.to === id),
       opportunities: [...this.store.opps.values()].filter(o => o.participants.includes(id)).sort((a, b) => b.createdAt - a.createdAt),
-      messages: (msgs as any[]).map(r => this.messageOf(r, rv, evidence.get(r.id))),
+      messages: messages.rows.map(r => this.messageOf(r, rv, evidence.get(r.id))),
+      ...(messages.before ? { historyBefore: { messages: messages.before } } : {}),
     };
   }
 
   /** A member's messages. Unless revealed, inbound bodies are not selected at all (only their length). */
-  private messages(id: string, rv: boolean) {
+  private async messages(id: string, rv: boolean, scope: "member" | "opportunity", before?: HistoryCursor) {
     const sql = this.sql!;
-    return rv
-      ? sql`select id, member_id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`
-      : sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
-            from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`;
+    return historyPage(await sql<MessageHistoryRow[]>`select id, member_id, ts, direction, status, type, opportunity_id, proactive, system,
+      to_char(ts at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as history_at,
+      ${rv ? sql`body` : sql`case when direction = 'inbound' then null else body end as body, length(body)::int as body_len`}
+      from network.messages where app_id = ${this.app}
+      and ${scope === "member" ? sql`member_id = ${id}` : sql`opportunity_id = ${id}`}
+      ${before ? sql`and (ts, id) < (${before.at}::timestamptz, ${before.id})` : sql``}
+      order by ts desc, id desc limit ${staffHistoryPageSize(false) + 1}`);
   }
 
   /** Reads only the app's shaped evidence, including when the queue has advanced past the message projection. */
@@ -728,21 +744,25 @@ export class RealSource implements DataSource {
     const rv = this.reveal || !!opts.reveal;
     const theirs = new Set([...this.store.opps.values()].filter(o => o.source !== "shadow" && o.participants.includes(id)).map(o => o.id));
     // Include every member reference that onTimeline may use, including members replaced in earlier rosters.
-    const [msgs, events, pending] = await Promise.all([
-      this.messages(id, rv),
-      sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
+    const before = opts.historyBefore?.events;
+    const [messages, rows, pending] = await Promise.all([
+      this.messages(id, rv, "member", opts.historyBefore?.messages),
+      sql<EventHistoryRow[]>`select id::text as id, at, actor_type, actor_id, type, object_type, object_id, payload,
+          to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as history_at from network.events
           where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id}
              or ${id} in (payload->>'memberId', payload->>'from', payload->>'newMemberId', payload->>'out', payload->>'in', payload->>'target', payload->>'by')
              or payload->'participants' ? ${id} or payload->'members' ? ${id} or payload->'attendance' ? ${id}
-             or (object_type = 'opportunity' and object_id = any(${`{${[...theirs].map(x => `"${x.replace(/"/g, "")}"`).join(",")}}`}::text[])))
-          order by at, id limit 5000`,
+             or (object_type = 'opportunity' and object_id = any(${sql.array([...theirs], "text")})))
+          ${before ? sql`and (at, network.events.id) < (${before.at}::timestamptz, ${before.id}::bigint)` : sql``}
+          order by at desc, network.events.id desc limit ${staffHistoryPageSize(true) + 1}`,
       this.stateRow("deferred_sends").then(rows => rows.map(r => ({ d: (typeof r.deferred_sends === "string" ? JSON.parse(r.deferred_sends) : r.deferred_sends ?? []).filter((x: any) => x?.memberId === id) }))),
     ]);
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
+    const events = historyPage(rows, true);
+    const evidence = await this.deliveryEvidence(messages.rows);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     const entries: TimelineEntry[] = [
-      ...(msgs as any[]).map((r): TimelineEntry => { const message = this.messageOf(r, rv, evidence.get(r.id)); return { t: message.ts, kind: "message", message }; }),
-      ...(events as any[]).filter(e => onTimeline(e as EventRow, id, theirs)).map((e): TimelineEntry => ({ t: ms(e.at) ?? 0, kind: "event", event: describe(e as EventRow, name) })),
+      ...messages.rows.map((r): TimelineEntry => { const message = this.messageOf(r, rv, evidence.get(r.id)); return { t: message.ts, kind: "message", message }; }),
+      ...events.rows.filter(e => onTimeline(e, id, theirs)).map((e): TimelineEntry => ({ t: ms(e.at as Date | string) ?? 0, kind: "event", event: describe(e, name) })),
     ];
     // Stable: at the same instant, what the system did comes before the message it sent.
     entries.sort((a, b) => a.t - b.t || (a.kind === b.kind ? 0 : a.kind === "event" ? -1 : 1));
@@ -750,6 +770,7 @@ export class RealSource implements DataSource {
     const list = (typeof d === "string" ? JSON.parse(d) : d) ?? [];
     return {
       memberId: id, entries,
+      ...(messages.before || events.before ? { historyBefore: { messages: messages.before, events: events.before } } : {}),
       pending: (list as any[]).map(x => ({ kind: String(x.kind), ...(x.type ? { type: x.type } : {}), ...(x.proposalId ? { opportunityId: x.proposalId } : {}) })),
     };
   }
@@ -779,23 +800,28 @@ export class RealSource implements DataSource {
     };
   }
 
-  async opportunity(id: string): Promise<OpportunityDetail | undefined> {
+  async opportunity(id: string, opts: ViewOptions = {}): Promise<OpportunityDetail | undefined> {
     const o = this.store.opps.get(id);
     if (!o) return undefined;
     const sql = o.source !== "shadow" ? this.sql : undefined;
-    const msgs = !sql ? [] : this.reveal
-      ? await sql`select id, member_id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`
-      : await sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
-                  from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`;
-    const events = !sql ? [] : await sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
-      where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id limit 2000`;
-    const evidence = await this.deliveryEvidence(msgs as MessageEvidenceKey[]);
+    const before = opts.historyBefore?.events;
+    const [messages, rows] = sql ? await Promise.all([
+      this.messages(id, this.reveal, "opportunity", opts.historyBefore?.messages),
+      sql<EventHistoryRow[]>`select id::text as id, at, actor_type, actor_id, type, object_type, object_id, payload,
+        to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as history_at from network.events
+        where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id}
+        ${before ? sql`and (at, network.events.id) < (${before.at}::timestamptz, ${before.id}::bigint)` : sql``}
+        order by at desc, network.events.id desc limit ${staffHistoryPageSize(false) + 1}`,
+    ]) : [{ rows: [] as MessageHistoryRow[], before: undefined }, []];
+    const events = historyPage(rows);
+    const evidence = await this.deliveryEvidence(messages.rows);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     return {
       opportunity: o, members: o.participants.map(x => this.store.member(x)!).filter(Boolean),
-      messages: (msgs as any[]).map(r => ({ ...this.messageOf(r, this.reveal, evidence.get(r.id)), memberId: r.member_id })),
+      messages: messages.rows.map(r => ({ ...this.messageOf(r, this.reveal, evidence.get(r.id)), memberId: r.member_id })),
       run: o.runId ? this.store.runs.find(r => r.id === o.runId) : undefined,
-      events: (events as any[]).map(e => describe(e as EventRow, name)),
+      events: events.rows.map(e => describe(e, name)),
+      ...(messages.before || events.before ? { historyBefore: { messages: messages.before, events: events.before } } : {}),
     };
   }
 
