@@ -88,7 +88,8 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
   // With a Knowledge profile only the intents the member actually told the agent count, and a
   // minimal-tier member never set a romance opt-in unless their one want was romance.
   const known = k ? k.chat.intents.map(i => p.public.statedIntents[i]!).filter(Boolean) : p.public.statedIntents;
-  const cats = Array.from(new Set(["social", ...known.map(i => i.category)])) as Member["prefs"]["categoriesOptIn"];
+  const cats = [...new Set<Category>(["social", ...known.map(i => i.category)])];
+  if (known.some(i => i.category === "growth" && desireById.get(i.desireId)?.category === "growth") && !cats.includes("hobby")) cats.push("hobby");
   const romance = p.public.claimedAge >= 18 && (known.some(i => i.category === "romance")
     || (p.hidden.romance.optIn && p.hidden.adversarial !== "minor" && k?.richness !== "minimal"));
   return {
