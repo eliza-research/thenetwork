@@ -45,6 +45,18 @@ pure def lawDirectRefusalWithdrawsPendingSwap(namesOwnContact: bool, withholdsCo
   pendingSwapWithdrawn(namesOwnContact, withholdsContact, true)
 ```
 
+### A phone exchange must still have consent at dispatch
+
+A withdrawal also marks the prepared shares involving that member. An outbound share must still have a passed record and no rejection or withdrawal. A swap question goes only while the matching request is pending within its consent window.
+
+```quint
+pure def relayRecordMayDispatch(passed: bool, rejected: bool, withdrawn: bool): bool =
+  passed and not(rejected) and not(withdrawn)
+
+pure def lawWithdrawnRelayRecordsCannotDispatch(passed: bool, rejected: bool): bool =
+  not(relayRecordMayDispatch(passed, rejected, true))
+```
+
 ## Story: Keep unsafe items from reaching a match
 
 > As a member, I want Eliza to stop or hold items when the relay checks find a reason.

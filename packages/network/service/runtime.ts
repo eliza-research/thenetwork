@@ -29,6 +29,7 @@ import type { RunRecord } from "@thenetwork/core";
 import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
+import { relayConsentStale, relayRecordMayDispatch } from "../../core/src/generated/relayDecision.ts";
 import { cofounderBoundIntentCurrent, cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
@@ -51,7 +52,7 @@ import { appTagFacet } from "../src/apphooks.ts";
 import { hireSeatCurrent, readHireEvidence } from "../src/peon-hire-dispatch.ts";
 import { lockPeerOpportunityContact } from "./peer-opportunity-admission.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
-import type { RelayCanonical } from "../src/relay.ts";
+import { RELAY_SWAP_TTL_MS, SWAP_WITHDRAWN, type RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
@@ -575,13 +576,19 @@ export class NetworkRuntime {
     const state = (typeof saved.state === "string" ? JSON.parse(saved.state) : saved.state) as NetworkState;
     let from: MemberId | undefined, matchId: string | undefined;
     if (id[2]) {
-      // The swap question names no item of its own: the match is the row's, the sender its other member.
-      matchId = row.oppId;
-      from = state.opps.find(o => o.id === matchId)?.participants.find(p => p !== to);
+      const now = this.clock.now();
+      const request = state.relay?.swaps.find(swap => swap.itemId === id[1] && swap.matchId === row.oppId && swap.to === to);
+      if (!request || relayConsentStale(request.at, now, RELAY_SWAP_TTL_MS)) return no("relay:ask_expired");
+      matchId = request.matchId;
+      from = request.from;
     } else {
-      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
-      if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");
-      from = rec.from_member as MemberId; matchId = rec.opportunity_id as string;
+      const [rec] = await tx<{ opportunity_id: string; from_member: MemberId; to_member: MemberId; decision: string; review: string | null; reasons: string[] }[]>`
+        select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      if (!rec || rec.to_member !== to) return no("relay:not_passed");
+      const withdrawn = rec.reasons.includes(SWAP_WITHDRAWN);
+      if (!relayRecordMayDispatch(rec.decision === "pass", rec.review === "rejected", withdrawn)) return no(withdrawn ? SWAP_WITHDRAWN : "relay:not_passed");
+      from = rec.from_member;
+      matchId = rec.opportunity_id;
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }
     if (!from || !matchId) return no("relay:pair");
