@@ -4,8 +4,8 @@
 // PLATFORM_STOP_SCOPE=app stops that app alone. "leave <app>" (and the site's leave button) leaves one
 // app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
 // a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
-import { appMayText } from "../../core/src/generated/carrierConsent.ts";
-import { foldKeywordText as fold, hasStopWithCourtesy, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
+import { appMayText, matchesSpokenAppDomain } from "../../core/src/generated/carrierConsent.ts";
+import { foldKeywordText as fold, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase, stopCourtesyLanguage } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
 
 export type ConsentState = "opted_in" | "opted_out";
@@ -68,7 +68,7 @@ const REPEATED_SPANISH_STOP = new RegExp(`^(${KEYWORDS.stopEs.join("|")})(?: \\1
 function repeatedOrInsistedStop(key: string): "stop" | "stop_all" | undefined {
   const stop = key.replace(/^I (?:(?:ALREADY|JUST) )?SAID | I SAID$/g, "");
   if (STOP_ALL_TAIL_RX.test(stop)) return "stop_all";
-  if (hasStopWithCourtesy(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
+  if (stopCourtesyLanguage(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
   return undefined;
 }
 
@@ -106,13 +106,16 @@ export function leaveTarget(text: string, apps: Record<AppId, Pick<AppInfo, "id"
   // Strip a trailing courtesy or urgency word before matching the app, so "leave slop now" stays a leave
   // of slop. Without this the app does not match, the phrase is not a leave, and "unsubscribe from slop
   // now" falls through to the free-text opt-out reader as a stop of every app.
-  let x = m[1]!.replace(/^the /, "").trim();
+  const target = m[1]!;
+  const ambiguousArticle = target.startsWith("the ") && !/^(?:please )?unsubscribe\b/.test(t);
+  let x = target.replace(/^the /, "").trim();
   for (let i = 0; i < 3; i++) {
     const next = x.replace(TRAILING_COURTESY, "").trim();
     if (next === x) break;
     x = next;
   }
-  return Object.values(apps).find(a => x === a.id || x === a.domain || x === `www.${a.domain}` || x === a.name.toLowerCase().replace(/^the /, ""))?.id;
+  return Object.values(apps).find(a => x === a.id || x === a.domain || x === `www.${a.domain}` || x === a.name.toLowerCase().replace(/^the /, "")
+    || matchesSpokenAppDomain(x, a.domain.replaceAll(".", " "), a.domain.replaceAll(".", " dot "), ambiguousArticle))?.id;
 }
 
 /** The consent event and the reply for a keyword received on an app's line. HELP writes no event. */

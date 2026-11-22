@@ -2,7 +2,8 @@
 
 A member begins with separate memberships and saved details in slop and
 friends. The [saved profile rules](savedProfileRead.md) authorize each
-read. The [account privacy rules](accountPrivacy.md) handle leaving. This
+read. The [account privacy rules](accountPrivacy.md) handle leaving and the
+[carrier consent rules](carrierConsent.md) recognize the app named in a leave. This
 journey observes the stored memberships and saved fields returned through
 the shared line.
 
@@ -40,7 +41,10 @@ pure def stepReadingKeepsMemberships(before: ProfileMemberships, via: str, after
 ### An app leave removes that app's profile from later reads
 
 A leave removes the chosen membership and preserves the other app.
-Later reads from the removed app disclose no saved fields.
+Later reads from the removed app disclose no saved fields. The signed
+turn recognizes spoken forms such as "leave slop date" and "unsubscribe
+from friends dot help". It returns an opt-out for that app and leaves
+the other app's permission unchanged.
 
 ```quint
 pure def canLeaveProfileApp(s: ProfileMemberships, app: ProfileApp): bool = true
