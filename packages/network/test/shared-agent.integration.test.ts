@@ -438,7 +438,8 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
-test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
+// spec/notificationAcknowledgement.md, "Count a delivery action only when the store closes a pending delivery"
+test("a signed member open turn records activity once, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;
   const first=await post(turn("friends-join-start",phone,"friends.help","friends"));expect(first.status).toBe(200);
   expect((await first.json() as any).reason).toBe("onboarding_asked");
@@ -448,15 +449,43 @@ test("a normal signed join reaches open context, and STOP revokes replay without
   for (const text of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) {
     clock.advance(MINUTE);expect((await post(turn(`friends-onboard-${++n}`,phone,text,"friends"))).status).toBe(200);
   }
+  const personId=(await service.accounts.personFor(phone))!.id;
+  const delivery=async (id:string)=>{
+    await service.notify!.recordSent(
+      {personId,app:"friends",eventType:"requested",subjectId:id,urgency:"requested",summary:"Your update is ready."},
+      {deliveryId:id,channel:"imessage",countsTowardCap:true,sentAt:clock.now()},
+    );
+  };
+  const outcome=async (id:string)=>(await sql`select outcome from notify.deliveries where person_id=${personId} and delivery_id=${id}`)[0]?.outcome;
+  const firstDelivery="net:open-turn-before", nextDelivery="net:open-turn-after", stopDelivery="net:open-turn-stop";
+  await delivery(firstDelivery);
+  const wrongApp=await post(turn("friends-open-other-app",phone,"Tell me something about the weather","slop"));
+  expect(wrongApp.status).toBe(200);
+  expect(await wrongApp.json()).toMatchObject({outcome:"handled",app:"slop",memberId:null});
+  const readProfile=await post(turn("friends-open-profile-read",phone,"show my Friends profile","friends"));
+  expect(readProfile.status).toBe(200);
+  expect(await readProfile.json()).toMatchObject({outcome:"handled",app:"friends"});
+  expect(await service.submitProfile(personId,"friends",phone,"I enjoy hiking and cooking")).toBe("accepted");
+  expect(await outcome(firstDelivery)).toBeNull();
+
   const input=turn("friends-open",phone,"Tell me something about the weather","friends");
   const r=await post(input);expect(r.status).toBe(200);const body=await r.json() as any;
   expect(body.outcome).toBe("open");expect(body.app).toBe("friends");expect(body.context.singlePlayer).toBe(false);expect(body.context.activeItems).toBeNull();
+  expect(await outcome(firstDelivery)).toBe("acted");
+  expect((await sql`select surface,acted from notify.surface_signals where person_id=${personId} and acted>0`))
+    .toEqual([{surface:"imessage",acted:1}]);
+  await delivery(nextDelivery);
   expect(await (await post(input)).json()).toEqual(body);
+  expect(await outcome(nextDelivery)).toBeNull();
   // Canonical receiving is a valid recipient role; the wire's open state must not disable its chat.
   await service.runtimes.get("friends:nyc")!.scoped(tx=>tx`update network.members set participation_state='receiving' where app_id='friends' and id=${body.memberId}`);
   const receiving=await post(turn("friends-receiving-open",phone,"Tell me something about the weather","friends"));expect(receiving.status).toBe(200);
   const receivingBody=await receiving.json() as any;expect(receivingBody.outcome).toBe("open");expect(receivingBody.context.state).toBe("open");
+  expect(await outcome(nextDelivery)).toBe("acted");
+  await delivery(stopDelivery);
+  expect(await outcome(stopDelivery)).toBeNull();
   expect((await post(turn("friends-stop",phone,"STOP","friends"))).status).toBe(200);
+  expect(await outcome(stopDelivery)).not.toBe("acted");
   expect((await post(input)).status).toBe(409);
   expect(escaped).toBe(before);
 },60_000);

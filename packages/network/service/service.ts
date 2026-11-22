@@ -3437,9 +3437,17 @@ export class NetworkService implements RuntimeHost {
       if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && outcome !== "gathering_rsvp" && outcome !== "gathering_followup" && outcome !== "peon_candidate_search" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
-      if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
-        const context = binding?.membership.memberId === turn.memberId ? await rt!.sharedContext(turn.memberId) : null;
-        if (context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
+      if (outcome === "open" && !collected.length && turn.app && turn.memberId && rt && binding?.membership.memberId === turn.memberId) {
+        const context = await rt.sharedContext(turn.memberId);
+        if (context) {
+          // spec/notificationAcknowledgement.md, "Count a delivery action only when the store closes a pending delivery"
+          if (accountEligible && this.notify) {
+            const channel = input.transport === "sms" ? "sms" : "imessage";
+            await this.notify.threadReply(binding.person.id, channel, this.clock.now())
+              .catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
+          }
+          return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
+        }
       }
       if (outcome === "no_network" || outcome === "unknown_sender") return {outcome: "ignored", reason: outcome};
       return {outcome: "handled", replies: collected.map(r => r.body), replyIds: collected.map(r => r.id), delivery: "collected",
