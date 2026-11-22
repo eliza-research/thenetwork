@@ -80,7 +80,8 @@ test("a host-required circle counts only hosts eligible for that role", () => {
   const members: Member[] = ["guest-one", "guest-two", "nominal-host", "eligible-host"].map(id => ({
     id, name: id, homeCity: "nyc", age: 30, joinedAt: now - 30 * DAY, unansweredProactive: 0,
     state: id === "nominal-host" ? "receiving" : "normal",
-    prefs: { categoriesOptIn: ["social"], formats: ["small_group", "one_to_one"], quietHours: [22, 8], romanceOptIn: false },
+    prefs: { categoriesOptIn: ["social"], formats: ["small_group", "one_to_one"], quietHours: [22, 8],
+      romanceOptIn: false, maxTravelMinutes: 30, onlyWhenAsked: false },
   }));
   const facet = (memberId: string, kind: Facet["kind"], value: string, tags: string[]): Facet => ({
     id: `${memberId}:${kind}`, memberId, kind, value, tags, scope: "shareable", provenance: "said", confidence: 1,
@@ -90,7 +91,7 @@ test("a host-required circle counts only hosts eligible for that role", () => {
     ...(id.endsWith("-host") ? [facet(id, "skill", "hosting gatherings", ["host"])] : []),
   ]);
   const input: EngineInput = {
-    now, members, facets, intents: [], edges: [],
+    now, members, facets, intents: [], edges: [], recentProposals: [],
     presence: members.map(({ id }) => ({ memberId: id, city: "nyc", type: "home", areas: ["williamsburg"] })),
   };
   const world = new World(input, resolveConfig(), localEmbed);
