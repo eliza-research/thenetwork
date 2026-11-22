@@ -8,7 +8,7 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict and consent window](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. Phone swaps and durable queue acceptance remain separate.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -26,6 +26,9 @@ Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for s
 // and the queue admission refuses a contact share whose partner share is not passed, rejected, withdrawn or
 // ended unsent (runtime.ts:277-287). commitShare, tickFlush and queueSend below still model the older
 // one-at-a-time swap, so noOneWayNumber and the run tests that expect it violated describe that older code.
+// The Vibestack branch only removes pending requests on withdrawal. The legacy model below still shows
+// a withdrawn marker on an already prepared share, and admission of a swap question checks a live request.
+// These two dispatch fences are absent from current production and remain separate from the parser change.
 //
 // Machines in this model:
 //   relay-item            packages/network/src/relay.ts (RelayDesk.request, apply, deliver, release, reject, forget)
@@ -102,7 +105,7 @@ module relay {
   type Endpoint = {
     receipt: str -> str,   // absent | processing | completed | unresolved
     phase: str -> str,     // idle | claimed | committed | answered | failed | dead
-    kind: str -> str,      // text | share | withdraw
+    kind: str -> str,      // text | share | withdraw | none
     commits: str -> int,   // ghost: committed unit effects for the key
     response: str -> str,  // ghost: "" | ok | 409
   }
@@ -301,10 +304,24 @@ module relay {
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
 
+  // The model combines the receipt claim and parsing. The shell reads the refusal and uncertainty
+  // signals after claiming the receipt. Only a private request the reader has identified as explicit gets here.
+  pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
+    not(refused) and not(uncertain)
+
+  action claimPrivateContact(k: str, refused: bool, uncertain: bool, withdraws: bool): bool =
+    claim(k, if (privateRelayRequestAllowed(refused, uncertain)) "share" else if (withdraws) "withdraw" else "none")
+
   // The unit commits its effects and the receipt in one transaction (runtime.ts writeUnit, completeAction last).
   pure def committed(e: Endpoint, k: str): Endpoint =
     e.with("receipt", e.receipt.set(k, "completed")).with("phase", e.phase.set(k, "committed"))
      .with("commits", e.commits.set(k, e.commits.get(k) + 1))
+
+  action commitNone(k: str): bool = all {
+    ep.phase.get(k) == "claimed", ep.kind.get(k) == "none",
+    ep' = committed(ep, k),
+    w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
+  }
 
   // The endpoint unit before the desk decides (relay-endpoint.ts:231-232): sync the unsent items, and record in the
   // ghost what a decision that can deliver still reads as delivered (Q-relay-1, SD-252).
@@ -398,8 +415,21 @@ module relay {
     }
   }
 
-  // "Don't send my number" (relay-endpoint.ts:212-220; RelayDesk.cancelSwaps relay.ts:352-362). The same
-  // withdrawal runs on the /internal/turn path (network.ts:653). The answer is always "Okay, I won't share your number."
+  // A member's own message can remove their pending request before any signed relay action is made.
+  pure def pendingSwapWithdrawn(namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool =
+    declinesPendingSend or (namesOwnContact and withholdsContact)
+
+  action readPendingSwapReply(src: str, namesOwnContact: bool, withholdsContact: bool, declinesPendingSend: bool): bool = {
+    val withdraws = pendingSwapWithdrawn(namesOwnContact, withholdsContact, declinesPendingSend)
+    all {
+      desk.swaps.exists(sw => sw.src == src),
+      desk' = if (withdraws) desk.with("swaps", desk.swaps.filter(sw => sw.src != src)) else desk,
+      g' = if (withdraws) g.with("consent", g.consent.set(src, g.consent.get(src).with("live", false))) else g,
+      w' = w, ep' = ep, queue' = queue, photo' = photo,
+    }
+  }
+
+  // The signed relay action responds "Okay, I won't share your number" for a recognized withdrawal.
   // The pending swap goes, and each passed share of theirs gets consent:withdrawn, which the queue admission refuses (SD-039).
   action commitWithdraw(k: str): bool = {
     val src = owner(k)
@@ -716,12 +746,24 @@ module relay {
     if (ep.kind.get(k) == "text") commitText(k, tc, fault == "refuseMine")
     else if (ep.kind.get(k) == "share")
       commitShare(k, fault == "rateTheirs", fault == "rateMine", fault == "refuseAsk", fault == "refuseTheirs", fault == "refuseMine")
-    else commitWithdraw(k)
+    else if (ep.kind.get(k) == "withdraw") commitWithdraw(k)
+    else commitNone(k)
 
   action step = any {
     nondet k = REQS.oneOf()
-    nondet kind = Set("text", "share", "withdraw").oneOf()
-    claim(k, kind),
+    any {
+      nondet kind = Set("text", "withdraw").oneOf()
+      claim(k, kind),
+      nondet refused = Set(true, false).oneOf()
+      nondet uncertain = Set(true, false).oneOf()
+      claimPrivateContact(k, refused, uncertain, refused),
+    },
+    all {
+      desk.swaps.size() > 0,
+      nondet sw = desk.swaps.oneOf()
+      nondet declines = Set(true, false).oneOf()
+      readPendingSwapReply(sw.src, not(declines), false, declines),
+    },
     all {
       REQS.exists(k => ep.phase.get(k) == "claimed"),
       nondet k = REQS.filter(k => ep.phase.get(k) == "claimed").oneOf()
@@ -912,9 +954,19 @@ module relay {
       .expect(desk.swaps.size() == 1 and queue.rows.keys().contains("a1:ask"))
       .then(queueSend("a1:ask"))
       .then(timePass(5))
-      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
-      .then(queueSend("a1")).then(queueSend("b1"))
+      .then(readPendingSwapReply("A", true, false, false))
+      .then(claimPrivateContact("b1", true, false, true)).then(commitWithdraw("b1")).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and not(numberPending("A")) and not(numberPending("B")))
+      .then(claimPrivateContact("b2", false, false, false)).then(commitShare("b2", false, false, false, false, false)).then(answer("b2"))
+      .then(queueSend("a1")).then(queueSend("b2"))
       .expect(numberSent("A") and numberSent("B") and safety)
+
+  run pendingSwapPronounWithdrawalTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(readPendingSwapReply("A", false, false, true))
+      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "B") and not(numberPending("A")) and not(numberPending("B")) and safety)
 
   // SD-039 (fixed): both shares pass at quiet hours and wait in Network.deferred; A says "don't send my number";
   // in the morning the admission refuses A's share (consent:withdrawn). B's share still goes to A (SD-007, open).

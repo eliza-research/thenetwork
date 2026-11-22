@@ -89,6 +89,12 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   expect(await (await post(await ask("ari","relay-none","what should I wear tonight?"))).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});
   expect(await (await post(await ask("ari","relay-photo","send Bo this photo"))).json()).toMatchObject({decision:"block",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and id like 'relay:%'`).length).toBe(1);
+  const pending = await post(await ask("ari", "refusal-pending", "send Bo my number"));
+  expect(await pending.json()).toMatchObject({ decision: "hold" });
+  const refused = await post(await ask("bo", "refusal-deny", "I will not give Ari my number"));
+  expect(await refused.json()).toMatchObject({ decision: "none", delivered: false });
+  expect(await sql`select id from network.messages where app_id='friends' and body like '%asked me to send you%'`).toHaveLength(0);
+  await open(phones.ari, "refusal-cleanup", "don't send my number");
 },60_000);
 
 test("a scam is held for staff; staff list it (audited, app-scoped), reject it, and the text is gone; it all survives a restart",async()=>{
@@ -132,9 +138,8 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
   clock.advance(16*MINUTE);
   expect(await (await post(await ask("bo","ttl-bo","send Ari my number"))).json()).toMatchObject({decision:"hold"});
   expect(await numbers()).toBe(0);
-  // Bo changes their mind in a plain message ("don't send my number"): the pending request is gone.
   clock.advance(MINUTE);
-  expect((await signed(TURN_PATH,"bo-withdraw",JSON.stringify(turn(phones.bo,"bo-withdraw","actually please don't send my number")))).status).toBe(200);
+  expect((await signed(TURN_PATH,"bo-withdraw",JSON.stringify(turn(phones.bo,"bo-withdraw","actually please don't send it")))).status).toBe(200);
   expect(await (await post(await ask("ari","ttl-ari-2","send Bo my number"))).json()).toMatchObject({decision:"hold"});
   expect(await numbers()).toBe(0);
   // Ari takes theirs back through the relay action ("don't send my number" is nothing to relay, and confirmed).
@@ -149,6 +154,7 @@ test("a number goes out only after both members asked for the swap",async()=>{
   const first=await post(await ask("ari","swap-ari","send Bo my number"));
   expect(await first.json()).toMatchObject({decision:"hold",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);
+  await open(phones.ari, "swap-go-ahead", "Don't hesitate, send my number");
   const second=await post(await ask("bo","swap-bo","send Ari my number"));
   expect(await second.json()).toMatchObject({decision:"pass",delivered:false});
   const shares=await sql<{ member_id: string; body: string }[]>`select member_id,body from network.messages where app_id='friends' and id like 'relay:%' and body like '%asked me to send you%' order by member_id`;

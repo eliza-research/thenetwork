@@ -24,6 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
+import { pendingSwapWithdrawn } from "../../core/src/generated/relayDecision.ts";
 import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -98,21 +99,14 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
-/**
- * A negation that is not a no to the swap ("I don't mind, send them my number", "don't wait",
- * "stop asking", "never had to wait this long"). Blanked before withdrawsSwap reads the message, so
- * any other negation or cancel word in it still withdraws: the reader errs toward withdrawing, because
- * a swap left pending after a no would share the number.
- */
-const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
-/**
- * "Don't send my number", "cancel the number swap", "no, not my number": the member takes back a
- * pending swap request. A negation, a cancel word or "keep" together with their number.
- */
+const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|should|must|shall)\s+not\s+wait\b/g;
+const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
+const OWN_CONTACT = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/;
+const DECLINES_PENDING_SEND = /\b(?:don'?t|do\s+not)(?:\s+want\s+(?:you\s+)?to)?\s+(?:send|share|give|pass|forward)\s+(?:it|that)\b(?=\s*(?:$|[,.!?;])|\s+yet\b)/;
+
 export function withdrawsSwap(text: string): boolean {
-  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(NOT_A_NO, " ");
-  return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
+  const normalized = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(SWAP_GO_AHEAD, " ");
+  return pendingSwapWithdrawn(OWN_CONTACT.test(normalized), SWAP_WITHHOLDING.test(normalized), DECLINES_PENDING_SEND.test(normalized));
 }
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
