@@ -3,6 +3,7 @@
 // minor contacts). Each seed is one child process of packages/network/harness/experiment.ts (the
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
+import { simulatedMatchingMode } from "../../core/src/generated/simulationMatching.ts";
 import { labHasQueueCapacity } from "../../core/src/generated/labQueue.ts";
 import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { labAcceptsWork, labRunInterrupted } from "../../core/src/generated/consolePanels.ts";
@@ -80,13 +81,13 @@ export function resultsOf(out: string): { results?: Record<string, any>[] } | un
 }
 
 /**
- * The child's arguments. An app whose pack has not shipped (slop, peon) runs with no new
- * opportunities (--max-new 0): joins, onboarding and safety only. The experiment world is The
+ * The child's arguments. A locked app runs with matching off across every experiment arm.
+ * Joins, onboarding and safety still run. The experiment world is The
  * Network's NYC world for every app; it has no per-app join age yet.
  */
 export function labArgs(r: LabRequest, seed: number): string[] {
   const app = isAppId(r.app) ? r.app : DEFAULT_APP;
-  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed), ...(matchingAllowed(app) ? [] : ["--max-new", "0"])];
+  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed), ...(simulatedMatchingMode(matchingAllowed(app), false) === "SimulationMatchingOpen" ? [] : ["--matching-off"])];
 }
 
 export class Lab {

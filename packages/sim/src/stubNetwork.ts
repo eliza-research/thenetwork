@@ -18,6 +18,8 @@ import { CITY_TZ, fmtLocal, localHour, localParts, nextLocalHour } from "./time.
 
 export interface StubOptions {
   seed?: number | string;
+  /** Whether this simulation dispatches new introductions. */
+  matchingEnabled?: boolean;
   /** Generate random intros itself (default true). Set false when an Engine feeds proposals. */
   randomIntros?: boolean;
   /** Share of eligible members per city paired each day (default 0.1). */
@@ -154,9 +156,10 @@ export class StubNetwork implements NetworkUnderTest {
     }
   }
 
-  submitProposal(p: Proposal) { this.queued.push(p); }
+  submitProposal(p: Proposal) { if (this.opts.matchingEnabled !== false) this.queued.push(p); }
 
   private dailyRun(city: City, now: number) {
+    if (this.opts.matchingEnabled === false) return;
     const mine = this.queued.filter(p => p.city === city);
     this.queued = this.queued.filter(p => p.city !== city);
     for (const p of mine) this.dispatch(p, now);

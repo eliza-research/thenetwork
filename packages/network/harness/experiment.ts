@@ -11,12 +11,14 @@
 // --live-asks: personas ask only for wants that are still live in hidden truth (sim PolicyOptions).
 // --time-aware: personas answer offered times and booked plans from a hidden week, and attendance
 // depends on the meeting time (sim PolicyOptions.timeAware and WorldOptions.timeAware).
+// --matching-off: keep the matching arms from sending new intros while the rest of the world runs.
 // --plans off: the Network's planner and plan lane off (default on). --sim-plans on|off: personas
 // answer plan probes, the weekly check-in and crew offers, and plan meetings use the plan oracle
 // (sim WorldOptions.plans); default on when the Network runs plans. --capital: an NC ledger records
 // every event and the Network reads the levers from it (default: events are counted, levers off).
 // Every arm reports the judge's scores (computeMetrics) too, so the Observatory lab can call this.
 import { confirmsProactiveDelivery, observedMembershipMs } from "../../core/src/generated/consolePanels.ts";
+import { simulatedMatchingMode } from "../../core/src/generated/simulationMatching.ts";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { gini } from "@thenetwork/core";
 export { gini };
@@ -109,12 +111,13 @@ export async function runArm(arm: ExperimentArm, o: { days: number; seed: number
     engine: { cities: ["nyc"], ...o.network?.engine },
   });
   const simPlans = o.simPlans ?? (arm === "consent" && o.network?.plans !== false);
-  const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });
+  const matchingEnabled = simulatedMatchingMode(true, o.network?.matchingEnabled === false) === "SimulationMatchingOpen";
+  const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false, matchingEnabled });
   const records: RunRecord[] = [];
   const w = new World({
     seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
     ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}),
-    engine: consent ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
+    engine: consent || !matchingEnabled ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
   });
   await w.begin();
   await w.advanceTo(w.end);
@@ -280,6 +283,7 @@ if (import.meta.main) {
     "primed-met": { type: "string" }, "primed-partial": { type: "string" }, "primed-identity": { type: "string" }, "max-new": { type: "string" },
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
     paraphrase: { type: "boolean", default: false },
+    "matching-off": { type: "boolean", default: false },
   } });
   const seed = simulationSeed(a.seed);
   const selected = a.only === undefined ? EXPERIMENT_ARMS : a.only.split(",");
@@ -294,7 +298,7 @@ if (import.meta.main) {
   const out: ArmResult[] = [];
   for (const arm of selected) {
     const t0 = performance.now();
-    const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}) };
+    const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}), ...(a["matching-off"] ? { matchingEnabled: false } : {}) };
     const r = await runArm(arm, {
       days: Number(a.days), seed, liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
       ...(a["sim-plans"] ? { simPlans: a["sim-plans"] === "on" } : {}),

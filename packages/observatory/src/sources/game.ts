@@ -1,3 +1,4 @@
+import { simulatedMatchingMode } from "../../../core/src/generated/simulationMatching.ts";
 import { staffSearchHitVisible } from "../../../core/src/generated/staffSearch.ts";
 import { gameResetControlsAllowed } from "../../../core/src/generated/gameReset.ts";
 import { setTimeout as waitForMs } from "node:timers/promises";
@@ -214,7 +215,8 @@ export class GameSource implements DataSource {
         this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · NYC: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
       },
     }) : undefined;
-    this.engine = o.engine === "engine-v1" && !this.consent
+    const matchingEnabled = simulatedMatchingMode(matchingAllowed(this.app), false) === "SimulationMatchingOpen";
+    this.engine = o.engine === "engine-v1" && !this.consent && matchingEnabled
       ? new CapturingEngine(s => {
         this.store.addRun(s);
         this.store.clock.busy = undefined;
@@ -236,7 +238,7 @@ export class GameSource implements DataSource {
     });
     this.world = new World({
       seed: o.seed, personas, days: o.days, start: this.start, writeLog: false, ...(o.timeAware ? { timeAware: true } : {}),
-      network: this.consent ?? new StubNetwork({ seed: o.seed, randomIntros: o.engine === "random" }),
+      network: this.consent ?? new StubNetwork({ seed: o.seed, randomIntros: o.engine === "random", matchingEnabled }),
       engine: this.engine, agent: this.takeover,
       spawnFriend: joinGate(friendFactory({ seed: o.seed, ...(cast?.badInvitees ? { joinRate: 1, badActorRate: 1 } : {}) }), minAge),
       actions: cast?.actions,
@@ -350,7 +352,7 @@ export class GameSource implements DataSource {
     const alerts = healthAlerts({
       now, start: this.start, reviewOpen: n?.reviewQueue() ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app), reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
       deferred: n ? n.exportState().deferred.length : null, refusals, guardBlocked: this.recent.filter(x => x.key === "guard_blocked").length,
-      lastEngineRun: last?.at, expectEngine: !!n || this.opts.engine === "engine-v1", matchingEnabled: n?.matchingEnabled() ?? true,
+      lastEngineRun: last?.at, expectEngine: !!n || this.opts.engine === "engine-v1", matchingEnabled: n?.matchingEnabled() ?? matchingAllowed(this.app),
       invariants: judge?.invariants ?? null, canaryLeaks: judge?.canaryLeaks ?? null, minorContacts: judge?.minorContacts ?? null,
     });
     const members = [...this.store.members.values()];
@@ -606,7 +608,7 @@ export class GameSource implements DataSource {
     const opts = n ? (n as unknown as { opts: Record<string, unknown> }).opts : {};
     const network = Object.fromEntries(Object.entries(opts).filter(([, v]) => v === null || ["number", "boolean", "string"].includes(typeof v))) as ConfigInfo["network"];
     return {
-      matchingEnabled: n?.matchingEnabled() ?? true, reviewMode: n?.reviewMode() ?? null, network,
+      matchingEnabled: n?.matchingEnabled() ?? matchingAllowed(this.app), reviewMode: n?.reviewMode() ?? null, network,
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history: [...this.configHistory], canChange: !!n,
     };
   }
