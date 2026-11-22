@@ -97,6 +97,8 @@ const RX = {
  */
 const DISCLOSURE = /\b(he|she|they|someone|somebody|this (guy|girl|person|dude|man|woman)|[a-z]+) (asked|asks|wanted|wants|told|tells|keeps? asking|kept asking|tried|said|says|is asking|was asking|messaged|texted|dm'?d|demanded|threatened)\b/i;
 const NOT_A_PERSON = /^(i|we|you|it|that|this|which|what|who|mom|dad|the|a|an)$/i;
+const PRIVATE_MESSAGING_HANDLE_ASK = /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:send|give) me\s+(?:his|her|their)\s+whatsapp(?:\s+(?:handle|number|username))?(?:\s+please)?[.!?]*\s*$/i;
+const CONTACT_EXTRACTION = new RegExp(`${RX.extraction.source}|${PRIVATE_MESSAGING_HANDLE_ASK.source}`, "i");
 const ASK_FOR_NUMBER = /^\s*(?:please\s+)?(?:(?:(?:can|could|would) you\s+)?(?:give|send|pass|get) me|can i (?:get|have))\s+[^.!?]{1,100}\b(?:number|phone|cell)\b/i;
 const INTENT_TO_CONTACT_DIRECTLY = /(?:^|,|\bso\b)\s*(?:i (?:want to|need to|would like to|can|could)|i'd like to) (?:call|text|message|dm|contact) (?:him|her|them) (?:directly|off[- ]platform)\b/i;
 
@@ -153,7 +155,7 @@ export function classify(body: string): Classified {
   // spec/trustLevel.md, "An explicit attempt to bypass contact consent triggers watch"
   const explicitContactBypass = sents.some(({ text }) => ASK_FOR_NUMBER.test(text) && RX.extraction.test(text) && !describesAnotherPerson(text))
     && sents.some(({ text }) => INTENT_TO_CONTACT_DIRECTLY.test(text) && !describesAnotherPerson(text));
-  hit(RX.extraction, "contact_extraction", contactExtractionRisk(explicitContactBypass));
+  hit(CONTACT_EXTRACTION, "contact_extraction", contactExtractionRisk(explicitContactBypass));
   if (RX.injection.test(t)) { abuse.push("prompt_injection"); risk += 3; }
   hit(RX.harassment, "harassment", 3);
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);
