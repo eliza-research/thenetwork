@@ -10,7 +10,7 @@ import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core"
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
 import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
-import { SimChannel, type Reaction, type SimMessage } from "./channel.ts";
+import { detectKeyword, SimChannel, type Reaction, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
 import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
@@ -248,7 +248,7 @@ export class World {
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
   private personaSend(p: Persona, text: string, reaction?: Reaction): SimMessage | undefined {
     const mem = this.memories.get(p.id)!;
-    if (mem.optedOut && text.trim().toUpperCase() !== "START") return undefined;
+    if (mem.optedOut && (reaction !== undefined || detectKeyword(text) !== "START")) return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
     const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
     this.logMessage(m);
@@ -449,7 +449,7 @@ export class World {
     // Next initiative: adversaries every 1-2 days; others ~ every 3-12 days by social energy.
     const gapDays = p.hidden.adversarial ? r.range(1, 2) : r.logNormal(6 / (0.5 + p.hidden.socialEnergy), 0.4);
     const next = nextLocalHour(this.clock.now() + gapDays * DAY, p.homeCity, r.int(Math.max(p.routine.wake, 8), 21));
-    if (next < end && !mem.optedOut) this.scheduler.at(next, "initiative", { personaId: id });
+    if (next < end) this.scheduler.at(next, "initiative", { personaId: id });
   }
 
   private onFlakeCheck(meetingId: string, personaId: MemberId) {
