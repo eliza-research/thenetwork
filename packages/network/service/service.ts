@@ -72,7 +72,7 @@ import { ProfileFactEdits } from "./profile-fact-edits.ts";
 import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
-  checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
+  bindTextJoinMember, checkExplicitRoute, checkFallbackRoute, firstContactMayCheckAge, firstContactNoticeAllowed, initial as textJoinInitial, initialRoute,
   namedOtherApp, networkEnrollmentAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, preparedPeonTextNamesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
@@ -1236,8 +1236,11 @@ export class NetworkService implements RuntimeHost {
     };
     if (!(invitation ? await write(invitation.tx) : await rt.scoped(write))) return false;
     const turn = this.inboundTurn();
-    if (turn && (await this.accounts.personFor(turn.from))?.id === m.personId) {
-      turn.app = rt.app.id; turn.memberId = m.memberId;
+    if (turn) {
+      // spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
+      const sameApp = turn.app === rt.app.id;
+      const samePerson = sameApp && (await this.accounts.personFor(turn.from))?.id === m.personId;
+      if (bindTextJoinMember(sameApp, samePerson)) turn.memberId = m.memberId;
     }
     return true;
   }
@@ -1675,7 +1678,7 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. a saved-profile read, an invitation feedback reply, or an explicit app choice;
+   *  2. a saved-profile read, an invitation feedback reply, a pending enrollment answer, or an app keyword;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
@@ -1694,14 +1697,19 @@ export class NetworkService implements RuntimeHost {
     const survey = dedicated ? undefined : interruptionFeedbackAnswer(ev.text);
     const surveyApp = survey && isAppId(survey.app) ? survey.app : undefined;
     const keywordApp = dedicated || profileApp || surveyApp ? undefined : this.namedApp(ev.text);
-    const explicitFacts = { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, appKeyword: !!keywordApp };
+    const e164 = normalizePhone(ev.from);
+    const bare = lower(ev.text.trim()).replace(/[.!?]+$/, "");
+    const pendingEnrollmentAnswer = !!keywordApp && bare === keywordApp && !!this.runtimeFor(keywordApp)
+      && lookingFor(ev.text).includes(keywordApp) && !!e164 && !!await this.pendingOf(e164, "looking_for", "ntwrk")
+      && !!await this.accounts.activeMembership(this.apps.ntwrk, { e164, personId: null });
+    const explicitFacts = { dedicated: !!dedicated, profileApp: !!profileApp, surveyApp: !!surveyApp, pendingEnrollmentAnswer, appKeyword: !!keywordApp };
     const explicit = checkExplicitRoute(initialRoute, explicitFacts);
     if (explicit.phase === "DedicatedRoute" && dedicated) return { app: dedicated, shared: false };
     if (explicit.phase === "ProfileRoute" && profileApp) return { app: profileApp, shared: true };
     if (explicit.phase === "SurveyRoute" && surveyApp) return { app: surveyApp, shared: true };
+    if (explicit.phase === "LookingForRoute") return { app: "ntwrk", shared: true };
     if (explicit.phase === "KeywordRoute" && keywordApp) return { app: keywordApp, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
-    const e164 = normalizePhone(ev.from);
     if (threadRead && e164) {
       const ranked = [...mine].sort((a, b) => (b.lastItem ?? 0) - (a.lastItem ?? 0) || (b.lastOut ?? 0) - (a.lastOut ?? 0));
       for (const { app, memberId } of ranked) {

@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "KeywordRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
+export type RoutePhase = "AwaitingExplicitRoute" | "AwaitingFallbackRoute" | "DedicatedRoute" | "ProfileRoute" | "SurveyRoute" | "LookingForRoute" | "KeywordRoute" | "PendingJoinRoute" | "OpenItemRoute" | "RecentAppRoute" | "DefaultNetworkRoute";
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
-export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; appKeyword: boolean }
+export interface ExplicitFacts { dedicated: boolean; profileApp: boolean; surveyApp: boolean; pendingEnrollmentAnswer: boolean; appKeyword: boolean }
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 export interface TextRoute { phase: RoutePhase }
 /** Story: Text the Network to join an app / A pending join routes only a possible join answer (spec/textEnrollment.md) */
@@ -45,28 +45,35 @@ export function inv(current: TextJoin): boolean {
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
 export function checkExplicitRoute(routing: TextRoute, explicitFacts: ExplicitFacts): TextRoute {
-  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp ? ({ phase: "ProfileRoute" } as TextRoute) : (explicitFacts.surveyApp ? ({ phase: "SurveyRoute" } as TextRoute) : (explicitFacts.appKeyword ? ({ phase: "KeywordRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute)))));
+  return routing.phase !== "AwaitingExplicitRoute" ? routing : (explicitFacts.dedicated ? ({ phase: "DedicatedRoute" } as TextRoute) : (explicitFacts.profileApp ? ({ phase: "ProfileRoute" } as TextRoute) : (explicitFacts.surveyApp ? ({ phase: "SurveyRoute" } as TextRoute) : (explicitFacts.pendingEnrollmentAnswer ? ({ phase: "LookingForRoute" } as TextRoute) : (explicitFacts.appKeyword ? ({ phase: "KeywordRoute" } as TextRoute) : ({ phase: "AwaitingFallbackRoute" } as TextRoute))))));
 }
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
-export function lawDedicatedLineTakesPrecedence(profileApp: boolean, surveyApp: boolean, appKeyword: boolean): boolean {
+export function lawDedicatedLineTakesPrecedence(profileApp: boolean, surveyApp: boolean, pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return checkExplicitRoute(initialRoute, ({ dedicated: true, profileApp: profileApp, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "DedicatedRoute";
+  return checkExplicitRoute(initialRoute, ({ dedicated: true, profileApp: profileApp, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)).phase === "DedicatedRoute";
 }
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
-export function lawProfileReadTakesPrecedence(surveyApp: boolean, appKeyword: boolean): boolean {
+export function lawProfileReadTakesPrecedence(surveyApp: boolean, pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: true, surveyApp: surveyApp, appKeyword: appKeyword } as ExplicitFacts)).phase === "ProfileRoute";
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: true, surveyApp: surveyApp, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)).phase === "ProfileRoute";
 }
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
 //@ pure
-export function lawSurveyReplyTakesPrecedence(appKeyword: boolean): boolean {
+export function lawSurveyReplyTakesPrecedence(pendingEnrollmentAnswer: boolean, appKeyword: boolean): boolean {
   //@ ensures \result === true
-  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: true, pendingEnrollmentAnswer: pendingEnrollmentAnswer, appKeyword: appKeyword } as ExplicitFacts)).phase === "SurveyRoute";
+}
+
+/** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md) */
+//@ pure
+export function lawPendingEnrollmentAnswerTakesPrecedence(appKeyword: boolean): boolean {
+  //@ ensures \result === true
+  return checkExplicitRoute(initialRoute, ({ dedicated: false, profileApp: false, surveyApp: false, pendingEnrollmentAnswer: true, appKeyword: appKeyword } as ExplicitFacts)).phase === "LookingForRoute";
 }
 
 /** Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line (spec/textEnrollment.md) */
@@ -228,8 +235,21 @@ export function otherAppAllowed(appName: string, adult: boolean): boolean {
 
 /** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
 //@ pure
+export function bindTextJoinMember(sameRoutedApp: boolean, samePerson: boolean): boolean {
+  return sameRoutedApp && samePerson;
+}
+
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
+//@ pure
 export function otherAppEnrollment(existingMember: boolean, ageEligible: boolean): OtherAppOutcome {
   return existingMember ? "KeepOtherApp" : (ageEligible ? "CreateOtherApp" : "SkipOtherApp");
+}
+
+/** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
+//@ pure
+export function lawAnotherAppCannotRebindTextJoin(samePerson: boolean): boolean {
+  //@ ensures \result === true
+  return !bindTextJoinMember(false, samePerson);
 }
 
 /** Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment (spec/textEnrollment.md) */
