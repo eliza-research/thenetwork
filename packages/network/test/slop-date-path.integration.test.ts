@@ -111,6 +111,7 @@ test("Slop availability and pacing follow the booked time in the meeting's zone"
 
     // Older snapshots can recover the booked time from the exact opportunity after a restart.
     delete interaction.bookedMeeting;
+    delete interaction.opportunityId;
     world.net.importState(state);
     expect(history()?.attendedSlots).toEqual([slot]);
 
@@ -120,6 +121,8 @@ test("Slop availability and pacing follow the booked time in the meeting's zone"
       { from: "rae", at: feedbackAt, wouldMeetAgain: liked === "rae" },
       { from: "sam", at: feedbackAt + HOUR, wouldMeetAgain: liked === "sam" },
     ]);
+    const afterBothReplies = slopProfiles(world.net.engineInput(world.clock.now()));
+    for (const id of ids) expect(afterBothReplies.get(id)?.history).toMatchObject({ dates: 1, attendedSlots: [slot] });
     const gate = (id: string, at: number) => {
       const view = new World(world.net.engineInput(at), SLOP_ENGINE_DEFAULTS, localEmbed, slopPack);
       return pacing.check(view, id, view.get(id)!, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false });
@@ -438,6 +441,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const rt = service.runtimeFor("slop")!;
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: seeded.members, opps: [past, future] }));
     const state = async () => (await rt.pg.load())!;
+    const history = () => rt.unitOfWork(net => slopProfiles(net.engineInput(clock.now())));
     const own = "I did not show up.";
     await signedText(service, clock, secret, RAE, "absence-unreceived", own);
     expect((await state()).opps.find(opp => opp.id === id)?.post).toBeUndefined();
@@ -477,6 +481,22 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const afterOther = await state();
     expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: true });
     expect(afterOther.reports).toMatchObject([{ reporterId: sam, subjectId: rae, kind: "no_show", opportunityId: id, source: "check_in" }]);
+    const afterBothReplies = await history();
+    expect(afterBothReplies.get(sam)?.history).toMatchObject({ dates: 1, noShows: 0 });
+    expect(afterBothReplies.get(rae)?.history).toMatchObject({ dates: 0, noShows: 1 });
+    await rt.unitOfWork(net => {
+      const saved = net.exportState();
+      const absence = saved.interactions.find(item => item.opportunityId === id && item.outcome === "no_show")!;
+      expect(absence.noShowBy).toEqual([rae]);
+      delete absence.opportunityId;
+      delete absence.noShowBy;
+      // A similarly shaped old row cannot accuse its apparent author without the exact saved opportunity.
+      saved.interactions.push({ ...absence, id: `lost-opportunity:fb:${sam}` });
+      net.importState(saved);
+    });
+    const restored = await history();
+    expect(restored.get(sam)?.history).toMatchObject({ dates: 1, noShows: 0 });
+    expect(restored.get(rae)?.history).toMatchObject({ dates: 0, noShows: 1 });
     await service.close(); svc = undefined;
   }, T);
 

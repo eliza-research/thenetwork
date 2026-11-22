@@ -170,6 +170,7 @@ export class World {
       ...r, participants: distinctIds(r.participants),
       declinedBy: r.declinedBy && distinctIds(r.declinedBy), contributors: r.contributors && distinctIds(r.contributors),
       acceptedBy: r.acceptedBy && distinctIds(r.acceptedBy), noResponse: r.noResponse && distinctIds(r.noResponse),
+      noShowBy: r.noShowBy && distinctIds(r.noShowBy),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {

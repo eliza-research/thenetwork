@@ -3947,12 +3947,22 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { at: o.meetingAt, timeZone: o.meetingTimeZone ?? (o.plan ? CITY_TZ[o.plan.city] : NY) };
   }
 
-  private restoreSlopMeeting(record: InteractionRecord): InteractionRecord {
-    if (record.bookedMeeting !== undefined || record.outcome !== "completed") return record;
+  private restoreSlopInteraction(record: InteractionRecord): InteractionRecord {
+    if (record.outcome !== "completed" && record.outcome !== "no_show") return record;
     const marker = record.id.lastIndexOf(":fb:");
     if (marker < 0) return record;
     const opportunity = this.opps.get(record.id.slice(0, marker));
-    return { ...record, bookedMeeting: opportunity ? this.bookedMeeting(opportunity) : null };
+    const author = record.id.slice(marker + 4);
+    const ownReply = opportunity && (record.opportunityId === undefined || record.opportunityId === opportunity.id)
+      && opportunity.feedbackFrom.has(author) && opportunity.participants.includes(author) && record.participants.includes(author);
+    return {
+      ...record,
+      ...(ownReply && record.opportunityId === undefined ? { opportunityId: opportunity.id } : {}),
+      ...(record.outcome === "completed" && record.bookedMeeting === undefined
+        ? { bookedMeeting: ownReply ? this.bookedMeeting(opportunity) : null } : {}),
+      ...(record.outcome === "no_show" && record.noShowBy === undefined && ownReply
+        && opportunity.post?.[author]?.came === false ? { noShowBy: [author] } : {}),
+    };
   }
 
   private onFeedback(m: MemberState, o: Opp, body: string, f: ReturnType<typeof feedbackOf>, attendanceOpen: boolean) {
@@ -3979,7 +3989,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.interactions.push({
         id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants],
         at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
-        ...(this.app.id === "slop" && !f.selfNoShow ? { bookedMeeting: this.bookedMeeting(o) } : {}),
+        ...(this.app.id === "slop" ? {
+          opportunityId: o.id,
+          ...(f.selfNoShow ? { noShowBy: [m.id] } : { bookedMeeting: this.bookedMeeting(o) }),
+        } : {}),
       });
     }
     const repeatConsent = !o.plan && !o.seat && o.participants.length === 2 && recordsRepeatConsent(
@@ -7356,7 +7369,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.queued = st.queued; this.deferred = st.deferred;
     this.declinedIds = new Set(st.declinedIds); this.blocks = new Set(st.blocks); this.avoid = new Set(st.avoid); this.declined = new Map(st.declined);
     this.feedback = st.feedback;
-    this.interactions = this.app.id === "slop" ? st.interactions.map(record => this.restoreSlopMeeting(record)) : st.interactions;
+    this.interactions = this.app.id === "slop" ? st.interactions.map(record => this.restoreSlopInteraction(record)) : st.interactions;
     this.vouchedSkills = new Map(st.vouchedSkills.map(([k, v]) => [k, new Set(v)]));
     this.invitedIds.clear(); for (const id of st.invitedIds) this.invitedIds.add(id);
     this.trust.importState(st.trust);
