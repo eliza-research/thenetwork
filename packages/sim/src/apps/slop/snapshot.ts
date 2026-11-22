@@ -229,7 +229,9 @@ export function slopFacetsOf(p: SlopPersona, joinedAt: number, learned?: Readonl
   if (!minor) {
     const who = S.seeks.map(g => (g === "nonbinary" ? "nonbinary people" : g === "woman" ? "women" : "men")).join(" and ");
     f("preference", `Open to dating; interested in ${who}${K.ageRange ? `, ages ${S.ageRange[0]}-${S.ageRange[1]}` : ""}`,
-      [`romance:is:${S.matchGender}`, ...S.seeks.map(g => `romance:seeks:${g}`), ...(K.ageRange ? [`romance:age:${S.ageRange[0]}-${S.ageRange[1]}`] : [])], "agent_private");
+      [`romance:is:${S.matchGender}`, ...S.seeks.map(g => `romance:seeks:${g}`), ...(K.ageRange ? [`romance:age:${S.ageRange[0]}-${S.ageRange[1]}`] : []),
+        ...(S.transOpenness ? [`romance:open_trans:${S.transOpenness}`] : []), ...S.shownTo.map(g => `romance:shown_to:${g}`)], "agent_private");
+    if (S.transDisclosed) f("fact", "trans status stated", ["romance:trans:yes"], "agent_private");
     if (K.scope) {
       const sc = S.scope;
       const st = sc.mode === "city" ? "slop:scope:city" : sc.mode === "radius" ? `slop:scope:radius:${sc.miles}` : `slop:scope:multi:${sc.cities.join(",")}`;

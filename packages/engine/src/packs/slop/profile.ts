@@ -21,6 +21,7 @@ import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
+import type { DatingStatement, StatedGender, TransOpenness } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
 import { pairKey } from "../../world.ts";
@@ -69,6 +70,9 @@ export interface SlopProfile {
    */
   zipUnknown: boolean;
   is?: Gender; seeks: Gender[];
+  trans?: "yes" | "no";
+  transOpenness?: "open" | "not_open" | "only" | "declined";
+  shownTo: Gender[];
   ageRange?: [number, number]; scope?: Scope; maxMiles?: number; goal?: Goal;
   values: { smoking?: string; drinking?: string; hasKids?: string; wantsKids?: string; religion?: string; religionImportance?: number; politics?: string };
   dealbreakers: string[];
@@ -177,8 +181,6 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && !NEVER_USED.test(f.tags[0]));
     const interestFacet = new Map<string, string>();
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
-    const is = one("romance:is:") as Gender | undefined;
-    const seeks = [...new Set(has("romance:seeks:"))].sort() as Gender[];
     const visiting = [...new Set(input.presence.flatMap(p => {
       if (C(p.memberId) !== m.id || p.city === m.homeCity) return [];
       const trip = temporaryPresenceWindow(p);
@@ -187,7 +189,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
-      is, seeks,
+      ...datingFactsOf(tags.map(x => x.t)),
       ageRange: age ? (age.split("-").map(Number) as [number, number]) : undefined,
       scope, maxMiles: mm !== undefined ? Number(mm) : undefined,
       goal: one("slop:goal:") as Goal | undefined,
@@ -225,6 +227,35 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     }
   }
   return out;
+}
+
+const TRANS_STATUS: ReadonlySet<string> = new Set(["yes", "no"]);
+const TRANS_OPENNESS: ReadonlySet<string> = new Set(["open", "not_open", "only", "declined"]);
+const STATED_GENDER: Record<Gender, StatedGender> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
+const OPENNESS: Record<NonNullable<SlopProfile["transOpenness"]>, TransOpenness> = { open: "OpenToTrans", not_open: "NotOpenToTrans", only: "OnlyTrans", declined: "TransUnanswered" };
+
+export type DatingFacts = Pick<SlopProfile, "is" | "seeks" | "trans" | "transOpenness" | "shownTo">;
+export function datingFactsOf(tags: readonly string[]): DatingFacts {
+  const has = (prefix: string) => tags.filter(t => t.startsWith(prefix)).map(t => t.slice(prefix.length));
+  const one = (prefix: string) => has(prefix)[0];
+  const trans = one("romance:trans:"), open = one("romance:open_trans:");
+  return {
+    is: one("romance:is:") as Gender | undefined,
+    seeks: [...new Set(has("romance:seeks:"))].sort() as Gender[],
+    trans: trans !== undefined && TRANS_STATUS.has(trans) ? trans as "yes" | "no" : undefined,
+    transOpenness: open !== undefined && TRANS_OPENNESS.has(open) ? open as SlopProfile["transOpenness"] : undefined,
+    shownTo: [...new Set(has("romance:shown_to:"))].filter(g => g === "woman" || g === "man").sort() as Gender[],
+  };
+}
+
+export function datingStatementOf(p: DatingFacts): DatingStatement {
+  return {
+    gender: p.is ? STATED_GENDER[p.is] : "GenderUnstated",
+    trans: p.trans === "yes" ? "StatedTrans" : p.trans === "no" ? "StatedNotTrans" : "TransNotStated",
+    seeksWomen: p.seeks.includes("woman"), seeksMen: p.seeks.includes("man"), seeksNonbinary: p.seeks.includes("nonbinary"),
+    shownToWomenSeekers: p.shownTo.includes("woman"), shownToMenSeekers: p.shownTo.includes("man"),
+    transOpenness: p.transOpenness ? OPENNESS[p.transOpenness] : "TransUnanswered",
+  };
 }
 
 const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, contextualBlocks: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });

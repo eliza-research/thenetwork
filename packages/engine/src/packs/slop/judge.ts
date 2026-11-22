@@ -14,6 +14,7 @@ import { ageBand } from "./copy.ts";
 import { mutualMarkets } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { slopProfiles, type SlopProfile } from "./profile.ts";
+import { seekingMatches } from "./rules.ts";
 import { distanceBand } from "./zips.ts";
 
 export const SLOP_JUDGE_VERSION = "slop-judge-0.2";
@@ -58,7 +59,7 @@ export function slopJudgeContext(w: World, c: Candidate, o: SlopPackOptions): { 
       lane: "first date", P1: side(pa), P2: side(pb),
       distance_band: mm.length ? distanceBand(mm[0]!.miles) : null,
       shared_interests: shared,
-      mutual_preferences: !!pa.is && !!pb.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is),
+      mutual_preferences: seekingMatches(pa, pb),
     },
   };
 }
@@ -74,7 +75,7 @@ export function slopJudge(o: SlopPackOptions): JudgePack {
       const P = slopProfiles(w.input, w.canonical);
       const [pa, pb] = c.participants.map(id => P.get(id));
       if (!pa?.adult || !pb?.adult) return "underage";
-      return pa.is && pb.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is) ? null : "orientation_mismatch";
+      return seekingMatches(pa, pb) ? null : "orientation_mismatch";
     },
   };
 }

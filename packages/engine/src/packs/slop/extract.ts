@@ -36,7 +36,8 @@ export interface Evidence { turn: number; start: number; end: number; text: stri
 export interface Field<T> { value: T; confidence: number; evidence: Evidence; source: "rules" | "llm" }
 
 /** The fields the onboarding conversation fills (ask keys for `asked`, nextQuestion and the evals). */
-export type OnboardField = "age" | "gender" | "seeks" | "orientation" | "ageRange" | "distance" | "location" | "goal" | "dealbreakers" | "values" | "interests" | "activities" | "free";
+export type OnboardField = "age" | "gender" | "seeks" | "orientation" | "ageRange" | "distance" | "location" | "transOpenness" | "shownTo" | "goal" | "dealbreakers" | "values" | "interests" | "activities" | "free";
+export type TransAnswer = "open" | "not_open" | "only" | "declined";
 /** The fields the engine needs before it may propose (rules.ts missingFields + a placeable location). */
 export const HARD_FIELDS = ["gender", "seeks", "ageRange", "distance", "location"] as const;
 /** Each onboarding question at most this many times (the pack's maxAsksPerField default). */
@@ -58,6 +59,8 @@ export interface SlopOnboarding {
   /** agent_private, never read back: straight, gay, lesbian, bisexual, pansexual, queer, asexual. */
   orientation?: Field<string>;
   seeks?: Field<Gender[]>;
+  transOpenness?: Field<TransAnswer>;
+  shownTo?: Field<Gender[]>;
   ageRange?: Field<[number, number]>;
   distance?: Field<Distance>;
   location?: Field<Location>;
@@ -232,6 +235,7 @@ function identityOf(adj: string, w: string): string | undefined {
   if (/^(?:trans ?woman|trans ?girl|trans ?femme|mtf)$/.test(x) || (/\btrans(?:gender)?\b/.test(adj) && genderOfWord(x) === "woman")) return "trans_woman";
   if (/^(?:trans ?man|trans ?guy|ftm)$/.test(x) || (/\btrans(?:gender)?\b/.test(adj) && genderOfWord(x) === "man")) return "trans_man";
   if (/\bcis(?:gender)?\b/.test(adj)) return genderOfWord(x) === "woman" ? "cis_woman" : genderOfWord(x) === "man" ? "cis_man" : undefined;
+  if (/\btrans(?:gender)?\b/.test(adj) && genderOfWord(x) === "nonbinary") return "trans_nonbinary";
   if (/^(?:genderqueer|gender ?queer)$/.test(x)) return "genderqueer";
   if (/^agender$/.test(x)) return "agender";
   if (/^(?:gender ?fluid|genderfluid)$/.test(x)) return "genderfluid";
@@ -267,8 +271,11 @@ function readGender(t: string, asked?: OnboardField): GenderReading {
     for (const m of all(/\((f|m|nb)\)/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
     for (const m of all(/\b(m|w|f|nb)4(?:m|w|f|nb|a|any|mw|wm|all)\b/, s.text)) out.gender = cand(m[1] === "m" ? "man" : m[1] === "nb" ? "nonbinary" : "woman", s, m, 0.9);
     // Orientation said alone: "I'm bi", "gay btw", "straight here", "I'm a woman, lesbian".
-    for (const m of all(new RegExp(`\\b${ME}\\s+(?:a\\s+|pretty\\s+|very\\s+|mostly\\s+)?(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer|ace|asexual)\\b(?!\\s*(?:friendly|bar|bars|club))|\\b(straight|gay|bi|queer|lesbian|pan)\\s+(?:here|btw|fwiw)\\b|(?:^|,)\\s*(lesbian|bisexual|pansexual|queer)\\s*[,.!]?\\s*(?:$|\\d)`), s.text)) {
+    for (const m of all(new RegExp(`\\b${ME}\\s+(?:a\\s+|pretty\\s+|very\\s+|mostly\\s+)?(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer|ace|asexual)\\b(?!\\s*(?:friendly|bar|bars|club))|\\b(straight|gay|bi|queer|lesbian|pan)\\s+(?:here|btw|fwiw)\\b|(?:^|,)\\s*(lesbian|bisexual|bi|pansexual|pan|queer)\\s*[,.!]?\\s*(?:$|\\d)`), s.text)) {
       out.orientation = cand(ORIENT_WORDS[(m[1] ?? m[2] ?? m[3])!]!, s, m, 0.95);
+    }
+    for (const m of all(new RegExp(`\\b${ME}\\s+(?:a\\s+)?(trans|transgender|cis|cisgender)(?=\\s*(?:$|[,.!?;:)]|(?:and|btw|fwiw|here|too|myself|lol)\\b))`), s.text)) {
+      if (!out.identity) out.identity = cand(m[1]!.startsWith("trans") ? "trans" : "cis", s, m, 0.95);
     }
   }
   return out;
@@ -281,41 +288,64 @@ const SEEK_WORD: [RegExp, Gender][] = [
   [/^(?:men|man|guys?|gusy|guyz|dudes?|boys?|males?|gents|gentlemen|bros|m)$/, "man"],
   [/^(?:nonbinary|nonbinery|non-binary|nb|nbs|enby|enbies|genderqueer)$/, "nonbinary"],
 ];
-const SEEK_FILLER = /^(?:a|an|the|some|cute|nice|tall|older|younger|mostly|mainly|only|just|also|too|and|or|&|\+|plus|n|\/|people|folks|ppl|persons|humans|of|kind|really|primarily|other|fellow|queer|trans|straight|bi|gay|lesbian|single|hot|cool|smart|funny|interesting|ish|lol|tbh|honestly|pls|please|preferably|ideally|i guess|non|binary|people's|cis|masc|femme|fem|feminine|masculine|good|great|decent|real|genuine|sweet|honest|handsome|pretty|beautiful|new|special|right|solid|kind-hearted|caring|both|either)$/;
+const SEEK_FILLER = /^(?:a|an|the|some|cute|nice|tall|older|younger|mostly|mainly|only|just|also|too|and|or|&|\+|plus|n|\/|people|folks|ppl|persons|humans|of|kind|really|primarily|other|fellow|queer|straight|bi|gay|lesbian|single|hot|cool|smart|funny|interesting|ish|lol|tbh|honestly|pls|please|preferably|ideally|i guess|non|binary|people's|masc|femme|fem|feminine|masculine|good|great|decent|real|genuine|sweet|honest|handsome|pretty|beautiful|new|special|right|solid|kind-hearted|caring|both|either)$/;
 const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all three|everyone really|literally anyone|all(?=\s*(?:$|[,.!?;)]|lol\b|tbh\b|really\b|please\b|pls\b|honestly\b|i guess\b))|anyone really)\b/;
 /** "anyone but men", "everyone except guys": the genders after it are excluded. */
 const ALL_BUT = /^\s*(?:but|except|besides|other than|apart from|excluding|minus)\b/;
 const SEEK_TRIGGER = /\b(?:look(?:ing|in'?|ng)?\s+(?:for|4)|lokking for|loking for|lookign for|lf|seeking|searching for|into|interested in|attracted to|dat(?:e|ing|in)|meet(?:ing)?|want(?:ing)?|wanna (?:date|meet)|prefer|preferably|open to|down for|tryna (?:meet|date|find)|hoping (?:to meet|for)|after|only|just|exclusively|strictly|(?<!i'?m |im )likes?|loves?)\b/;
 
-interface SeekReading { seeks?: Cand<Gender[]>; neg: Gender[]; additive: boolean }
-/** Parse a list of gender words starting at `from` in sentence `s` ("men and nonbinary folks", "women only"). */
-function genderList(text: string, from: number): { genders: Set<Gender>; neg: Set<Gender>; end: number; all: boolean } {
+interface SeekReading { seeks?: Cand<Gender[]>; neg: Gender[]; additive: boolean; trans?: Cand<TransAnswer> }
+interface GenderList { genders: Set<Gender>; neg: Set<Gender>; end: number; all: boolean; transNamed: Set<Gender>; transNeg: boolean; cisNamed: boolean; plainNamed: Set<Gender> }
+const TRANS_WORD = /^(?:trans|transgender|trans\*)$/, CIS_WORD = /^(?:cis|cisgender)$/;
+function genderList(text: string, from: number): GenderList {
   const rest = text.slice(from);
-  const genders = new Set<Gender>(), neg = new Set<Gender>();
+  const genders = new Set<Gender>(), neg = new Set<Gender>(), transNamed = new Set<Gender>(), plainNamed = new Set<Gender>();
+  const plain = (x: Pick<GenderList, "genders" | "neg" | "end" | "all">): GenderList => ({ ...x, transNamed, transNeg: false, cisNamed: false, plainNamed: new Set(x.genders) });
   const am = ALL_GENDERS.exec(rest);
   // "anyone who smokes", "anybody with kids": a person qualifier (a dealbreaker), not every gender.
-  if (am && /^\s*(?:who|that|with|w\/)\b/.test(rest.slice(am[0].length))) return { genders: new Set(), neg: new Set(), end: from, all: false };
+  if (am && /^\s*(?:who|that|with|w\/)\b/.test(rest.slice(am[0].length))) return plain({ genders: new Set(), neg: new Set(), end: from, all: false });
   if (am) {
     const after = from + am[0].length, but = ALL_BUT.exec(text.slice(after));
-    if (!but) return { genders: new Set(GENDERS), neg, end: after, all: true };
+    if (!but) return plain({ genders: new Set(GENDERS), neg, end: after, all: true });
     const x = genderList(text, after + but[0].length);
-    return { genders: new Set(GENDERS.filter(g => !x.genders.has(g))), neg: x.genders, end: x.end, all: false };
+    if (x.transNamed.size && [...x.genders].every(g => x.transNamed.has(g))) return { ...plain({ genders: new Set(GENDERS), neg, end: x.end, all: false }), transNeg: true };
+    return plain({ genders: new Set(GENDERS.filter(g => !x.genders.has(g))), neg: x.genders, end: x.end, all: false });
   }
-  const tok = /\s*(non[- ]binary|[a-z0-9'&+\/-]+|,)/g;
-  let m: RegExpExecArray | null, end = from, negMode = false, afterComma = false;
+  const tok = /\s*(non[- ]binary|[a-z0-9'&+\/*-]+|,)/g;
+  let m: RegExpExecArray | null, end = from, negMode = false, afterComma = false, trans = false, cis = false, transNeg = false, cisNamed = false;
   while ((m = tok.exec(rest))) {
     const w = m[1]!.replace(/[,]/g, "");
     if (!w) { afterComma = true; end = from + tok.lastIndex; continue; }
     // "no guys, just women", "I don't date men, only women": a new clause after the comma ends the list.
     if (afterComma && /^(?:only|just|exclusively|strictly|but|looking|seeking|into|prefer|want)$/.test(w)) break;
-    if (/^(?:not|no|except|never|nor)$/.test(w)) { negMode = true; end = from + tok.lastIndex; continue; }
+    if (/^(?:not|no|except|never|nor|excluding)$/.test(w)) { negMode = true; end = from + tok.lastIndex; continue; }
+    if (w === "but" && /^\s*(?:not|no|never)\b/.test(rest.slice(tok.lastIndex))) { end = from + tok.lastIndex; continue; }
+    if (TRANS_WORD.test(w)) { trans = true; end = from + tok.lastIndex; continue; }
+    if (CIS_WORD.test(w)) { cis = true; end = from + tok.lastIndex; continue; }
+    if (trans && /^(?:people|folks|ppl|persons|partners)$/.test(w)) {
+      for (const x of GENDERS) transNamed.add(x);
+      if (negMode) transNeg = true;
+      trans = false;
+      end = from + tok.lastIndex;
+      continue;
+    }
     const g = SEEK_WORD.find(([rx]) => rx.test(w))?.[1];
-    if (g) { (negMode ? neg : genders).add(g); end = from + tok.lastIndex; continue; }
+    if (g) {
+      if (trans) { transNamed.add(g); if (negMode) transNeg = true; else genders.add(g); }
+      else if (cis) { if (!negMode) { genders.add(g); plainNamed.add(g); cisNamed = true; } }
+      else if (negMode) neg.add(g);
+      else { genders.add(g); plainNamed.add(g); }
+      trans = cis = false;
+      end = from + tok.lastIndex;
+      continue;
+    }
     if (SEEK_FILLER.test(w) || w === "") { end = from + tok.lastIndex; continue; }
     break;
   }
-  return { genders, neg, end, all: false };
+  return { genders, neg, end, all: false, transNamed, transNeg, cisNamed, plainNamed };
 }
+const partlyTransNamed = (L: GenderList): boolean => L.plainNamed.size > 0 && [...L.genders].some(g => !L.plainNamed.has(g));
+const onlyTransNamed = (L: GenderList): boolean => L.transNamed.size > 0 && [...L.genders, ...L.neg].every(g => L.transNamed.has(g));
 
 /** The comma parts of a sentence (the sentence itself first). */
 function segmentsOf(s: Sentence): Sentence[] {
@@ -332,6 +362,11 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
   const out: SeekReading = { neg: [], additive: false };
   const neg = new Set<Gender>();
   let best: Cand<Gender[]> | undefined;
+  const transAt = (c: Cand<TransAnswer>) => { if (!out.trans || c.start >= out.trans.start) out.trans = c; };
+  function readTrans(L: GenderList, s: Sentence, m: { index: number; 0: string }, only: boolean) {
+    if (L.transNeg || L.cisNamed) transAt(cand("not_open" as const, s, m, 0.95));
+    else if (L.transNamed.size) transAt(cand(only && onlyTransNamed(L) ? "only" as const : "open" as const, s, m, 0.9));
+  }
   const sents = sentences(t);
   for (const s of sents) {
     if (THIRD_PARTY.test(s.text)) continue;
@@ -339,11 +374,13 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
       const L = genderList(s.text, m.index + m[0].length);
       const triggerNeg = negated(s.text, m.index, 3);
       // "a woman": singular after a self marker is a self description, not a seek.
-      if (!L.genders.size && !L.neg.size) continue;
+      if (!L.genders.size && !L.neg.size && !L.transNeg) continue;
       if (/^(?:only|just|exclusively|strictly)$/.test(m[0]) && L.all) continue;
+      if (triggerNeg && onlyTransNamed(L)) { transAt(cand("not_open" as const, s, m, 0.95)); continue; }
       if (triggerNeg) { for (const g of L.genders) neg.add(g); continue; }
+      readTrans(L, s, m, /\b(?:only|exclusively|strictly)\b/.test(s.text.slice(m.index, L.end)) || /^\s*only\b/.test(s.text.slice(L.end)));
       for (const g of L.neg) neg.add(g);
-      if (L.genders.size) {
+      if (L.genders.size && !partlyTransNamed(L)) {
         const c = cand([...L.genders].sort(), s, { index: m.index, 0: s.text.slice(m.index, L.end) }, 0.95);
         best = best && best.start === c.start ? best : best ? { ...c, value: [...new Set([...best.value, ...c.value])].sort() } : c;
       }
@@ -354,9 +391,12 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
   function scanOpening(s: Sentence) {
     const lead = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*/.exec(s.text)![0].length;
     const L = genderList(s.text, lead);
-    const plural = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:(?:only|just)\s+)?(?:women|womxn|girls|grls|gals|ladies|females|men|guys|dudes|boys|males|non-?binary (?:people|folks|ppl)|enbies|nbs|anyone|any1|anybody|everyone|everybody|whoever|all genders|any gender)\b/.test(s.text);
+    const plural = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:(?:only|just)\s+)?(?:(?:trans|transgender|cis|cisgender)\s+)?(?:women|womxn|girls|grls|gals|ladies|females|men|guys|dudes|boys|males|non-?binary (?:people|folks|ppl)|enbies|nbs|anyone|any1|anybody|everyone|everybody|whoever|all genders|any gender)\b/.test(s.text);
     const singularAsked = asked === "seeks" && /^\s*(?:(?:actually|no|oh|um|well|so)[\s,!]+)*(?:a\s+|an\s+)?(?:woman|man|guy|girl|gal|lady|dude|nonbinary person|nb person)\b/.test(s.text);
     if (asked !== "gender" && (plural || singularAsked) && (L.genders.size || L.neg.size) && !/^\s*(?:i'?m|im|i am)\b/.test(s.text)) {
+      const negLead = /\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead)), negAfter = /^\s*(?:are|is)\s+(?:a\s+)?(?:hard\s+)?(?:no|not|never|out|off the table|a pass|pass)\b/.test(s.text.slice(L.end));
+      if ((negLead || negAfter) && onlyTransNamed(L)) { transAt(cand("not_open" as const, s, { index: lead, 0: s.text.slice(lead, L.end) }, 0.95)); return; }
+      readTrans(L, s, { index: lead, 0: s.text.slice(lead, L.end) }, /^\s*only\b/.test(s.text.slice(lead)) || /^\s*only\b/.test(s.text.slice(L.end)));
       for (const g of L.neg) neg.add(g);
       // "men are a no for me", "guys are out": the genders named are excluded.
       if (/^\s*(?:are|is)\s+(?:a\s+)?(?:hard\s+)?(?:no|not|never|out|off the table|a pass|pass)\b/.test(s.text.slice(L.end))) { for (const g of L.genders) neg.add(g); return; }
@@ -364,10 +404,10 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
       // Only up to the first comma: "no women, men only" excludes women; "men only" is read from its own comma part.
       if (/\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead))) {
         const comma = s.text.indexOf(",", lead);
-        for (const g of (comma > 0 ? genderList(s.text.slice(0, comma), lead) : L).genders) neg.add(g);
+        for (const g of (comma > 0 ? genderList(s.text.slice(0, comma), lead) : L).genders) if (!L.transNamed.has(g)) neg.add(g);
         return;
       }
-      if (L.genders.size) {
+      if (L.genders.size && !partlyTransNamed(L)) {
         const c = cand([...L.genders].sort(), s, { index: lead, 0: s.text.slice(lead, L.end) }, plural ? 0.95 : 0.9);
         best = best ? { ...c, value: [...new Set([...best.value, ...c.value])].sort() } : c;
       }
@@ -381,6 +421,18 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
       best = cand(v, s, m, 0.9);
     }
     for (const m of all(/\b(?:gender (?:doesn'?t|does not|dont|don'?t) matter|open to (?:all|every) genders?|any gender is fine|all genders welcome)\b/, s.text)) best = cand([...GENDERS], s, m, 0.95);
+  }
+  for (const s of sents) {
+    if (THIRD_PARTY.test(s.text)) continue;
+    for (const m of all(/\b(?:trans[- ]?(?:friendly|inclusive)|open to (?:dating )?trans(?:gender)? (?:people|folks|partners|women|men)|(?:i'?m |im |i am )?(?:fine|ok|okay|happy) (?:with|dating) trans(?:gender)? (?:people|folks|partners|women|men))\b/, s.text)) {
+      if (!negated(s.text, m.index, 3)) transAt(cand("open" as const, s, m, 0.95)); else transAt(cand("not_open" as const, s, m, 0.95));
+    }
+    for (const m of all(/\b(?:cis(?:gender)? only|only cis(?:gender)?|(?:no|not into|not open to|not interested in|rather not date|(?:don'?t|wouldn'?t|won'?t) date) trans(?:gender)?(?: people| folks| partners)?)\b/, s.text)) transAt(cand("not_open" as const, s, m, 0.95));
+    if (asked === "transOpenness") {
+      const bare = /^\s*(?:(?<declined>rather not say|i'?d rather not(?= say|\s*[,.!?]|\s*$)|prefer not to say|skip|pass|no comment|not saying)|(?<only>only (?:trans|other trans)|just trans|trans only|only t4t|t4t)|(?<indifferent>no preference|doesn'?t matter|does not matter|don'?t mind|do not mind|either way)|(?<notOpen>no|nah|nope|never|not really|not open|not for me|i'?m not|im not|i am not)|(?<open>yes|yeah|yep|yup|ya|sure|of course|absolutely|definitely|totally|open|i am|i'?m open))\b/.exec(s.text);
+      const g = bare?.groups;
+      if (g) transAt(cand(g.declined ? "declined" as const : g.only ? "only" as const : g.open || g.indifferent ? "open" as const : "not_open" as const, s, bare!, 0.9));
+    }
   }
   if (best) best.value = best.value.filter(g => !neg.has(g));
   if (best && !best.value.length) best = undefined;
@@ -813,6 +865,21 @@ function readFree(t: string, asked: OnboardField | undefined): { add: Cand<Slot>
   return { add: add.filter(c => !remove.includes(c.value)), remove };
 }
 
+function readShownTo(t: string): Cand<Gender[]> | undefined {
+  const s: Sentence = { start: 0, text: t };
+  const both = /^\s*(?:both|either|both of them|women and men|men and women|everyone|anyone)\b/.exec(t);
+  if (both) return cand(["man", "woman"] as Gender[], s, both, 0.9);
+  const add = new Set<Gender>(), drop = new Set<Gender>();
+  for (const c of t.split(/[,;.!?]|\bbut\b/)) {
+    const named = (c.match(/\b(?:women|woman|girls|ladies|men|man|guys|dudes)\b/g) ?? []).map(w => (/^(?:women|woman|girls|ladies)$/.test(w) ? "woman" : "man") as Gender);
+    for (const g of named) (/\b(?:not|no|never|don'?t|nor)\b/.test(c) ? drop : add).add(g);
+  }
+  const chosen = [...add].filter(g => !drop.has(g)).sort();
+  if (chosen.length) return cand(chosen, s, { index: 0, 0: t }, 0.9);
+  const neither = /^\s*(?:neither|none|no|nope|nah|not really|just nonbinary(?: people| folks)?|only nonbinary(?: people| folks)?)\b/.exec(t);
+  return neither || drop.size ? cand([] as Gender[], s, neither ?? { index: 0, 0: t }, 0.9) : undefined;
+}
+
 // ------------------------------------------------------------------------------------------ one message
 
 /** Everything the rules read in one message. Exported for the evals. */
@@ -820,6 +887,7 @@ export interface Reading {
   age?: Cand<number>; ageStrict?: boolean; minor?: Cand<true>;
   gender?: Cand<Gender>; identity?: Cand<string>; orientation?: Cand<string>;
   seeks?: Cand<Gender[]>; seeksNeg: Gender[]; additive: boolean;
+  transOpenness?: Cand<TransAnswer>; shownTo?: Cand<Gender[]>;
   ageRange?: Cand<[number, number]>; ageRel?: Cand<number>;
   distance?: Cand<Distance>; location?: Cand<Location>;
   goal?: Cand<Goal>; values: ValueCands; dealbreakers: DbReading;
@@ -828,7 +896,7 @@ export interface Reading {
 
 export function readMessage(text: string, o: ExtractOptions & { selfAge?: number } = {}): Reading {
   const t = normText(text);
-  const a = readAge(t), g = readGender(t, o.asked), sk = readSeeks(t, o.asked);
+  const a = readAge(t), g = readGender(t, o.asked), sk: SeekReading = o.asked === "shownTo" ? { neg: [], additive: false } : readSeeks(t, o.asked);
   const ar = readAgeRange(t, o.asked, a.age?.value ?? o.selfAge);
   const v = readValues(t);
   if (g.hasKids && !v.hasKids) v.hasKids = g.hasKids;
@@ -836,6 +904,7 @@ export function readMessage(text: string, o: ExtractOptions & { selfAge?: number
     age: a.age, ageStrict: a.strict, minor: a.minor,
     gender: g.gender, identity: g.identity, orientation: g.orientation,
     seeks: sk.seeks, seeksNeg: sk.neg, additive: sk.additive,
+    transOpenness: sk.trans, shownTo: o.asked === "shownTo" ? readShownTo(t) : undefined,
     ageRange: ar.range, ageRel: ar.rel,
     distance: readDistance(t, o.asked), location: readLocation(t, o.asked, o.market),
     goal: readGoal(t, o.asked), values: v, dealbreakers: readDealbreakers(t, o.asked),
@@ -870,6 +939,8 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
     const left = p.seeks.value.filter(g => !r.seeksNeg.includes(g));
     if (left.length) p.seeks = { ...p.seeks, value: left }; else delete p.seeks;
   }
+  if (r.transOpenness) p.transOpenness = field(r.transOpenness, turn, text);
+  if (r.shownTo) p.shownTo = field(r.shownTo, turn, text);
   if (r.ageRange) p.ageRange = field(r.ageRange, turn, text);
   else if (r.ageRel && p.age && p.age.value >= 18) p.ageRange = field({ ...r.ageRel, value: [Math.max(18, p.age.value - r.ageRel.value), p.age.value + r.ageRel.value] as [number, number] }, turn, text);
   if (r.distance) p.distance = field({ ...r.distance, value: mergeDistance(p.distance?.value, r.distance.value) }, turn, text);
@@ -913,11 +984,7 @@ export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
     const v: Gender[] | undefined = o === "straight" && g !== "nonbinary" ? [g === "woman" ? "man" : "woman"] : o === "gay" && g === "man" ? ["man"] : o === "gay" && g === "woman" ? ["woman"] : o === "lesbian" ? ["woman"] : undefined;
     if (v) p.seeks = { value: v, confidence: 0.7, evidence: p.orientation.evidence, source: p.orientation.source };
   }
-  // Founder decision (2026-10-11): a woman or a man still unclear about who they hope to meet after the
-  // seeks question was asked its last time is read as straight. The read-back repeats it (confidence 0.6,
-  // the read-back floor) and any later answer replaces it. Without this, seeks stayed empty and the
-  // member was never matchable. Nonbinary members, and anyone who said gay, lesbian or asexual, are never defaulted.
-  if (!p.seeks && p.gender && p.gender.value !== "nonbinary" && !["gay", "lesbian", "asexual"].includes(p.orientation?.value ?? "") && (p.askCounts.slop_seeks ?? 0) >= MAX_ASKS_PER_QUESTION) {
+  if (!p.seeks && p.gender && p.gender.value !== "nonbinary" && !p.orientation && (p.askCounts.slop_seeks ?? 0) >= MAX_ASKS_PER_QUESTION) {
     p.seeks = { value: [p.gender.value === "woman" ? "man" : "woman"], confidence: 0.6, evidence: p.gender.evidence, source: "rules" };
   }
   if (changed) p.confirmed = false;
@@ -930,11 +997,13 @@ export function hasField(p: SlopOnboarding, f: OnboardField): boolean {
   switch (f) {
     case "age": return !!p.age;
     case "gender": return !!p.gender;
-    case "seeks": return !!p.seeks?.value.length;
-    case "orientation": return !!p.gender && !!p.seeks?.value.length;
+    case "seeks": return !!seeksAnswerOf(p)?.length;
+    case "orientation": return !!p.gender && !!seeksAnswerOf(p)?.length;
     case "ageRange": return !!p.ageRange;
     case "distance": return !!p.distance;
     case "location": return !!p.location?.value.known || p.distance?.value.mode === "multi";
+    case "transOpenness": return transAnswerOf(p) !== undefined;
+    case "shownTo": return !!p.shownTo;
     case "goal": return !!p.goal;
     case "dealbreakers": return p.dealbreakers.length > 0 || !!p.noDealbreakers;
     case "values": return Object.keys(p.values).length > 0;
@@ -963,6 +1032,22 @@ export function extractSlopProfile(messages: (string | { text: string; asked?: O
 
 // ------------------------------------------------------------------------------------------ facet tags
 
+export function transStatusOf(identity: string | undefined): "yes" | "no" | undefined {
+  if (identity === undefined) return undefined;
+  if (identity === "trans" || identity.startsWith("trans_")) return "yes";
+  if (identity === "cis" || identity.startsWith("cis_")) return "no";
+  return undefined;
+}
+
+export function transAnswerOf(p: SlopOnboarding): TransAnswer | undefined {
+  const v = p.transOpenness?.value;
+  return v === "only" && transStatusOf(p.identity?.value) !== "yes" ? undefined : v;
+}
+
+export function seeksAnswerOf(p: SlopOnboarding): Gender[] | undefined {
+  return p.transOpenness?.value === "only" && transStatusOf(p.identity?.value) !== "yes" ? undefined : p.seeks?.value;
+}
+
 export interface SlopTag { tag: string; kind: Facet["kind"]; scope: Facet["scope"]; confidence: number }
 /**
  * The facet tags to persist (profile.ts schema) and the tag prefixes they replace. Minors and declined
@@ -973,9 +1058,17 @@ export function slopOnboardTags(p: SlopOnboarding): { tags: SlopTag[]; replaces:
   if (p.minor || p.declined || !canBeMatched(p.age?.value ?? 18)) return { tags, replaces };
   const add = (tag: string, kind: Facet["kind"], scope: Facet["scope"], c: number) => tags.push({ tag, kind, scope, confidence: c });
   if (p.gender) { add(`romance:is:${p.gender.value}`, "preference", "agent_private", p.gender.confidence); replaces.push("romance:is:"); }
-  if (p.seeks) { for (const g of p.seeks.value) add(`romance:seeks:${g}`, "preference", "agent_private", p.seeks.confidence); replaces.push("romance:seeks:"); }
+  if (p.seeks) { for (const g of seeksAnswerOf(p) ?? []) add(`romance:seeks:${g}`, "preference", "agent_private", p.seeks.confidence); replaces.push("romance:seeks:"); }
   if (p.ageRange) { add(`romance:age:${p.ageRange.value[0]}-${p.ageRange.value[1]}`, "preference", "agent_private", p.ageRange.confidence); replaces.push("romance:age:"); }
   if (p.identity) { add(`slop:identity:${p.identity.value}`, "fact", "agent_private", p.identity.confidence); replaces.push("slop:identity:"); }
+  const trans = transStatusOf(p.identity?.value);
+  if (trans && p.identity) { add(`romance:trans:${trans}`, "fact", "agent_private", p.identity.confidence); replaces.push("romance:trans:"); }
+  if (p.transOpenness) {
+    const answer = transAnswerOf(p);
+    if (answer) add(`romance:open_trans:${answer}`, "preference", "agent_private", p.transOpenness.confidence);
+    replaces.push("romance:open_trans:");
+  }
+  if (p.shownTo) { for (const g of p.shownTo.value) add(`romance:shown_to:${g}`, "preference", "agent_private", p.shownTo.confidence); replaces.push("romance:shown_to:"); }
   if (p.orientation) { add(`slop:orientation:${p.orientation.value}`, "fact", "agent_private", p.orientation.confidence); replaces.push("slop:orientation:"); }
   if (p.location) {
     if (p.location.value.zip) { add(`slop:zip:${p.location.value.zip}`, "fact", "agent_private", p.location.confidence); replaces.push("slop:zip:"); }

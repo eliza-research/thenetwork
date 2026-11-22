@@ -146,6 +146,8 @@ import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, t
 import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeldItem, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
+import { datingFactsOf, datingStatementOf, type DatingFacts } from "../../engine/src/packs/slop/profile.ts";
+import { mutuallyOpen } from "../../core/src/generated/mutualOpenness.ts";
 import { ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -6144,29 +6146,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  /**
-   * Romance, checked again here whatever the engine did (adults only, PRD 17.4; founder 2026-10-08):
-   * exactly two people; each opted in on the record (romanceOptIn and the romance category); each
-   * has a verified adult age on the record (never a stated or unknown age); each stated who they
-   * hope to meet; and each is what the other seeks.
-   */
   private romanceGate(ids: readonly MemberId[]): string | undefined {
     if (ids.length !== 2) return "romance_not_pair";
     const snap = this.snapshotCached();
-    const prefs = new Map<MemberId, { is: string[]; seeks: string[] }>();
+    const prefs = new Map<MemberId, DatingFacts>();
     for (const id of ids) {
       const r = this.record(id);
       const m = this.members.get(id);
       if (!r || !r.prefs?.romanceOptIn || !(r.prefs.categoriesOptIn ?? []).includes("romance")) return "romance_not_opted_in";
       if (!validAge(r.age) || r.age < 18 || !m || m.minor || m.minorSignal || m.ageConflict) return "romance_not_verified_adult";
       const tags = [...snap.facets.filter(f => f.memberId === id).flatMap(f => f.tags), ...(m.appTags ?? []).map(t => t.tag)].map(t => t.toLowerCase());
-      const is = tags.filter(t => t.startsWith("romance:is:")).map(t => t.slice(11));
-      const seeks = tags.filter(t => t.startsWith("romance:seeks:")).map(t => t.slice(14));
-      if (!seeks.length) return "romance_prefs_unstated";
-      prefs.set(id, { is, seeks });
+      const facts = datingFactsOf(tags);
+      if (!facts.seeks.length) return "romance_prefs_unstated";
+      prefs.set(id, facts);
     }
-    const [a, b] = [prefs.get(ids[0]!)!, prefs.get(ids[1]!)!];
-    if (!a.seeks.some(x => b.is.includes(x)) || !b.seeks.some(x => a.is.includes(x))) return "romance_mismatch";
+    if (!mutuallyOpen(datingStatementOf(prefs.get(ids[0]!)!), datingStatementOf(prefs.get(ids[1]!)!))) return "romance_mismatch";
     return undefined;
   }
 

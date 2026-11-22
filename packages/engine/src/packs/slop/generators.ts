@@ -5,6 +5,7 @@
 import type { City, MemberId } from "@thenetwork/core";
 import { DAY, withinMutualRadius } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
+import { datingClassAdmits, datingSegmentClassOf, type DatingSegmentClass, type DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
 import { memberReason, type MemberCheck } from "../../filters.ts";
 import { countExclusion, pairCandidate, type GenCtx } from "../../genkit.ts";
 import type { EntitySegment, EntityTags, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
@@ -13,7 +14,7 @@ import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import { limitMiles, mutualMarkets } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
-import { cellIn, datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
+import { cellIn, datingMarkets, datingStatementOf, slopProfiles, type SlopProfile } from "./profile.ts";
 import { SLOP_LANE, SLOP_MATCH_LANE } from "./rules.ts";
 import { DateStandings, UNKNOWN_DATE_STANDING } from "./standing.ts";
 import { dateActivity, datePackValue, responsiveness } from "./score.ts";
@@ -97,26 +98,27 @@ function reachableCells(memo: SegmentMemo, cell: Cell, limit: number, margin: nu
   return cells;
 }
 const dateSegment = (pool: string, cell: string): string => `${pool}|${cell}`;
+const classKey = (c: DatingSegmentClass): string =>
+  `${c.reachesWomenSeekers ? "w" : "-"}${c.reachesMenSeekers ? "m" : "-"}${c.reachesNonbinarySeekers ? "n" : "-"}${c.transStated ? "t" : "-"}`;
+const SEGMENT_CLASSES: readonly DatingSegmentClass[] = Array.from({ length: 16 }, (_, k) => ({
+  reachesWomenSeekers: (k & 1) !== 0, reachesMenSeekers: (k & 2) !== 0, reachesNonbinarySeekers: (k & 4) !== 0, transStated: (k & 8) !== 0,
+}));
+const admittedClasses = (m: DatingStatement): string[] => SEGMENT_CLASSES.filter(c => datingClassAdmits(m, c)).map(classKey);
 
-/**
- * The Date segment: the member's own pool and coarse cell; partners are every pool the member seeks
- * on every cell within the member's own limit. Superset of the pair rules: orientation_mismatch admits
- * b only when b.is is in a.seeks; a member in one dating market meets in that market only, so the
- * mutual radius holds there and b's cell is within a's limit. A member who dates in several markets
- * may meet in another one, so their memberships carry no segment and reach every partner.
- */
 function dateSegmentOf(w: World, p: SlopProfile, market: City, o: SlopPackOptions): EntitySegment | undefined {
   const markets = w.pack.geo.markets(w.cfg);
   if (datingMarkets(p).filter(m => markets.includes(m)).length > 1) return undefined;
   const cell = cellIn(p, market), limit = limitMiles(p, o);
-  const own = dateSegment(p.is ?? "unstated", cell?.id ?? "unplaced");
+  const statement = datingStatementOf(p);
+  const own = dateSegment(classKey(datingSegmentClassOf(statement)), cell?.id ?? "unplaced");
   if (!cell || limit === undefined) return { own, partners: [] };
   const memo = segmentMemoOf(w);
-  const key = `${p.seeks.join(",")}|${cell.id}|${limit}|${o.radiusMargin}`;
+  const classes = admittedClasses(statement);
+  const key = `${classes.join(",")}|${cell.id}|${limit}|${o.radiusMargin}`;
   let partners = memo.partners.get(key);
   if (!partners) {
     const cells = reachableCells(memo, cell, limit, o.radiusMargin);
-    partners = p.seeks.flatMap(pool => cells.map(c => dateSegment(pool, c)));
+    partners = classes.flatMap(pool => cells.map(c => dateSegment(pool, c)));
     memo.partners.set(key, partners);
   }
   return { own, partners };

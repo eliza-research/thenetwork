@@ -16,7 +16,7 @@ import { buildPlanProbe, planItem, planToProposal, type Crew, type PlanEvidence,
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
-import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
+import { officialGates, opennessGroups, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher, planToProposal as toFriendsProposal } from "../../packages/sim/src/apps/friends/packMatcher.ts";
 import { buildFriendsSnapshot, NYC_TZ, slotTime, visibleRedFlag, weekTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
@@ -30,7 +30,7 @@ import { idsSalted, overlap, pairedLine } from "../../packages/sim/src/paired.ts
 
 export const FRIENDS_PINNED = { seeds: [5, 6, 7, 8], weeks: 8, n: 400 };
 const meetupKeys = (meetups: readonly MeetupRecord[]) => meetups.map(m => `${m.activity}:${[...m.attendees].sort().join(",")}`).sort();
-const SAFETY = new Set(["minors", "known_adversary"]);
+const SAFETY = new Set(["minors", "known_adversary", "openness"]);
 
 /** A friends world after `weeks` weeks of friendsPack meetups: the snapshot the engine would read next. */
 const cache = new Map<number, FriendsSnapshot>();
@@ -377,13 +377,14 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   await friendsKnownContactMetricGate(b);
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
-  const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
+  const openPack: FriendsMetrics[] = [];
+  const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle, open: friendsPackMatcher() };
   // PR #450: repeat and crew invitations read the latest enjoyment from earlier weeks, in meetup time order.
   let priorChecks = 0, priorErrors = 0, memoryChecks = 0, memoryErrors = 0;
   const met: string[][] = [];
-  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
+  for (const arm of ["pack", "random", "oracle", "open"] as const) for (const seed of spec.seeds) {
     const decisions: { id: MemberId; week: number; enjoy: number | undefined; crew: boolean }[] = [];
-    const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: w => {
+    const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, statedOpenness: arm === "open", matcher: w => {
       // Observe the real oracle without changing its answers, draws or matcher proposals.
       const answer = w.oracle.answer.bind(w.oracle), crewOptIn = w.oracle.crewOptIn.bind(w.oracle);
       w.oracle.answer = (id, key, c) => {
@@ -414,7 +415,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
       memoryChecks++;
       if (result.world.lastEnjoy.get(id) !== latest.get(id)) memoryErrors++;
     }
-    all[arm].push(friendsMetrics(result));
+    (arm === "open" ? openPack : all[arm]).push(friendsMetrics(result));
     if (arm === "pack") met.push(meetupKeys(result.meetups));
   }
   b.gate("harness: invitations use the latest prior-week enjoyment", priorChecks > 0 && memoryChecks > 0 && priorErrors + memoryErrors === 0,
@@ -422,6 +423,10 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);
+  b.track("stated openness world: fingerprint of the pack arm", true, digest(openPack));
+  for (const g of officialGates(openPack, all.random, all.oracle)) if (SAFETY.has(g.id) || g.id === "repeat") b.gate(`stated openness world: gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id));
+  const groups = opennessGroups(openPack);
+  b.track(`stated openness world: tracked ${groups.gate}`, groups.pass, groups.value);
   b.gate("pack: 0 declared-minor proposals", all.pack.every(m => m.safety.declaredMinorProposals === 0));
 
   const aa: FriendsMetrics[] = [], aaMet: string[][] = [];

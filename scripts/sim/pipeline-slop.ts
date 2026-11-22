@@ -61,6 +61,8 @@ const ANSWER: Record<string, (x: Person) => string> = {
   slop_location: x => `My zip is ${x.zip}.`,
   slop_zip: x => `My zip is ${x.zip}.`,
   slop_basics: () => "Something long-term, and no smokers.",
+  slop_trans_openness: () => "Rather not say.",
+  slop_shown_to: () => "Neither.",
   slop_goal: () => "Something long-term.",
   slop_interests: x => x.interests,
   slop_activities: () => "Coffee or a walk.",

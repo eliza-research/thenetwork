@@ -8,13 +8,14 @@
 // Safety: observed safety cues and the Network's own records hold a member for human review.
 import { DAY, type City, type MemberId } from "@thenetwork/core";
 import { slopPairConstraintsCurrent } from "../../../../core/src/generated/datingRadius.ts";
+import { mutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import type { MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import type { EngineInput } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import { limitMiles, mutualMarkets } from "./geo.ts";
 import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
-import { slopProfiles, type SlopProfile } from "./profile.ts";
+import { datingStatementOf, slopProfiles, type SlopProfile } from "./profile.ts";
 import { statedDealbreaker } from "./score.ts";
 
 export const SLOP_LANE = "romance" as const;
@@ -66,8 +67,8 @@ export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null 
   return null;
 }
 
-function seekingMatches(a: SlopProfile, b: SlopProfile): boolean {
-  return !!a.is && !!b.is && a.seeks.includes(b.is) && b.seeks.includes(a.is);
+export function seekingMatches(a: SlopProfile, b: SlopProfile): boolean {
+  return mutuallyOpen(datingStatementOf(a), datingStatementOf(b));
 }
 
 function ageRangeReason(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): string | null {
@@ -135,7 +136,6 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
     },
     { id: "unknown_member", check: (_w, _a, _b, _lane, ma, mb) => (!ma || !mb ? "unknown_member" : null) },
     {
-      // Mutual gender / orientation inclusion: each is in the other's seeking set.
       id: "orientation_mismatch", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
         return seekingMatches(pa, pb) ? null : "orientation_mismatch";

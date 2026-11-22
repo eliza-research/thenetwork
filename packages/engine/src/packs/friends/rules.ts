@@ -13,6 +13,7 @@
 //   transit            geo.pairReason: two homes too far apart for any venue to fit both tolerances
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { NETWORK_MEMBER_RULES, NETWORK_PAIR_RULES } from "../network/rules.ts";
+import { friendsMutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import { friendsInfo } from "./info.ts";
 import type { World } from "../../world.ts";
 import type { MemberId } from "@thenetwork/core";
@@ -57,6 +58,10 @@ export const friendsPairRules = (): readonly PairRule[] => (pairRules ??= [
   netPair("negative_feedback_cooldown"),
   netPair("unknown_member"),
   netPair("dealbreaker"),
+  { id: "friend_openness", check: (w, a, b) => {
+    const info = friendsInfo(w), fa = info.get(a)?.friend, fb = info.get(b)?.friend;
+    return fa && fb && friendsMutuallyOpen(fa, fb) ? null : "friend_openness";
+  } },
 ]);
 
 export const FRIENDS_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [

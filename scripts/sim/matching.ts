@@ -2,6 +2,8 @@ import { hash32, Rng, type MemberId } from "../../packages/core/src/index.ts";
 import { searchTouchesPerCheck } from "../../packages/core/src/generated/candidateSearch.ts";
 import { laneLimits, laneOffset, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
 import { pairValueScale, parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
+import { friendsMutuallyOpen, mutuallyOpen } from "../../packages/core/src/generated/mutualOpenness.ts";
+import { cofounderFactsFit } from "../../packages/core/src/generated/cofounderIntent.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
@@ -12,8 +14,8 @@ import type { AppPack } from "../../packages/engine/src/pack.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import {
-  adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, plantedEngineInput, plantedLabels,
-  plantedPairTruth, randomGroups, type PlantedTruth,
+  adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
+  plantedPairTruth, randomGroups, statedIdentityGroup, statedOpenness, type PlantedTruth,
 } from "../../packages/sim/src/planted.ts";
 import { Block } from "./gate.ts";
 import {
@@ -46,6 +48,8 @@ interface LaneStats {
   readonly empty: Faults; readonly minors: Faults; readonly mismatch: Faults; readonly missed: Faults;
   readonly parity: Faults; readonly reciprocity: Faults; readonly unprofiled: Faults; readonly groupFaults: Faults;
   readonly searchCost: Faults; readonly segmentSuperset: Faults;
+  readonly openness: Faults;
+  readonly byGroup: Map<string, { searches: number; exact: number; kept: number; members: number; proposed: number }>;
   segmentRefused: number;
   readonly logged: { members: number; exact: number };
   readonly rho: number[]; readonly rhoRandom: number[]; readonly worse: number[]; readonly worseRandom: number[];
@@ -60,12 +64,34 @@ const laneStats = (lane: MatchLane): LaneStats => ({
   lane, searches: 0, exact: 0, certificates: 0, runs: 0, laneProfiles: 0, noKept: 0, pairs: 0, groups: 0, otherLane: 0, circles: 0, blockingPairs: 0,
   empty: noFaults(), minors: noFaults(), mismatch: noFaults(), missed: noFaults(),
   parity: noFaults(), reciprocity: noFaults(), unprofiled: noFaults(), groupFaults: noFaults(),
-  searchCost: noFaults(), segmentSuperset: noFaults(), segmentRefused: 0,
+  searchCost: noFaults(), segmentSuperset: noFaults(), openness: noFaults(), byGroup: new Map(), segmentRefused: 0,
   logged: { members: 0, exact: 0 },
   rho: [], rhoRandom: [], worse: [], worseRandom: [], ari: [], ariRandom: [], purity: [], purityRandom: [], precision: [], precisionRandom: [],
   valueAuc: [], keptRecall: [], runPairs: [],
   low: { members: 0, proposed: 0 }, all: { members: 0, proposed: 0 },
 });
+
+interface Stated { readonly open: ReturnType<typeof statedOpenness>; readonly group: (id: MemberId) => string }
+function statedOf(input: EngineInput, lane: MatchLane): Stated {
+  const open = statedOpenness(input);
+  return { open, group: id => statedIdentityGroup(lane as (typeof PLANTED_LANES)[number], open.dating.get(id), open.friend.get(id)) };
+}
+const groupRow = (s: LaneStats, g: string) => {
+  let row = s.byGroup.get(g);
+  if (!row) { row = { searches: 0, exact: 0, kept: 0, members: 0, proposed: 0 }; s.byGroup.set(g, row); }
+  return row;
+};
+function opennessFault(lane: MatchLane | undefined, members: readonly MemberId[], st: Stated): string | null {
+  if (lane !== "Date" && lane !== "Friend" && lane !== "Cofounder") return null;
+  for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) {
+    const a = members[i]!, b = members[j]!;
+    const ok = lane === "Date" ? mutuallyOpen(st.open.dating.get(a)!, st.open.dating.get(b)!)
+      : lane === "Cofounder" ? cofounderFactsFit(st.open.cofounder.get(a)!, st.open.cofounder.get(b)!)
+      : friendsMutuallyOpen(st.open.friend.get(a) ?? { friendGender: "GenderUnstated", friendOpenness: "FriendsWithAnyone" }, st.open.friend.get(b) ?? { friendGender: "GenderUnstated", friendOpenness: "FriendsWithAnyone" });
+    if (!ok) return `${a} and ${b} are not open to each other`;
+  }
+  return null;
+}
 
 const ids = (rows: readonly { readonly profile: MatchProfile; readonly value: number }[]) => rows.map(r => `${r.profile.id}:${r.value}`).join(",");
 
@@ -91,11 +117,15 @@ function checkCertificate(w: World, s: LaneStats, p: MatchProfile, result: Searc
 
 // spec/candidateSearch.md, "Story: Keep the best candidates within a fixed number of pair checks":
 // an exact search keeps exactly the brute-force top list; a budgeted one misses nothing above its bound.
-function exactness(w: World, s: LaneStats, at: string): void {
+function exactness(w: World, s: LaneStats, at: string, st: Stated): void {
   for (const p of w.match.profiles) {
     const result = w.match.candidates(p);
     checkSearchCost(s.searchCost, p, result, at);
     s.searches++;
+    if (p.lane === s.lane) {
+      const row = groupRow(s, st.group(p.memberId));
+      row.searches++; row.kept += result.kept.length; if (result.exact) row.exact++;
+    }
     if (result.exact) {
       const brute = bruteForceCandidates(w, w.match.index, p);
       s.exact++;
@@ -160,7 +190,7 @@ const mean = (xs: readonly number[]): number => {
   return finite.length ? finite.reduce((t, x) => t + x, 0) / finite.length : NaN;
 };
 
-async function engineGates(pack: AppPack, seed: number, input: EngineInput, truth: PlantedTruth, w: World, s: LaneStats): Promise<void> {
+async function engineGates(pack: AppPack, seed: number, input: EngineInput, truth: PlantedTruth, w: World, s: LaneStats, st: Stated): Promise<void> {
   const lane = s.lane, at = `seed ${seed}`;
   const shipped = await runEngine(input, shippedConfig(pack, seed), { pack });
   const greedy = await runEngine(input, greedyConfig(pack, seed), { pack });
@@ -192,6 +222,8 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
       return q?.lane === proposalLane && q.memberId === id ? [q] : [];
     });
     if (group.length !== p.participants.length) { fault(s.unprofiled, `${at}: proposal ${p.id} (${p.generator}) has a participant without a ${proposalLane} profile`); continue; }
+    const closed = opennessFault(proposalLane, p.participants, st);
+    if (closed) fault(s.openness, `${at}: proposal ${p.id}: ${closed}`);
     if (graded) for (const id of p.participants) proposed.add(id);
     if (group.length > 2) {
       if (graded) s.groups++;
@@ -236,6 +268,8 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
         : size < circleMinimum || size > circleMaximum ? `size ${size} outside ${circleMinimum}..${circleMaximum}`
         : groupFault(w, lane, members);
       if (f) fault(s.groupFaults, `${at}: circle ${circle.members.join(",")}: ${f}`);
+      const closed = opennessFault(lane, members.map(q => q.memberId), st);
+      if (closed) fault(s.openness, `${at}: circle ${circle.members.join(",")}: ${closed}`);
       groups.push(members.map(q => q.memberId));
     }
     if (groups.length) {
@@ -252,6 +286,7 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   const low = members.slice(0, Math.ceil(members.length / 5));
   s.low.members += low.length; s.low.proposed += low.filter(id => proposed.has(id)).length;
   s.all.members += members.length; s.all.proposed += members.filter(id => proposed.has(id)).length;
+  for (const id of members) { const row = groupRow(s, st.group(id)); row.members++; if (proposed.has(id)) row.proposed++; }
 }
 
 function rankAuc(scored: readonly { readonly score: number; readonly good: boolean }[]): number {
@@ -367,6 +402,22 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
   const blocking = lanes.reduce((t, s) => t + s.blockingPairs, 0);
   b.gate(`${id}: no blocking pair in the greedy phase (${runs})`, blocking === 0, perLane(s => `${s.blockingPairs}`));
 
+  const openness = merged(s => s.openness);
+  b.gate(`${id}: no proposal, group or circle pairs members outside each other's stated openness (Date gender and trans, Friend gender, Cofounder must-haves; ${runs})`, openness.count === 0,
+    `${perLane(s => `${s.pairs} pairs, ${s.groups} groups, ${s.circles} circles`)}; ${show(openness)}`);
+  const thin = lanes.filter(s => s.lane === "Date" || s.lane === "Friend");
+  if (thin.length) {
+    const rate = (r: { members: number; proposed: number }) => (r.members ? r.proposed / r.members : NaN);
+    const lowest = (s: LaneStats) => {
+      const overall = rate(s.all);
+      const ratios = [...s.byGroup.values()].filter(r => r.members >= 10).map(r => rate(r) / overall);
+      return ratios.length ? Math.min(...ratios) : NaN;
+    };
+    b.track(`${id}: by stated identity group, exact-search share, kept candidates per search and proposal rate; lowest group >= 0.7x overall (${runs})`,
+      thin.every(s => lowest(s) >= 0.7),
+      thin.map(s => `${s.lane}: ${[...s.byGroup].sort(([x], [y]) => (x < y ? -1 : 1)).map(([g, r]) => `${g} n ${r.members} exact ${pct(r.exact, r.searches)}, kept ${fixed(r.kept / Math.max(1, r.searches), 1)}, proposed ${pct(r.proposed, r.members)}`).join("; ")}; lowest ratio ${fixed(lowest(s), 2)}`).join(" | "));
+  }
+
   const groups = merged(s => s.groupFaults);
   b.gate(`${id}: every circle within circleMinimum..circleMaximum; every pair of every circle and proposed group reaches circlePairFloor, spread within the band (${runs})`, groups.count === 0,
     `${perLane(s => `${s.circles} circles, ${s.groups} groups`)}; ${show(groups)}`);
@@ -418,8 +469,9 @@ export async function matchingBlock(b: Block, o: { quick: boolean; matchingPack?
         const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: mixed ? ["Intro", "Friend"] : [s.lane], app: pack.id });
         // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
         const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
-        exactness(w, s, `N ${n} seed ${seed}`);
-        if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s);
+        const st = statedOf(input, s.lane);
+        exactness(w, s, `N ${n} seed ${seed}`, st);
+        if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s, st);
       }
     }
     const ladder = runLadder(app, "planted", plan.ladder);

@@ -6,7 +6,7 @@ export type PromptPhase = "AwaitingProfile" | "Withheld" | "ReadbackOffered" | "
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 export interface PromptRun { phase: PromptPhase; reason: string }
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
-export interface QuestionFacts { ageMissing: boolean; genderMissing: boolean; seeksMissing: boolean; ageRangeMissing: boolean; distanceMissing: boolean; locationMissing: boolean; unknownZip: boolean; dealbreakersMissing: boolean; goalMissing: boolean; interestsMissing: boolean; activitiesMissing: boolean; freeMissing: boolean }
+export interface QuestionFacts { ageMissing: boolean; genderMissing: boolean; seeksMissing: boolean; orientationStated: boolean; ageRangeMissing: boolean; distanceMissing: boolean; locationMissing: boolean; unknownZip: boolean; transOpennessMissing: boolean; shownToMissing: boolean; dealbreakersMissing: boolean; goalMissing: boolean; interestsMissing: boolean; activitiesMissing: boolean; freeMissing: boolean }
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -62,7 +62,7 @@ export function canRouteProfile(p: PromptRun): boolean {
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
 //@ pure
 export function nextQuestionReason(facts: QuestionFacts, unavailable: string[]): string {
-  return facts.ageMissing && !unavailable.includes("slop_age") ? "slop_age" : (facts.genderMissing && facts.seeksMissing && !unavailable.includes("slop_orientation") ? "slop_orientation" : (facts.seeksMissing && !unavailable.includes("slop_seeks") ? "slop_seeks" : (facts.genderMissing && !unavailable.includes("slop_gender") ? "slop_gender" : (facts.ageRangeMissing && !unavailable.includes("slop_age_range") ? "slop_age_range" : (facts.distanceMissing && !unavailable.includes("slop_distance") ? "slop_distance" : (facts.locationMissing && facts.unknownZip && !unavailable.includes("slop_zip") ? "slop_zip" : (facts.locationMissing && !unavailable.includes("slop_location") ? "slop_location" : (facts.dealbreakersMissing && facts.goalMissing && !unavailable.includes("slop_basics") ? "slop_basics" : (facts.goalMissing && !unavailable.includes("slop_goal") ? "slop_goal" : (facts.interestsMissing && !unavailable.includes("slop_interests") ? "slop_interests" : (facts.activitiesMissing && !unavailable.includes("slop_activities") ? "slop_activities" : (facts.freeMissing && !unavailable.includes("slop_free") ? "slop_free" : ""))))))))))));
+  return facts.ageMissing && !unavailable.includes("slop_age") ? "slop_age" : (facts.genderMissing && facts.seeksMissing && !unavailable.includes("slop_orientation") ? "slop_orientation" : (facts.seeksMissing && !unavailable.includes("slop_seeks") ? "slop_seeks" : (facts.seeksMissing && facts.orientationStated && !unavailable.includes("slop_seeks_genders") ? "slop_seeks_genders" : (facts.genderMissing && !unavailable.includes("slop_gender") ? "slop_gender" : (facts.ageRangeMissing && !unavailable.includes("slop_age_range") ? "slop_age_range" : (facts.distanceMissing && !unavailable.includes("slop_distance") ? "slop_distance" : (facts.locationMissing && facts.unknownZip && !unavailable.includes("slop_zip") ? "slop_zip" : (facts.locationMissing && !unavailable.includes("slop_location") ? "slop_location" : (facts.transOpennessMissing && !unavailable.includes("slop_trans_openness") ? "slop_trans_openness" : (facts.shownToMissing && !unavailable.includes("slop_shown_to") ? "slop_shown_to" : (facts.dealbreakersMissing && facts.goalMissing && !unavailable.includes("slop_basics") ? "slop_basics" : (facts.goalMissing && !unavailable.includes("slop_goal") ? "slop_goal" : (facts.interestsMissing && !unavailable.includes("slop_interests") ? "slop_interests" : (facts.activitiesMissing && !unavailable.includes("slop_activities") ? "slop_activities" : (facts.freeMissing && !unavailable.includes("slop_free") ? "slop_free" : "")))))))))))))));
 }
 
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
@@ -81,6 +81,13 @@ export function alwaysReadyHasReason(p: PromptRun): boolean {
 //@ pure
 export function stepRestrictedStaysWithheld(before: PromptRun, after: PromptRun): boolean {
   return !(before.phase === "Withheld") || after.phase === "Withheld";
+}
+
+/** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
+//@ pure
+export function lawStatedLabelIsAskedPlainlyNotDefaulted(facts: QuestionFacts): boolean {
+  //@ ensures \result === true
+  return !(facts.seeksMissing && facts.orientationStated && !facts.ageMissing && !facts.genderMissing) || nextQuestionReason(facts, (["slop_seeks"] as string[])) === "slop_seeks_genders";
 }
 
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
@@ -183,11 +190,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
-  const is_QuestionFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.ageMissing === "boolean" && typeof v.genderMissing === "boolean" && typeof v.seeksMissing === "boolean" && typeof v.ageRangeMissing === "boolean" && typeof v.distanceMissing === "boolean" && typeof v.locationMissing === "boolean" && typeof v.unknownZip === "boolean" && typeof v.dealbreakersMissing === "boolean" && typeof v.goalMissing === "boolean" && typeof v.interestsMissing === "boolean" && typeof v.activitiesMissing === "boolean" && typeof v.freeMissing === "boolean";
+  const is_QuestionFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.ageMissing === "boolean" && typeof v.genderMissing === "boolean" && typeof v.seeksMissing === "boolean" && typeof v.orientationStated === "boolean" && typeof v.ageRangeMissing === "boolean" && typeof v.distanceMissing === "boolean" && typeof v.locationMissing === "boolean" && typeof v.unknownZip === "boolean" && typeof v.transOpennessMissing === "boolean" && typeof v.shownToMissing === "boolean" && typeof v.dealbreakersMissing === "boolean" && typeof v.goalMissing === "boolean" && typeof v.interestsMissing === "boolean" && typeof v.activitiesMissing === "boolean" && typeof v.freeMissing === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "routeProfile" && typeof raw.restricted === "boolean" && typeof raw.hardComplete === "boolean" && typeof raw.confirmed === "boolean" && typeof raw.skipped === "boolean" && typeof raw.belowAskCap === "boolean") return { type: "routeProfile", restricted: raw.restricted, hardComplete: raw.hardComplete, confirmed: raw.confirmed, skipped: raw.skipped, belowAskCap: raw.belowAskCap };
   if (raw.type === "resolveReadback" && typeof raw.textAvailable === "boolean") return { type: "resolveReadback", textAvailable: raw.textAvailable };
-  if (raw.type === "chooseQuestion" && is_QuestionFacts(raw.facts) && Array.isArray(raw.unavailable) && raw.unavailable.every((x0: any) => typeof x0 === "string")) return { type: "chooseQuestion", facts: ({ ageMissing: raw.facts.ageMissing, genderMissing: raw.facts.genderMissing, seeksMissing: raw.facts.seeksMissing, ageRangeMissing: raw.facts.ageRangeMissing, distanceMissing: raw.facts.distanceMissing, locationMissing: raw.facts.locationMissing, unknownZip: raw.facts.unknownZip, dealbreakersMissing: raw.facts.dealbreakersMissing, goalMissing: raw.facts.goalMissing, interestsMissing: raw.facts.interestsMissing, activitiesMissing: raw.facts.activitiesMissing, freeMissing: raw.facts.freeMissing }), unavailable: raw.unavailable.map((x0: any) => x0) };
+  if (raw.type === "chooseQuestion" && is_QuestionFacts(raw.facts) && Array.isArray(raw.unavailable) && raw.unavailable.every((x0: any) => typeof x0 === "string")) return { type: "chooseQuestion", facts: ({ ageMissing: raw.facts.ageMissing, genderMissing: raw.facts.genderMissing, seeksMissing: raw.facts.seeksMissing, orientationStated: raw.facts.orientationStated, ageRangeMissing: raw.facts.ageRangeMissing, distanceMissing: raw.facts.distanceMissing, locationMissing: raw.facts.locationMissing, unknownZip: raw.facts.unknownZip, transOpennessMissing: raw.facts.transOpennessMissing, shownToMissing: raw.facts.shownToMissing, dealbreakersMissing: raw.facts.dealbreakersMissing, goalMissing: raw.facts.goalMissing, interestsMissing: raw.facts.interestsMissing, activitiesMissing: raw.facts.activitiesMissing, freeMissing: raw.facts.freeMissing }), unavailable: raw.unavailable.map((x0: any) => x0) };
   return undefined;
 }
 

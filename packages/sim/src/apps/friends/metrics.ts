@@ -6,7 +6,7 @@ import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 import { friendAdversaryKnownAtProposal, friendCountsProbedProposal, friendCountsProposal } from "../../../../core/src/generated/friendsWeek.ts";
 import type { HarmKind } from "./oracle.ts";
-import { hoodOf, isReal } from "./persona.ts";
+import { friendsStatedOpen, hoodOf, isReal, openGroupOf } from "./persona.ts";
 import { visibleRedFlag, weekTime } from "./snapshot.ts";
 import { pk, type FriendsRunResult } from "./world.ts";
 
@@ -54,10 +54,12 @@ export interface FriendsMetrics {
     hiddenMinorContacts: number; adversaryContacts: number; knownAdversaryContacts: number;
     adversaryContactsByKind: Partial<Record<string, number>>; adversariesReached: number; medianReachPerAdversary: number;
     harms: Partial<Record<HarmKind, number>>; harmsReported: number;
+    opennessViolations: number;
     /** Harm events whose offender showed no visible red flag (cue, unpassed check, hold) when the proposal was made. */
     harmsUndetected: number;
   };
   selfHangouts: number;
+  proposedByOpenness: Record<string, { n: number; share: number }>;
 }
 
 const div = (a: number, b: number) => (b ? a / b : 0);
@@ -180,6 +182,20 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const advIds = world.personas.filter(p => p.hidden.adversary && p.hidden.adversary !== "age_liar").map(p => p.id);
   const meetCount = real.map(p => (valueDays.get(p.id) ?? []).length);
 
+  const persona = new Map(world.personas.map(p => [p.id, p]));
+  const pairViolations = (ids: readonly MemberId[]) => {
+    let n = 0;
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (!friendsStatedOpen(persona.get(ids[i]!)!, persona.get(ids[j]!)!)) n++;
+    return n;
+  };
+  const opennessViolations = proposals.reduce((s, f) => s + pairViolations(f.invited), 0) + held.reduce((s, m) => s + pairViolations(m.attendees), 0);
+  const invitedEver = new Set(proposals.flatMap(f => f.invited));
+  const proposedByOpenness: Record<string, { n: number; share: number }> = {};
+  for (const g of ["anyone", "women only", "men only"]) {
+    const ids = real.filter(p => openGroupOf(p) === g);
+    proposedByOpenness[g] = { n: ids.length, share: div(ids.filter(p => invitedEver.has(p.id)).length, ids.length) };
+  }
+
   return {
     matcher: res.matcher, seed: world.seed, weeks: world.weeks, members: world.personas.length, real: real.length,
     proposals: proposals.length, probes: proposals.reduce((s, f) => s + f.probed, 0), probeYesRate: div(proposals.reduce((s, f) => s + f.yes, 0), proposals.reduce((s, f) => s + f.probed, 0)),
@@ -202,8 +218,9 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
       declaredMinorProposals: proposals.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
       adversaryContacts: adv, knownAdversaryContacts: knownContacts.size, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
       medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported, harmsUndetected: undetected,
+      opennessViolations,
     },
-    selfHangouts: world.selfHangouts,
+    selfHangouts: world.selfHangouts, proposedByOpenness,
   };
 }
 
