@@ -196,6 +196,12 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
         memberId: ari, kind: "reveal", body: expect.stringContaining("Charlie"),
       }));
       expect(await delivered(original.oppId, "proposal")).toEqual([expect.objectContaining({ to: people[1].e164 })]);
+      // A saved assent without the current participant row cannot authorize a named reply.
+      await sql`update network.participations set role='alternate' where app_id=${app.id} and opportunity_id=${original.oppId} and member_id=${ari}`;
+      const replay = await post(TURN_PATH, bookedYes.messageId, bookedYes);
+      expect(replay.status).toBe(409);
+      expect(await replay.json()).toMatchObject({ error: "turn_booking_changed" });
+      await sql`update network.participations set role='participant' where app_id=${app.id} and opportunity_id=${original.oppId} and member_id=${ari}`;
       await answer(turn("booked-charlie-steps-out", people[2].e164, "I can't make it."));
       const ongoing = await booking(original.oppId);
       expect(ongoing).toMatchObject({ stage: "scheduled" });

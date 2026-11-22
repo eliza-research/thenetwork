@@ -124,8 +124,12 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
     opp.kind='group' as group_booking,msg.booking_roster_member_ids is not null as roster_recorded,
     msg.member_id=any(msg.booking_roster_member_ids) as roster_includes_recipient,
     not exists (select 1 from unnest(msg.booking_roster_member_ids) named(member_id) where not exists (
-      select 1 from jsonb_array_elements(booking.status) accepted(seat)
-      where accepted.seat->>0=named.member_id and accepted.seat->>1='yes'
+      select 1 from network.participations current_seat
+      join lateral jsonb_array_elements(booking.status) accepted(seat)
+        on accepted.seat->>0=current_seat.member_id and accepted.seat->>1='yes'
+      where current_seat.app_id=msg.app_id and current_seat.opportunity_id=msg.opportunity_id
+        and current_seat.member_id=named.member_id and current_seat.role='participant'
+        and current_seat.status in ('pending','confirmed')
     )) as roster_accepted
     from network.messages msg
     left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
