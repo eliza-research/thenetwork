@@ -22,6 +22,8 @@ pure def lawFutureConsentIsStale(consentAt: int, itemAt: int, lifetime: int): bo
 
 An explicit request for a contact share or photo is valid only when the member does not refuse it or qualify it as uncertain. A contact or photo refusal does not stop an ordinary message that the member explicitly asks the agent to relay. The shell reads the member's text, including refusal phrases such as "will not send" and instructions to proceed such as "will not wait, send it".
 
+A condition on the recipient's assent or a later time leaves the private item unapproved. The reader can recognize a complete quoted body as an explicit text relay. The body then goes through the ordinary relay text checks.
+
 ```quint
 pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
   not(refused) and not(uncertain)

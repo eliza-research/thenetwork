@@ -457,6 +457,20 @@ const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybo
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
 const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward)\\s+(?:this|that|these|my)\\s+(?:photos?|pics?|pictures?|selfies?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
 const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s+(?:know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
+const QUOTED_RELAY_TEXT = /^(?:"[^"]+"|“[^“”]+”)$/;
+const SHARE_CONDITION = /\b(?:if|when)\s+(?:she|he|they|my (?:match|date))(?:(?:'s|'re)|\s+(?:is|are))?\s+(?:asks?|wants?|requests?|ready|interested|says?\s+(?:so|yes|ok(?:ay)?))\b/;
+const SHARE_DEFERRED = /\b(?:(?:when|once)\s+(?:we(?:'re)?|i)\s+(?:meet|see\s+(?:him|her|them|each other)|get together|together)|after\s+(?:our|my|the)\s+(?:first\s+)?date|next\s+(?:week|month)|this\s+(?:week|weekend)|in a (?:few days|week|month)|(?:on|this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/;
+const SHARE_QUALIFIER = new RegExp(String.raw`^[\s,:]*(?:(?:only|please)\s+)*(?:${SHARE_CONDITION.source}|${SHARE_DEFERRED.source})`);
+
+function privateShareQualified(text: string, request: RegExpExecArray): boolean {
+  const after = text.slice(request.index + request[0].length).toLowerCase();
+  if (SHARE_QUALIFIER.test(after)) return true;
+
+  // A leading qualifier must end at the request. Leave prior sentences outside its scope.
+  const before = text.slice(0, request.index).toLowerCase().split(/[.!?;]+/).at(-1) ?? "";
+  const qualifier = SHARE_QUALIFIER.exec(before);
+  return qualifier !== null && /^[\s,:]*$/.test(before.slice(qualifier[0].length));
+}
 
 /**
  * What a member asks the agent to do with their match. Only an explicit, unhedged, unnegated request
@@ -467,11 +481,17 @@ export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const low = t.toLowerCase();
   const negated = NEG.test(low), hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));
-  const allowed = privateRelayRequestAllowed(negated || SHARE_NEG.test(low), hedged);
-  if (CONTACT_REQ.test(t)) return allowed ? { kind: "contact_share" } : { kind: "none" };
-  if (PHOTO_REQ.test(t)) return allowed ? { kind: "photo" } : { kind: "none" };
-  const m = TEXT_REQ.exec(t);
-  if (m && !negated) return { kind: "text", body: m[1]!.trim() };
+  const body = TEXT_REQ.exec(t)?.[1]?.trim();
+  if (body && !negated && QUOTED_RELAY_TEXT.test(body)) return { kind: "text", body };
+
+  const contact = CONTACT_REQ.exec(t);
+  const privateRequest = contact ?? PHOTO_REQ.exec(t);
+  if (privateRequest) {
+    const uncertain = hedged || privateShareQualified(t, privateRequest);
+    if (!privateRelayRequestAllowed(negated || SHARE_NEG.test(low), uncertain)) return { kind: "none" };
+    return { kind: contact ? "contact_share" : "photo" };
+  }
+  if (body && !negated) return { kind: "text", body };
   return { kind: "none" };
 }
 

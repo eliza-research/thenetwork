@@ -48,3 +48,21 @@
 {"text": "I couldn't share this pic with her", "want": "none"}
 {"text": "can't wait! send them my number", "want": "contact_share"}
 {"text": "tell them I can't make it at 7", "want": "text"}
+{"text": "send them my number when we meet", "want": "none"}
+{"text": "send them my number once we meet", "want": "none"}
+{"text": "send them this photo next week", "want": "none"}
+{"text": "send them my number on Friday", "want": "none"}
+{"text": "send them my number after our first date", "want": "none"}
+{"text": "send them my number this weekend", "want": "none"}
+{"text": "send them my number in a few days", "want": "none"}
+{"text": "when we meet, send them my number", "want": "none"}
+{"text": "send them my number if she asks", "want": "none"}
+{"text": "send them this photo if they ask", "want": "none"}
+{"text": "send them my number when she's ready", "want": "none"}
+{"text": "send them my number if my match is interested", "want": "none"}
+{"text": "send them my number if they say yes", "want": "none"}
+{"text": "send them my number, she already asked", "want": "contact_share"}
+{"text": "I met my match on Friday. Send them my number now.", "want": "contact_share"}
+{"text": "Send them my number now. We meet on Friday.", "want": "contact_share"}
+{"text": "Tell them \"I will send you my number when we meet.\"", "want": "text"}
+{"text": "Tell them \"send them my number if she asks\"", "want": "text"}
