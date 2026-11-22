@@ -345,8 +345,15 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
   });
 
   await each("one date at a time: no member is booked for a second date before the first one has happened", r => {
+    const closed = new Map<string, number>();
+    const close = (key: string, t: number) => { if (!closed.has(key)) closed.set(key, t); };
+    for (const x of logs(r.records, "booked_cancelled")) close(`${String(x.detail.oppId)}|${String(x.detail.memberId)}`, x.t);
+    for (const x of logs(r.records, "opportunity_closed")) close(String(x.detail.proposalId), x.t);
     const byMember = new Map<MemberId, { t: number; at: number }[]>();
-    for (const x of r.records) if (x.type === "meeting_scheduled") for (const id of x.participants) byMember.set(id, [...(byMember.get(id) ?? []), { t: x.t, at: x.at }]);
+    for (const x of r.records) if (x.type === "meeting_scheduled") for (const id of x.participants) {
+      const at = Math.min(x.at, closed.get(`${x.proposalId}|${id}`) ?? Infinity, closed.get(x.proposalId) ?? Infinity);
+      byMember.set(id, [...(byMember.get(id) ?? []), { t: x.t, at }]);
+    }
     for (const [id, ms] of byMember) {
       const s = ms.sort((a, c) => a.t - c.t);
       for (let i = 1; i < s.length; i++) expect([id, s[i]!.t >= s[i - 1]!.at]).toEqual([id, true]);

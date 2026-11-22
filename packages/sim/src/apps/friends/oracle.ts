@@ -23,7 +23,8 @@
 import type { MemberId } from "@thenetwork/core";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { hood, transitMinutes } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { h01, hoodOf, type AdversaryKind, type FriendsPersona } from "./persona.ts";
+import { h01 } from "../../coins.ts";
+import { hoodOf, type AdversaryKind, type FriendsPersona } from "./persona.ts";
 
 export const ORACLE_PARAMS = {
   c0: 0.35, wA: 2.0, chemSd: 0.55, sideSd: 0.35, wBal: 1.0, wF: 0.9, wTravel: 1.0,
@@ -99,9 +100,17 @@ export class FriendsOracle {
 
   /** The member answers a probe: did they reply, say yes, and which offered options are they truly free for. */
   answer(id: MemberId, key: string, c: ProbeCtx): { replied: boolean; yes: boolean; picks: number[] } {
-    const per = this.p(id), h = per.hidden;
+    const h = this.p(id).hidden;
     if (this.u("reply", id, key) >= h.replyProb) return { replied: false, yes: false, picks: [] };
-    const picks = c.options.filter(s => h.adversary === "bot" || this.free(id, c.week, s));
+    const picks = this.picks(id, c);
+    const yes = this.u("yes", id, key) < this.yesProb(id, c) && picks.length > 0;
+    return { replied: true, yes, picks: yes ? picks : [] };
+  }
+  picks(id: MemberId, c: ProbeCtx): number[] {
+    return c.options.filter(s => this.p(id).hidden.adversary === "bot" || this.free(id, c.week, s));
+  }
+  yesProb(id: MemberId, c: ProbeCtx): number {
+    const h = this.p(id).hidden;
     let p: number;
     if (h.adversary && h.adversary !== "age_liar") p = { romance_seeker: 0.85, mlm: 0.9, bot: 0.7, harasser: 0.75 }[h.adversary];
     else {
@@ -114,8 +123,7 @@ export class FriendsOracle {
       const base = c.prevEnjoy !== undefined ? Math.max(like, 0.35 + 0.7 * c.prevEnjoy) * (c.prevEnjoy >= this.P.positive ? 1.2 : 0.8) : 0.5 + 0.5 * like;
       p = (0.5 + 0.5 * this.appetite(id, c.week)) * base * travelF * size * Math.pow(0.8, c.fatigue) * (c.primed ? 1.3 : 1) * (c.crew ? 1.1 : 1);
     }
-    const yes = this.u("yes", id, key) < Math.min(0.95, p) && picks.length > 0;
-    return { replied: true, yes, picks: yes ? picks : [] };
+    return Math.min(0.95, p);
   }
 
   /** P(shows up) for a booked seat. */
@@ -138,8 +146,9 @@ export class FriendsOracle {
    * Enjoyment of each real attendee; see-again answers; harms by adversaries present. `bond(i, j)`:
    * hours i and j spent together before at meetups both enjoyed (the harness keeps it).
    */
-  meetup(key: string, attendees: MemberId[], activity: string, venueHood: string, bond: (a: MemberId, b: MemberId) => number): MeetupOutcome {
+  meetup(key: string, attendees: MemberId[], activity: string, venueHood: string, bond: (a: MemberId, b: MemberId) => number, draw?: number): MeetupOutcome {
     const P = this.P;
+    const chem = (a: MemberId, b: MemberId) => (draw === undefined ? this.chem(a, b) : P.chemSd * this.n("mc-chem", draw, ...(a < b ? [a, b] : [b, a])));
     const ids = [...attendees].sort();
     const n = ids.length;
     const act = activityById.get(activity);
@@ -168,7 +177,7 @@ export class FriendsOracle {
       const h = this.p(i).hidden;
       const others = ids.filter(j => j !== i);
       let pair = 0, b = 0;
-      for (const j of others) { pair += this.chem(i, j) + this.sim(i, j) + 0.4 * this.p(j).hidden.likability; b += Math.min(1, bond(i, j) / 10); }
+      for (const j of others) { pair += chem(i, j) + this.sim(i, j) + 0.4 * this.p(j).hidden.likability; b += Math.min(1, bond(i, j) / 10); }
       pair /= Math.max(1, others.length); b /= Math.max(1, others.length);
       const t = this.travel(i, venueHood);
       const travel = P.wTravel * (h.travelCost * (t / 30) + Math.max(0, t - h.tolerance) / h.tolerance);
@@ -176,7 +185,7 @@ export class FriendsOracle {
       if (h.groupPref === "one_to_one" && n > 3) size += 0.3 * (1 - h.energy);
       if (h.groupPref === "group" && n === 2) size += 0.2;
       size += 0.06 * Math.max(0, n - 4) * (1 - h.energy);
-      const L = P.c0 + P.wA * ((h.likes[activity] ?? 0.3) - 0.5) + pair + h.warmth + balance + P.wF * b - travel - size + P.sideSd * this.n("side", key, i)
+      const L = P.c0 + P.wA * ((h.likes[activity] ?? 0.3) - 0.5) + pair + h.warmth + balance + P.wF * b - travel - size + P.sideSd * (draw === undefined ? this.n("side", key, i) : this.n("mc-side", draw, i))
         + (act && act.durationMin >= 180 && h.energy < 0.3 ? -0.1 : 0);
       enjoy[i] = sig(L) * (hit.get(i) ?? 1);
     }
@@ -186,13 +195,34 @@ export class FriendsOracle {
       for (const j of ids) {
         if (i === j) continue;
         const adv = this.p(j).hidden.adversary ? -2.5 : 0;
-        const x = P.kE * (enjoy[i]! - 0.55) + P.kC * this.chem(i, j) + 1.5 * this.sim(i, j) + 0.5 * this.p(j).hidden.likability + 0.8 * Math.min(1, bond(i, j) / 10) + P.seeAgainBias + adv;
+        const x = P.kE * (enjoy[i]! - 0.55) + P.kC * chem(i, j) + 1.5 * this.sim(i, j) + 0.5 * this.p(j).hidden.likability + 0.8 * Math.min(1, bond(i, j) / 10) + P.seeAgainBias + adv;
         if (this.u("see", key, i, j) < sig(x)) seeAgain[i]!.push(j);
       }
     }
     const realE = real.map(id => enjoy[id]!);
     const good = realE.length >= 2 && Math.min(...realE) >= P.good;
     return { enjoy, seeAgain, positive: ids.filter(id => enjoy[id]! >= P.positive), good, harms };
+  }
+
+  expectedGood(pr: { invited: MemberId[]; activity: string; venueHood: string; options: number[]; quorum: number; week: number }, ctxOf: (id: MemberId) => Omit<ProbeCtx, "options" | "size" | "week" | "activity" | "venueHood">, bond: (a: MemberId, b: MemberId) => number, draws = 32): number {
+    const ids = [...pr.invited].sort();
+    if (!pr.options.length || ids.length < 2) return 0;
+    const ctx = (id: MemberId): ProbeCtx => ({ ...ctxOf(id), week: pr.week, activity: pr.activity, venueHood: pr.venueHood, options: pr.options, size: ids.length });
+    const pYes = new Map(ids.map(id => [id, this.p(id).hidden.replyProb * this.yesProb(id, ctx(id))]));
+    const free = new Map(ids.map(id => [id, this.picks(id, ctx(id))]));
+    const quorum = Math.max(2, Math.min(pr.quorum, ids.length));
+    let good = 0;
+    for (let k = 0; k < draws; k++) {
+      const yes = ids.filter(id => free.get(id)!.length > 0 && this.u("mc-yes", k, id) < pYes.get(id)!);
+      let slot = pr.options[0]!, best = -1;
+      for (const s of pr.options) { const n = yes.filter(id => free.get(id)!.includes(s)).length; if (n > best) { best = n; slot = s; } }
+      if (best < quorum) continue;
+      const going = yes.filter(id => free.get(id)!.includes(slot)).slice(0, 6);
+      const came = going.filter(id => this.u("mc-attend", k, id) < this.attendP(id, pr.week, slot, pr.venueHood));
+      if (came.length < 2) continue;
+      if (this.meetup(`mc:${k}`, came, pr.activity, pr.venueHood, bond, k).good) good++;
+    }
+    return good / draws;
   }
 
   /** Hours a pair shares at one meetup of `n` attendees with activity duration `durMin`. */

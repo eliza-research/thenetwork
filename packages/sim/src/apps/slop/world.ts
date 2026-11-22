@@ -13,6 +13,7 @@
 import { DAY, HOUR, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
+import { signature } from "../../coins.ts";
 import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
 import { SlopOracle, type DateOutcome } from "./oracle.ts";
@@ -59,6 +60,7 @@ export interface FlowRecord {
   /** Policy: a member with a claimed age under 18 was in the proposal (must never happen). */
   declaredMinor: boolean;
   day?: number;
+  expected: { date: number; good: number; second: number };
 }
 
 export interface SlopRunOptions extends Omit<SlopGenOptions, "seed"> {
@@ -191,9 +193,10 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const key = `w${week}:${i}:${pr.first}:${pr.partner}`;
     const a = oracle.byId.get(pr.first), b = oracle.byId.get(pr.partner);
     const f: FlowRecord = { key, week, first: pr.first, partner: pr.partner, city: pr.city, activity: pr.activity, options: [...pr.options],
-      stage: "dropped_policy", mutualYes: false, revealed: false, filterViolation: false, harms: [], declaredMinor: false };
+      stage: "dropped_policy", mutualYes: false, revealed: false, filterViolation: false, harms: [], declaredMinor: false, expected: { date: 0, good: 0, second: 0 } };
     flows.push(f);
     if (!a || !b || a.id === b.id) return;
+    const coin = behavior.coins.key(`pair:w${week}:${signature([a.id, b.id])}`, key);
     f.filterViolation = !oracle.statedMutual(a, b, week);
     if (!canBeMatched(a.stated.claimedAge) || !canBeMatched(b.stated.claimedAge)) { f.declaredMinor = true; return; }
     if (state.paused.has(a.id) || state.paused.has(b.id)) return;
@@ -202,23 +205,29 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const interaction: InteractionRecord = { id: key, kind: "intro", category: "romance", participants: [a.id, b.id], at: state.now, outcome: "pending" };
     const done = (outcome: InteractionRecord["outcome"], extra: Partial<InteractionRecord> = {}) => state.interactions.push({ ...interaction, outcome, ...extra });
     // Photo in the probe: the engine's rule (adults both sides, consent, an opaque id), as on the live path.
-    const probePhoto = (id: MemberId) => {
+    const photoShown = (id: MemberId) => {
       const other = id === a.id ? b : a, me = id === a.id ? a : b;
       const held = state.safetyHolds.some(h => h.memberId === other.id && (h.to === undefined || h.to > state.now));
-      const ok = probePhotoRefs({ age: other.stated.claimedAge, photoConsent: simPhotoConsent(other, photos?.consent), photoIds: simPhotoIds(other), held }, { age: me.stated.claimedAge }).length > 0;
-      if (ok) rc.photoCount.withPhoto++; else rc.photoCount.withoutPhoto++;
-      return ok;
+      return probePhotoRefs({ age: other.stated.claimedAge, photoConsent: simPhotoConsent(other, photos?.consent), photoIds: simPhotoIds(other), held }, { age: me.stated.claimedAge }).length > 0;
     };
-    const ctx = (id: MemberId) => ({
+    const ctx = (id: MemberId, probesThisWeek: number) => ({
       week, city: pr.city, activity: pr.activity, asked: askedNow.has(id),
       recentLikedDate: likedWeek.has(id) && week - likedWeek.get(id)! <= 2,
-      probesThisWeek: invites.get(id) ?? 0,
+      probesThisWeek,
       sharedFactMatch: !!pr.sharedFact && oracle.p(id).hidden.interests.includes(pr.sharedFact),
-      ...(photos && probePhoto(id) ? { photo: { of: id === a.id ? b.id : a.id, noiseSd: photos.noiseSd } } : {}),
+      ...(photos && photoShown(id) ? { photo: { of: id === a.id ? b.id : a.id, noiseSd: photos.noiseSd } } : {}),
     });
+    const probeCtx = (id: MemberId) => {
+      const c = ctx(id, invites.get(id) ?? 0);
+      if (photos) { if (c.photo) rc.photoCount.withPhoto++; else rc.photoCount.withoutPhoto++; }
+      return c;
+    };
     // 1. first probe
     if ((invites.get(a.id) ?? 0) >= cap || booked.has(a.id)) { f.stage = "dropped_first_cap"; return; }
-    const c1 = ctx(a.id); inc(a.id);
+    const pDate = oracle.pDateHappens(a.id, b.id, ctx(a.id, 0), pr.options, ctx(b.id, 0));
+    const soft = oracle.softLabel(a.id, b.id, pr.activity, 32);
+    f.expected = { date: pDate, good: pDate * soft.pGood, second: pDate * soft.pSecond };
+    const c1 = probeCtx(a.id); inc(a.id);
     const ans1 = behavior.answerProbe(a.id, key, c1, pr.options);
     f.firstYes = ans1.yes;
     if (!ans1.replied) { f.stage = "first_silent"; done("expired", { noResponse: [a.id] }); return; }
@@ -226,7 +235,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     // 2. partner probe, offered the first member's picks (or the original options)
     if ((invites.get(b.id) ?? 0) >= cap || booked.has(b.id)) { f.stage = "dropped_partner_cap"; done("expired", { acceptedBy: [a.id] }); return; }
     const opts2 = ans1.picks.length ? ans1.picks : pr.options;
-    const c2 = ctx(b.id); inc(b.id);
+    const c2 = probeCtx(b.id); inc(b.id);
     const ans2 = behavior.answerProbe(b.id, key, c2, opts2);
     f.partnerYes = ans2.yes;
     if (!ans2.replied) { f.stage = "partner_silent"; done("expired", { acceptedBy: [a.id], noResponse: [b.id] }); return; }
@@ -236,12 +245,12 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const both = ans1.picks.filter(s => ans2.picks.includes(s));
     const slot = both[0] ?? opts2[0]!;
     f.slot = slot; f.revealed = true; f.day = week * 7 + SLOT_DAY[SLOTS[slot]!];
-    const revealHarms = behavior.harms(a.id, b.id, key, "reveal");
+    const revealHarms = behavior.harms(a.id, b.id, coin, "reveal");
     if (relay?.engine) {
       // Critical path item 7: the pair exchange items through the engine's relay policy.
       const blocked = (x: MemberId, y: MemberId) => state.edges.some(e => e.type === "blocked" && ((e.from === x && e.to === y) || (e.from === y && e.to === x)));
       const heldNow = (x: MemberId) => state.safetyHolds.some(h => h.memberId === x && (h.to === undefined || h.to > state.now));
-      const ex = relayExchange({ seed: world.seed, key, now: state.now, a, b, activity: pr.activity, harms: revealHarms, blocked, held: heldNow, photoConsent: photos?.consent ?? 1, ...(relay.roles ? { shares: relay.roles } : {}) }, rc.relay.engine!);
+      const ex = relayExchange({ seed: world.seed, key: coin, now: state.now, a, b, activity: pr.activity, harms: revealHarms, blocked, held: heldNow, photoConsent: photos?.consent ?? 1, ...(relay.roles ? { shares: relay.roles } : {}) }, rc.relay.engine!);
       for (const id of new Set([...ex.flagged, ...ex.ageSignal])) {
         rc.relay.holds++;
         // Sim-only relay roles (contact fishers, rating probers) count as true positives, not honest members.
@@ -263,8 +272,8 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
         const adv = x.hidden.adversary;
         const recall = adv === "romance_scammer" ? relay.scamRecall : adv === "harasser" ? relay.hostileRecall : 0;
         const scripts = revealHarms.some(h => h.offender === x.id && h.kind !== "minor_contact");
-        if (recall && scripts && behavior.relayDetects(x.id, key, recall)) { flagged.add(x.id); rc.relay.truePositive++; }
-        else if (!adv && behavior.relayFalsePositive(x.id, key, relay.falsePositive)) { flagged.add(x.id); rc.relay.falsePositive++; }
+        if (recall && scripts && behavior.relayDetects(x.id, coin, recall)) { flagged.add(x.id); rc.relay.truePositive++; }
+        else if (!adv && behavior.relayFalsePositive(x.id, coin, relay.falsePositive)) { flagged.add(x.id); rc.relay.falsePositive++; }
       }
       for (const id of flagged) {
         rc.relay.holds++;
@@ -279,41 +288,41 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
       f.harms.push(...kept);
     } else f.harms.push(...revealHarms);
     // The photo shrinks the surprise at the reveal only for a member whose probe carried it.
-    const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week), c1.photo ? photos?.noiseSd : undefined);
-    const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week), c2.photo ? photos?.noiseSd : undefined);
-    if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms, key); return; }
+    const outA = behavior.backsOut(a.id, b.id, coin, oracle.statedAccepts(a, b, week), c1.photo ? photos?.noiseSd : undefined);
+    const outB = behavior.backsOut(b.id, a.id, coin, oracle.statedAccepts(b, a, week), c2.photo ? photos?.noiseSd : undefined);
+    if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms, coin); return; }
     booked.add(a.id); booked.add(b.id);
     // 4. the date
     const freeA = !!a.hidden.adversary || oracle.free(a.id, week, slot), freeB = !!b.hidden.adversary || oracle.free(b.id, week, slot);
     f.seatsNotFree = (freeA ? 0 : 1) + (freeB ? 0 : 1);
-    const showA = behavior.attends(a.id, key, freeA), showB = behavior.attends(b.id, key, freeB);
+    const showA = behavior.attends(a.id, coin, freeA), showB = behavior.attends(b.id, coin, freeB);
     const at = slotTime(week, slot);
     if (!showA || !showB) {
-      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms, key); return;
+      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms, coin); return;
     }
     f.stage = "date";
     const o2 = oracle.dateOutcome(a.id, b.id, pr.activity);
     f.outcome = o2; f.good = o2.good;
-    f.harms.push(...behavior.harms(a.id, b.id, key, "date"));
+    f.harms.push(...behavior.harms(a.id, b.id, coin, "date"));
     done("completed", { acceptedBy: [a.id, b.id], at });
     state.edges.push({ from: a.id, to: b.id, type: "met", strength: 1, explicit: true, createdAt: at });
     for (const [id, other, side] of [[a.id, b.id, "a"], [b.id, a.id, "b"]] as const) {
-      const fb = behavior.feedback(id, key, o2, side);
+      const fb = behavior.feedback(id, coin, o2, side);
       if (fb.replied) state.feedback.push({ id: `fb:${key}:${id}`, from: id, about: other, opportunityId: key, at: at + 20 * HOUR, sentiment: fb.sentiment, wouldMeetAgain: fb.wouldMeetAgain });
       if ((side === "a" ? o2.wantsSecondA : o2.wantsSecondB)) likedWeek.set(id, week);
     }
-    f.secondDate = behavior.secondDate(key, o2);
-    if (f.secondDate) for (const id of [a.id, b.id]) if (behavior.pausesAfterSecond(id, key)) state.paused.add(id);
-    applyHarms(world, f.harms, key);
+    f.secondDate = behavior.secondDate(coin, o2);
+    if (f.secondDate) for (const id of [a.id, b.id]) if (behavior.pausesAfterSecond(id, coin)) state.paused.add(id);
+    applyHarms(world, f.harms, coin);
   });
 }
 
 /** Reported harms: the offender goes on a safety hold, the victim blocks them (both visible). */
-function applyHarms(w: SlopWorld, harms: HarmEvent[], flowKey: string) {
+function applyHarms(w: SlopWorld, harms: HarmEvent[], coin: string) {
   // Iteration 3: the post-date / post-reveal check-in ("how did it go? anything we should know?").
   // A victim who answers it reports an unreported harm with p = checkin[kind].
   const ci = w.state.platform?.checkin;
-  if (ci) for (const h of harms) if (!h.reported && w.behavior.checkinReports(h.victim, flowKey, h.kind, ci[h.kind] ?? 0)) { h.reported = true; h.via = "checkin"; }
+  if (ci) for (const h of harms) if (!h.reported && w.behavior.checkinReports(h.victim, coin, h.kind, ci[h.kind] ?? 0)) { h.reported = true; h.via = "checkin"; }
   for (const h of harms) {
     if (!h.reported) continue;
     // A reported minor contact ("they seemed underage") holds the minor, not the reporter.

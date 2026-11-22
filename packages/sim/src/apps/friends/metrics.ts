@@ -48,6 +48,7 @@ export interface FriendsMetrics {
   v14Arranged: number;
   travel: { medianGroupMax: number; meanSeat: number; overTolerance: number };
   giniMeetups: number; zeroMeetupShare: number;
+  expected: { perProposal: number; perMember: number };
   safety: {
     declaredMinorProposals: number; declaredMinorContacts: number;
     hiddenMinorContacts: number; adversaryContacts: number; knownAdversaryContacts: number;
@@ -193,6 +194,10 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     v14, v14ByBorough: byB, boroughRatioMin: ratios.length ? Math.min(...ratios) : NaN, boroughRatioMin30: ratios30.length ? Math.min(...ratios30) : NaN, v14Arranged: v14Of(real.map(p => p.id), arranged, days),
     travel: { medianGroupMax: median(groupMax) ?? NaN, meanSeat: div(seats.reduce((s, x) => s + x.t, 0), seats.length), overTolerance: div(seats.filter(x => x.t > x.tol).length, seats.length) },
     giniMeetups: gini(meetCount), zeroMeetupShare: div(meetCount.filter(x => x === 0).length, real.length),
+    expected: {
+      perProposal: div(proposals.reduce((s, f) => s + f.expected, 0), proposals.length),
+      perMember: div(proposals.reduce((s, f) => s + f.expected * f.invited.filter(id => realIds.has(id)).length, 0), real.length),
+    },
     safety: {
       declaredMinorProposals: proposals.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
       adversaryContacts: adv, knownAdversaryContacts: knownContacts.size, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,

@@ -25,6 +25,7 @@ import { DATA_DIR } from "../synthetic/common.ts";
 import { vouchPeriodGate } from "./capital.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
+import { overlap, pairedLine } from "../../packages/sim/src/paired.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
@@ -34,6 +35,12 @@ const outbound = (records: RunRecord[]) => records.filter((r): r is Msg => r.typ
 /** Regression floors (audit P2-20), not targets: pooled over seeds 1-3 at the CI lower bound (docs/results/2026-10-08-network-hardening.md). */
 const ALL_YES_MIN = 0.73;
 const MEETINGS_MIN = 140;
+
+function meetingKeys(records: RunRecord[]): string[] {
+  return records.filter((r): r is Extract<RunRecord, { type: "outcome" }> => r.type === "outcome")
+    .map(o => Object.entries(o.attendance).filter(([, a]) => a.showed).map(([id]) => id).sort())
+    .filter(ids => ids.length >= 2).map(ids => ids.join(",")).sort();
+}
 
 async function world(days: number, seed = 3, network: NetworkOptions = { review: "auto" }) {
   const personas = await nycPersonas();
@@ -408,7 +415,8 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   if (!o.quick) {
     const push = await runArm("push_baseline", { days: 21, seed: 1 });
     const consent: ArmResult[] = [];
-    for (const seed of [1, 2, 3]) consent.push(await runArm("consent", { days: 21, seed }));
+    const met: string[][] = [];
+    for (const seed of [1, 2, 3]) consent.push(await runArm("consent", { days: 21, seed, onRecords: r => met.push(meetingKeys(r)) }));
     b.track("fingerprint: consent vs push arms", true, digest([push, ...consent]));
     const sum = (f: (r: ArmResult) => number) => consent.reduce((x, r) => x + f(r), 0);
     const allYes = sum(r => r.proposalsAllYes) / sum(r => r.proposals);
@@ -429,6 +437,16 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     b.gate("plans: no names before booking (quorum), no reveal before quorum", P.every(p => p.namesBeforeBooking === 0 && p.revealsBeforeQuorum === 0), P.map(p => `${p.namesBeforeBooking}/${p.revealsBeforeQuorum}`).join(","));
     // The intro cap per participation state is checked on the invariant run above and by the judge (over_budget = 0).
     b.gate("plans: <= 1 plan invite per member per 7 days (the plan lane)", P.every(p => p.maxPlanInvites7d <= 1), P.map(p => p.maxPlanInvites7d).join(","));
+
+    const aa: ArmResult[] = [], aaMet: string[][] = [];
+    for (const seed of [1, 2, 3]) aa.push(await runArm("consent", { days: 21, seed, network: { seed: seed + 1000 }, onRecords: r => aaMet.push(meetingKeys(r)) }));
+    const row = (f: (r: ArmResult) => number) => pairedLine(consent.map(f), aa.map(f));
+    b.track("A/A consent (Network seed + 1000), meetings held", true, row(r => r.meetingsHeld));
+    b.track("A/A consent, everyone-yes proposals", true, row(r => r.proposalsAllYes));
+    b.track("A/A consent, new members joined", true, row(r => r.newMembersJoined));
+    b.track("A/A consent, expected value per proposal (oracle)", true, row(r => r.expected.perProposal));
+    b.track("A/A consent, expected good meetings per member (oracle)", true, row(r => r.expected.perMember));
+    b.track("A/A consent, same meetings (Jaccard of who met whom, per seed)", true, met.map((m, i) => overlap(m, aaMet[i]!).toFixed(2)).join(", "));
   }
 
   // ---- NYC scenarios ------------------------------------------------------------------------------------

@@ -117,6 +117,27 @@ Hard flags make a proposal incompatible: minor, adversary, exes, romance mismatc
 
 The LLM persona agent writes only the words, given the decision the choice model has already made. `llmDecides: true` lets the model choose instead, for A/B experiments.
 
+### Common random numbers
+
+A simulated member's decision draws its coin from a key that says what the decision is about. It never uses a proposal index, a message id or a meeting sequence number. When two engines ask the same person about the same thing in the same week, both runs use the same coin. A change in what an engine proposes then moves only the decisions that the change really touches. The results are in `docs/results/2026-11-17-paired-evaluation.md`.
+
+- `src/coins.ts` holds the keys. `Coins.key(meaning, instance)` gives the n-th distinct instance of a meaning the key `meaning#n`. Each event keeps its own independent draw, so the marginal probabilities do not change. When the same instance asks again, it gets the same key. `h01` is a uniform draw from key parts: FNV-1a with the murmur3 finalizer, because FNV-1a alone moves its high bits too little when only the last part changes. `signature` is the sorted member set of a group.
+- The ntwrk world (`src/world.ts`) keys the persona context of each delivered message by the persona, the message type, its category or activity, the people it is about and the day. It keys a meeting by its participants at the first booking and its day. Participants who join later do not change the key, so the booking and every flake check use the same key. The n-th invite of a member makes the same friend in every run. `src/oracle.ts` keys accept and show by people, category and week, and keys the anonymous probe by persona, category, kind and week. The time-conflict draw (`agent/availability.ts`) is keyed by persona and meeting time, with the proposal as its instance. Plan options, plan shows and crew opt-ins (`agent/policy.ts`, `plans.ts`) are keyed by persona, activity and time.
+- The slop world keys the anonymous probe by member and week inside `SlopBehavior.answerProbe`. The flow key stays the method's argument, so hooks can still identify the flow. Everything after the reveal is keyed by the pair and the week. The relay exchange gets the same pair key.
+- The friends world keys the probe by member, week, kind and activity, because an anonymous probe does not name the group. The reveal, attendance, meetup and feedback coins are keyed by the people at the table. A crew's own sessions are keyed by activity, members and week, with the crew id as the instance.
+
+### Expected value (simulator only)
+
+For each proposal the harness computes from the oracle the probability of the good outcome before any coin is drawn. The engine never sees these numbers.
+
+- friends: `FriendsOracle.expectedGood` takes 32 fixed Monte Carlo draws of the replies and yeses of the invited members, the booked option (the one that most yes-sayers are free for), attendance, chemistry and side noise. `meetup(..., draw)` with a draw number uses Monte Carlo chemistry, because chemistry is not known before people meet. Fatigue is 0, and caps and back-outs are left out, so the value does not depend on the order of the week's proposals. `FriendsMetrics.expected` gives the mean per proposal and the expected good meetups per real member.
+- slop: `SlopOracle.pDateHappens` (no earlier probes this week) times the `softLabel` P(good) and P(second date). The value is 0 when the proposal is dropped before its first probe. `SlopMetrics.expected` gives the mean per proposal and the expected good dates per safe member.
+- ntwrk: for each proposal, the product of the accept and show probabilities when the oracle rates the meeting good, else 0 (`ArmResult.expected` in `packages/network/harness/experiment.ts`).
+
+### A/A arms and paired statistics
+
+`src/paired.ts` has no imports, so `scripts/sim/paired.ts` can load it beside another tree. `paired` gives the mean difference B - A, its SD and SE, a 95% t interval, the correlation and the minimum detectable effect (alpha 0.05 two-sided, power 0.8). `overlap` is the Jaccard overlap of two runs' events. The neutral perturbations are simulator only: `idsSalted` shows a matcher every member under a salted alias and maps its proposals back to the real ids, and `saltSeed` gives an unrelated engine seed for salt 1 or more. The `$engineSalt` option of `apps/slop/packEval.ts` `runArm` uses it.
+
 ### Ground-truth isolation
 
 Hidden cards stay inside the simulator process. The Network gets only `ctx.send` and `ctx.snapshot()`. Personas reveal their public side, with noise, through the conversation.
@@ -246,5 +267,5 @@ The leaky-stub negative control fails the canary scenario, which confirms the ca
 
 - **Persona and judge model.** Persona agents and judges both default to `gpt-6-luna` (founder decision 2026-10-05). Judges use a different prompt and pass, not a different model. Use a different judge model (`JUDGE_MODEL`) for audits only; a cross-family audit needs founder approval because it sends data to another provider.
 - **JSON retries.** Reasoning models (`gpt-6-luna`, and the earlier `qwen-3.8-27b`) sometimes spend their whole token budget on reasoning and returns empty or truncated content. `chatJson`, and the judges' `ask`, retry with a larger budget, and persona agents fall back to template text if the model still fails.
-- **Stub network.** It is a test fixture, not a reference implementation. It parses replies with keywords, makes only random pairs (groups come only from an engine or a scenario), and has no relay or contact swap.
+- **Stub network.** It is a test fixture, not a reference implementation. It parses replies with keywords, makes only random pairs (groups come only from an engine or a scenario), and has no relay or contact swap. It sends nothing to a member who texted STOP, booked reminders and feedback requests included. It sends the same info or concierge text to the same member only once in 10 minutes.
 - **Not built yet:** world shocks (rainy weekend, holiday, invite burst) and a synthetic event calendar are not modeled yet.
