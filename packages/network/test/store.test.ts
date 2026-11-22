@@ -100,6 +100,7 @@ test.each([
   ["a positive rating alone", "It was great, we clicked.", false, false],
   ["explicit requests for different meetings", "I would love to meet again.", false, true],
   ["two explicit requests", "It was great. I would love to meet again.", true, false],
+  ["an explicit request after a courtesy opener", "No worries, I would meet again.", true, false],
 ] as const)("repeat review follows delivered feedback across restart: %s", async (_label, secondFeedback, expected, separateMeetings) => {
   const pair = ["a", "b"];
   const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
