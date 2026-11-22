@@ -1631,7 +1631,9 @@ export class NetworkRuntime {
   async health() {
     const key = `network-tick-${this.pg.id}`;
     const [holder] = await this.sql`select l.pid, a.application_name from pg_locks l join pg_stat_activity a on a.pid = l.pid
-      where l.locktype = 'advisory' and l.granted and l.objsubid = 1 and ((l.classid::bigint << 32) | l.objid::bigint) = hashtext(${key})::bigint limit 1`;
+      where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+        and l.database = (select oid from pg_database where datname = current_database())
+        and ((l.classid::bigint << 32) | l.objid::bigint) = hashtext(${key})::bigint limit 1`;
     const [saved, statuses, capital] = await this.scoped(async tx => [
       (await tx`select saved_at from network.network_state where id = ${this.pg.id}`)[0],
       await tx`select status, count(*)::int as n from network.messages where app_id = ${this.app.id} and direction = 'outbound' group by status`,
