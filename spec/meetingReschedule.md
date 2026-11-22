@@ -76,15 +76,17 @@ pure def lawBookingStartEndsOriginalNotice(scheduled: bool, confirmedSeat: bool,
 
 ### A named booking notice still needs every recorded seat
 
-Record the roster from the notice when its text is created. On queued delivery and signed replay, require the recipient to be on that roster and every recorded seat to remain confirmed for this booking. A new confirmed seat does not invalidate an earlier notice. A withdrawal withholds the notice that named the departing member, even when the remaining group can continue. An older group notice without a recorded roster cannot establish current consent to disclose every name. Erasure clears the stored roster and the notice that names the removed member.
+Record the roster from the notice when its text is created. On queued delivery and signed replay, require the recipient to be on that roster and every recorded member to still accept this booking. Another member's acceptance is independent of whether their own notice has left quiet hours. A new accepted seat does not invalidate an earlier notice. A withdrawal withholds a staged notice that names the departing member, even when the remaining group can continue. An older staged group notice without a recorded roster cannot establish current consent to disclose every name. Erasure clears the stored roster and the notice that names the removed member.
+
+If an unstaged group notice waited for quiet hours and its recorded roster is no longer current, make a new notice for the same future booking and accepted recipient from the seats that still accept. Use the same time and place and check the recipients again before staging. When the old text described the original group, use general booking copy for the current group.
 
 ```quint
-pure def bookingNoticeRosterCurrent(groupBooking: bool, recordedRoster: bool, includesRecipient: bool, recordedSeatsConfirmed: bool): bool =
-  if (recordedRoster) includesRecipient and recordedSeatsConfirmed else not(groupBooking)
+pure def bookingNoticeRosterCurrent(groupBooking: bool, recordedRoster: bool, includesRecipient: bool, recordedSeatsAccepted: bool): bool =
+  if (recordedRoster) includesRecipient and recordedSeatsAccepted else not(groupBooking)
 
 pure def lawWithdrawnSeatPreventsNotice(groupBooking: bool, includesRecipient: bool): bool =
   not(bookingNoticeRosterCurrent(groupBooking, true, includesRecipient, false))
 
-pure def lawUnboundGroupNoticeCannotSend(includesRecipient: bool, recordedSeatsConfirmed: bool): bool =
-  not(bookingNoticeRosterCurrent(true, false, includesRecipient, recordedSeatsConfirmed))
+pure def lawUnboundGroupNoticeCannotSend(includesRecipient: bool, recordedSeatsAccepted: bool): bool =
+  not(bookingNoticeRosterCurrent(true, false, includesRecipient, recordedSeatsAccepted))
 ```

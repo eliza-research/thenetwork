@@ -14,7 +14,7 @@ The [Friends partner time-choice spec](../friendsPlanTimeChoice.md) covers revie
 
 The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
 
-The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
+The [original booking notice rule](../meetingReschedule.md#a-named-booking-notice-still-needs-every-recorded-seat) governs exact accepted seats in a staged notice and re-creation after quiet hours. `planReveal` abstracts the quiet-hours interval by disclosing the current accepted roster when it sends. The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
