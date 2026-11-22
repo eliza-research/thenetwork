@@ -3,10 +3,16 @@ import { expect, test } from "vitest";
 import { laneLimits, laneWeights } from "../../core/src/generated/matchLane.ts";
 import { dateTypeCeiling } from "../../core/src/generated/datePackValue.ts";
 import { directedUtility } from "../../core/src/generated/pairValue.ts";
+import { localEmbed } from "../src/embed.ts";
+import { bruteForceCandidates } from "../src/match/mod.ts";
+import type { AppPack } from "../src/pack.ts";
+import { slopPack, SLOP_ENGINE_DEFAULTS } from "../src/packs/slop/index.ts";
 import { SLOP_DEFAULT_OPTIONS } from "../src/packs/slop/options.ts";
 import { datePackBound, datePackClassCap, datePackClassKey } from "../src/packs/slop/packBound.ts";
 import { SLOTS, type SlopProfile } from "../src/packs/slop/profile.ts";
 import { DATE_TYPE_WEIGHT, datePackValue } from "../src/packs/slop/score.ts";
+import { baseMember, emptyInput, facet } from "../src/testkit.ts";
+import { World } from "../src/world.ts";
 
 const INTERESTS = ["climbing", "jazz", "cooking", "film", "running", "board_games", "art", "travel", "dogs", "books", "yoga", "wine"];
 const ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
@@ -87,4 +93,53 @@ test("the Date pair bound and class caps are at least the pack value, and many f
     untouchedPairs: untouched,
   }));
   expect(violations).toEqual({ bound: 0, cap: 0, boundOverCap: 0, untouchedCap: 0 });
+});
+
+function daterInput(): ReturnType<typeof emptyInput> {
+  const r = new Rng(20261122);
+  const input = emptyInput();
+  for (let n = 0; n < 40; n++) {
+    const id = `d${String(n).padStart(2, "0")}`, is = n % 2 === 0 ? "woman" : "man";
+    input.members.push(baseMember(id, { homeCity: "nyc", prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }));
+    input.facets.push(facet(id, 0, "preference", "Private dating preferences", [
+      `romance:is:${is}`, `romance:seeks:${is === "woman" ? "man" : "woman"}`, "romance:age:18-65", "slop:zip:11222", "slop:max_miles:10",
+    ], "agent_private"));
+    const answers = [
+      ...(r.bool(0.8) ? [`slop:goal:${r.pick(["casual", "long_term", "unsure"])}`] : []),
+      ...(r.bool(0.7) ? [`slop:smoking:${r.pick(["never", "sometimes", "regular"])}`] : []),
+      ...(r.bool(0.7) ? [`slop:drinking:${r.pick(["never", "social", "regular"])}`] : []),
+      ...(r.bool(0.6) ? [`slop:wants_kids:${r.pick(["yes", "no", "open"])}`] : []),
+      ...(r.bool(0.6) ? [`slop:religion_importance:${r.int(0, 3)}`] : []),
+      ...(r.bool(0.6) ? [`slop:politics:${r.pick(["left", "moderate", "right"])}`] : []),
+      ...r.sample(ACTIVITIES.slice(0, 4), r.int(0, 2)).map(a => `slop:activity:${a}`),
+    ];
+    input.facets.push(facet(id, 1, "fact", "Dating answers", answers, "agent_private"));
+    r.sample(INTERESTS.slice(0, 6), r.int(0, 2)).forEach((tag, k) => input.facets.push(facet(id, 2 + k, "interest", tag, [tag])));
+    const free = r.sample(SLOTS, r.int(0, 2));
+    if (free.length) input.facets.push(facet(id, 9, "availability_pattern", "Free evenings", free.map(s => `slop:free:${s}`), "agent_private"));
+  }
+  return input;
+}
+
+test("the Date pair bound and class caps keep every Date search equal to the search without them, with fewer pair checks", () => {
+  const vectors = slopPack.vectors;
+  if (!vectors) throw new Error("slopPack has no match vectors");
+  const unbounded: AppPack = { ...slopPack, vectors: { ...vectors, packBound: undefined, packClasses: undefined } };
+  const [bounded, full] = [slopPack, unbounded].map(pack => {
+    const w = new World(daterInput(), SLOP_ENGINE_DEFAULTS, localEmbed, pack);
+    const profiles = w.match.profiles.filter(p => p.lane === "Date");
+    const kept = profiles.map(p => {
+      const result = w.match.candidates(p);
+      expect(result.exact).toBe(true);
+      expect(result.kept).toEqual(bruteForceCandidates(w, w.match.index, p));
+      return { id: p.id, kept: result.kept.map(c => [c.profile.id, c.value]) };
+    });
+    return { profiles: profiles.length, kept, tally: w.match.tally() };
+  });
+  expect(bounded.profiles).toBe(40);
+  expect(bounded.kept).toEqual(full.kept);
+  expect(bounded.kept.some(entry => entry.kept.length > 0)).toBe(true);
+  for (const { tally } of [bounded, full]) expect(tally).toMatchObject({ members: 40, exact: 40, boundViolations: 0, packBoundViolations: 0 });
+  expect(bounded.tally.checks).toBeLessThan(full.tally.checks);
+  expect(bounded.tally.touches).toBeLessThan(full.tally.touches);
 });

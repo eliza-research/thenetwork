@@ -47,30 +47,30 @@ export interface EntityStanding {
 export interface EntitySegment { readonly own: string; readonly partners: readonly string[] }
 export interface EntityMask { readonly own: number; readonly accepts: number }
 export interface MatchSegment { readonly own: string; readonly partners: ReadonlySet<string> }
-/** Scalar attributes compared by closeness: `of` returns one whole number per entry of `costs`. */
 export interface PackTraits {
   readonly costs: readonly number[];
   of(w: World, entity: MatchEntity): readonly number[];
 }
+export interface PackClasses {
+  of(w: World, entity: MatchEntity): number;
+  cap(w: World, a: MatchProfile, packClass: number, untouched: boolean): number;
+}
 
-/** The hook a pack implements to take part in generic matching (AppPack.vectors). */
 export interface PackVectors {
   memberships(w: World, memberId: MemberId): readonly Membership[];
   tags(w: World, entity: MatchEntity): EntityTags;
   standing(w: World, entity: MatchEntity): EntityStanding;
   readonly traits?: PackTraits;
-  /** The entity's segment; undefined pairs with every segment. */
   segment?(w: World, entity: MatchEntity): EntitySegment | undefined;
-  /** Directed value of `b` for `a`, 0..1000 (whole number). */
   packValue?(w: World, a: MatchProfile, b: MatchProfile): number;
   packBound?(w: World, a: MatchProfile, b: MatchProfile): number;
+  readonly packClasses?: PackClasses;
   masks?(w: World, entity: MatchEntity): readonly EntityMask[];
 }
 
 export interface MatchProfile {
   readonly id: EntityId;
   readonly memberId: MemberId;
-  /** Position in the canonical (entity id) order of its block: unique and stable inside the block. */
   readonly ordinal: number;
   readonly lane: MatchLane;
   readonly side: LaneSide;
@@ -82,9 +82,9 @@ export interface MatchProfile {
   readonly seeks: TagSet;
   readonly interests: TagSet;
   readonly traits: readonly number[];
-  /** Absent: the profile reaches every partner and every partner reaches it. */
   readonly segment?: MatchSegment;
   readonly masks?: readonly EntityMask[];
+  readonly packClass?: number;
 }
 
 /** The legacy category whose opt-in, cooldowns and pack pair rules apply to a lane. */
@@ -132,6 +132,7 @@ interface Draft {
   readonly capacity: number; readonly tags: EntityTags; readonly standing: EntityStanding; readonly traits: readonly number[];
   readonly segment?: MatchSegment;
   readonly masks?: readonly EntityMask[];
+  readonly packClass?: number;
 }
 
 const maskBits = (bits: number): number => {
@@ -139,11 +140,6 @@ const maskBits = (bits: number): number => {
   return bits;
 };
 
-/**
- * Profiles in canonical order (block key, then entity id). A member who cannot be matched (minor or
- * unknown age, under the pack or config age floor, safety hold, paused, not opted in to the lane's
- * category) gets none, and the pack is not asked about a member who fails the core checks.
- */
 export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], mode: "discovery" | "existingFriendPlan" = "discovery"): readonly MatchProfile[] {
   const vectors = w.pack.vectors;
   if (!vectors) return [];
@@ -152,7 +148,6 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
   let maskCount: number | undefined;
   const drafts: Draft[] = [];
   const seen = new Set<string>();
-  // Packs memoize partner lists, so members with the same list share one set.
   const partnerSets = new WeakMap<readonly string[], ReadonlySet<string>>();
   const partnerSet = (partners: readonly string[]): ReadonlySet<string> => {
     let set = partnerSets.get(partners);
@@ -179,10 +174,12 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       const segment = vectors.segment?.(w, entity);
       const masks = vectors.masks?.(w, entity).map(m => ({ own: maskBits(m.own), accepts: maskBits(m.accepts) }));
       if (masks && masks.length !== (maskCount ??= masks.length)) throw new Error(`entity ${id} has ${masks.length} masks, another has ${maskCount}`);
+      const packClass = vectors.packClasses ? wholeNumber(vectors.packClasses.of(w, entity), "pack class") : undefined;
       drafts.push({
         entity, id, key: blockKey(lane, side, market), capacity, traits,
         ...(segment ? { segment: { own: segment.own, partners: partnerSet(segment.partners) } } : {}),
         ...(masks ? { masks } : {}),
+        ...(packClass !== undefined ? { packClass } : {}),
         tags: { offers: normalTags(raw.offers), seeks: normalTags(raw.seeks), interests: normalTags(raw.interests) },
         standing: {
           standing: clamp(wholeNumber(rated.standing, "standing"), standingCeiling),
@@ -206,6 +203,7 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       traits: d.traits,
       ...(d.segment ? { segment: d.segment } : {}),
       ...(d.masks ? { masks: d.masks } : {}),
+      ...(d.packClass !== undefined ? { packClass: d.packClass } : {}),
     };
   });
 }

@@ -1,9 +1,5 @@
-// Bounded candidate search: a window (the standing range inside each segment the member reaches),
-// an exact threshold walk over the member's tag postings in that window, and the generated
-// candidateSearch machine, which keeps the top `searchLimit` and certifies when nothing unchecked
-// can beat them.
 import {
-  enabled, initial, searchMayTouch, searchStopsExact, searchWindowHigh, searchWindowLow, step, unseenValueBound,
+  enabled, initial, searchMayTouch, searchStopsExact, searchUntouchedSharesNoTag, searchWindowHigh, searchWindowLow, step, unseenValueBound,
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
 } from "../../../core/src/generated/candidateSearch.ts";
 import { laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
@@ -42,7 +38,6 @@ function resultOf(block: CandidateBlock | undefined, search: CandidateSearch, to
   return { kept, checks: search.checks, touches, exact: search.phase === "Exact", unseenBound: search.unseenBound, ...(budgetedBy ? { budgetedBy } : {}), counters };
 }
 
-/** First index in [lo, hi) whose value is >= `x` (hi when none) in an ascending run read through `at`. */
 function lowerBound(lo: number, hi: number, at: (i: number) => number, x: number): number {
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
@@ -51,36 +46,31 @@ function lowerBound(lo: number, hi: number, at: (i: number) => number, x: number
   return lo;
 }
 
-/**
- * The window of `profile` in its partner block: inside each segment the profile reaches, the
- * positions whose standing is in [low, high]. Ascending and disjoint; adjacent spans are merged.
- */
-function windowSpans(block: CandidateBlock, profile: MatchProfile, band: number): Span[] {
+interface SearchWindow { readonly spans: readonly Span[]; readonly packClasses: ReadonlySet<number> }
+
+function windowOf(block: CandidateBlock, profile: MatchProfile, band: number): SearchWindow {
   const offset = laneOffset(profile.lane, profile.side);
   const low = searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
   const high = searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
   const standingAt = (i: number) => block.profiles[i].standing;
   const spans: Span[] = [];
+  const packClasses = new Set<number>();
   for (const segment of block.segments) {
-    // spec/candidateSearch.md, "Segment blocking never drops a pair the pair gate admits": the same
-    // test as segmentReaches(profile, other) for every other in the segment.
     if (profile.segment && segment.segment !== undefined && !profile.segment.partners.has(segment.segment)) continue;
     const start = lowerBound(segment.start, segment.end, standingAt, low);
     const end = lowerBound(start, segment.end, standingAt, high + 1);
     if (end === start) continue;
+    for (const packClass of segment.packClasses) packClasses.add(packClass);
     const last = spans[spans.length - 1];
     if (last?.end === start) spans[spans.length - 1] = { start: last.start, end };
     else spans.push({ start, end });
   }
-  return spans;
+  return { spans, packClasses };
 }
 
-/** The three tag groups a search can walk, named from the searching member `a`. */
 type TagGroup = "affinity" | "complement" | "returned";
-/** One tag's posting inside the window: `spans` index the posting, `size` counts their entries. */
 interface Range { readonly group: TagGroup; readonly posting: readonly number[]; readonly spans: readonly Span[]; readonly size: number }
 
-/** The window range of each of `tags` in `postings`; empty ranges dropped. */
 function windowRanges(group: TagGroup, postings: Postings, tags: TagSet, window: readonly Span[]): Range[] {
   return tags.flatMap(tag => {
     const posting = postings.get(tag);
@@ -108,9 +98,8 @@ function tagRanges(block: CandidateBlock, profile: MatchProfile, window: readonl
 
 const spanSize = (spans: readonly Span[]): number => spans.reduce((n, span) => n + span.end - span.start, 0);
 
-/** Exact window and tag counts for offline cost reports, using only the indexed span endpoints. */
 export function searchWindowMetrics(block: CandidateBlock, profile: MatchProfile): { window: number; ranges: number; shortest: number } {
-  const window = windowSpans(block, profile, laneLimits(profile.lane).rules.parityBand);
+  const window = windowOf(block, profile, laneLimits(profile.lane).rules.parityBand).spans;
   let ranges = 0, shortest = Infinity;
   for (const range of tagRanges(block, profile, window)) {
     ranges += range.size;
@@ -119,10 +108,6 @@ export function searchWindowMetrics(block: CandidateBlock, profile: MatchProfile
   return { window: spanSize(window), ranges, shortest: ranges === 0 ? 0 : shortest };
 }
 
-/**
- * The best `searchLimit` partners of `profile`, with at most `searchBudget` pair checks and at most
- * `searchTouchesPerCheck x searchBudget` posting entries visited.
- */
 export function searchCandidates(w: World, index: CandidateIndex, profile: MatchProfile, memo?: PairMemo): SearchResult {
   const limits = laneLimits(profile.lane), { rules } = limits;
   let search = step(initial, { type: "beginSearch", limit: limits.searchLimit, budget: limits.searchBudget });
@@ -130,8 +115,7 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const empty: SearchEvent = { type: "closeExact", unseenBound: noPairValue };
   if (!block) return resultOf(block, step(search, empty), 0);
 
-  // spec/candidateSearch.md, "The standing window contains every partner that the parity rule allows"
-  const window = windowSpans(block, profile, rules.parityBand);
+  const { spans: window, packClasses } = windowOf(block, profile, rules.parityBand);
   if (window.length === 0) return resultOf(block, step(search, empty), 0);
 
   const vectors = vectorsOf(w);
@@ -140,25 +124,32 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const hasPackValue = vectors.packValue !== undefined;
   const weights = laneWeights(profile.lane);
 
-  // spec/candidateSearch.md, "The posting walk covers or bounds every partner in the window":
-  // a's interests in the partners' interests, a's seeks in their offers, a's offers in their seeks,
-  // walked rarest first. `open` counts the tags of each group whose window range is not fully walked:
-  // a candidate that was not touched can have a hit only in those.
-  const walk = tagRanges(block, profile, window).sort((x, y) => x.size - y.size); // the sort is stable
+  const walk = tagRanges(block, profile, window).sort((x, y) => x.size - y.size);
   const windowSize = spanSize(window);
   const open: Record<TagGroup, number> = { affinity: 0, complement: 0, returned: 0 };
   for (const range of walk) open[range.group]++;
   let windowWalked = false;
 
-  // spec/candidateSearch.md, "A bound is never below the value of the pair it covers" (lawUnseenBoundSound):
-  // an untouched b has at most open[g] hits in group g; a's terms are the coverage of those hits, b's
-  // terms are full when b can have a hit and 0 when it cannot; closeness and pack at full value.
+  const classCaps = new Map<boolean, number>();
+  const untouchedPack = (untouched: boolean): number => {
+    const classes = vectors.packClasses;
+    if (!hasPackValue || !classes) return pairValueScale;
+    let cap = classCaps.get(untouched);
+    if (cap === undefined) {
+      cap = 0;
+      for (const packClass of packClasses) cap = Math.max(cap, wholeNumber(classes.cap(w, profile, packClass, untouched), "pack class cap"));
+      classCaps.set(untouched, cap);
+    }
+    return cap;
+  };
+
   const untouchedBound = (): number => {
     if (windowWalked) return noPairValue;
     const complement = coverageValue(open.complement, profile.seeks.length);
     const returned = open.returned > 0 ? pairValueScale : 0;
+    const untouched = searchUntouchedSharesNoTag(open.affinity, open.complement, open.returned);
     const mine = directedUtility(weightedTerms(weights, hasTraits, hasPackValue, {
-      complement, affinity: coverageValue(open.affinity, profile.interests.length), closeness: pairValueScale, pack: pairValueScale,
+      complement, affinity: coverageValue(open.affinity, profile.interests.length), closeness: pairValueScale, pack: untouchedPack(untouched),
     }));
     const theirs = directedUtility(weightedTerms(weights, hasTraits, hasPackValue, {
       complement: returned, affinity: open.affinity > 0 ? pairValueScale : 0, closeness: pairValueScale, pack: pairValueScale,
@@ -221,7 +212,6 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
     const stop: SearchEvent = { type: "closeExact", unseenBound: unseen };
     if (enabled(search, stop)) return resultOf(block, step(search, stop), touches, counters);
     if (untouched > topBound && !walkSpent) {
-      // A range at least as long as the window costs no less than the window, which leaves no one untouched.
       const range = walk[walked];
       if (range && range.size < windowSize) {
         if (visit(range.spans, i => range.posting[i])) { open[range.group]--; walked++; } else walkSpent = true;
@@ -241,7 +231,6 @@ interface BoundedCandidate { readonly other: MatchProfile; readonly bound: numbe
 const ranksAbove = (x: BoundedCandidate, y: BoundedCandidate): boolean =>
   x.bound > y.bound || (x.bound === y.bound && x.other.ordinal < y.other.ordinal);
 
-/** A binary heap of touched candidates: the highest bound first, then the lowest ordinal. */
 class CandidateHeap {
   private readonly items: BoundedCandidate[] = [];
   peek(): BoundedCandidate | undefined { return this.items[0]; }
@@ -290,10 +279,6 @@ export class PairMemo {
   }
 }
 
-/**
- * Oracle for the simulator gate only: the same pair function over the whole partner block, no
- * pruning, no segment window (the pair gate refuses pairs whose segments do not reach each other).
- */
 export function bruteForceCandidates(w: World, index: CandidateIndex, profile: MatchProfile): RankedProfile[] {
   const block = partnerBlock(index, profile);
   if (!block) return [];
@@ -334,11 +319,6 @@ export function tallySearch(tally: SearchTally, result: SearchResult): SearchTal
 
 export interface MatchEdge { readonly a: EntityId; readonly b: EntityId; readonly value: number; readonly key: string }
 
-/**
- * One edge per pair where either side kept the other. "Either" and not "both": the pair value is
- * symmetric, so a one-sided keep is still a pair both sides value; it only lost a top-k slot on
- * one side to better partners. Sorted by value desc, then key.
- */
 export function mutualEdges(results: readonly { readonly profile: MatchProfile; readonly result: SearchResult }[]): MatchEdge[] {
   const edges = new Map<string, MatchEdge>();
   for (const { profile, result } of results) {

@@ -17,6 +17,7 @@ import type { SlopPackOptions } from "./options.ts";
 import { cellIn, datingMarkets, datingStatementOf, slopProfiles, type SlopProfile } from "./profile.ts";
 import { SLOP_LANE, SLOP_MATCH_LANE } from "./rules.ts";
 import { DateStandings, UNKNOWN_DATE_STANDING } from "./standing.ts";
+import { datePackBound, datePackClassCap, datePackClassKey } from "./packBound.ts";
 import { dateActivity, datePackValue, responsiveness } from "./score.ts";
 import { cellMiles, cellOfZip, ZIPS, type Cell } from "./zips.ts";
 
@@ -124,7 +125,6 @@ function dateSegmentOf(w: World, p: SlopProfile, market: City, o: SlopPackOption
   return { own, partners };
 }
 
-/** slop.date's match vectors (AppPack.vectors). */
 export function slopVectors(o: SlopPackOptions): PackVectors {
   const standings = new WeakMap<World, DateStandings>();
   const standingsOf = (w: World): DateStandings => {
@@ -137,8 +137,6 @@ export function slopVectors(o: SlopPackOptions): PackVectors {
       if (memberReason(w, memberId, DATING) !== null) return [];
       const p = profilesOf(w).get(memberId), mi = w.get(memberId);
       if (!p || !mi) return [];
-      // An open thread already stops the member (rule your_turn); recent proposals use up the week.
-      // Every market shares the one weekly capacity: assign.ts counts it per member.
       const capacity = laneLimits(SLOP_MATCH_LANE).weeklyCapacity - mi.recentProactive;
       return datingMemberships(memberId, p, w.pack.geo.markets(w.cfg))
         .map(({ id, market }): Membership => ({ id, lane: SLOP_MATCH_LANE, side: "Peer", market, capacity }));
@@ -158,6 +156,20 @@ export function slopVectors(o: SlopPackOptions): PackVectors {
     packValue(w, a, b) {
       const P = profilesOf(w), pa = P.get(a.memberId), pb = P.get(b.memberId);
       return pa && pb ? datePackValue(pa, pb, o) : 0;
+    },
+    packBound(w, a, b) {
+      const P = profilesOf(w), pa = P.get(a.memberId), pb = P.get(b.memberId);
+      return pa && pb ? datePackBound(pa, pb, o) : 0;
+    },
+    packClasses: {
+      of(w, entity) {
+        const p = profilesOf(w).get(entity.memberId);
+        return p ? datePackClassKey(p) : 0;
+      },
+      cap(w, a, packClass, untouched) {
+        const p = profilesOf(w).get(a.memberId);
+        return p ? datePackClassCap(p, packClass, untouched, o) : 0;
+      },
     },
   };
 }

@@ -7,7 +7,6 @@ import { datePackAnswersOf, datePackCheapOf, datePackSeekerOf } from "./score.ts
 
 const GOALS: readonly DateGoal[] = ["DateGoalCasual", "DateGoalLongTerm", "DateGoalUnsure", "DateGoalUnstated"];
 const UNSTATED_COUNTS = datePackClassUnstatedMost + 1;
-export const DATE_PACK_CLASSES = GOALS.length * UNSTATED_COUNTS;
 
 export function datePackBound(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   return datePackPairBound(datePackSeekerOf(a, o), datePackAnswersOf(b), datePackCheapOf(a, b, o));

@@ -2,7 +2,7 @@
 export {
   buildProfiles, internTags, isEntityId, laneCategory, partnerSide,
   type EntityId, type EntityMask, type EntityStanding, type EntityTags, type MatchEntity, type MatchProfile, type Membership,
-  type PackTraits, type PackVectors, type TagInterner, type TagSet,
+  type PackClasses, type PackTraits, type PackVectors, type TagInterner, type TagSet,
 } from "./profile.ts";
 export { eligiblePair, intersectCount, maskRefusesAdmitted, pairSideOf, pairValueOf, utilityTerms } from "./pair.ts";
 export { buildCandidateIndex, partnerBlock, type CandidateBlock, type CandidateIndex, type Postings } from "./index.ts";
