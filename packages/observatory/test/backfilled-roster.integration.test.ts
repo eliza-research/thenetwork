@@ -39,7 +39,7 @@ test("a reviewed plan snapshots its roster through backfill and closure", async 
   const projector = new Projector(store);
   let consumed = 0;
   const refresh = () => {
-    for (const record of world.logs.slice(consumed)) projector.apply({ ...record, type: "network_log", app: "ntwrk" });
+    for (const record of world.logs.slice(consumed)) projector.apply({ ...record, type: "network_log" });
     consumed = world.logs.length;
   };
   const native = () => world.net.exportState().opps.find(o => o.id === oppId)!;
