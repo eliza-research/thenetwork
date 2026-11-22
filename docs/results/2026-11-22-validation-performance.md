@@ -24,6 +24,9 @@ Node 26.13.0 on arm64 macOS. The machine ran multiple concurrent validation sess
 | Slop profile build, same seed, 10,000 members | 2,336 ms CPU | 384 ms CPU | Median of 3 runs per implementation |
 | Friends pair value, planted Friend seed `matching-1`, 38,809 ordered pairs | 32.7 ms CPU | 20.6 ms CPU | Median of 6 runs per implementation |
 | Slop pair value, planted Date seed `matching-1`, 38,809 ordered pairs | 71.1 ms CPU | 68.6 ms CPU | Median of 6 runs per implementation |
+| Network matching input, seed 1, 250 members and 3,000 stored facets | 7.69 ms CPU | 1.21 ms CPU | Median of 5 runs per implementation |
+| Network matching input, seed 1, 1,000 members and 12,000 stored facets | 53.85 ms CPU | 2.40 ms CPU | Median of 5 runs per implementation |
+| Network engine run and fingerprints, seed 1, 1,000 members | 125.50 ms CPU | 90.61 ms CPU | Median of 5 runs per implementation |
 | `pnpm run spec:check-generated`, empty snapshot cache then warm cache | 83.45s elapsed | 22.39s elapsed | One run per cache state |
 
 The profile benchmark adds a duplicate trip, an aliased trip, a home-city trip, and trips at both window boundaries to each planted fixture. Each of the original and indexed implementations returns the same member-to-visit digest. The pair benchmark compares every ordered pair value and every complete candidate search result in each 200-member world. All compared values, ranked results, checks, touches and certificates agree. The generated check compares 232 current artifacts in both cache states. The warm snapshot directory uses 3.5 MiB.
@@ -32,6 +35,8 @@ The profile benchmark adds a duplicate trip, an aliased trip, a home-city trip, 
 
 - Use indexed and memoized segment ranges in block order. The matching simulation independently compares this lookup with the original ordered scan. Standing cutoffs, visit order, and search caps still apply.
 - Calculate shared affinity hits and trait closeness once per pair. For packs without a custom value, reuse the resulting score at the check and apply the same pair gate. For packs with a custom value, compute the full score at the check.
+- Index stored facet tags by member before combining them with learned tags. Compute the input and configuration fingerprints once per match run. The input, proposals, and complete run log apart from timing fields match the original in the paired runs.
+- Share the immutable result of one six-day Observatory simulation between its consent and Postgres parity tests. The hosted reference spent 15.2s and 14.4s on the tests that each ran this fixture.
 - Run the NYC simulation alongside the other offline blocks on one runner. Both commands must succeed. The existing Postgres skip check reads the core report.
 - Reuse only content-keyed generation inputs across GitHub runs. The generator and VibeLang compiler still compare outputs against the current checkout. Obsolete PR runs of the Vibestack workflow are canceled.
 - Share one unprivileged checkout and package install between Pages typecheck and build. The production job keeps its branch, environment, and deploy conditions. Bombadil uses the full Chromium build and the browser job omits the separate headless-shell binary.
