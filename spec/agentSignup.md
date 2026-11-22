@@ -303,7 +303,7 @@ pure def sometimesWrongApp(s: AgentSignup): bool = s.phase == WrongApp
 pure def sometimesProfileNotSent(s: AgentSignup): bool = s.phase == ProfileNotSent
 pure def sometimesMessagesStopped(s: AgentSignup): bool = s.phase == MessagesStopped
 
-pure val witness_sometimesSavedThroughNativeConnector = (
+pure val eval_witness_sometimesSavedThroughNativeConnector = (
   ("chooseTransport", NativeConnectorSkill, true),
   ("readAppFacts", true, false),
   ("draftProfile", Adult),
@@ -315,7 +315,7 @@ pure val witness_sometimesSavedThroughNativeConnector = (
   ("confirmProfile", true)
 )
 
-pure val witness_sometimesSavedWithBrowserInvitation = (
+pure val eval_witness_sometimesSavedWithBrowserInvitation = (
   ("chooseTransport", NativeConnectorSkill, true),
   ("readAppFacts", true, true),
   ("draftProfile", Adult),
@@ -327,7 +327,7 @@ pure val witness_sometimesSavedWithBrowserInvitation = (
   ("confirmProfile", true)
 )
 
-pure val witness_sometimesExistingMember = (
+pure val eval_witness_sometimesExistingMember = (
   ("chooseTransport", NativeConnectorSkill, true),
   ("readAppFacts", true, false),
   ("draftProfile", Adult),
