@@ -129,6 +129,70 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  for (const scenario of ["resume after draft", "finish draft before probe", "two manager probes", "first applicant to answer during a draft"] as const) {
+    await b.run(`Peon manager reply slot: ${scenario}`, async () => {
+      const w = new SeatWorld();
+      w.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      w.add("c1", "Casey Lee", 29, { candidate: true });
+      const reverseOrder = scenario === "first applicant to answer during a draft";
+      const firstAnswerWaits = scenario === "finish draft before probe" || reverseOrder;
+      if (scenario === "two manager probes" || reverseOrder) w.add("c2", "Jordan West", 29, { candidate: true });
+      for (const member of w.members) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(member.id, answer);
+      await w.say("manager", POST);
+      await w.say("manager", "yes");
+      const count = w.members.length - 1;
+      expect(await w.runUntil(() => w.net.reviewQueue().length === count)).toBe(true);
+      const ids = w.net.reviewQueue().map(item => item.oppId);
+      if (reverseOrder) ids.reverse();
+      const [first, second] = ids as [string, string | undefined];
+      const candidate = (id: string) => w.opp(id)!.participants.find(p => p !== "manager")!;
+      for (const id of ids) expect(w.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      for (const id of ids) expect(await w.runUntil(() => w.probedFor(candidate(id), id))).toBe(true);
+      const question = () => w.net.memberList().find(m => m.id === "manager")?.awaiting;
+      const questionsSent = () => w.to("manager").flatMap(send => send.meta.probe ? [send.meta.probe.key] : []);
+      const secondPost = "We're hiring a barista, 1 opening, $40k-$50k, onsite in Manhattan";
+      if (firstAnswerWaits) await w.say("manager", secondPost);
+      await w.say(candidate(first), "yes");
+      if (reverseOrder) await w.say(candidate(second!), "yes");
+      if (firstAnswerWaits) {
+        await w.run(HOUR);
+        expect(question()?.kind).toBe("posting");
+        expect(questionsSent()).toEqual([]);
+        w.restart();
+        await w.say("manager", "yes");
+        expect(w.saved.length).toBe(2);
+        expect(w.meetings.length).toBe(0);
+        expect(await w.runUntil(() => w.probedFor("manager", first))).toBe(true);
+      } else {
+        expect(await w.runUntil(() => w.probedFor("manager", first))).toBe(true);
+      }
+      const originalDelivery = question()?.probeReceiptId;
+      const originalSent = w.opp(first)?.sentAt?.manager;
+      if (scenario === "resume after draft") {
+        await w.say("manager", secondPost);
+        expect(question()?.kind).toBe("posting");
+        await w.say("manager", "no");
+        expect(w.meetings.length).toBe(0);
+        w.restart();
+        expect(await w.runUntil(() => w.probedFor("manager", first), 3 * HOUR)).toBe(true);
+        expect(question()?.probeReceiptId).not.toBe(originalDelivery);
+        expect(w.opp(first)?.sentAt?.manager).toBe(originalSent);
+      } else if (second) {
+        if (!reverseOrder) await w.say(candidate(second), "yes");
+        expect(questionsSent()).toEqual([first]);
+        expect(question()?.oppId).toBe(first);
+      }
+      w.restart();
+      await w.say("manager", "yes");
+      expect(w.meetings.map(meeting => meeting.proposalId)).toEqual([first]);
+      if (second) {
+        expect(await w.runUntil(() => w.probedFor("manager", second))).toBe(true);
+        await w.say("manager", "yes");
+        expect(w.meetings.map(meeting => meeting.proposalId)).toEqual([first, second]);
+      }
+    });
+  }
+
   for (const attendance of ["candidate missed", "manager missed", "completed", "unanswered"] as const) {
     await b.run(`seat capacity after a booked interview: ${attendance}`, async () => {
       const world = new SeatWorld();

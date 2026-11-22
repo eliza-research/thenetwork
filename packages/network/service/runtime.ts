@@ -31,7 +31,8 @@ import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRun
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { relayConsentStale, relayRecordMayDispatch } from "../../core/src/generated/relayDecision.ts";
 import { cofounderBoundIntentCurrent, cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
-import { hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
+import { hireContactAllowed, managerQuestionDeadline, managerQuestionDeliveryCurrent } from "../../core/src/generated/peonHireDispatch.ts";
+import { probeResponseMs } from "../../core/src/generated/probeDispatch.ts";
 import { slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalRosterReady, lateArrivalText, lateArrivalWindow } from "../../core/src/generated/groupLateArrival.ts";
@@ -459,8 +460,13 @@ export class NetworkRuntime {
     if (contact.body !== body || !candidate || participants.length !== 2 || !participants.includes(seat.manager)
       || !participants.includes(memberId) || !this.matchingAllowed || !saved?.state.matchingEnabled) return false;
     const now = this.clock.now(), reveal = contact.type === "proposal", statuses = new Map(opp.status);
+    const managerProbe = !reveal && memberId === seat.manager;
+    const slot = managerProbe ? saved.state.members.find(member => member.id === memberId)?.awaiting : undefined;
+    if (!managerQuestionDeliveryCurrent(managerProbe, slot?.kind === "probe" && slot.oppId === opp.id, slot?.probeReceiptId === contact.id)) return false;
+    const original = opp.sentAt?.[memberId];
+    const deadline = managerProbe ? managerQuestionDeadline(opp.deadline, original !== undefined, original ?? 0, probeResponseMs) : opp.deadline;
     const phase = reveal ? opp.stage === "scheduled" && now < (opp.meetingAt ?? 0) && opp.bookedTold?.includes(memberId) === true
-      : opp.stage === "probing" && now < opp.deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
+      : opp.stage === "probing" && now < deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
     const accepted = (id: MemberId) => statuses.get(id) === (reveal ? "yes" : "available") && opp.contacted.includes(id);
     const humanReview = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
     if (!hireContactAllowed(true, humanReview, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;

@@ -77,7 +77,7 @@ import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGather
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems } from "../../core/src/generated/peonCapacity.ts";
-import { hireAnswerAllowed, hireContactAllowed } from "../../core/src/generated/peonHireDispatch.ts";
+import { hireAnswerAllowed, hireContactAllowed, managerQuestionDeadline, managerQuestionMayOpen } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
 import { engineQuestionDeliveryPrefix } from "../../core/src/generated/engineAsks.ts";
@@ -624,6 +624,8 @@ interface Opp {
    * yes and the intro only after both yeses. The engine's own views (capacity, pair rules) see the seat.
    */
   seat?: HireSeat;
+  /** New posting text displaced the employer's unanswered question. Its first send time still applies. */
+  managerProbeSuspended?: true;
 }
 /** A member request. The member's own words are not kept: only what the classifier read from them. */
 interface Request {
@@ -1286,8 +1288,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!this.currentHireSeat(o.seat, o.participants)) return this.close(o, "peon_search_changed", { releasePartial: true });
         const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
         const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
+        const deadline = o.seat.manager === m.id ? this.managerProbeDeadline(o, m.id) : o.deadline;
         if (!hireAnswerAllowed(this.memberReply && !msg.reaction, acceptedAt !== undefined,
-          msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now, o.deadline)) return "open" as const;
+          msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now, deadline)) return "open" as const;
       }
       if (this.app.id === "slop" && o?.category === "romance") {
         const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
@@ -3335,7 +3338,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!turnReached(current, first, firstIn)) continue;
       const opened = stepProbe(current, { type: "openTurn", first, firstAvailable: firstIn });
       if (opened !== current) { o.status.set(p, "probing"); o.turnAt = { ...o.turnAt, [p]: now }; }
-      if (needsProbeSend(opened, o.contacted.has(p))) this.probe(o, p);
+      if (needsProbeSend(opened, this.probeAlreadyAsked(o, p))) this.probe(o, p);
     }
     this.maybeReveal(o);
   }
@@ -3350,7 +3353,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const m = this.member(id);
     const now = this.now();
     const pending = participantProbe(o.status.get(id));
-    if (!needsProbeSend(pending, o.contacted.has(id))) return;
+    if (!needsProbeSend(pending, this.probeAlreadyAsked(o, id))) return;
+    if (o.seat?.manager === id && !this.managerProbeMayOpen(o, m, now)) return;
     if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatPreferencesAllow(o.category, o.participants))) {
       this.close(o, "repeat preferences changed");
       return;
@@ -6708,7 +6712,8 @@ export class ConsentNetwork implements NetworkUnderTest {
           if (!o) return;
           m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId, probeInboundCount: m.msgsIn };
           m.asked++; o.contacted.add(h.id);
-          o.sentAt = { ...o.sentAt, [h.id]: now() };
+          if (o.managerProbeSuspended && o.seat?.manager === h.id) o.managerProbeSuspended = undefined;
+          else o.sentAt = { ...o.sentAt, [h.id]: now() };
           this.counters.probesSent++;
           const n = o.offered?.[h.id]?.length ?? 0;
           if (n) this.counters.probesWithOptions++;
@@ -7191,6 +7196,30 @@ export class ConsentNetwork implements NetworkUnderTest {
       o.stage === "probing" || (reveal && o.stage === "scheduled"), to === seat.manager, reveal, accepted(candidate), accepted(seat.manager));
   }
 
+  private probeAlreadyAsked(o: Opp, member: MemberId): boolean {
+    return o.contacted.has(member) && !(o.seat?.manager === member && o.managerProbeSuspended);
+  }
+
+  private managerProbeDeadline(o: Opp, member: MemberId): number {
+    const sentAt = o.sentAt?.[member];
+    return managerQuestionDeadline(o.deadline, sentAt !== undefined, sentAt ?? 0, probeResponseMs);
+  }
+
+  /** A suspended manager question keeps its place. Other questions are ordered by when the applicant said yes. */
+  private managerProbeMayOpen(o: Opp, m: MemberState, now: number): boolean {
+    if (probeExpired(now, this.managerProbeDeadline(o, m.id))) return false;
+    const opened = o.turnAt?.[m.id] ?? o.createdAt;
+    const older = [...this.opps.values()].some(waiting => {
+      if (waiting === o || waiting.seat?.manager !== m.id || waiting.stage !== "probing"
+        || waiting.status.get(m.id) !== "probing" || this.probeAlreadyAsked(waiting, m.id)
+        || probeExpired(now, this.managerProbeDeadline(waiting, m.id))) return false;
+      if (!!waiting.managerProbeSuspended !== !!o.managerProbeSuspended) return waiting.managerProbeSuspended === true;
+      const awaitingSince = waiting.turnAt?.[m.id] ?? waiting.createdAt;
+      return awaitingSince < opened || (awaitingSince === opened && waiting.id < o.id);
+    });
+    return managerQuestionMayOpen(m.awaiting?.kind === "posting", m.awaiting?.kind === "probe" && m.awaiting.oppId !== o.id, older);
+  }
+
   /** The job title of a seat (its posting's "Hire: <title>"), for the seat copy. */
   private seatTitle(seat: MemberId): string {
     return (this.snapshotCached().intents.find(i => i.memberId === seat)?.objective ?? "").replace(/^Hire:\s*/i, "") || "the role";
@@ -7357,6 +7386,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     const asks = (step.draft.asks ?? 0) + (step.ready ? 0 : 1);
     // Two questions without the missing field: the draft is dropped (one question at a time, never a loop).
     if (asks > 2) { clear(); return reply(POSTING_COPY.dropped); }
+    if (m.awaiting?.kind === "probe") {
+      const interrupted = this.opps.get(m.awaiting.oppId ?? "");
+      if (interrupted?.seat?.manager === m.id && interrupted.stage === "probing"
+        && interrupted.status.get(m.id) === "probing" && interrupted.sentAt?.[m.id] !== undefined
+        && !probeExpired(this.now(), this.managerProbeDeadline(interrupted, m.id))) interrupted.managerProbeSuspended = true;
+    }
     m.posting = { ...step.draft, asks, ready: step.ready };
     m.awaiting = { kind: "posting", at: this.now() };
     this.ctx.log("posting_read_back", { memberId: m.id, ready: step.ready, close: !!step.draft.close });
