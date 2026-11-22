@@ -77,6 +77,7 @@ import {
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { inboundAllowedAfterBan, sharedReportRoute } from "../../core/src/generated/safetyCase.ts";
+import { inboundReleasesHeldTexts } from "../../core/src/generated/outboundAdmission.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
@@ -1842,7 +1843,10 @@ export class NetworkService implements RuntimeHost {
     const threadRead = !kw && threadUpdateRequested(ev.text);
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
-    const legacyEngagement = !banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar && !gatheringRsvp && !gatheringFollowup;
+    const leavingId = leaveTarget(ev.text, this.apps);
+    const stopRequested = kw === "stop" || kw === "stop_all";
+    const legacyEngagement = !banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar
+      && !gatheringRsvp && !gatheringFollowup && inboundReleasesHeldTexts(stopRequested, leavingId !== undefined);
     const signed = !!this.inboundTurn() && !banned;
     const reportReply = signed && !kw && !factCommand && !intentCommand && !controls && !calendar
       && !gatheringRsvp && !gatheringFollowup && !surveyAnswer && !travel && !soloEvents && contributionPage === undefined;
@@ -1874,15 +1878,13 @@ export class NetworkService implements RuntimeHost {
     };
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
-    if (kw === "stop" || kw === "stop_all") {
-      if (legacyEngagement) await this.lineAdapter()?.engaged?.(ev.from);
+    if (stopRequested) {
       const scope: StopScope = stopCoversEveryApp(kw === "stop_all", route.shared, stopScope(this.env) === "global") ? "global" : "app";
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 
     // A banned person: STOP above, HELP and "leave <app>" only. Nothing else is engagement or opens a flow.
     // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
-    const leavingId = leaveTarget(ev.text, this.apps);
     if (!inboundAllowedAfterBan(banned, kw === "help" || !!leavingId)) { this.log(`[inbound] a banned number (${rt.id}): not handled`); return "held"; }
     // An allowed HELP from a banned number gets the help text and nothing else.
     if (banned && kw === "help") {

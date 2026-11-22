@@ -90,6 +90,17 @@ pure def conversationPolicy(compliance: bool, atCap: bool, agent: bool, reengage
   else { decision: AwaitingReply, reengage: false }
 ```
 
+### A STOP or an app leave does not release a text held for an answer
+
+A text held for the person's answer stays held until an eligible interaction resets the line. STOP, STOP ALL and a recognized app leave never release a held text. A leave can remove that app's held texts through account cleanup. It keeps another app's texts held.
+
+```quint
+pure def inboundReleasesHeldTexts(stop: bool, leave: bool): bool = not(stop or leave)
+
+pure def lawOptOutKeepsHeldTexts(stop: bool, leave: bool): bool =
+  (stop or leave) implies not(inboundReleasesHeldTexts(stop, leave))
+```
+
 ### Apply line controls and sending caps before checking the text
 
 Line review pauses every row. A reply-only line holds agent-initiated and new conversations. A pause-new line holds new conversations. Compliance skips the hourly recipient, daily line, and new-conversation caps. The line and new-conversation caps apply to agent-initiated rows. A proactive message also needs its person-cap slot. A leak finding holds the text for staff review.
