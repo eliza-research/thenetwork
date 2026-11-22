@@ -72,7 +72,7 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
   for (const f of res.flows) if (f.stage === "date") for (const id of [f.first, f.partner]) datesOf.set(id, (datesOf.get(id) ?? 0) + 1);
   const feasibleGroups: Extra["feasibleGroups"] = {};
   for (const p of real) {
-    if (!real.some(q => O.statedMutual(p, q, 0))) continue;
+    if (!res.world.initiallyFeasible.has(p.id)) continue;
     const g = (feasibleGroups[groupOf(p)] ??= { dates: 0, memberMonths: 0 });
     g.dates += datesOf.get(p.id) ?? 0; g.memberMonths += months;
   }
