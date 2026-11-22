@@ -1,5 +1,20 @@
 // spec/sitePages.md, "Every site serves public pages and each special page has one site"
-import { JoinView, type LegalText, LandingView, LegalDocument, NotFoundView, PageShell, useJoin, useLanding } from "@thenetwork/ui";
+import {
+  HomeHelpPageView,
+  JoinView,
+  type LegalText,
+  LandingView,
+  LegalDocument,
+  NotFoundView,
+  PageShell,
+  PhonePageView,
+  PhotoUploadPageView,
+  useHomeHelpPage,
+  useJoin,
+  useLanding,
+  usePhonePage,
+  usePhotoUploadPage,
+} from "@thenetwork/ui";
 import type { Brand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import type { SitePage } from "../../../packages/core/src/generated/sitePages.ts";
 import type { SiteData } from "./site.ts";
@@ -45,6 +60,24 @@ export function App({ brand, view, site }: AppProps) {
           <Join brand={brand} site={site} />
         </PageShell>
       );
+    case "PhonePage":
+      return (
+        <PageShell brand={brand}>
+          <PhoneChange site={site} />
+        </PageShell>
+      );
+    case "HomeHelpPage":
+      return (
+        <PageShell brand={brand}>
+          <HomeHelp site={site} />
+        </PageShell>
+      );
+    case "PhotosAddPage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosAdd site={site} />
+        </PageShell>
+      );
     default: {
       const unknownView: never = view;
       return unknownView;
@@ -80,4 +113,30 @@ function Join({ brand, site }: PartProps) {
       }}
     />
   );
+}
+
+type StepPartProps = Pick<AppProps, "site">;
+
+/**
+ * The phone change page over the phone page state of `usePhonePage`.
+ * @model spec/phonePage.md
+ */
+function PhoneChange({ site }: StepPartProps) {
+  return <PhonePageView {...usePhonePage({ siteKey: site.turnstileSiteKey })} />;
+}
+
+/**
+ * The home-help address page over the home-help page state of `useHomeHelpPage`.
+ * @model spec/homeHelpPage.md
+ */
+function HomeHelp({ site }: StepPartProps) {
+  return <HomeHelpPageView {...useHomeHelpPage({ siteKey: site.turnstileSiteKey })} />;
+}
+
+/**
+ * The photo upload page over the photo upload state of `usePhotoUploadPage`, with the photo consent of the site build.
+ * @model spec/photoUploadPage.md
+ */
+function PhotosAdd({ site }: StepPartProps) {
+  return <PhotoUploadPageView {...usePhotoUploadPage({ consentVersion: site.photoConsentVersion })} consentText={site.photoConsentText} />;
 }

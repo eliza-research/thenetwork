@@ -182,7 +182,7 @@ Models: [public event catalog](../publicEventCatalog.md), [matching engine](../m
 
 Try information and services first. Consider adults who opted into that kind of help and have capacity. State the request, time and effort clearly, review it before contacting anyone, and collect feedback afterwards. Requests requiring entry to a home are medium-risk exceptions to the public venue default. Require two or more helpers or a helper already known to the requester, plus review and consent from everyone before revealing an address. Route a request with a single unfamiliar helper to safety review.
 
-Models: [bounded help admission](../boundedHelp.md), [reviewed roster consent](../homeHelpConsent.md), [private address release](../privateHomeHelpVenue.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [safety and trust](../models/safety_trust.md).
+Models: [bounded help admission](../boundedHelp.md), [reviewed roster consent](../homeHelpConsent.md), [private address release](../privateHomeHelpVenue.md), [home-help page](../homeHelpPage.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F15 — Ask for an introduction
 
@@ -300,7 +300,7 @@ Models: [account privacy and export](../accountPrivacy.md), [identity lifecycle]
 
 Verify the new number and confirm from the old number or use steward recovery. Update authorized identity mappings and grants. End stale sessions. Preserve the person ID and membership history. Reusing a released number must not expose the former person's account.
 
-Models: [phone change](../phoneChange.md), [phone identity](../models/phone_identity.md), [identity lifecycle](../models/identity_sagas.md), [OAuth and MCP](../models/oauth_mcp.md).
+Models: [phone change](../phoneChange.md), [phone change page](../phonePage.md), [phone identity](../models/phone_identity.md), [identity lifecycle](../models/identity_sagas.md), [OAuth and MCP](../models/oauth_mcp.md).
 
 ## Story F26 — Set travel and presence
 
@@ -364,7 +364,7 @@ Models: [generated site enrollment](../siteEnrollment.md), [agent-assisted signu
 
 Confirm adult age, consent, app and ban status before fetching or processing a photo. Store it privately, remove unneeded metadata, and never include a photo in a probe. Clef ratings can affect matching as soft inputs. Scores stay private and are removed when the member, age or photo is no longer eligible. A member can choose an item to share only through F16.
 
-Models: [photos and rating](../models/photos_rating.md), [photo relay item](../models/photo_relay_item.md), [member age rules](../memberAge.md).
+Models: [photos and rating](../models/photos_rating.md), [photo upload page](../photoUploadPage.md), [photo relay item](../models/photo_relay_item.md), [member age rules](../memberAge.md).
 
 ## Story F32 — Keep meeting a public activity group
 
@@ -485,6 +485,7 @@ Spec: [landing entry](../landingEntry.md), "Story: Start in Messages instead".
 Acceptance:
 
 - Each site has a landing page, a privacy page, terms and a not-found page. Only peon.biz has a join page.
+- Each site has the one-step page `/phone`. Only ntwrk.party has `/home-help`, and only slop.date has `/photos/add`. On another site these paths show the not-found page. No page links to a one-step page, and each one-step page tells search engines not to index it.
 - The footer of each page has two links: Privacy, then Terms. Both pages exist on each site.
 - The terms page has a text messaging section at `#sms`. It describes the program, the opt-in, the message frequency, STOP for every app on the number, `leave` for one app, START, HELP, the costs, and that no number is shared for marketing.
 - On peon.biz, the terms name the join page and a text as the ways to opt in. On the other sites, the terms name the agent skill and a text, and never name or link a join page.
@@ -721,6 +722,57 @@ Acceptance:
 - The game tab shows only in the simulated world. Only an admin resets the world, chooses a level or chooses the reviewer.
 
 Spec: [console analysis panels](../consolePanels.md).
+
+## Story F53 — Change my number from a link
+
+> As a member who has a new number, I want to open the link from my conversation, confirm my current number and then my new number, so that I keep my account and my history.
+
+### Change the number on the site page
+
+Acceptance:
+
+- `/phone` is on every site. No page links to it. The link has no token and no fragment.
+- The page asks for a sign-in on the current number when there is no session, when the session ended, or when the sign-in is older than ten minutes ("For your safety, sign in again with your current number.").
+- The new number goes to the server only when it is a 10-digit US number and the sign-in mode is known. "Same number", "too many tries" ("Try later") and "invalid phone" keep the step.
+- A change code of 4 to 10 digits goes to the server. A wrong code keeps the code step. An expired change asks to start again. A number that another person uses goes back to the new-number step.
+- A held number shows "We need to check this number" and help@ntwrk.party.
+- A moved number shows the masked new number. On a Cloud site the page also says "Use your new number the next time you sign in." There is no sign-in button.
+
+Spec: [phone change page](../phonePage.md), [one-step pages](../oneStepPage.md).
+
+## Story F54 — Add or read the home-help address from a link
+
+> As a person on an approved home-help plan, I want to open the link from my conversation, confirm my number, and add, remove or read the address on a private page, so that the address never goes into a text.
+
+### The page does the address step for the plan in its link
+
+Acceptance:
+
+- `/home-help` is on ntwrk.party only. No page links to it.
+- The page reads the plan code and the revision from the fragment and removes the fragment before any request. It keeps the link in session storage only across the Cloud sign-in.
+- A bad or missing link shows "This link does not work", and the page sends no request.
+- The person signs in with the shared sign-in steps. The page offers the actions that the role allows, and all three while the role is unknown.
+- The page checks the address before it sends it: not empty, one line, at most 300 characters and 300 UTF-8 bytes.
+- The page shows the saved, removed, revealed, closed or unavailable result. It keeps the revealed address in page memory only. It names only help@ntwrk.party.
+
+Spec: [home-help page](../homeHelpPage.md), [one-step pages](../oneStepPage.md).
+
+## Story F55 — Add my photos from a link
+
+> As an adult slop.date member, I want to open the link from my conversation, choose my photos and send them once, so that the matchmaker can use them privately and nobody else can use my link.
+
+### The page stores the photos of one link once
+
+Acceptance:
+
+- `/photos/add` is on slop.date only. No page links to it. The page has no sign-in: the link is the authority.
+- The page reads the token from the fragment once, removes it before any request and keeps it in memory only. A malformed token sends nothing.
+- The page accepts 1 to 4 JPEG, PNG or WebP photos of at most 4 MB each and 8 MB in all, and checks them before it sends them.
+- The consent text shows exactly. Only a ticked box sends its version. A consent refusal keeps the link open.
+- A used, expired or ineligible link, or a link used on another site, stores nothing. The page then says to text ADD PHOTOS.
+- The page shows the saved count and one line for each refusal. It never shows a score. Photos are for adults (18+) only.
+
+Spec: [photo upload page](../photoUploadPage.md), [one-step pages](../oneStepPage.md), [photo policy](../photoPolicy.md).
 
 ## Later stories
 

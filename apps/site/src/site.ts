@@ -13,16 +13,23 @@ export interface SiteData {
   consentText: string;
   /** The security check key of the join page; "" when the site has no security check. */
   turnstileSiteKey: string;
+  /** The photo consent text that the photo upload page shows; "" on a site that keeps no photos. */
+  photoConsentText: string;
+  /** The version of that photo consent; "" on a site that keeps no photos. */
+  photoConsentVersion: string;
 }
 
-/** The pages that need the page script: the landing page (Copy, the agent tiles and Messages) and the browser join flow. */
-export type ScriptPage = "LandingPage" | "JoinPage";
+/** The pages that need the page script: the landing page (Copy, the agent tiles and Messages), the browser join flow and the one-step pages. */
+export type ScriptPage = "LandingPage" | "JoinPage" | "PhonePage" | "HomeHelpPage" | "PhotosAddPage";
 
 /** True when the page ships the page script. The other pages are complete without it. */
 export function pageNeedsScript(page: SitePage): page is ScriptPage {
   switch (page) {
     case "LandingPage":
     case "JoinPage":
+    case "PhonePage":
+    case "HomeHelpPage":
+    case "PhotosAddPage":
       return true;
     case "PrivacyPage":
     case "TermsPage":
@@ -47,6 +54,12 @@ export function rootAttributes(page: SitePage, brand: Brand, data: SiteData): st
     ["data-page", page],
     ["data-min-age", String(data.minJoinAge)],
     ...(page === "JoinPage" ? ([["data-consent-wording", data.consentText]] as [string, string][]) : []),
+    ...(page === "PhotosAddPage"
+      ? ([
+          ["data-photo-consent-text", data.photoConsentText],
+          ["data-photo-consent-version", data.photoConsentVersion],
+        ] as [string, string][])
+      : []),
     ...(pageNeedsScript(page)
       ? ([
           ["data-brand-record", JSON.stringify(brand)],
@@ -107,11 +120,15 @@ export function parseLinks(value: unknown): LandingLinks | undefined {
 
 /** Reads back what `rootAttributes` wrote, or undefined when the root does not carry a known page with its brand and links. */
 export function readRoot(root: HTMLElement, turnstileSiteKey: string): { page: SitePage; brand: Brand; data: SiteData } | undefined {
-  const { page, minAge, consentWording, brandRecord, landingLinks } = root.dataset;
+  const { page, minAge, consentWording, brandRecord, landingLinks, photoConsentText, photoConsentVersion } = root.dataset;
   const known = sitePageList.find((candidate) => candidate === page);
   const minJoinAge = Number(minAge);
   const brand = parseBrand(parseJson(brandRecord));
   const links = parseLinks(parseJson(landingLinks));
   if (known === undefined || brand === undefined || links === undefined || !Number.isSafeInteger(minJoinAge)) return undefined;
-  return { page: known, brand, data: { links, minJoinAge, consentText: consentWording ?? "", turnstileSiteKey } };
+  return {
+    page: known,
+    brand,
+    data: { links, minJoinAge, consentText: consentWording ?? "", turnstileSiteKey, photoConsentText: photoConsentText ?? "", photoConsentVersion: photoConsentVersion ?? "" },
+  };
 }

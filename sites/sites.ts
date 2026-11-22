@@ -10,6 +10,7 @@ import { parse as parseYaml } from "yaml";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
+import { PHOTO_APPS, PHOTO_CONSENT } from "../packages/platform/src/photos.ts";
 import { siteApp } from "../apps/site/prerender.ts";
 import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
 import { type SitePage, siteHasPage, sitePageList, skillAllowOrigin, skillCacheSeconds, skillContentType, updateHandoffAssetPath } from "../packages/core/src/generated/sitePages.ts";
@@ -88,6 +89,9 @@ export const PAGE_FILES: Record<SitePage, string> = {
   NotFoundPage: "404.html",
   JoinPage: "join.html",
   UpdateHandoffPage: updateHandoffAssetPath.slice(1) + ".html",
+  PhonePage: "phone.html",
+  HomeHelpPage: "home-help.html",
+  PhotosAddPage: "photos/add.html",
 };
 
 /** The pages of one site, including the pages that are specific to one site. */
@@ -329,6 +333,8 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
       minJoinAge: APPS[s.app].minJoinAge,
       consentText: APPS[s.app].consent.text,
       turnstileSiteKey: turnstileKey(env),
+      photoConsentText: PHOTO_APPS.includes(s.app) ? PHOTO_CONSENT.text : "",
+      photoConsentVersion: PHOTO_APPS.includes(s.app) ? PHOTO_CONSENT.version : "",
     };
     for (const page of pages(s)) write(join(outdir, PAGE_FILES[page]), app.page(s.key, page, input));
     if (existsSync(s.src)) cpSync(s.src, outdir, { recursive: true });

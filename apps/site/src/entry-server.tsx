@@ -8,7 +8,7 @@ import peonTokens from "@thenetwork/design-system/peon/tokens.json";
 import slopTokens from "@thenetwork/design-system/slop/tokens.json";
 import { BrandMark, brandIdFor, Button, landingLinks, PageShell, privacyFor, termsFor } from "@thenetwork/ui";
 import { type AppKey, type Brand, accentTokens, brandFor } from "../../../packages/core/src/generated/brandIdentity.ts";
-import { type SitePage, siteHasPage } from "../../../packages/core/src/generated/sitePages.ts";
+import { isOneStepPage, type SitePage, siteHasPage } from "../../../packages/core/src/generated/sitePages.ts";
 import { buttonPageButtons, UPDATE_HANDOFF_ASSISTANTS } from "../../../packages/notify/src/links.ts";
 import { UPDATE_HANDOFF_TEMPLATE_REFERENCE } from "../../../packages/notify/src/reference.ts";
 import { landingDescriptionFor } from "../../../packages/ui/src/content/landing.ts";
@@ -61,6 +61,12 @@ function pageText(brand: Brand, page: SitePage): { title: string; description: s
       return { title: `Join · ${brand.name}`, description: `Join ${brand.name}.` };
     case "UpdateHandoffPage":
       return { title: `Open your update · ${brand.name}`, description: `Open your ${brand.name} update in your assistant.` };
+    case "PhonePage":
+      return { title: `Change your number · ${brand.name}`, description: `Change the number you use with ${brand.name}.` };
+    case "HomeHelpPage":
+      return { title: `Home-help address · ${brand.name}`, description: "Add or read a home-help address." };
+    case "PhotosAddPage":
+      return { title: `Add photos · ${brand.name}`, description: `Add your photos to ${brand.name}.` };
     default: {
       const unknownPage: never = page;
       return unknownPage;
@@ -106,13 +112,16 @@ export const render: RenderPage = (app, page, input) => {
     `<meta name="theme-color" content="${escapeText(accent.light)}" media="(prefers-color-scheme: light)">`,
     `<meta name="theme-color" content="${escapeText(accent.dark)}" media="(prefers-color-scheme: dark)">`,
     `<link rel="icon" href="${escapeText(input.favicon)}" type="image/svg+xml">`,
-    ...(page === "JoinPage" ? ['<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">'] : []),
+    ...(page === "JoinPage" || page === "PhonePage" || page === "HomeHelpPage" ? ['<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">'] : []),
+    ...(isOneStepPage(page) ? ['<meta name="robots" content="noindex">'] : []),
   ].join("\n    ");
   const site: SiteData = {
     links: landingLinks(app, { skillVersion: input.skillVersion, textLine: input.textLine, siteHost: input.siteHost }),
     minJoinAge: input.minJoinAge,
     consentText: input.consentText,
     turnstileSiteKey: input.turnstileSiteKey,
+    photoConsentText: input.photoConsentText,
+    photoConsentVersion: input.photoConsentVersion,
   };
   const html = renderToString(
     <StrictMode>

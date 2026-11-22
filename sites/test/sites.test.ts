@@ -109,8 +109,10 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 describe.each(SITES)("$domain", (s) => {
   test("every required page is built, and the spec's brand record is this site", () => {
     expect([brandFor(s.key).domain, brandFor(s.key).skillName]).toEqual([s.domain, s.skill]);
-    const need = ["index.html", "privacy.html", "terms.html", "404.html", ...(s.app === "peon" ? ["join.html"] : [])];
+    const need = ["index.html", "privacy.html", "terms.html", "404.html", "phone.html", ...(s.app === "peon" ? ["join.html"] : []), ...(s.app === "ntwrk" ? ["home-help.html"] : [])];
     if (s.app !== "peon") expect(htmlFiles(s)).not.toContain("join.html");
+    if (s.app !== "ntwrk") expect(htmlFiles(s)).not.toContain("home-help.html");
+    expect(existsSync(join(out(s), "photos", "add.html"))).toBe(s.app === "slop");
     expect(htmlFiles(s)).not.toContain("sms-terms.html");
 
     expect(htmlFiles(s)).toEqual(expect.arrayContaining(need));
@@ -468,8 +470,7 @@ test("landing pages keep agent onboarding and the Messages entry", () => {
       expect(html, `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
       expect(html, `${s.domain} ${f}`).toContain(`<html lang="en" data-brand="${{ ntwrk: "network", slop: "slop", peon: "peon", friends: "friends" }[s.app]}">`);
     }
-    // Only the landing page and the join page ship the page script.
-    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(f === "index.html" || f === "join.html");
+    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(["index.html", "join.html", "phone.html", "home-help.html"].includes(f));
   }
 });
 

@@ -14,12 +14,12 @@ How the ledger was made: six agents read every file and the models on the three 
 
 | Verdict | Files |
 |---|---|
-| covered | 297 |
-| na | 411 |
+| covered | 311 |
+| na | 416 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 708 |
+| total | 727 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -33,7 +33,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | .github/runtime-eb4f/setup.ts | harness | none | none | na | Setup step for image qualification; no product state or decision. |
 | .github/workflows/deploy-sites.yml | production | boot_config [wave4/boot_config] | none | covered | The sites deploy workflow (M-148) with one proxy secret per Pages project (M-131): approval, Inspect, PATCH and readback, deploy, smoke, in matrix order. |
 | apps/site/prerender.ts | production | spec/sitePages.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
-| apps/site/src/App.tsx | production | spec/browserJoin.md, spec/landingEntry.md, spec/sitePages.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
+| apps/site/src/App.tsx | production | spec/browserJoin.md, spec/landingEntry.md, spec/sitePages.md, spec/phonePage.md, spec/homeHelpPage.md, spec/photoUploadPage.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
 | apps/site/src/entry-server.tsx | production | spec/brandIdentity.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
 | apps/site/src/main.tsx | production | spec/landingEntry.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | apps/site/src/site.ts | production | spec/sitePages.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, sitePages and does not recompute them. |
@@ -463,7 +463,11 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/.storybook/main.ts | devtool | none | none | na | Build, test or storybook configuration; no product state or decision. |
 | packages/ui/.storybook/preview.ts | devtool | none | none | na | Build, test or storybook configuration; no product state or decision. |
 | packages/ui/src/api/client.ts | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
+| packages/ui/src/api/homeHelp.ts | production | spec/homeHelpPage.md | packages/core/src/generated/homeHelpPage.ts | covered | Calls the generated link and address decisions; the regexes, the counts, the request body and the status-to-answer map are the shell (tests/e2e/home-help-page.e2e.test.ts). |
 | packages/ui/src/api/join.ts | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
+| packages/ui/src/api/phone.ts | production | spec/phonePage.md | packages/core/src/generated/phonePage.ts | covered | A total map from status and error code to one generated answer variant; tests/e2e/phone-page.e2e.test.ts covers it. |
+| packages/ui/src/api/photoUpload.ts | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | The token regex, the file facts and the status-to-answer map are a shell; the generated machine decides (tests/e2e/photo-upload-page.e2e.test.ts). |
+| packages/ui/src/api/stepPages.ts | production | spec/oneStepPage.md | packages/core/src/generated/oneStepPage.ts | covered | Maps each API answer to one generated sign-in answer or session value and decides nothing that the spec owns. |
 | packages/ui/src/api/turnstile.ts | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
 | packages/ui/src/brand/agentLogos.ts | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
 | packages/ui/src/brand/landing.ts | production | spec/landingEntry.md | packages/core/src/generated/brandIdentity.ts, packages/core/src/generated/landingEntry.ts, packages/core/src/generated/sitePages.ts | covered | Calls the generated decisions of brandIdentity, landingEntry, sitePages and does not recompute them. |
@@ -519,6 +523,8 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/FlowNotice.tsx | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
 | packages/ui/src/components/Headline.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Headline.tsx | production | spec/brandIdentity.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
+| packages/ui/src/components/HomeHelpPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/HomeHelpPageView.tsx | production | spec/homeHelpPage.md | packages/core/src/generated/homeHelpPage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of homeHelpPage and oneStepPage and does not recompute them. |
 | packages/ui/src/components/Icon.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Icon.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Input.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -539,12 +545,18 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/MessagesButton.tsx | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
 | packages/ui/src/components/NotFoundView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/NotFoundView.tsx | production | spec/sitePages.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
+| packages/ui/src/components/OneStepPage.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/OneStepPage.tsx | production | spec/oneStepPage.md | packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of oneStepPage and does not recompute them. |
 | packages/ui/src/components/PageShell.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PageShell.tsx | production | spec/sitePages.md | packages/core/src/generated/brandIdentity.ts | covered | Calls the generated decisions of brandIdentity and does not recompute them. |
 | packages/ui/src/components/PhoneInput.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PhoneInput.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
+| packages/ui/src/components/PhonePageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhonePageView.tsx | production | spec/phonePage.md | packages/core/src/generated/phonePage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of phonePage and oneStepPage and does not recompute them. |
 | packages/ui/src/components/PhoneStep.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/PhoneStep.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
+| packages/ui/src/components/PhotoUploadPageView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/PhotoUploadPageView.tsx | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | Display only: it shows the machine state and the copy. |
 | packages/ui/src/components/Popover.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Popover.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/PopoverClose.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -576,6 +588,8 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/components/StatusLine.tsx | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
 | packages/ui/src/components/StepFrame.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/StepFrame.tsx | production | spec/browserJoin.md | none | covered | Display only: it shows what its props give and decides nothing that the spec owns. |
+| packages/ui/src/components/StepSignInView.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
+| packages/ui/src/components/StepSignInView.tsx | production | spec/oneStepPage.md | packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of oneStepPage and does not recompute them. |
 | packages/ui/src/components/Table.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
 | packages/ui/src/components/Table.tsx | production | none | none | na | Display only: a token-styled primitive with no state that a spec owns. |
 | packages/ui/src/components/Tabs.meta.tsx | harness | none | none | na | Story data for the generated storybook: args and play functions only; it ships in no page. |
@@ -668,11 +682,16 @@ How the ledger was made: six agents read every file and the models on the three 
 | packages/ui/src/content/legal/slopPrivacy.tsx | data | spec/brandIdentity.md | none | covered | Copy and legal text only; spec/brandIdentity.md owns what each site may name. |
 | packages/ui/src/content/legal/slopTerms.tsx | data | spec/sitePages.md | none | covered | Copy and legal text only; spec/sitePages.md owns what each site may name. |
 | packages/ui/src/content/legal/types.ts | data | spec/sitePages.md | packages/core/src/generated/sitePages.ts | covered | Copy and legal text only; spec/sitePages.md owns what each site may name. |
+| packages/ui/src/hooks/stepSignIn.ts | production | spec/oneStepPage.md | packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of oneStepPage and does not recompute them. |
+| packages/ui/src/hooks/useHomeHelpPage.ts | production | spec/homeHelpPage.md | packages/core/src/generated/homeHelpPage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of homeHelpPage and oneStepPage and does not recompute them. |
 | packages/ui/src/hooks/useJoin.ts | production | spec/browserJoin.md | packages/core/src/generated/browserJoin.ts | covered | Calls the generated decisions of browserJoin and does not recompute them. |
 | packages/ui/src/hooks/useLanding.ts | production | spec/landingEntry.md | packages/core/src/generated/landingEntry.ts | covered | Calls the generated decisions of landingEntry and does not recompute them. |
+| packages/ui/src/hooks/usePhonePage.ts | production | spec/phonePage.md | packages/core/src/generated/phonePage.ts, packages/core/src/generated/oneStepPage.ts | covered | Calls the generated decisions of phonePage and oneStepPage and does not recompute them. |
+| packages/ui/src/hooks/usePhotoUploadPage.ts | production | spec/photoUploadPage.md | packages/core/src/generated/photoUploadPage.ts | covered | Calls the generated decisions of photoUploadPage and does not recompute them. |
 | packages/ui/src/index.ts | production | none | none | na | Re-exports only. |
 | packages/ui/src/lib/cn.ts | production | none | none | na | Class name and type helpers; no decision. |
 | packages/ui/src/lib/meta.ts | production | none | none | na | Class name and type helpers; no decision. |
+| packages/ui/src/lib/stepLink.ts | production | spec/oneStepPage.md | packages/core/src/generated/oneStepPage.ts | covered | The fragment rules are in oneStepPage; the history and session storage access is a thin shell. |
 | packages/ui/vite.config.ts | devtool | none | none | na | Build, test or storybook configuration; no product state or decision. |
 | packages/ui/vitest.config.ts | devtool | none | none | na | Build, test or storybook configuration; no product state or decision. |
 | plugins/build.ts | devtool | spec/agentEntry.md, spec/brandIdentity.md | packages/core/src/generated/agentEntry.ts, packages/core/src/generated/brandIdentity.ts | na | Plugin snapshot build with a --check mode. The MCP URL of each skill comes from the generated pluginEndpoint, endpointPath and endpointHost (every app at its own path on ntwrk.party), and the OpenAI manifest server from openAiManifestApp. It holds no state for a Quint flow. |
