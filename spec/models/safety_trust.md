@@ -14,6 +14,8 @@ Production uses [Safety cases and report review](../safetyCase.md) for the case 
 
 The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents decisions with increasing identifiers and global releases with an app set. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. A reported minor signal restricts matching in its originating app. The [membership and age model](join_age.md) checks person-wide propagation of an age stated by the member or verified through signup.
 
+[A report keeps its own disposition](../safetyCase.md#a-hold-ban-or-dismissal-updates-the-matching-report). `pendingReportHold` in `packages/network/src/network.ts` reads the open report's subject, encounter, and urgency. [A ban refuses new ordinary text](../safetyCase.md#a-ban-allows-only-carrier-commands-and-app-leave). `NetworkService.inbound` calls `inboundAllowedAfterBan` before the report reaches the runtime.
+
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
 // Safety and trust (docs/research/2026-11-07-state-machines.md section 6.9). Machines: person-safety-carryover
@@ -30,8 +32,8 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 //   packages/network/src/reports.ts          report kinds, URGENT_REPORTS, checkInReport (an oracle here; the
 //                                            corpus evals/network/check-in-reports.jsonl checks it, SD-067)
 //   packages/network/src/network.ts          onTrustChange 1257, caseEvent 1278, liftHold 1313, closeCase 1323,
-//                                            fileReport 1349, reportHeld 1365 (a held reporter holds nobody,
-//                                            SD-072), holdMember 1381, markBanned 1396, dismissReport 1409,
+//                                            fileReport 1349, reportHeld 1365, holdMember 1381,
+//                                            markBanned 1396, dismissReport 1409,
 //                                            metBefore 1457 (bookedTold, SD-044), handleBlock 1475, applyBlock 1491,
 //                                            blockAndReport 1506 (SD-229), callOffPair 1532 (SD-045, SD-025),
 //                                            counterparts 1551, safetyTargetAt 1612 (SD-250), answerWho 1634,
@@ -89,9 +91,10 @@ module safety_trust {
   }
   // origReporter: a ghost that keeps the reporter after a leave (the code blanks reporterId).
   // meantP: a ghost, the person the member meant ("boss": somebody who is not a member).
+  // bannedAtFiling: canonical ban observed when this report entered the case.
   type Report = {
     reporter: Mid, reporterP: str, origReporter: Mid, subject: Mid, kind: str, met: bool, source: str, status: str,
-    credible: bool, intended: bool, at: int, meantP: str
+    credible: bool, intended: bool, at: int, meantP: str, bannedAtFiling: bool
   }
   type ReportIdentity = (Mid, Mid, str, str, int)
   // slot: what profile.ts slotOf reads from the record; hour: the New York hour of the meeting (truth)
@@ -145,8 +148,6 @@ module safety_trust {
     autoHeldP: Set[(str, str)],
     minorP: Set[(str, str)],
     heldMids: Set[Mid],
-    heldAtLeave: Set[Mid],
-    liftedMids: Set[Mid],
     pendingCallOff: Set[(str, str, str)],
     src: Mid -> Src,
     counted: Mid -> Set[Mid],
@@ -213,11 +214,9 @@ module safety_trust {
   pure def midOf(st: State, app: str, p: str): Mid = { app: app, p: p, g: st.gen.get((app, p)) }
   pure def liveMidsOf(st: State, p: str): Set[Mid] = APPS.map(a => midOf(st, a, p)).filter(m => st.live.get(m))
   pure def lvl(st: State, m: Mid): str = st.trust.get(m).level
-  // trust.level of a reporter id; a reporter who left has the blank id, which has no record ("ok")
-  pure def repLvl(st: State, m: Mid): str = if (m == NOBODY) "ok" else lvl(st, m)
-  // network.ts:1300 reportHeld: open, met, urgent, and the reporter is not on hold (SD-072)
+  // Network pendingReportHold calls reportRestrictsMatching for the subject's exact report.
   pure def reportHeld(st: State, m: Mid): bool =
-    st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind) and repLvl(st, r.reporter) != "hold")
+    st.reports.exists(r => r.subject == m and r.status == "open" and r.met and URGENT.contains(r.kind))
   pure def reportIdentity(r: Report): ReportIdentity = (r.subject, r.origReporter, r.kind, r.source, r.at)
   pure def carriedReportHeld(st: State, m: Mid): bool = st.reports.exists(r =>
     r.subject.p == m.p and r.subject.app == m.app and urgentOpen(r) and st.carriedReports.contains(reportIdentity(r)))
@@ -361,7 +360,7 @@ module safety_trust {
     val cred = credibleT(rt, st.now) and not(st.banned.contains(rep.p))
     val r: Report = {
       reporter: rep, reporterP: rep.p, origReporter: rep, subject: sub, kind: kind, met: met, source: source, status: "open",
-      credible: cred, intended: intended, at: st.now, meantP: meant
+      credible: cred, intended: intended, at: st.now, meantP: meant, bannedAtFiling: st.banned.contains(rep.p)
     }
     val s1 = { ...st, reports: st.reports.union(Set(r)),
                counted: if (credibleT(rt, st.now) and met) st.counted.set(sub, st.counted.get(sub).union(Set(rep))) else st.counted }
@@ -455,7 +454,6 @@ module safety_trust {
     pendingWho: st.pendingWho.set(m, NO_WHO),
     relayLog: st.relayLog.filter(x => x._1 != m),
     heldMids: st.heldMids.exclude(Set(m)),
-    heldAtLeave: if (lvl(st, m) == "hold") st.heldAtLeave.union(Set(m)) else st.heldAtLeave,
     src: st.src.set(m, NO_SRC),
     counted: ALL_MIDS.mapBy(x => if (x == m) Set() else st.counted.get(x).exclude(Set(m))),
     staffCleared: st.staffCleared.exclude(Set(m)),
@@ -533,8 +531,6 @@ module safety_trust {
     autoHeldP: Set(),
     minorP: Set(),
     heldMids: Set(),
-    heldAtLeave: Set(),
-    liftedMids: Set(),
     pendingCallOff: Set(),
     src: ALL_MIDS.mapBy(_ => NO_SRC),
     counted: ALL_MIDS.mapBy(_ => Set()),
@@ -810,7 +806,6 @@ module safety_trust {
       // open case "lifted" (network.ts:1313-1317): the case always ends "lifted" (W3-228: already so).
       caseSt: st.caseSt.set(m, "lifted"),
       heldMids: st.heldMids.exclude(Set(m)),
-      liftedMids: st.liftedMids.union(Set(m)),
       autoHeldP: st.autoHeldP.exclude(Set((m.p, m.app))),
       minorP: st.minorP.exclude(Set((m.p, m.app))),
       counted: st.counted.set(m, Set()),
@@ -1063,11 +1058,8 @@ module safety_trust {
   }
 
   // ------------------------------------------------------------------ invariants (rules, not code)
-  // A report that the code counts toward a hold: open, met, urgent (reportHeld, network.ts:1300).
+  // The approved restriction persists while a report is open, met and urgent.
   pure def urgentOpen(r: Report): bool = r.status == "open" and r.met and URGENT.contains(r.kind)
-  // The rule's reporter in good standing (ghosts): not banned, not on hold now, and did not leave while on hold.
-  pure def standing(st: State, r: Report): bool =
-    not(st.banned.contains(r.reporterP)) and not(st.heldMids.contains(r.reporter)) and not(st.heldAtLeave.contains(r.origReporter))
 
   // PRD 40.3 (docs/prd-snapshot.md:1777) "A safety removal holds the person everywhere ... a safety hold alone
   // does not refuse a join, but the person cannot be matched until staff resolve it"; admin-console 3.7.1
@@ -1096,10 +1088,9 @@ module safety_trust {
 
   // PRD 36.3 / 1446 "an automatic safety hold on the reported member's opportunities until reviewed". An open
   // urgent report keeps the person's member on that app out of matching until its exact disposition.
-  // The historical live-member branch abstracts reporter standing. The carried branch uses the committed report.
   val urgentMetReportBlocksMatchingInApp = s.reports.forall(r => urgentOpen(r) implies {
     val x = midOf(s, r.subject.app, r.subject.p)
-    (s.live.get(x) and ((x == r.subject and standing(s, r)) or s.carriedReports.contains(reportIdentity(r)))) implies not(matchable(s, x))
+    (s.live.get(x) and (x == r.subject or s.carriedReports.contains(reportIdentity(r)))) implies not(matchable(s, x))
   })
 
   // trust.ts:6-7 "Holds never decay; only a person lifts them."
@@ -1112,13 +1103,8 @@ module safety_trust {
     x.msgs + x.reporters.size() + x.other >= 2
   })
 
-  // trust.ts:115-116 "a serial reporter's ... reports don't count"; a banned member is "never matched or
-  // contacted again". A reporter on hold or banned cannot take someone out of matching. SD-072 (fixed in
-  // ab4ff2a). Two paths reset the reporter's standing that the fix reads (the trust level): a leave and a staff
-  // lift of a banned member. They are the separate value `reporterStandingKept` below (NEW-2).
-  val reporterNotHeld = ALL_MIDS.forall(m => (s.live.get(m) and reportHeld(s, m)) implies
-    s.reports.exists(r => r.subject == m and urgentOpen(r) and (r.reporter == NOBODY or
-      (not(s.heldMids.contains(r.reporter)) and (not(s.banned.contains(r.reporterP)) or s.liftedMids.contains(r.reporter))))))
+  // A completed report records the ban at filing, independent of the transition's inbound guard.
+  val reportsAdmittedBeforeBan = s.reports.forall(r => not(r.bannedAtFiling))
 
   // PRD 40.3 "Blocks are person to person and apply in every app"; PRD F23 "Block takes effect immediately".
   // No booked item that two blocked people are going to: on the app of the block at once, on every other app
@@ -1211,13 +1197,6 @@ module safety_trust {
   val strangersCannotEngineHold = ALL_MIDS.forall(m => (s.live.get(m) and m.app == "slop" and blockedBy(s, m) >= 2
     and not(noShows(s, m) >= 2 and noShows(s, m) > dates(s, m))) implies metBlockers(s, m) >= 2)
 
-  // NEW-2 (W3-234: in scope as a security defect with a trace). reportHeld reads the reporter's trust level. A
-  // reporter on hold who then leaves the app (forget blanks reporterId, network.ts:999, and trust.level("") is
-  // "ok"), or a banned reporter whose hold staff lift (service.ts:1797 liftHold does not check the ban), makes
-  // the report hold its subject again.
-  val reporterStandingKept = ALL_MIDS.forall(m => (s.live.get(m) and reportHeld(s, m)) implies
-    s.reports.exists(r => r.subject == m and urgentOpen(r) and standing(s, r)))
-
   // Every rule above.
   val safety = and {
     staffHoldFollowsPerson,
@@ -1226,7 +1205,7 @@ module safety_trust {
     urgentMetReportBlocksMatchingInApp,
     holdOnlyLiftedByStaff,
     noSingleActorHold,
-    reporterNotHeld,
+    reportsAdmittedBeforeBan,
     blockClosesAllApps,
     blockOnlyAffectsPair,
     metIsReal,
@@ -1243,7 +1222,6 @@ module safety_trust {
     reportSubjectMeant,
     bannedNeverMatchable,
     relayAgeSignalReachesAgePolicy,
-    reporterStandingKept,
     engineHoldVisible,
     strangersCannotEngineHold,
   }
@@ -1257,8 +1235,6 @@ module safety_trust {
   // person's other apps (platform.person_holds gets a row only from a staff hold or a leave). It is not clear
   // which staff decision ends such a hold on the other apps.
   val autoHoldFollowsPerson = s.autoHeldP.forall(h => liveMidsOf(s, h._1).forall(x => not(matchable(s, x))))
-  val urgentMetReportBlocksMatching = s.reports.forall(r =>
-    (urgentOpen(r) and standing(s, r)) implies liveMidsOf(s, r.subject.p).forall(x => not(matchable(s, x))))
 
   // SD-027 (the staff exit is skipped: it needs a founder decision on a new staff action and member copy). The
   // slop trust_review rule holds a member with no case; staff cannot end it.
@@ -1316,7 +1292,7 @@ module safety_trust {
       .then(abuse(CY_S, 1))
       .then(report("ana", "slop", "cy", "report", "harassment", false))
       .then(report("ben", "slop", "cy", "report", "harassment", false))
-      .expect(lvl(s, CY_S) == "hold" and noSingleActorHold and reporterNotHeld)
+      .expect(lvl(s, CY_S) == "hold" and noSingleActorHold and reportsAdmittedBeforeBan)
       .then(liftHold(CY_S))
       .expect(lvl(s, CY_S) == "ok" and s.caseSt.get(CY_S) == "lifted")
 
@@ -1434,24 +1410,23 @@ module safety_trust {
       .then(report("cy", "slop", "ana", "report", "harassment", false))
       .expect(metIsReal and matchable(s, ANA_S) and s.reports.exists(r => r.reporter == CY_S and not(r.met)))
 
-  // SD-072 (fixed): a banned member who met ana cannot take her out of matching. Since the ban rule
-  // (spec/safetyCase.md, "A ban allows only carrier commands and app leave") the report text is held: no report.
+  // The canonical ban prevents a new ordinary report even before the app projects the restriction.
   run sd072BannedReporterTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
-      .then(ban("ben"))
-      .expect(reporterNotHeld and matchable(s, ANA_S))
+      .then(banStart("ben"))
+      .expect(s.banning.contains(BEN_S) and s.reports == Set() and matchable(s, ANA_S))
       .then(report("ben", "slop", "ana", "report", "harassment", false).fail())
 
-  // NEW-2: a held reporter's report holds nobody until the reporter leaves the app.
-  run new2HeldReporterLeavesTest =
+  // An admitted urgent report keeps its matching restriction after its reporter leaves.
+  run openReportSurvivesReporterLeaveTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(staffHold(BEN_S))
       .then(report("ben", "slop", "ana", "report", "harassment", false))
-      .expect(matchable(s, ANA_S))
+      .expect(not(matchable(s, ANA_S)))
       .then(leave("slop", "ben"))
-      .expect(not(matchable(s, ANA_S)) and not(reporterStandingKept) and reporterNotHeld)
+      .expect(not(matchable(s, ANA_S)) and urgentMetReportBlocksMatchingInApp and reportsAdmittedBeforeBan)
 
   // SD-067 (fixed): a happy check-in answer is no report (the reader cannot misread it).
   run sd067HappyCheckInTest =
@@ -1783,15 +1758,20 @@ module safety_trust {
       .expect(s.opps.get("o1").stage == "closed" and s.opps.get("o2").stage == "probing" and blockClosesAllApps)
       .then(confirm("o2").fail())
 
-  // W3-234 (NEW-2 path b): ana reports ben, then ana is banned (her hold stops the report from counting), staff
-  // lift her slop hold (liftHold does not check the ban), and her report holds ben again. A report sent after
-  // the ban is held (inboundOk), so the report must come first.
-  run w3_234BannedReporterLiftedTest =
+  // A later reporter ban leaves the exact open report pending until staff dismiss it.
+  run openReportSurvivesReporterBanTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
+      .expect(matchable(s, ANA_S) and matchable(s, BEN_S))
       .then(report("ana", "slop", "ben", "report", "harassment", false))
-      .then(ban("ana"))
-      .then(liftHold(ANA_S))
-      .expect(not(reporterStandingKept) and not(matchable(s, BEN_S)))
+      .expect(not(matchable(s, BEN_S)) and matchable(s, BEN_P))
+      .then(banStart("ana"))
+      .expect(not(matchable(s, BEN_S)) and reportsAdmittedBeforeBan)
+      .then(banApply(ANA_P))
+      .then(banApply(ANA_S))
+      .then(closeCase(BEN_S))
+      .expect(not(matchable(s, BEN_S)) and urgentMetReportBlocksMatchingInApp)
+      .then(all { nondet r = s.reports.oneOf() dismiss(r) })
+      .expect(matchable(s, BEN_S) and s.reports.forall(r => r.status == "dismissed"))
 }
 ```
