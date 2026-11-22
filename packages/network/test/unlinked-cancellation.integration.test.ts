@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { confirmationWindowHours } from "../../core/src/generated/meetingSettlement.ts";
 import { Mini } from "./mini.ts";
 
@@ -146,4 +146,25 @@ test("a day-only cancellation needs one booking on that New York date", async ()
   await w.say("a", "Cancel tonight, sorry");
   expect(w.net.opps.get("today")?.stage).toBe("closed");
   expect(w.net.opps.get(booked.id)?.stage).toBe("scheduled");
+});
+
+test("two withdrawals still close both bookings when a separate reply falls between acknowledgments", async () => {
+  const { w, state, booked } = await bookedPair();
+  state.opps = [20, 21, 22].map(day => ({
+    ...booked, id: `booking-${day}`, meetingAt: Date.UTC(2026, 9, day, 23),
+  }));
+  w.net.importState(state);
+  const marker = w.mark();
+  await w.say("a", "Please cancel my meeting on 2026-10-20 at 19:00");
+  await w.say("a", "Please cancel my meeting.");
+  expect(w.to("a", marker).map(message => message.body).join(" ")).toContain("Which one should I cancel?");
+  w.net.importState(w.net.exportState());
+  await w.say("a", "Please cancel my meeting on 2026-10-21 at 19:00");
+  expect(w.log("booked_cancelled").map(entry => entry.detail.oppId)).toEqual(["booking-20", "booking-21"]);
+  const acknowledgments = () => w.to("a", marker).filter(message => message.body === "No worries, thanks for the heads up.");
+  expect(acknowledgments()).toHaveLength(1);
+  w.clock.advance(10 * MINUTE);
+  await w.say("a", "Please cancel my meeting on 2026-10-22 at 19:00");
+  expect(w.log("booked_cancelled").map(entry => entry.detail.oppId)).toEqual(["booking-20", "booking-21", "booking-22"]);
+  expect(acknowledgments()).toHaveLength(2);
 });

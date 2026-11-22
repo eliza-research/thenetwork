@@ -129,6 +129,7 @@ import {
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
+import { bookingWithdrawalAcknowledgmentAllowed } from "../../core/src/generated/replyDuplication.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
@@ -469,6 +470,8 @@ interface MemberState {
   suggested: Map<string, number>;
   /** The last text sent to this member (the duplicate check in send()). */
   lastSent?: { body: string; at: number; consentProbe?: string | null; photoItemId?: string };
+  /** The last accepted neutral booking withdrawal reply, regardless of intervening messages. */
+  bookingWithdrawalAckAt?: number;
   /** Standing availability said at onboarding ("weekends, mostly"): availability tags that do not expire (plans ask 1). */
   standing?: { tags: string[]; at: number };
   /** This week's stated windows from the weekly check-in answer, and the activities named in it. */
@@ -3889,7 +3892,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.bookedAt?.[m.id] !== undefined && (ack || m.optedOut)) this.emit({ type: "plan_cancelled", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
     if (o.planRun) o.planRun = { ...o.planRun, answers: { ...o.planRun.answers, [m.id]: "no" } };
     this.ctx.log("booked_cancelled", { oppId: o.id, memberId: m.id, told: ack });
-    if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
+    if (bookingWithdrawalAcknowledgmentAllowed(ack, m.bookingWithdrawalAckAt !== undefined, now - (m.bookingWithdrawalAckAt ?? now))) {
+      const sent = this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
+      if (sent === "sent") m.bookingWithdrawalAckAt = now;
+    }
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = [...new Set(o.participants)].filter(p => o.status.get(p) === "yes");
     const keep = groupCanContinue(still.length);
