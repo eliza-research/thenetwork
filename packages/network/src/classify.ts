@@ -838,7 +838,9 @@ function clauseAt(t: string, i: number, len: number): string {
 
 const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
-const NAMED_EXCLUSION = /\b(?:(?:any day|any ?time|anything|everything|all|whichever) but|except|other than|apart from|aside from|excluding|barring)\s+(?:on\s+)?$/;
+const NAMED_EXCLUSION_RANGE = "(?:any day|any ?time|anything|everything|all|whichever)";
+const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barring";
+const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|except|${NAMED_EXCLUSION_PHRASES})\s+(?:on\s+)?$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type TimeMention = { at: number; end: number; day?: string; minute?: number; part?: "morning" | "afternoon" | "evening" };
@@ -1052,6 +1054,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }
 
+const AVAILABILITY_EXCLUSION = new RegExp(String.raw`\b(?:(${NAMED_EXCLUSION_RANGE} )but|${NAMED_EXCLUSION_PHRASES})\s+`, "g");
 const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\\b)`);
 
 /**
@@ -1065,9 +1068,9 @@ const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => r
 export function availabilityTags(body: string): string[] {
   // These exclusions have the same scope as "except". Require a time expression next so
   // "barring emergencies" does not refuse a later day; keep this out of booking consent.
-  const t = body.toLowerCase().replace(/\b(?:other than|apart from|aside from|barring)\s+/g,
-    (cue: string, at: number, text: string) => !/\bnothing(?:\s+at all)?\s+$/.test(text.slice(0, at))
-      && AVAILABILITY_TIME.test(text.slice(at + cue.length)) ? "except " : cue);
+  const t = body.toLowerCase().replace(AVAILABILITY_EXCLUSION,
+    (cue: string, range: string | undefined, at: number, text: string) => !/\bnothing(?:\s+at all)?\s+$/.test(text.slice(0, at))
+      && AVAILABILITY_TIME.test(text.slice(at + cue.length)) ? `${range ?? ""}except ` : cue);
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   type Tok = { at: number; days?: number[]; part?: string; refused?: boolean };
   const toks: Tok[] = [];

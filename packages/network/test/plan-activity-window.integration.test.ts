@@ -35,6 +35,32 @@ test("a weekly check-in applies to the first remaining local occurrence across t
   }
 });
 
+test.each([
+  "Weekday evenings, excluding Friday.",
+  "Weekday evenings, any day but Friday works.",
+  "Weekday evenings, anytime but Friday works.",
+])("a named exclusion in the weekly reply %j leaves that evening unavailable", async reply => {
+  // spec/planFormation.md, "The member's latest weekly answer takes precedence"
+  const tz = "America/New_York";
+  const clockDay = (day: number, hour: number) => fromLocal(2026, 10, day, hour, tz);
+  const mini = new Mini([{ id: "a", name: "Ana", age: 30 }], { growth: false, matchingEnabled: false });
+  mini.clock.set(clockDay(25, 13));
+  await mini.onboard("a");
+  await mini.say("a", "WEEKLY");
+  expect(await mini.runUntil(() => mini.to("a").some(message => message.meta.checkIn), 10 * HOUR)).toBe(true);
+
+  const now = clockDay(26, 13);
+  mini.clock.set(now);
+  await mini.say("a", reply);
+  const member = mini.net.exportState().members.find(member => member.id === "a");
+  expect(member?.availability?.at(-1)?.tags).toEqual(["evening:Mon", "evening:Tue", "evening:Wed", "evening:Thu"]);
+  const window = (day: number) => ({ start: clockDay(day, 18), end: clockDay(day, 19) });
+  expect(plans.planWindowMatchesStated(member?.stated, window(29), now)).toBe(true);
+  expect(plans.planWindowMatchesStated(member?.stated, window(30), now)).toBe(false);
+  expect(mini.log("probe_answer")).toEqual([]);
+  expect(mini.meetings).toEqual([]);
+});
+
 test("the generic planner checks availability through the end of a four-hour hike", () => {
   const venue = PLAN_VENUES.find(v => v.id === "inwood-hill");
   if (!venue) throw new Error("Missing the curated Inwood Hill Park venue");
