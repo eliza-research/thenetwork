@@ -67,7 +67,7 @@ import {
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
 } from "./rescheduling.ts";
 import {
-  bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
+  bookedReplyCurrent, closesForBlock, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
   acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed, unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
@@ -2243,13 +2243,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.trust.block(m.id, now, { target: target.id, met });
     // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
     // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
-    for (const o of [...this.opps.values()]) {
-      if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id)) continue;
-      const booked = o.stage === "scheduled";
-      if (booked) this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
-      this.close(o, "blocked");
-      // The other booked participants hear it is off without learning who acted.
-      if (booked) for (const id of o.participants) if (id !== m.id) this.sendBookedCancellation(o, id, copy.declinedQuiet);
+    for (const o of this.openOpps()) {
+      const roster = this.blockRoster(o);
+      if (closesForBlock(opportunityLifecycle(o), roster.includes(m.id) && roster.includes(target.id))) this.closeBlocked(o, m.id);
     }
     if (verb === "report") {
       const points = this.trust.report(target.id, m.id, now, { met });
@@ -2262,6 +2258,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     const reply = verb === "block" ? (met ? copy.blocked : copy.blockUnmatched)
       : met ? copy.reported(currentDanger) : copy.reportUnmatched(currentDanger);
     this.safetyReply(m, reply, currentDanger);
+  }
+
+  private blockRoster(o: Opp): MemberId[] {
+    return o.participants.filter(id => o.stage === "scheduled" ? o.status.get(id) === "yes" : activeOpportunityParticipant(o, id));
+  }
+
+  private closeBlocked(o: Opp, initiator?: MemberId): void {
+    const booked = o.stage === "scheduled";
+    if (booked) this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
+    this.close(o, "blocked");
+    if (booked) for (const id of o.participants) {
+      if (id !== initiator) this.sendBookedCancellation(o, id, copy.declinedQuiet);
+    }
   }
 
   /** Safety guidance is the first sentence and stays with the one direct reply. */
@@ -5074,6 +5083,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.retainMemberStanding(now);
     this.queueGatheringRepeats();
     for (const o of this.openOpps()) {
+      const roster = this.blockRoster(o);
+      const blockedPair = roster.some((first, index) => roster.slice(index + 1).some(second => this.blocked(first, second)));
+      if (closesForBlock(opportunityLifecycle(o), blockedPair)) {
+        this.closeBlocked(o);
+        continue;
+      }
       if (o.stage === "scheduled") continue;
       if (this.holdHelpOpportunity(o)) {
         this.close(o, "bounded help needs safety review");

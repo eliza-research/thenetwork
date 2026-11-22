@@ -12,7 +12,7 @@ Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md
 
 Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
 
-The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. The older independent minor-signal trace remains an abstraction of the age path.
+The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. [Exact open report restrictions](../safetyCase.md#the-exact-open-report-follows-its-subject-through-ordinary-app-leave) carry within their originating app. This model has one runtime per app and represents the exact report ID by its immutable report identity tuple. A reported minor signal restricts matching in its originating app. The [membership and age model](join_age.md) checks person-wide propagation of an age stated by the member or verified through signup.
 
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
@@ -85,7 +85,7 @@ module safety_trust {
   // meetHour: the New York local hour of the meeting (the slot, W3-225)
   type Opp = {
     app: str, kind: str, parts: Set[Mid], going: Set[Mid], told: Set[Mid], stage: str, meetingAt: int, meetHour: int,
-    feedbackFrom: Set[Mid], absent: Set[Mid], closedBy: str, blocker: str, target: str
+    feedbackFrom: Set[Mid], absent: Set[Mid], closedBy: str, blocker: str, target: str, blockRoster: Set[Mid]
   }
   // origReporter: a ghost that keeps the reporter after a leave (the code blanks reporterId).
   // meantP: a ghost, the person the member meant ("boss": somebody who is not a member).
@@ -185,7 +185,7 @@ module safety_trust {
   pure val NO_LIFT: Lift = { m: { app: "", p: "", g: -1 }, scope: "", star: false, stage: "none" }
   pure val FREE_OPP: Opp = {
     app: "", kind: "", parts: Set(), going: Set(), told: Set(), stage: "free", meetingAt: -1, meetHour: 19,
-    feedbackFrom: Set(), absent: Set(), closedBy: "", blocker: "", target: ""
+    feedbackFrom: Set(), absent: Set(), closedBy: "", blocker: "", target: "", blockRoster: Set()
   }
 
   pure def imin(a: int, b: int): int = if (a < b) a else b
@@ -392,7 +392,7 @@ module safety_trust {
       val o = st.opps.get(k)
       val inIt = if (o.stage == "probing") o.parts else o.going
       if (o.app == app and (o.stage == "scheduled" or o.stage == "probing") and inIt.exists(x => x.p == a) and inIt.exists(x => x.p == b))
-        { ...o, stage: "closed", closedBy: how, blocker: a, target: b }
+        { ...o, stage: "closed", closedBy: how, blocker: a, target: b, blockRoster: inIt }
       else o
     }) }
 
@@ -1036,7 +1036,7 @@ module safety_trust {
       shareAsk(a),
       shareYes(a),
       leaveStart(app, a),
-      leaveFinish(m),
+      all { s.leaving != Set(), nondet departing = s.leaving.oneOf() leaveFinish(departing) },
       join(app, a),
       relaySend(k, m, decision, flag2),
       tick(d),
@@ -1111,12 +1111,13 @@ module safety_trust {
   })
 
   // PRD F23 "Block ... only affects the pair". A block calls an item off only when the blocker and the target
-  // are both going to it: a member who said no to a plan does not call it off for the others. SD-045 (fixed
+  // are both on its roster at closure: asked participants for a probe, going participants for a booking.
+  // A member who said no to a plan does not call it off for the others. SD-045 (fixed
   // in df588c8). The stricter "nobody else is going" form is `blockLeavesOthersPlan` below (NEW-3).
   val blockOnlyAffectsPair = OPP_IDS.forall(k => {
     val o = s.opps.get(k)
     (o.closedBy == "blocked" or o.closedBy == "blocked_elsewhere") implies
-      (o.going.exists(x => x.p == o.blocker) and o.going.exists(x => x.p == o.target))
+      (o.blockRoster.exists(x => x.p == o.blocker) and o.blockRoster.exists(x => x.p == o.target))
   })
 
   // metBefore doc "Anonymous probes do not count: neither knew who the other was"; trust.ts:9 "only when the
@@ -1182,10 +1183,6 @@ module safety_trust {
   // "transactional". A hold notice is never queued as transactional. SD-475 (fixed in 49602b7).
   val safetyNoticeImmediate = s.holdNotices.forall(x => x._2 != "transactional")
 
-  // SD-074, minor part (W3-236; in scope: AGENTS.md founder decision 1, "Age is a person-level fact", minors
-  // are never matched "in any app"). A minor report on one app keeps the person out of matching on every app.
-  val minorSignalFollowsPerson = s.minorP.forall(h => liveMidsOf(s, h._1).forall(x => not(matchable(s, x))))
-
   // SD-027, visibility part (W3-235). trust.ts:6 "hold - ... staff review"; PRD 1420 the safety console lists
   // "members on watch and hold with the events that caused it". A member that the slop trust_review rule keeps
   // out of matching has an open (or held) safety case.
@@ -1233,7 +1230,6 @@ module safety_trust {
     reporterStandingKept,
     engineHoldVisible,
     strangersCannotEngineHold,
-    minorSignalFollowsPerson,
   }
 
   // ------------------------------------------------------------------ rules kept out of `safety`
@@ -1370,12 +1366,11 @@ module safety_trust {
       .then(join("peon", "cy"))
       .then(abuse(CY_P, 1).fail())
 
-  // SD-074 (skipped): a minor report on slop keeps ben matchable on peon.
-  run sd074MinorReportOneAppTest =
+  run minorReportRemainsInOriginAppTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "minor", false))
-      .expect(minorSignalFollowsPersonInApp and not(minorSignalFollowsPerson) and matchable(s, BEN_P))
+      .expect(minorSignalFollowsPersonInApp and not(matchable(s, BEN_S)) and matchable(s, BEN_P))
 
   // SD-025 (fixed): a slop date and a peon date between ana and ben; ana blocks ben on slop. The peon item stays
   // scheduled until the next tick (it cannot finalize first), then it closes.
@@ -1387,6 +1382,14 @@ module safety_trust {
       .expect(blockClosesAllApps and s.opps.get("o1").stage == "closed" and s.opps.get("o2").stage == "scheduled")
       .then(tick(1))
       .expect(s.opps.get("o2").stage == "closed" and s.opps.get("o2").closedBy == "blocked_elsewhere" and safety)
+
+  run crossAppBlockClosesCurrentProbeTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(bookDateAt("o2", "peon", "ana", "ben", 19, true))
+      .then(report("ana", "slop", "ben", "block", "harassment", false))
+      .then(tick(1))
+      .expect(s.opps.get("o2").closedBy == "blocked_elsewhere" and blockOnlyAffectsPair and safety)
 
   // SD-025 (fixed): the other app's item cannot finalize before the tick calls it off.
   run sd025NoMeetingBeforeCallOffTest =
