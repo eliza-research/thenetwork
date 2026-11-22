@@ -373,7 +373,7 @@ export class RelayDesk {
     const context = this.context(item, match, o, h.at);
     const again = relayItem(item, context);
     const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
-    const canOverride = staffMayReleaseHeldText(VERDICT[again.decision], item.kind === "text", context.sender.held, context.recipient.held);
+    const canOverride = staffMayReleaseHeldText(VERDICT[again.decision], item.kind === "text", context.sender.held === true, context.recipient.held === true);
     const rendered = again.decision === "pass" ? again.rendered : canOverride ? RELAY_WORDING.text(first, item.text!) : "";
     const released = decided();
     if (!rendered) return { ok: true, delivered: false };
