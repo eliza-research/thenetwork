@@ -102,6 +102,22 @@ pure def lawEmergencyCheckInNeedsReceipt(attributedReport: bool): bool =
   not(emergencyCheckInReport(false, attributedReport))
 ```
 
+## Story: Block or report a person directly
+
+> As a member, I want a clearly requested block or report to reach the right person or ask me who I mean.
+
+### Direct polite safety requests use the existing counterpart chooser
+
+A direct request beginning with “can you” or “could you” can ask to block or report. For these forms, conditional, hypothetical and delayed wording cannot start the action. “My date” and “my match” refer to a counterpart under the existing target rules. Use the existing chooser for uncertainty, including confirmation for a report by reference after a past meeting.
+
+```quint
+pure def safetyRequestMayResolveTarget(directCommand: bool, conditionalOrDelayed: bool): bool =
+  directCommand and not(conditionalOrDelayed)
+
+pure def lawConditionalSafetyRequestCannotResolveTarget(directCommand: bool): bool =
+  not(safetyRequestMayResolveTarget(directCommand, true))
+```
+
 ## Story: Resolve a report with its own disposition
 
 > As a staff member, I want a report to show whether it is open, dismissed, held, or banned.
