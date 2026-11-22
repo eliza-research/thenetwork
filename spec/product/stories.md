@@ -278,9 +278,9 @@ Models: [gathering review](../monthlyGathering.md), [invitation review](../month
 
 ### A block takes effect now and a report has an accountable owner
 
-A block stops pair contact across apps and invalidates queued work for the pair. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
+A block stops pair contact across apps and invalidates queued work for the pair. When another app reads the block, it closes an open opportunity that still includes both people before messages or settlement proceed. Record a report with necessary evidence and route by severity. Authorized safety staff can impose a hold or ban, triage urgent cases and process a decision with a recorded reason. For immediate danger, tell the person to contact emergency services.
 
-Models: [safety and trust](../models/safety_trust.md), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
+Models: [safety and trust](../models/safety_trust.md), [opportunity lifecycle](../opportunityLifecycle.md#a-block-closes-an-open-opportunity-for-the-active-pair), [outbound admission](../outboundAdmission.md#recheck-blocks-between-the-participants-before-contact), [outbound queue](../models/outbound_queue.md), [console privacy](../models/console_privacy.md).
 
 ## Story F24 — Export or delete my data
 

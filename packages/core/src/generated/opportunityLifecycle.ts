@@ -187,6 +187,19 @@ export function lawMinorContactClosesAnUnbookedOpportunity(proposal: Opportunity
   return !(proposal.phase === "InReview" || proposal.phase === "Probing") || closesForMinor(proposal, true, false, false, true);
 }
 
+/** Story: Book and conclude a proposal that comes together / A block closes an open opportunity for the active pair (spec/opportunityLifecycle.md) */
+//@ pure
+export function closesForBlock(proposal: OpportunityLifecycle, activeBlockedPair: boolean): boolean {
+  return canClose(proposal) && activeBlockedPair;
+}
+
+/** Story: Book and conclude a proposal that comes together / A block closes an open opportunity for the active pair (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawBlockClosesOnlyAnActivePair(proposal: OpportunityLifecycle, activeBlockedPair: boolean): boolean {
+  //@ ensures \result === true
+  return !closesForBlock(proposal, activeBlockedPair) || (canClose(proposal) && activeBlockedPair);
+}
+
 /** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function canComplete(proposal: OpportunityLifecycle, feedbackDue: boolean): boolean {
