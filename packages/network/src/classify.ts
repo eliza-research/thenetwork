@@ -8,6 +8,7 @@
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
 import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, type Category } from "@thenetwork/core";
+import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { historicalProbeTimeClause, mayRetryCounter, unboundProbeTimeNeedsClarification, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
@@ -278,7 +279,7 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}(?:${AGE_HALF}(?:${AGE_END}|${AGE_AND_CLAUSE})|${AGE_AND_CLAUSE}|${AGE_END})`), age: m => ageNumber(m[1] ?? "") },
   { rx: new RegExp(`${STATED_AGE}(\\d{1,2}|${NUM_WORD})${NOT_UPCOMING_AGE}${AGE_END_LOOSE}`), age: m => joinAgeOnly(ageNumber(m[1] ?? "")) },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
-  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => teenOrAdult(ageNumber(m[1] ?? "") - 1), estimated: true },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => teenOrAdult(precedingBirthdayAge(ageNumber(m[1] ?? ""))), estimated: true },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1), estimated: true },

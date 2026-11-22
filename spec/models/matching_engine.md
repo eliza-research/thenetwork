@@ -23,6 +23,8 @@ evidence, judgment views, probe order, and cached matching profiles. The [repeat
 
 [Dating radius](../datingRadius.md#date-planning-uses-the-matched-members-canonical-profiles) gives matching and the standalone planner the same bounded member-alias rules. The reference trace covers the lookup. The seeded engine test covers cache order and verifies identical plans.
 
+The [profile skill rule](../profileSkillLearning.md) applies to the offline reader. The Network adds eligible skills to the member's matching facets and retains previously learned skills. The model takes the reader's clause evidence as input. The optional model reader has its own prompt and validator and is outside this transition.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -940,6 +942,18 @@ module matching_engine {
   action hardFields(m: str): bool = agentNext(m).then(say(m, "core")).then(say(m, "loc"))
 
   // Onboarding to a confirmed read-back (docs/results/2026-10-09-slop-onboarding.md).
+  pure def profileSkillsAfter(learned: Set[str], skill: str, quoted: bool, anotherPerson: bool, sought: bool, ownClaim: bool): Set[str] =
+    if (not(quoted or anotherPerson) and (not(sought) or ownClaim)) learned.union(Set(skill)) else learned
+
+  run offlineProfileSkillOwnershipTest =
+    initWith("prod", false, "flow").expect(and {
+      profileSkillsAfter(Set("climbing"), "design", false, false, true, false) == Set("climbing"),
+      profileSkillsAfter(Set("climbing"), "design", true, false, false, true) == Set("climbing"),
+      profileSkillsAfter(Set("climbing"), "design", false, true, false, false) == Set("climbing"),
+      profileSkillsAfter(Set("climbing"), "design", false, false, true, true) == Set("climbing", "design"),
+      profileSkillsAfter(Set("climbing"), "design", false, false, false, false) == Set("climbing", "design"),
+    })
+
   run datePlanUsesCanonicalMemberTest =
     initWith("prod", false, "slop")
       .expect({

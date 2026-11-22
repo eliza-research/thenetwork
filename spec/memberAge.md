@@ -101,6 +101,18 @@ pure def lawConfirmedUnderageCannotRestart(age: int): bool =
   confirmedUnderage(age) implies not(textUseAllowedAtAge(age, false))
 ```
 
+### A near birthday gives an estimate for the present age
+
+The Network and Slop accept a current age qualified by words such as “still” or “currently,” including ages written with “y.o.” If a direct self-age clause names the age of a near birthday, use one year less in onboarding and conversation. Treat the result as an estimate. It can keep someone out of matching but does not confirm an under-13 refusal. The direct-only relay check does not commit an estimate. Quoted, reported, or hypothetical wording does not supply a direct current age.
+
+```quint
+pure def precedingBirthdayAge(nextAge: int): int =
+  nextAge - 1
+
+pure def lawBeforeAnEighteenthBirthdayIsNotAdult(nextAge: int): bool =
+  nextAge <= adultAge implies not(matchableAge(precedingBirthdayAge(nextAge)))
+```
+
 ### An older age cannot raise the effective age
 
 After validating both ages, the caller keeps the lower one. Missing and invalid observations do not replace a usable observation. The platform applies this rule across apps.

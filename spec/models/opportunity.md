@@ -14,6 +14,8 @@ The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitatio
 
 The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
 
+The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a qualified use of the same words. A direct withdrawal declines the offer. A quoted or negated use and an unbound time keep its current probe open. The model abstracts the text reader to these separate intents.
+
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -89,6 +91,7 @@ module opportunity {
 
   // What the member really says (the readers see only the text).
   pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel", "past_time",
+    "direct_withdrawal", "qualified_withdrawal", "unbound_time",
                          "fb_good", "fb_other_noshow", "fb_self_noshow", "ack", "job_post")
   // Intents that are consent to meet (AGENTS.md decision 11: only answer "yes" is consent, a counter is
   // not a yes). "yes, but none of those times" is a yes to the meeting.
@@ -471,13 +474,13 @@ module opportunity {
     if (Set("yes", "fb_good").contains(intent)) "yes_all"
     else if (intent == "yes_other_times") "yes_none"
     else if (intent == "ack") (if (outboundBefore >= 2 or answersOther) "unclear" else "yes_all")
-    else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
+    else if (Set("no", "cancel", "fb_self_noshow", "direct_withdrawal").contains(intent)) "no"
     else "unclear"
 
   // yesNoOf / consentOf (N:654, classify.ts:556): yes, no, counter or unclear.
   pure def readYesNo(intent: str): str =
     if (Set("yes", "fb_good", "ack").contains(intent)) "yes"
-    else if (Set("no", "cancel", "fb_self_noshow").contains(intent)) "no"
+    else if (Set("no", "cancel", "fb_self_noshow", "direct_withdrawal").contains(intent)) "no"
     else "unclear"
 
   // ---------------------------------------------------------------- onProbeAnswer (N:2327)
@@ -1234,6 +1237,16 @@ module opportunity {
       .then(tick(1, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").stage == "closed" and op(s, "o2").review.decision == "expired" and op(s, "o2").contacted == Set()
               and s.collected == 0 and safety)
+
+  run qualifiedReplyKeepsProbeTest =
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "qualified_withdrawal", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "probing" and mm(s, "a").aw.kind == "probe")
+      .then(answer("a", "unbound_time", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "probing" and op(s, "o2").revealSent == Set() and safety)
+      .then(answer("a", "direct_withdrawal", ALL_OPEN)).then(settled)
+      .expect(stat(s, "o2", "a") == "out" and op(s, "o2").revealSent == Set() and safety)
 
   // SD-041 (113a369, opportunity-counter-offer.test.ts): "how about next week instead?" is unclear: one
   // clarification, the probe stays open, silence expires it, and the request item closes. No names go out.

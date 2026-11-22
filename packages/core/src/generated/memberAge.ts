@@ -99,6 +99,19 @@ export function lawConfirmedUnderageCannotRestart(age: number): boolean {
   return !confirmedUnderage(age) || !textUseAllowedAtAge(age, false);
 }
 
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function precedingBirthdayAge(nextAge: number): number {
+  return exact_memberAge(nextAge - 1);
+}
+
+/** Story: Take part in adult matching / A near birthday gives an estimate for the present age (spec/memberAge.md) */
+//@ pure
+export function lawBeforeAnEighteenthBirthdayIsNotAdult(nextAge: number): boolean {
+  //@ ensures \result === true
+  return !(nextAge <= adultAge) || !matchableAge(precedingBirthdayAge(nextAge));
+}
+
 /** Story: Take part in adult matching / An older age cannot raise the effective age (spec/memberAge.md) */
 //@ pure
 export function lowerAge(firstAge: number, secondAge: number): number {
@@ -110,4 +123,10 @@ export function lowerAge(firstAge: number, secondAge: number): number {
 export function lawEffectiveAgeCannotRise(firstAge: number, secondAge: number): boolean {
   //@ ensures \result === true
   return lowerAge(firstAge, secondAge) <= firstAge && lowerAge(firstAge, secondAge) <= secondAge;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_memberAge(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

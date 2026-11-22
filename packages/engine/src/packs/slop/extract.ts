@@ -15,6 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
+import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
 import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canBeMatched, canJoin, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
@@ -176,7 +177,7 @@ const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: bool
   { rx: new RegExp(`^\\s*(?:(?:hi|hey|hello)[\\s,!]+)?(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|${NUM_WORD_RX})[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => ageNumber(m[1] ?? ""), strict: true },
   { rx: /\b(?:my age is|age\s*[:=-]|age is)\s*(\d{1,2})\b|(?:^|[,.(]\s*)age\s+(\d{1,2})\b/, age: m => Number(m[1] ?? m[2]), strict: true },
-  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => ageNumber(m[1] ?? "") - 1, strict: false },
+  { rx: new RegExp(`${SELF_CURRENT_AGE}(\\d{1,2}|${NUM_WORD_RX})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`), age: m => precedingBirthdayAge(ageNumber(m[1] ?? "")), strict: false },
   { rx: new RegExp(`\\b(?:${ME}\\s+)?(?:almost|nearly|turning|about to (?:be|turn))\\s+(\\d{1,2}|${NUM_WORD_RX})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|mi\\b|km|percent|%|feet|ft|times))`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD_RX})\\s+(?:in|on|next|this|soon)\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   // Shorthand "27f", "27 m", "27/nb", "f27", "m 31": an age and a gender together.
