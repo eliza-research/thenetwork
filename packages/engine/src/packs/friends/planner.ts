@@ -33,9 +33,10 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import {
-  canReservePartner, type Event as WeekEvent, friendTableHasMinimumCandidates, friendTableTriesNextStarter, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
+  canReservePartner, type Event as WeekEvent, friendTableHasMinimumCandidates, friendTableTriesNextStarter, initial as initialWeek, newPlanAvailable,
   recurringAvailable, step as stepWeek,
 } from "../../../../core/src/generated/friendsWeek.ts";
+import { friendsAlternateMayRemain } from "../../../../core/src/generated/friendsPlanningSeats.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue, pairValueScale } from "../../../../core/src/generated/pairValue.ts";
@@ -597,8 +598,15 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       out.partners.push(fp);
     }
   }
-  // Alternates are never invited elsewhere this run.
+  // An alternate belongs to the first eligible bench in the week's plan order.
   week = stepWeek(week, { type: "finishWeek" });
-  for (const p of out.plans) p.alternates = p.alternates.filter(id => newPlanAlternateCanRemain(week, id));
+  const plans = [...out.sessions, ...out.offers.map(offer => offer.first), ...out.repeats, ...out.plans, ...out.partners];
+  const invitees = new Set(plans.flatMap(plan => plan.invited));
+  const alternates = new Set<MemberId>();
+  for (const plan of plans) plan.alternates = plan.alternates.filter(id => {
+    if (!friendsAlternateMayRemain(invitees.has(id), alternates.has(id))) return false;
+    alternates.add(id);
+    return true;
+  });
   return out;
 }

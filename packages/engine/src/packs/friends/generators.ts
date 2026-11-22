@@ -11,6 +11,7 @@
 //                       passes the one-to-one rules (rules.ts group_first)
 import type { MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
+import { friendsCandidateCanMeet, friendsSeatFitsFormat } from "../../../../core/src/generated/friendsPlanningSeats.ts";
 import { memberReason, pairReason } from "../../filters.ts";
 import { circleCandidate, pairCandidate, searchFor, type GenCtx } from "../../genkit.ts";
 import type { Circle } from "../../match/circles.ts";
@@ -74,13 +75,21 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
     const mutual = (a: MemberId, b: MemberId) => positiveAbout(ctx, a, b, r.id) && positiveAbout(ctx, b, a, r.id);
     // Attendees with a mutual "see again" with at least one other attendee.
     const ids = r.participants.filter(a => r.participants.some(b => b !== a && mutual(a, b)));
-    const ok = ids.filter(id => !memberReason(w, id, { category: "social", role: "peer", format: ids.length >= 3 ? "small_group" : "one_to_one", timeSensitive: false })).slice(0, 6);
+    const startsAsGroup = ids.length >= 3;
+    const fit = (id: MemberId, group: boolean) => {
+      const format = group ? "small_group" : "one_to_one";
+      return w.get(id)?.m.prefs.formats.includes(format) === true
+        && memberReason(w, id, { category: "social", role: "peer", format, timeSensitive: false }) === null;
+    };
+    const firstPass = ids.filter(id => fit(id, startsAsGroup)).slice(0, 6);
+    const ok = firstPass.length === 2 && startsAsGroup
+      ? firstPass.filter(id => friendsSeatFitsFormat(true, true, fit(id, false))) : firstPass;
     if (ok.length < 2) continue;
     const k = [...ok].sort().join(",");
-    if (seen.has(k)) continue;
-    seen.add(k);
+    if (seen.has(k) || !w.canMeet(ok)) continue;
     const circle = familiarCircle(w, ok);
     if (!circle) continue;
+    seen.add(k);
     const group = ok.length >= 3;
     // The mutual "see again" is the evidence and the warmth; fit and benefit come from the match core.
     out.push(circleCandidate(w, circle, "Friend", {
@@ -115,11 +124,13 @@ export function activityPartner(ctx: GenCtx): Candidate[] {
   const { w } = ctx;
   const out: Candidate[] = [];
   const done = new Set<string>();
-  const oneToOne = (id: MemberId) => memberReason(w, id, ONE_TO_ONE) === null;
+  const oneToOne = (id: MemberId) => w.get(id)?.m.prefs.formats.includes("one_to_one") === true
+    && memberReason(w, id, ONE_TO_ONE) === null;
   for (const profile of w.match.profiles) {
     if (profile.lane !== "Friend" || !oneToOne(profile.memberId)) continue;
     const best = searchFor(ctx, profile).kept.find(({ profile: other }) =>
-      oneToOne(other.memberId) && pairReason(w, profile.memberId, other.memberId, ONE_TO_ONE.category) === null);
+      oneToOne(other.memberId) && friendsCandidateCanMeet(
+        pairReason(w, profile.memberId, other.memberId, ONE_TO_ONE.category) === null, w.canMeet([profile.memberId, other.memberId])));
     if (!best) continue;
     const [a, b] = [profile.memberId, best.profile.memberId];
     const k = [a, b].sort().join(",");
