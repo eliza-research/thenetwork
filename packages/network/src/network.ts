@@ -510,15 +510,31 @@ const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|c
 /** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
 const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you(?: then| there)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 
-const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this) (?:meeting|date|plan|booking)(?: on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d))?(?: please)?[.!?]?$/i;
-const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:need to cancel|can'?t make it(?: anymore)?|can'?t come(?: anymore)?|have to bail)[.!]?$/i;
-type BookingCancellation = { localStart?: string };
+const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this|our) (?:meeting|date|plan|booking)(?: on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d))?(?: please)?[.!]?$/i;
+const EXACT_ATTENDANCE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it to|attend) (?:my|the|this|our) (?:meeting|date|plan|booking) on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d)(?: anymore)?(?:, sorry)?[.!]?$/i;
+const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:(?:need|have) to (?:cancel|call it off)|(?:can'?t|cannot|won'?t be able to) (?:make it|come)(?: anymore)?|have to bail)(?:, sorry)?[.!]?$/i;
+const ATTENDANCE_DAY_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:cancel|(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)(?: to [^.?!;,]{1,80} on)?)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: anymore)?(?:, sorry)?[.!]?$/i;
+const QUALIFIED_ATTENDANCE = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t|will not)\b[^.;!?]*\b(?:if|unless|assuming|in case)\b/i;
+const KEEP_BOOKING = /^(?:please )?(?:(?:i|we) (?:don'?t|do not) need to|(?:there(?: is|'s) )?no need to|(?:don'?t|do not)) (?:cancel|call off|call it off)\b[^.;!?]*(?:[.!]*)$/i;
+type BookingCancellation = { localStart?: string; day?: string; needsExactStart?: boolean };
 
 export function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
-  const booking = BOOKING_CANCEL.exec(command);
+  const booking = BOOKING_CANCEL.exec(command) ?? EXACT_ATTENDANCE_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
+  const namedDay = ATTENDANCE_DAY_CANCEL.exec(command);
+  if (namedDay) return /\bto .+ on\s+/i.test(command) ? { needsExactStart: true } : { day: namedDay[1]!.toLowerCase() };
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
+}
+
+/** The local civil date named by the member at receipt. A bare weekday is its next occurrence. */
+function bookingCancellationDay(timeWord: string, receivedAt: number): string {
+  const { day, weekday } = nyParts(receivedAt);
+  if (timeWord === "today" || timeWord === "tonight") return day;
+  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const desired = weekdays.findIndex(label => label.toLowerCase() === timeWord.slice(0, 3));
+  const offset = timeWord === "tomorrow" ? 1 : (desired - weekdays.indexOf(weekday) + 7) % 7;
+  return new Date(Date.parse(`${day}T00:00:00Z`) + offset * DAY).toISOString().slice(0, 10);
 }
 
 const ATTENDANCE_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i\s+)?(?:can'?t|cannot|won'?t|will not)\s+(?:make it|come|attend)|(?:i'?m\s+|i am\s+)?not\s+(?:coming|attending|comfortable meeting)|i\s+(?:need|have)\s+to\s+(?:cancel|call it off))(?:\s+anymore)?[.,!]*$/i;
@@ -535,6 +551,18 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
     start = end.index + end[0].length;
   }
   return !quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start).trim());
+}
+
+/** The source text for a booked reply, with independent transfer and attendance evidence. */
+export function bookedReplyKeepsMeeting(body: string): boolean {
+  const text = body.trim().replace(/[‘’ʼ`´]/g, "'");
+  return KEEP_BOOKING.test(text) || QUALIFIED_ATTENDANCE.test(text);
+}
+
+export function bookedTextDeclines(body: string, ordinaryDecline: boolean): boolean {
+  const swapWithdrawal = withdrawsSwap(body);
+  return bookedReplyDeclines(ordinaryDecline, swapWithdrawal,
+    swapWithdrawal && declinesAttendanceAlongsideSwap(body), bookedReplyKeepsMeeting(body));
 }
 
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
@@ -1269,9 +1297,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
     const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body) : undefined;
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
-    const cancellation = this.memberReply && !msg.reaction ? explicitBookingCancellation(body) : undefined;
+    const directBookingReply = this.memberReply && !msg.reaction;
+    const bookingText = directBookingReply ? body : "";
+    const cancellation = explicitBookingCancellation(bookingText);
+    const cancelDay = cancellation?.day ? bookingCancellationDay(cancellation.day, msg.signedReceivedAt ?? msg.ts) : undefined;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
-    if (cancellation?.localStart && this.handleExplicitCancellation(m, cancellation, now)) return;
+    if (cancellation?.needsExactStart) {
+      this.send(m, this.copy.bookingStartToCancel, { type: "info" }, "reply");
+      return;
+    }
+    if (cancellation && (cancellation.localStart || cancelDay)
+      && this.handleExplicitCancellation(m, cancellation, now, false, cancelDay)) return;
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
@@ -1367,10 +1403,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.awaiting = undefined;
       } else {
         const yn = this.yesNoOf(body);
-        const swapWithdrawal = this.memberReply && !msg.reaction && withdrawsSwap(body);
         // spec/opportunityLifecycle.md, "A number-swap refusal does not decline the booked meeting"
-        const declines = bookedReplyDeclines(c.kind === "cancel" || yn === "no", swapWithdrawal,
-          swapWithdrawal && declinesAttendanceAlongsideSwap(body));
+        const declines = bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no");
         const confirms = yn === "yes" || c.kind === "ack";
         if (checkIn && (declines || confirms)) {
           const receipt = this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", o.id, m.id, checkIn.revision));
@@ -1383,7 +1417,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           }
         }
         if (declines) {
-          return this.handleDrop(m, o, true, !msg.reaction && (swapWithdrawal || c.kind === "cancel" || consentOf(body).answer === "no"));
+          return this.handleDrop(m, o, true, !msg.reaction && bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || consentOf(body).answer === "no"));
         }
         if (confirms) {
           m.awaiting = undefined;
@@ -1393,7 +1427,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
-    if (!msg.reaction && !c.pastAbsence && !withdrawsSwap(body) && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
+    if (!msg.reaction && !c.pastAbsence && !withdrawsSwap(body) && !bookedReplyKeepsMeeting(bookingText)
+      && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {
       const directAnswer = this.memberReply && !msg.reaction;
@@ -1485,17 +1520,18 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private handleExplicitCancellation(m: MemberState, request: BookingCancellation, now: number,
-    bookedSlotAvailable = m.awaiting?.kind === "booked"): boolean {
+    bookedSlotAvailable = m.awaiting?.kind === "booked", date?: string): boolean {
     const matches: Opp[] = [];
     for (const o of this.opps.values()) {
       const startAt = o.meetingAt;
       if (!upcomingCancellationEligible(opportunityLifecycle(o), o.participants.includes(m.id),
         o.status.get(m.id) === "yes", startAt !== undefined && Number.isFinite(startAt), startAt ?? 0, now)) continue;
       if (request.localStart !== undefined && localBookingStart(startAt!) !== request.localStart) continue;
+      if (date !== undefined && nyParts(startAt!).day !== date) continue;
       matches.push(o);
       if (matches.length === 2) break;
     }
-    const action = unlinkedCancellation(this.memberReply, true, bookedSlotAvailable, request.localStart !== undefined, matches.length);
+    const action = unlinkedCancellation(this.memberReply, true, bookedSlotAvailable, request.localStart !== undefined || date !== undefined, matches.length);
     if (action === "NoCancellation") return false;
     if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!, true, true);
     else this.send(m, action === "AskWhichBooking" ? this.copy.whichBookingToCancel : this.copy.noBookingToCancel, { type: "info" }, "reply");

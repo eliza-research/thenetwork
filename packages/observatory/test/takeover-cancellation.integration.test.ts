@@ -10,6 +10,10 @@ test.each([
   { text: "Yes, I’ll be there", cancelled: false },
   { text: "Do not cancel the restaurant; I can’t come", cancelled: true },
   { text: "Cancel this date", cancelled: true },
+  { text: "I have to cancel", cancelled: true },
+  { text: "We don't need to cancel", cancelled: false },
+  { text: "No, not my number", cancelled: false },
+  { text: "Don’t give out my number - I'm not coming", cancelled: true },
 ])("records takeover attendance after '$text'", async ({ text, cancelled }) => {
   const game = new GameSource({
     seed: 7, personas: 80, days: 14, network: "consent", pushMs: 3_600_000, tickMs: 3_600_000,

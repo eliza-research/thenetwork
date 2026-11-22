@@ -169,15 +169,22 @@ export function lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle
 
 /** Story: Book and conclude a proposal that comes together / A number-swap refusal does not decline the booked meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function bookedReplyDeclines(ordinaryDecline: boolean, swapWithdrawal: boolean, directAttendanceDecline: boolean): boolean {
-  return swapWithdrawal ? directAttendanceDecline : ordinaryDecline;
+export function bookedReplyDeclines(ordinaryDecline: boolean, swapWithdrawal: boolean, directAttendanceDecline: boolean, keepsBooking: boolean): boolean {
+  return !keepsBooking && (swapWithdrawal ? directAttendanceDecline : ordinaryDecline);
 }
 
 /** Story: Book and conclude a proposal that comes together / A number-swap refusal does not decline the booked meeting (spec/opportunityLifecycle.md) */
 //@ pure
 export function lawSwapWithdrawalAloneDoesNotCancel(ordinaryDecline: boolean): boolean {
   //@ ensures \result === true
-  return !bookedReplyDeclines(ordinaryDecline, true, false);
+  return !bookedReplyDeclines(ordinaryDecline, true, false, false);
+}
+
+/** Story: Book and conclude a proposal that comes together / A number-swap refusal does not decline the booked meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawKeepingTheBookingVetoesABookedDecline(ordinaryDecline: boolean, swapWithdrawal: boolean, directAttendanceDecline: boolean): boolean {
+  //@ ensures \result === true
+  return !bookedReplyDeclines(ordinaryDecline, swapWithdrawal, directAttendanceDecline, true);
 }
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */

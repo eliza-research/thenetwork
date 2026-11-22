@@ -16,7 +16,7 @@ The executable [rescheduling rules](../meetingReschedule.md) cover independent c
 
 The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a qualified use of the same words. A direct withdrawal declines the offer. A quoted or negated use and an unbound time keep its current probe open. The model abstracts the text reader to these separate intents.
 
-A [number-swap withdrawal](../opportunityLifecycle.md#a-number-swap-refusal-does-not-decline-the-booked-meeting) keeps the booking unless the member also refuses attendance. The relay model owns the transfer state. The trace below follows the booked slot and makes sure the counterpart receives cancellation only after the attendance refusal.
+A negative or conditional cancellation uses the same booked-reply guard. Exact local start and date-only selection use the one-booking rule in the executable spec. The standalone state machine uses deterministic traces for the special interpretations and abstracts from a second simultaneous booked reply. A [number-swap withdrawal](../opportunityLifecycle.md#a-number-swap-refusal-does-not-decline-the-booked-meeting) keeps the booking unless the member also refuses attendance. The relay model owns the transfer state. The trace below follows the booked slot and makes sure the counterpart receives cancellation only after the attendance refusal.
 
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -93,7 +93,6 @@ module opportunity {
 
   // What the member really says (the readers see only the text).
   pure val INTENTS = Set("yes", "yes_other_times", "counter", "no", "unclear", "cancel", "past_time",
-    "direct_withdrawal", "qualified_withdrawal", "unbound_time", "swap_only", "swap_and_attendance",
                          "fb_good", "fb_other_noshow", "fb_self_noshow", "ack", "job_post")
   // Intents that are consent to meet (AGENTS.md decision 11: only answer "yes" is consent, a counter is
   // not a yes). "yes, but none of those times" is a yes to the meeting.

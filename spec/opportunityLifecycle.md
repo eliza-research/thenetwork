@@ -88,7 +88,7 @@ pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, ac
 
 ### An explicit cancellation selects the named upcoming meeting
 
-Read the member's own explicit cancellation in the current app. A request with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
+Read the member's own explicit cancellation in the current app. A request or direct attendance refusal with an exact date and time in New York local time selects that start before interpreting a reply to another booking or probe. A direct date-only cancellation can select a unique booking on the named local day. Read “today,” “tonight,” “tomorrow,” or a bare weekday from the signed receive date. When a natural-language activity name does not bind an exact start, ask for the full start before changing any booking. Keep that other reply slot open. Consider only accepted bookings on the member's current roster with a known start later than now. One matching booking follows the ordinary cancellation path. With several matches, ask which meeting. With no match, report that none matched. Both outcomes leave all bookings unchanged. A cancellation without a date keeps the normal routing for an active booked reply slot and for a probe answer.
 
 ```quint
 type UnlinkedCancellation = NoCancellation | NoMatchingBooking | AskWhichBooking | CancelMatchingBooking
@@ -117,14 +117,17 @@ pure def lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRos
 
 ### A number-swap refusal does not decline the booked meeting
 
-Withdrawing a number swap changes number-sharing consent. Keep the booking unless the text separately and directly declines attendance. A separate affirmative booking answer can still confirm the plan. The text reader distinguishes that answer or refusal from the transfer clause before the booked reply uses it.
+A statement that says the booking need not be cancelled preserves it. A conditional attendance statement cannot cancel on its own. Withdrawing a number swap changes number-sharing consent. Keep the booking unless the text separately and directly declines attendance. A separate affirmative booking answer can still confirm the plan. The text reader distinguishes that answer or refusal from the transfer clause before the booked reply uses it.
 
 ```quint
-pure def bookedReplyDeclines(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool): bool =
-  if (swapWithdrawal) directAttendanceDecline else ordinaryDecline
+pure def bookedReplyDeclines(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool, keepsBooking: bool): bool =
+  not(keepsBooking) and (if (swapWithdrawal) directAttendanceDecline else ordinaryDecline)
 
 pure def lawSwapWithdrawalAloneDoesNotCancel(ordinaryDecline: bool): bool =
-  not(bookedReplyDeclines(ordinaryDecline, true, false))
+  not(bookedReplyDeclines(ordinaryDecline, true, false, false))
+
+pure def lawKeepingTheBookingVetoesABookedDecline(ordinaryDecline: bool, swapWithdrawal: bool, directAttendanceDecline: bool): bool =
+  not(bookedReplyDeclines(ordinaryDecline, swapWithdrawal, directAttendanceDecline, true))
 ```
 
 ### A new minor signal closes an unbooked opportunity involving that person

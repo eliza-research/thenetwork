@@ -4,7 +4,7 @@
 import { MINUTE, type MemberId } from "@thenetwork/core";
 import { decide, type AgentReply, type PersonaAgent, type PersonaContext, type SimMessage } from "@thenetwork/sim";
 // The Network's own reader (refusal first): the simulator's parseYesNo read "absolutely not" as yes.
-import { explicitBookingCancellation, parseYesNo, sentencesOf } from "@thenetwork/network";
+import { bookedTextDeclines, explicitBookingCancellation, parseYesNo, sentencesOf } from "@thenetwork/network";
 import type { PlayerPrompt } from "./types.ts";
 
 interface Pending { prompt: PlayerPrompt; ctx: PersonaContext; msg: SimMessage; resolve: (r: AgentReply) => void }
@@ -63,17 +63,19 @@ export class TakeoverAgent implements PersonaAgent {
     const base: AgentReply = { ...d, action: "reply", text, delayMs: 2 * MINUTE, proposalId: pid };
     const answer = parseYesNo(text);
     const booked = msg.meta?.booked;
+    const wholeRequest = explicitBookingCancellation(text);
+    const unboundToOtherBooking = !wholeRequest?.localStart && !wholeRequest?.day && !wholeRequest?.needsExactStart;
     const cancels = sentencesOf(text).some(({ text: clause }) => {
       const request = explicitBookingCancellation(clause.replace(/;\s*$/, ""));
-      return request !== undefined && request.localStart === undefined;
+      return request !== undefined && !request.localStart && !request.day && !request.needsExactStart;
     });
-    if (cancels || (booked && answer === "no")) {
+    if ((booked || cancels) && unboundToOtherBooking && bookedTextDeclines(text, cancels || answer === "no")) {
       const upcoming = booked?.proposalId
         ?? Object.entries(mem.proposals).find(([, pr]) => pr.decision !== "decline" && pr.at && pr.at > ctx.now)?.[0] ?? pid;
       if (upcoming && mem.proposals[upcoming]) mem.proposals[upcoming]!.plannedShow = false;
       return { ...base, intent: "flake_notice", decision: "none", proposalId: upcoming };
     }
-    if (d.messageType === "proposal" && pid && answer !== "unclear") {
+    if (!booked && d.messageType === "proposal" && pid && answer !== "unclear") {
       const decision = answer === "no" ? "decline" : answer === "counter" ? "counter" : "accept";
       const pr = mem.proposals[pid] ?? { decision, plannedShow: false, enjoyment: 0, others: d.participants?.filter(x => x !== ctx.persona.id) ?? [] };
       mem.proposals[pid] = { ...pr, decision, plannedShow: decision !== "decline" };

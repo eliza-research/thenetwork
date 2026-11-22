@@ -94,3 +94,56 @@ test.each([
   const notices = w.to("b", marker).filter(send => send.meta.type === "cancellation");
   expect(notices.map(send => send.meta.proposalId)).toEqual(cancelled ? [booked.id] : []);
 });
+
+
+test.each([
+  ["I have to cancel", true],
+  ["Please cancel our date", true],
+  ["Have to call it off", true],
+  ["Please cancel my meeting", true],
+  ["No need to cancel, see you there", false],
+  ["We don't need to cancel", false],
+  ["I can't make it tonight if the trains stop", false],
+  ["Won't be able to make it tonight", false],
+] as const)("a booked reply uses its direct cancellation scope (%s)", async (body, cancelled) => {
+  const { w, booked } = await bookedPair();
+  await w.say("a", body);
+  expect(w.net.opps.get(booked.id)?.stage).toBe(cancelled ? "closed" : "scheduled");
+});
+
+test("a named attendance refusal preserves the unrelated active booking slot", async () => {
+  const { w, state, booked } = await bookedPair();
+  state.opps = [
+    { ...booked, objective: "running meetup", meetingAt: Date.UTC(2026, 9, 20, 23) },
+    { ...booked, id: "coffee", objective: "coffee", meetingAt: Date.UTC(2026, 9, 21, 23) },
+  ];
+  w.net.importState(state);
+  const marker = w.mark();
+  await w.say("a", "I can't make it to coffee on Wednesday anymore, sorry");
+  expect(w.to("a", marker).map(send => send.body).join(" ")).toContain("Which meeting should I cancel?");
+  expect(w.net.opps.get("coffee")?.stage).toBe("scheduled");
+  expect(w.net.opps.get(booked.id)?.stage).toBe("scheduled");
+  await w.say("a", "I can't make it to my meeting on 2026-10-21 at 19:00");
+  expect(w.net.opps.get("coffee")?.stage).toBe("closed");
+  expect(w.net.opps.get(booked.id)?.stage).toBe("scheduled");
+  expect(w.net.memberList().find(member => member.id === "a")?.awaiting?.oppId).toBe(booked.id);
+});
+
+test("a day-only cancellation needs one booking on that New York date", async () => {
+  const { w, state, booked } = await bookedPair();
+  const today = Date.UTC(2026, 9, 5, 23);
+  state.opps = [
+    { ...booked, meetingAt: today + 2 * DAY },
+    { ...booked, id: "today", meetingAt: today + 2 * HOUR },
+    { ...booked, id: "another-today", meetingAt: today + HOUR },
+  ];
+  w.net.importState(state);
+  w.clock.set(today);
+  await w.say("a", "Cancel tonight, sorry");
+  expect(w.net.exportState().opps.every(opp => opp.stage === "scheduled")).toBe(true);
+  await w.say("a", "Please cancel my meeting on 2026-10-05 at 20:00");
+  expect(w.net.opps.get("another-today")?.stage).toBe("closed");
+  await w.say("a", "Cancel tonight, sorry");
+  expect(w.net.opps.get("today")?.stage).toBe("closed");
+  expect(w.net.opps.get(booked.id)?.stage).toBe("scheduled");
+});
