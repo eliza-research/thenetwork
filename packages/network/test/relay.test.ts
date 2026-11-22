@@ -93,6 +93,7 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   expect(await pending.json()).toMatchObject({ decision: "hold" });
   const refused = await post(await ask("bo", "refusal-deny", "I will not give Ari my number"));
   expect(await refused.json()).toMatchObject({ decision: "none", delivered: false });
+  expect(await (await post(await ask("bo", "refusal-would", "I would not give Ari my number"))).json()).toMatchObject({ decision: "none", delivered: false });
   expect(await sql`select id from network.messages where app_id='friends' and body like '%asked me to send you%'`).toHaveLength(0);
   await open(phones.ari, "refusal-cleanup", "don't send my number");
 },60_000);
@@ -145,6 +146,7 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
   // Ari takes theirs back through the relay action ("don't send my number" is nothing to relay, and confirmed).
   expect(await (await post(await ask("ari","ttl-ari-cancel","actually don't send my number"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
   expect(await (await post(await ask("bo","ttl-bo-2","send Ari my number"))).json()).toMatchObject({decision:"hold"});
+  expect(await (await post(await ask("bo","ttl-bo-refuse","don't delay, my number is off limits"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
   expect(await numbers()).toBe(0);
   // Clean slate for the next test: Bo's request is withdrawn too.
   expect(await (await post(await ask("bo","ttl-bo-cancel","never mind, don't send my number"))).json()).toMatchObject({decision:"none"});
