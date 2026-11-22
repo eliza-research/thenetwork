@@ -131,6 +131,7 @@ import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext,
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { bookingWithdrawalAcknowledgmentAllowed } from "../../core/src/generated/replyDuplication.ts";
 import { recommendationLocation } from "../../core/src/generated/plansLocation.ts";
+import { currentPairAllowed } from "../../core/src/generated/currentPairRestrictions.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
@@ -807,7 +808,6 @@ export function bookedReminderWindow(kind: BookedReminderKind, now: number, star
 
 const activeOpportunityParticipant = (o: Opp, id: MemberId) =>
   o.participants.includes(id) && !["unavailable", "no", "dropped"].includes(o.status.get(id) ?? "");
-const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 export { gatheringRepeatOppPrefix };
@@ -2381,7 +2381,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     const met = this.metBefore(m.id, target.id);
-    this.blocks.add(pairKey(m.id, target.id));
+    const blockedPair = pairKey(m.id, target.id);
+    this.blocks.add(blockedPair);
+    this.planAgain.delete(blockedPair);
     this.ctx.recordBlock(m.id, target.id);
     this.trust.block(m.id, now, { target: target.id, met });
     // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
@@ -2906,7 +2908,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const o of this.opps.values()) if (o.origin === "request" && now - o.createdAt < 7 * DAY) for (const p of o.participants) if (p !== o.requester) load.set(p, (load.get(p) ?? 0) + 1);
     const out: { id: MemberId; score: number; fit: number; why: string; whyBack: string; tie: number }[] = [];
     for (const x of this.members.values()) {
-      if (x.id === m.id || !this.eligible(x.id) || this.blocked(m.id, x.id) || this.avoid.has(pairKey(m.id, x.id))) continue;
+      if (x.id === m.id || !this.eligible(x.id) || !this.pairAllowed(m.id, x.id)) continue;
       // Never two people with one first name in a request: the reveal "meet Bilal B." must be unambiguous.
       if (x.first.toLowerCase() === m.first.toLowerCase()) continue;
       if (x.state === "receiving") continue; // Receiving members are never asked to help others (support-only)
@@ -3005,7 +3007,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Plans buddy: someone else who asked for plans in the last 3 days, nearby. Asking for plans is
     // not consent to meet a stranger, so neither is primed: both are asked first (and it is reviewed).
     const other = this.requests.find(r => r.kind === "plans" && r.memberId !== m.id && now - r.at < 3 * DAY && !r.oppId
-      && this.eligible(r.memberId) && !this.blocked(m.id, r.memberId) && (this.minutesBetween(m.area, this.member(r.memberId).area) ?? Infinity) <= 35);
+      && this.eligible(r.memberId) && this.pairAllowed(m.id, r.memberId) && !this.pairHistory(m.id, r.memberId, 60)
+      && this.member(r.memberId).first.toLowerCase() !== m.first.toLowerCase()
+      && (this.minutesBetween(m.area, this.member(r.memberId).area) ?? Infinity) <= 35);
     if (other && venues[0]) {
       const o = this.newOpp({
         origin: "plans", kind: "event_coattend", category: "events", objective: `go to ${venues[0].name} together`, detail: `going to ${venues[0].name} with someone`,
@@ -3229,7 +3233,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
-      if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+      if (!this.pairAllowed(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
     if (!this.currentDatingPair(o)) return "slop_pair_changed";
     if (o.seat && !this.currentHireSeat(o.seat, o.participants)) return "peon_search_changed";
     if (o.origin === "second_encounter" && (!this.repeatSourceCurrent(o) || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
@@ -3251,7 +3255,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60))
+    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => !this.pairAllowed(p, a) || this.pairHistory(p, a, 60))
       && (!o.seat || !!this.hireSeatFor(o.seat, a)));
     const nextSeat = alt && o.seat ? this.hireSeatFor(o.seat, alt) : undefined;
     const next = stepOpportunity(opportunityLifecycle(o), { type: "reroll", replacementFound: !!alt && (!o.seat || !!nextSeat) });
@@ -3714,7 +3718,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // The same checks as a reroll: blocks, avoid edges and pair history with everyone staying (network-consent-26).
       const eligible = this.eligible(a);
       const sameFirstName = eligible && this.sharesFirstName(o, a);
-      const conflict = eligible && !sameFirstName && o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
+      const conflict = eligible && !sameFirstName && o.participants.some(p => p !== out && (!this.pairAllowed(p, a) || this.pairHistory(p, a, 60)));
       if (alternateAllowed(eligible, sameFirstName, conflict)) alt = a;
     }
     if (o.picks?.[out]) { const { [out]: _, ...rest } = o.picks; o.picks = rest; }
@@ -4162,7 +4166,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const other of others) {
       this.feedback.push({ id: `fb${this.feedback.length + 1}`, from: m.id, about: other, opportunityId: o.id, at: this.now(), sentiment: f.sentiment, wouldMeetAgain: f.again, ...(repeatConsent ? { repeatConsent: true } : {}) });
       const k = pairKey(m.id, other);
-      if (f.sentiment === "negative" && !f.otherNoShow) this.avoid.add(k);
+      if (f.sentiment === "negative" && !f.otherNoShow) {
+        this.avoid.add(k);
+        this.planAgain.delete(k);
+      }
       if (f.sentiment === "positive" && o.requester === m.id && o.origin === "request") {
         const r = this.requests.find(x => x.oppId === o.id);
         const def = r?.desireId ? desireById.get(r.desireId) : undefined;
@@ -4181,7 +4188,9 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private recordMeetingSafetyReport(reporter: MemberId, opp: Opp, subject: MemberId, kind: ReportKind) {
     this.fileReport(reporter, subject, kind, { oppId: opp.id, source: "check_in", met: true });
-    this.blocks.add(pairKey(reporter, subject));
+    const blockedPair = pairKey(reporter, subject);
+    this.blocks.add(blockedPair);
+    this.planAgain.delete(blockedPair);
     this.ctx.recordBlock(reporter, subject);
     const member = this.members.get(subject);
     if (kind === "minor" && member) this.minorReported(member, reporter);
@@ -4555,7 +4564,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private planFriendSeatFits(world: EngineWorld, id: MemberId, peers: readonly MemberId[], mode: "discovery" | "existingPlan"): boolean {
-    if (peers.some(peer => this.blocked(id, peer) || this.avoid.has(pairKey(id, peer)))) return false;
+    if (peers.some(peer => !this.pairAllowed(id, peer))) return false;
     if (mode === "existingPlan") {
       const values = existingFriendPlanPairValues(world, id, peers);
       return currentFriendPlanSeatFits(values !== undefined, values ?? []);
@@ -5156,7 +5165,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const again = planAgainOf(body) === "yes" && post.came;
     o.post = { ...o.post, [m.id]: { ...post, again } };
     const now = this.now();
-    if (again) for (const x of going) if (x !== m.id && o.post[x]?.again) { this.planAgain.set(pairKey(m.id, x), now); this.dirty = true; }
+    if (again) for (const x of going) if (x !== m.id && o.post[x]?.again && this.pairAllowed(m.id, x)) {
+      this.planAgain.set(pairKey(m.id, x), now); this.dirty = true;
+    }
     return this.crewCheck(m, o, going);
   }
 
@@ -5271,7 +5282,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       const activity = plans.activityById.get(crew.activityId);
       if (!venue || !activity) continue;
       const place = { name: venue.name, area: venue.area };
-      const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
+      const eligible = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
+      const host = crew.hostRotation[crew.sessions.length % crew.hostRotation.length];
+      const ordered = host && eligible.includes(host) ? [host, ...eligible.filter(id => id !== host)] : eligible;
+      const selected = new Set<MemberId>();
+      for (const id of ordered) if ([...selected].every(other => this.pairAllowed(other, id))) selected.add(id);
+      const members = eligible.filter(id => selected.has(id));
       if (members.length < this.pcfg.crews.minMembers) continue;
       world ??= this.planWorld(now, true);
       const next = plans.crewSessionPlan(world, { ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
@@ -5301,15 +5317,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     const last = this.lastParticipation(now);
     const friends = w.pack.id === "friends";
     const ranked = [...this.members.values()]
-      .filter(m => !invited.includes(m.id) && this.planSeatOk(m) && (m.age ?? m.statedAge ?? 0) >= a.ageMin && this.crewWindowAvailable(m, plan.window, now)
-        && (friends || invited.every(x => !this.blocked(x, m.id) && !this.avoid.has(pairKey(x, m.id))))
+      .filter(m => !invited.includes(m.id) && !plan.alternates.includes(m.id) && this.planSeatOk(m) && (m.age ?? m.statedAge ?? 0) >= a.ageMin && this.crewWindowAvailable(m, plan.window, now)
         && (plans.activityFit(w, m.id, this.pcfg).get(plan.activityId) ?? 0) >= this.pcfg.minFit)
       .sort((x, y) => ((last.get(x.id) ?? -Infinity) - (last.get(y.id) ?? -Infinity)) || (x.id < y.id ? -1 : 1));
     const add: MemberId[] = [];
     // spec/capitalLevers.md, "Earned organizing reach reserves the extra slots for low exposure"
     for (const { id } of ranked) {
       if (add.length >= extra) break;
-      const seatFits = !friends || this.planFriendSeatFits(w, id, [...invited, ...add], "discovery");
+      const seated = [...new Set([host, ...invited, ...plan.alternates, ...add])];
+      const seatFits = seated.every(other => this.pairAllowed(other, id))
+        && (!friends || this.planFriendSeatFits(w, id, [...invited, ...add], "discovery"));
       if (organizingReachSeatTaken(add.length, extra, seatFits)) add.push(id);
     }
     this.plansCounters.reachExtra += add.length;
@@ -5947,7 +5964,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // pair history and responsiveness still apply.
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const [a, b] = [p.participants[i]!, p.participants[j]!];
-        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, 60)) return "pair_history";
+        if (!this.pairAllowed(a, b) || this.pairHistory(a, b, 60)) return "pair_history";
       }
       if (this.opts.selective && p.participants.some(id => this.responsiveness(id) < this.opts.minResponsiveness)) return "unresponsive";
       return undefined;
@@ -5970,8 +5987,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (p.components.warmPath < 0.3 && p.components.fit < 0.45) return "speculative";
     }
     for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
-      const k = pairKey(p.participants[i]!, p.participants[j]!);
-      if (this.avoid.has(k) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60)) return "pair_history";
+      if (!this.pairAllowed(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60)) return "pair_history";
     }
     return undefined;
   }
@@ -6007,7 +6023,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const check = this.opts.hooks?.hardDatingPairCurrent;
     if (!check || this.app.id !== "slop" || o.category !== "romance") return true;
     const [first, second] = o.participants;
-    if (!first || !second || this.avoid.has(pairKey(first, second))) return false;
+    if (!first || !second || !this.pairAllowed(first, second)) return false;
     return o.participants.every(id => this.checkRecipient(id, "reveal", { about: o.participants, reply: false }).ok)
       && check(this.packInput(this.now()), o.participants);
   }
@@ -6163,11 +6179,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(snap.events ? { events: snap.events } : {}),
       edges: [
         ...snap.edges.filter(e => local.has(e.from) && local.has(e.to)),
-        ...this.repeatSources(now).filter(({ firstYes, secondYes, pair }) => firstYes && secondYes && !this.blocked(...pair) && !this.avoid.has(pairKey(...pair)))
+        ...this.repeatSources(now).filter(({ firstYes, secondYes, pair }) => firstYes && secondYes && this.pairAllowed(...pair))
           .map(({ source, pair: [from, to] }) => ({ from, to, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: source.meetingAt! })),
         ...[...this.avoid].map(k => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: now }; }),
         // Attendees of a plan who both said they'd do it again (plans ask 8).
-        ...[...this.planAgain].map(([k, at]) => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: at }; }),
+        ...[...this.planAgain].flatMap(([k, at]) => {
+          const [a, b] = k.split("|") as [MemberId, MemberId];
+          return this.pairAllowed(a, b) ? [{ from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: at }] : [];
+        }),
       ],
       recentProposals: recent, safetyHolds: holds, feedback: this.feedback, interactions: this.interactions, reliability,
       recentAsks: this.asks.map(a => ({ ...a })),
@@ -6321,7 +6340,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private gatheringRepeatPairAllowed(pair: [MemberId, MemberId]): boolean {
     const [first, second] = pair;
     const key = pairKey(first, second);
-    return !this.blocked(first, second) && !this.avoid.has(key) && (this.declined.get(key) ?? -Infinity) <= this.now() - 60 * DAY &&
+    return this.pairAllowed(first, second) && (this.declined.get(key) ?? -Infinity) <= this.now() - 60 * DAY &&
       this.repeatPreferencesAllow("social", pair) && pair.every(id => {
         if (this.declinedIds.has(id)) return false;
         const member = this.members.get(id), record = this.record(id);
@@ -6390,7 +6409,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const pendingRepeats = new Set<MemberId>();
     for (const { source, pair, firstYes, secondYes } of this.repeatSources(now)) {
       if (!firstYes || !secondYes || !pair.every(id => current.has(id)) || !this.repeatPreferencesAllow(source.category, pair) ||
-        this.blocked(...pair) || this.avoid.has(pairKey(...pair)) || (this.declined.get(pairKey(...pair)) ?? -Infinity) > now - 60 * DAY) continue;
+        !this.pairAllowed(...pair) || (this.declined.get(pairKey(...pair)) ?? -Infinity) > now - 60 * DAY) continue;
       const offer = offeredRepeats.get(source.id);
       if (offer && ((offer.stage !== "review" && offer.stage !== "probing") || offer.participants.length !== 2 ||
         !pair.every(id => offer.participants.includes(id) && offer.status.get(id) !== "no"))) continue;
@@ -6425,7 +6444,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const interests = profiles.get(first)?.interests;
       for (const second of members.slice(index + 1)) {
         const key = pairKey(first, second);
-        if (this.blocked(first, second) || this.avoid.has(key) || (this.declined.get(key) ?? -Infinity) > now - 60 * DAY) continue;
+        if (!this.pairAllowed(first, second) || (this.declined.get(key) ?? -Infinity) > now - 60 * DAY) continue;
         const shared = [...(profiles.get(second)?.interests ?? [])].filter(tag => interests?.has(tag)).length;
         pairs.push({ first, second, value: shared });
       }
@@ -6441,7 +6460,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const { source, pair, firstYes, secondYes } of this.repeatSources(now)) {
       if (!firstYes || !secondYes) continue;
       const key = pairKey(...pair);
-      const pairAvailable = !this.blocked(...pair) && !this.avoid.has(key) && (this.declined.get(key) ?? -Infinity) <= now - 60 * DAY;
+      const pairAvailable = this.pairAllowed(...pair) && (this.declined.get(key) ?? -Infinity) <= now - 60 * DAY;
       if (!queueRepeat(firstYes, secondYes, this.repeatOutreachAllowed(source.category, pair), pairAvailable, offered.has(source.id))) continue;
       const [a, b] = pair;
       const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: source.category, objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: GOOD_FIT, [b]: GOOD_FIT }, score: 0.8, generator: "second_encounter", tags: [] });
@@ -6456,7 +6475,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if ([...this.opps.values()].some(o => o.participants.includes(m.id))) continue;
       const mine = known.get(m.id);
       if (!mine) continue;
-      const host = [...this.members.values()].filter(x => x.id !== m.id && x.id !== m.invitedBy && x.state !== "receiving" && this.eligible(x.id) && x.noShows === 0 && now - x.joinedAt > 7 * DAY
+      const host = [...this.members.values()].filter(x => x.id !== m.id && x.id !== m.invitedBy && x.invitedBy !== m.id
+        && x.state !== "receiving" && this.eligible(x.id) && x.noShows === 0 && now - x.joinedAt > 7 * DAY
+        && this.pairAllowed(m.id, x.id) && !this.pairHistory(m.id, x.id, 60) && x.first.toLowerCase() !== m.first.toLowerCase()
         && (this.minutesBetween(m.area, x.area) ?? Infinity) <= 30 && [...(known.get(x.id)?.interests ?? [])].some(t => mine.interests.has(t)))
         .sort((a, b) => this.minutesBetween(m.area, a.area)! - this.minutesBetween(m.area, b.area)! || seededTie(this.opts.seed, m.id, a.id) - seededTie(this.opts.seed, m.id, b.id))[0];
       if (!host) continue;
@@ -6686,7 +6707,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // whoever proposed it (search, engine, planner, player or scenario).
       const am = this.members.get(a);
       if (!am || am.minor || am.minorSignal) continue;
-      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a))) continue;
+      if (participants.includes(a) || [...participants, ...out].some(p => !this.pairAllowed(p, a))) continue;
       const f = this.members.get(a)?.first.toLowerCase();
       if (f && firsts.has(f)) continue;
       if (f) firsts.add(f);
@@ -7007,7 +7028,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!this.trust.ok(id)) return no("on_watch");
       for (const x of o.about ?? []) {
         if (x === id) continue;
-        if (this.blocked(id, x)) return no("blocked_pair");
+        if (this.blocked(id, x) || ((kind === "probe" || kind === "plan_probe") && !this.pairAllowed(id, x))) return no("blocked_pair");
         const other = this.members.get(x);
         if (!other && kind === "invite_notice" && !this.declinedIds.has(x) && this.ctx.verifiedJoinedInviteeName?.(id, x)) continue;
         if (other) this.syncRecord(other);
@@ -7173,13 +7194,28 @@ export class ConsentNetwork implements NetworkUnderTest {
    * service adds one for every person-to-person block made on any app). The snapshot read is the
    * cached one: this never loads a new snapshot.
    */
-  private blocked(a: MemberId, b: MemberId) { return this.blocks.has(pairKey(a, b)) || this.snapshotBlocks().has(pairKey(a, b)); }
-  private snapBlocks?: { snap: WorldSnapshot; set: Set<string> };
-  private snapshotBlocks(): ReadonlySet<string> {
+  private blocked(a: MemberId, b: MemberId) {
+    const key = pairKey(a, b);
+    return this.blocks.has(key) || this.snapshotPairEdges()?.blocks.has(key) === true;
+  }
+  private pairAllowed(a: MemberId, b: MemberId): boolean {
+    const key = pairKey(a, b);
+    const avoided = this.avoid.has(key) || this.snapshotPairEdges()?.avoid.has(key) === true;
+    return currentPairAllowed(this.blocked(a, b), avoided);
+  }
+  private snapPairEdges?: { snap: WorldSnapshot; blocks: Set<string>; avoid: Set<string> };
+  private snapshotPairEdges() {
     const snap = this.snapCache?.snap;
-    if (!snap) return EMPTY_SET;
-    if (this.snapBlocks?.snap !== snap) this.snapBlocks = { snap, set: new Set(snap.edges.filter(e => e.type === "blocked").map(e => pairKey(e.from, e.to))) };
-    return this.snapBlocks.set;
+    if (!snap) return;
+    if (this.snapPairEdges?.snap !== snap) {
+      const blocks = new Set<string>(), avoid = new Set<string>();
+      for (const edge of snap.edges) {
+        if (edge.type === "blocked") blocks.add(pairKey(edge.from, edge.to));
+        else if (edge.type === "avoid") avoid.add(pairKey(edge.from, edge.to));
+      }
+      this.snapPairEdges = { snap, blocks, avoid };
+    }
+    return this.snapPairEdges;
   }
 
   /** The member record from the snapshot (indexed once per snapshot). The production snapshot adds the account status (service/snapshot.ts). */

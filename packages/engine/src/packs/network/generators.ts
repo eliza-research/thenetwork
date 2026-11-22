@@ -5,13 +5,14 @@
 // earlier generators left unmatched.
 import { needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
+import { welcomePairMayRank } from "../../../../core/src/generated/currentPairRestrictions.ts";
 import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
 import { recentRepeatSource, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import type { GeneratorName } from "../../config.ts";
-import { isHomeEntry, isMinor, memberReason } from "../../filters.ts";
+import { isHomeEntry, isMinor, memberReason, pairReason } from "../../filters.ts";
 import {
   circleCandidate, eventMembers, eventRiskText, label, makeCandidate, pairCandidate, searchFor, warmPathValue, type GenCtx, type MatchedFields,
 } from "../../genkit.ts";
@@ -428,7 +429,8 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     if (!profile) continue;
     const others = searchFor(ctx, profile).kept.map(k => k.profile).filter(p => {
       const mi = w.get(p.memberId);
-      return !!mi && !mi.newcomer && (mi.m.state === "open" || mi.m.state === "normal");
+      return !!mi && !mi.newcomer && (mi.m.state === "open" || mi.m.state === "normal")
+        && welcomePairMayRank(pairReason(w, n, p.memberId, category, WELCOME_LANE) === null, w.canMeet([n, p.memberId]));
     });
     const floor = laneLimits(WELCOME_LANE).circlePairFloor;
     const host = others.find(p => w.get(p.memberId)?.isHost && searchedValue(ctx, profile, p) >= floor
@@ -437,7 +439,8 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     const group = [profile, host];
     for (const p of others) {
       if (group.length >= WELCOME_MAX) break;
-      if (p !== host && group.every(g => searchedValue(ctx, g, p) >= floor)) group.push(p);
+      if (p !== host && group.every(g => searchedValue(ctx, g, p) >= floor)
+        && w.canMeet([...group.map(member => member.memberId), p.memberId])) group.push(p);
     }
     const circle = group.length >= WELCOME_MIN ? circleOf(ctx, WELCOME_LANE, group) : undefined;
     if (!circle) continue;
