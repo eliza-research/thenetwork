@@ -3877,7 +3877,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private feedbackDue(m: MemberState, now: number): Opp | undefined {
-    return [...this.opps.values()].reverse().find(o => this.feedbackCandidate(m.id, o, now));
+    let latest: Opp | undefined;
+    let latestStart = -Infinity;
+    for (const opportunity of this.opps.values()) {
+      const start = opportunity.meetingAt;
+      if (start === undefined || start < latestStart || !this.feedbackCandidate(m.id, opportunity, now)) continue;
+      latest = opportunity;
+      latestStart = start;
+    }
+    return latest;
   }
 
   private feedbackReceiptAt(o: Opp, id: MemberId): number | undefined {

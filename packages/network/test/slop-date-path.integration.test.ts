@@ -480,6 +480,77 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await service.close(); svc = undefined;
   }, T);
 
+  // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
+  test("unprompted signed feedback follows booked time with the exact prompt receipt", async () => {
+    await svc?.close();
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START + 7 * DAY);
+    const secret = "synthetic-feedback-order-turn-signing-secret";
+    const service = svc = new NetworkService({
+      url: URL_, clock, log: () => {}, photoStorage: null, notify: false,
+      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "slop:nyc", matchingEnabled: false }], adapter: () => new DryRunAdapter(() => {}),
+    });
+    await service.start();
+    const names = ["Rae", "Sam", "Cy"];
+    const phones = [RAE, SAM, "+12125550163"];
+    const people = [];
+    for (const [index, name] of names.entries()) {
+      const result = await service.accounts.join(APPS.slop, { e164: phones[index]!, personId: null }, {
+        firstName: name, age: 30, consent: { sms: true, wording: APPS.slop.consent.text },
+      });
+      if (!result.ok) throw new Error("Fixture member could not join");
+      people.push({ id: result.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["climbing"] });
+    }
+    const [rae, sam, cy] = people.map(person => person.id) as [string, string, string];
+    const world = new Mini(people, { plans: false, growth: false });
+    await world.onboard(rae, sam, cy);
+    const id = world.propose([rae, sam]);
+    await world.answerProbes([rae, sam]);
+    const seeded = world.net.exportState();
+    const booked = seeded.opps.find(opp => opp.id === id)!;
+    expect(booked.stage).toBe("scheduled");
+    const latest = {
+      ...booked, id: "latest-booked-date", stage: "done" as const, feedbackSent: true,
+      createdAt: clock.now() - 6 * DAY, meetingAt: clock.now() - DAY, scheduleRevision: 2,
+    };
+    const earlier = {
+      ...latest, id: "earlier-booked-date", participants: [rae, cy], contacted: [rae, cy],
+      createdAt: clock.now() - 5 * DAY, meetingAt: clock.now() - 3 * DAY,
+      status: [[rae, "yes"], [cy, "yes"]] as typeof latest.status,
+    };
+    for (const person of seeded.members) person.awaiting = undefined;
+    const rt = service.runtimeFor("slop")!;
+    await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: seeded.members, opps: [latest, earlier] }));
+
+    const queue = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+      provider: { kind: "sim", send: async () => { throw new Error("Fixture only records prompt receipts"); } } });
+    const delivered = async (oppId: string, revision: number) => {
+      const key = meetingFeedbackKey(oppId, rae, revision), prompt = "How did your date go?";
+      await sql.begin(async tx => {
+        await tx`insert into network.messages (app_id,id,member_id,direction,channel,body,type,status,opportunity_id,proactive,system,ts)
+          values ('slop',${key},${rae},'outbound','imessage',${prompt},'feedback_request','collected',${oppId},false,false,${new Date(clock.now())})`;
+        await queue.recordCollected(tx, [{ id: key, memberId: rae, to: RAE, kind: "transactional", text: prompt }]);
+        await queue.collectedReceipt(tx, [key], "accepted", clock.now());
+      });
+    };
+    const feedback = async () => (await rt.pg.load())!.feedback.map(f => [f.opportunityId, f.about]);
+    await delivered(latest.id, 1);
+    await signedText(service, clock, secret, RAE, "feedback-stale-revision", "We both came.");
+    expect(await feedback()).toEqual([]);
+
+    await delivered(earlier.id, earlier.scheduleRevision);
+    await delivered(latest.id, latest.scheduleRevision);
+    clock.advance(MINUTE);
+    await signedText(service, clock, secret, RAE, "feedback-latest-booking", "We both came. It was great.");
+    expect(await feedback()).toEqual([[latest.id, sam]]);
+
+    clock.advance(MINUTE);
+    await signedText(service, clock, secret, RAE, "feedback-earlier-booking", "It was great, we really clicked.");
+    expect(await feedback()).toEqual([[latest.id, sam], [earlier.id, cy]]);
+    await service.close(); svc = undefined;
+  }, T);
+
   // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to
   // meet after the seeks question was asked its two times is read as straight. The read-back says so,
   // and the member can change it. Before this, seeks stayed empty and the member was never matchable.
