@@ -16,6 +16,8 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 
 [A report keeps its own disposition](../safetyCase.md#a-hold-ban-or-dismissal-updates-the-matching-report). `pendingReportHold` in `packages/network/src/network.ts` reads the open report's subject, encounter, and urgency. [A ban refuses new ordinary text](../safetyCase.md#a-ban-allows-only-carrier-commands-and-app-leave). `NetworkService.inbound` calls `inboundAllowedAfterBan` before the report reaches the runtime.
 
+[Danger disclosures during a check-in](../safetyCase.md#direct-current-danger-text-gets-immediate-guidance-first) use the [receipt of the exact current feedback prompt](../meetingSettlement.md#a-feedback-reply-needs-receipt-of-its-exact-prompt). The model receives the receipt check and the attributed counterpart as inputs. Unattributed disclosures and disclosures without the exact receipt receive guidance without changing attendance or creating a report. The ordinary member report uses its separate transition.
+
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
 // Safety and trust (docs/research/2026-11-07-state-machines.md section 6.9). Machines: person-safety-carryover
@@ -40,7 +42,7 @@ The matching snapshot reads [canonical ban authority](../staffSafetyService.md#l
 //                                            minorReported 1656, dropMember 2756, onFeedback 2786 (record `by`,
 //                                            the meeting time and the bookedTold people, SD-222, SD-442, SD-044;
 //                                            postDateReports),
-//                                            checkInReported 2845, lateCheckInReport 2856 (SD-220), forget 965,
+//                                            handleImmediateDanger, recordMeetingSafetyReport, forget 965,
 //                                            tick 3523 (personHold, callOffPair on snapshot blocks, decay 3559),
 //                                            syncMember/personHold/safetyHeld 4782-4799 (SD-021, SD-022),
 //                                            RelayHost.severeBlock 5154 (SD-254)
@@ -619,7 +621,7 @@ module safety_trust {
   // "report", "selfNoShow"); `reader`: checkInReport's output (an oracle). After SD-067 a happy answer reads
   // as no report: the corpus evals/network/check-in-reports.jsonl (gate in scripts/sim/evals.ts) checks the
   // reader on direct answers, so the model takes `checkInReaderSound` as a named assumption for this path. The
-  // reader on a later free text (disclose) has no such assumption (W3-224).
+  // separate immediate danger disclosure path requires exact receipt and counterpart attribution.
   // spec/safetyCase.md, "A ban allows only carrier commands and app leave" (inboundAllowedAfterBan): after the
   // ban rows exist, an ordinary text of the person (a check-in answer, a disclosure, block or report, the answer
   // to "Who do you mean?", any other message) is held: no engagement, no flow. STOP, HELP and "leave <app>"
@@ -646,47 +648,30 @@ module safety_trust {
       checkInReaderSound(intent, reader),
       s' = { ...s2,
         staffCleared: if (intent == "selfNoShow") s2.staffCleared.filter(y => not(o.parts.contains(y))) else s2.staffCleared,
-        wanted: if (intent == "report") s2.wanted.union(others.map(x => (m.p, x.p))) else s2.wanted,
+        wanted: if (reportKind != "none") s2.wanted.union(others.map(x => (m.p, x.p))) else s2.wanted,
         lastAction: "checkIn" },
     }
   }
 
-  // A later text with a report word (lateCheckInReport, network.ts:2859; SD-220). route() (service.ts:1085)
-  // sends a text that classify reads as "other" to the app with the newest unanswered item, else the last
-  // writer: an oracle over the member's apps (`app`, W3-220). On that app the code takes the member's NEWEST done
-  // 1:1 date in the last 7 days (`k`), and files the report against its other person when checkInReport(text)
-  // gives a kind (`kind`, an oracle that reads report words whatever they are about) and the text has a pronoun
-  // or "the date" (ABOUT_SOMEONE, `pronoun`) or names that person. It never checks whom the text is about
-  // (W3-218, W3-219). Ghost `meant`: the person the member is talking about ("boss": not a member). A first
-  // answer (the date's check-in not answered yet) goes through onFeedback, with the same result.
-  pure def inWindowOn(st: State, m: Mid): Set[str] = OPP_IDS.filter(j => { val q = st.opps.get(j)
-    q.stage == "done" and q.kind == "date" and q.going.contains(m) and q.meetingAt <= st.now and st.now - q.meetingAt < 7 })
-  action disclose(k: str, app: str, p: str, meant: str, kind: str, pronoun: bool): bool = {
+  // handleImmediateDanger (network.ts). exactReceipt abstracts the matching pending slot, schedule
+  // revision and receipt times. The subject supplied by the parser can be unrelated to the meeting.
+  action disclose(k: str, app: str, p: str, meant: str, kind: str, exactReceipt: bool): bool = {
     val m = midOf(s, app, p)
     val s0 = sync(s, m)
-    val win = inWindowOn(s0, m)
-    val newest = win.fold(-1, (acc, j) => imax(acc, s0.opps.get(j).meetingAt))
     val o = s0.opps.get(k)
     val others = o.going.exclude(Set(m))
-    val intended = meant != "boss"
-    // the member wants a report about someone they met (ghost, for everyMetReportFiled)
-    val w = if (intended and s0.metPairs.contains((p, meant))) s0.wanted.union(Set((p, meant))) else s0.wanted
-    val first = not(o.feedbackFrom.contains(m))
-    val s1 = if (first) { ...s0,
-        opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
-        inters: s0.inters.union(Set(recordOf(o, m, false, s0.now))) } else s0
+    val current = exactReceipt and o.stage == "done" and o.kind == "date" and o.app == app
+      and o.going.contains(m) and not(o.feedbackFrom.contains(m)) and s.now - o.meetingAt < 7
+    val attributed = others.size() == 1 and others.exists(other => other.p == meant)
     all {
-      s.live.get(m), inboundOk(s, p), lvl(s0, m) != "hold", meant != p, REPORT_KINDS.contains(kind),
-      if (win == Set())
-        // routed to an app with no date in the window: nothing is filed (W3-220)
-        all { k == "o1", APPS.exists(a => a != app and inWindowOn(s0, midOf(s0, a, p)) != Set()),
-              s' = { ...s0, wanted: w, lastAction: "discloseLost" } }
-      else all {
-        win.contains(k), o.meetingAt == newest,
-        pronoun or others.exists(x => x.p == meant),
-        s' = { ...others.fold(s1, (acc, x) => blockAndReport(acc, m, kind, x, "check_in", intended, meant)),
-               wanted: w, lastAction: "disclose" },
-      },
+      s.live.get(m), inboundOk(s, p), meant != p, REPORT_KINDS.contains(kind),
+      if (current and attributed) {
+        val replied = { ...s0, opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }) }
+        val filed = others.fold(replied, (acc, x) => blockAndReport(acc, m, kind, x, "check_in", true, meant))
+        s' = { ...filed,
+          wanted: if (s0.metPairs.contains((p, meant))) s0.wanted.union(Set((p, meant))) else s0.wanted,
+          lastAction: "dangerReport" }
+      } else s' = { ...s0, lastAction: "dangerGuidanceOnly" },
     }
   }
 
@@ -1132,12 +1117,11 @@ module safety_trust {
   // reports.ts "A plain 'it was fine' or 'not my type' is not a report." A check-in report, block and minor
   // flag come only from an answer that reports something. SD-067 (fixed in 0e0bf2a; the reader is an oracle
   // here, and the corpus gate checks the reader).
-  // W3-224: the late path (disclose) has a free reader and a pronoun gate, so this rule can fail (W3-219).
   val checkInReportIntended = s.reports.forall(r => r.source == "check_in" implies r.intended)
 
   // PRD F23 "'report' from any channel"; reports.ts a report is about the person the member names; trust.ts:9
   // the reporter "shared an opportunity with the target". A report (and its block and hold) names the person
-  // the member means, not the partner of their newest date (W3-218, W3-219: network.ts:2859-2871 never checks).
+  // the member means. The danger path requires attribution to the counterpart of the exact current check-in.
   val reportSubjectMeant = s.reports.forall(r => r.meantP == r.subject.p)
 
   // AGENTS.md 2026-10-09 item 3 "Bans are by phone number"; network.ts markBanned "never matched or contacted
@@ -1454,16 +1438,16 @@ module safety_trust {
       .then(checkIn("o2", CY_S, "report", "no_show"))
       .expect(reportersCounted and s.trust.get(BEN_S).reportsFrom == Set(ANA_S, CY_S) and lvl(s, BEN_S) == "watch")
 
-  // SD-220 (fixed): the first answer is "it was fine", the disclosure a day later files the report.
-  run sd220DisclosureAfterAnswerTest =
+  run exactDangerCheckInFilesOneReportWithoutAttendanceTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set()))
-      .then(checkIn("o1", ANA_S, "fine", "none"))
-      .then(tick(1))
       .then(disclose("o1", "slop", "ana", "ben", "harassment", true))
-      .expect(everyMetReportFiled and s.reports.exists(r => r.reporter == ANA_S and r.source == "check_in" and r.met)
-              and not(matchable(s, BEN_S)))
+      .expect(s.lastAction == "dangerReport" and everyMetReportFiled
+              and s.reports.exists(r => r.reporter == ANA_S and r.subject == BEN_S and r.source == "check_in" and r.met)
+              and s.inters == Set() and not(matchable(s, BEN_S)))
+      .then(disclose("o1", "slop", "ana", "ben", "harassment", true))
+      .expect(s.lastAction == "dangerGuidanceOnly" and s.reports.size() == 1 and s.inters == Set())
 
   // SD-221 (fixed): a peon check-in answer that reports something files the report.
   run sd221PeonCheckInTest =
@@ -1472,6 +1456,15 @@ module safety_trust {
       .then(meet("o1", Set()))
       .then(checkIn("o1", ANA_P, "report", "harassment"))
       .expect(everyMetReportFiled and s.reports.exists(r => r.subject == BEN_P and r.met))
+
+  run planCheckInLeavesExplicitReportAvailableTest =
+    init
+      .then(bookPlan("o1", "slop", "ana", "ben", "cy", false))
+      .then(meet("o1", Set()))
+      .then(checkIn("o1", ANA_S, "report", "harassment"))
+      .expect(s.reports == Set() and everyMetReportFiled)
+      .then(report("ana", "slop", "ben", "report", "harassment", false))
+      .expect(everyMetReportFiled and s.reports.exists(r => r.subject == BEN_S and r.source == "message"))
 
   // SD-250 (fixed): ana met ben on slop; "report Ben" cannot go to peon, it goes to slop and holds ben there.
   run sd250ReportRoutedToMeetingTest =
@@ -1591,54 +1584,42 @@ module safety_trust {
   // ------------------------------------------------------------------ wave 4 run tests
   pure val CY_S1: Mid = { app: "slop", p: "cy", g: 1 }
 
-  // W3-218 (Q: confirmed): ana dates cy, then ben; her disclosure about cy ("Cy followed me home, he scared me")
-  // is filed against ben, the partner of her NEWEST date. Ben is blocked and held; cy is untouched.
-  run w3_218LateDisclosureNewestDateTest =
+  // W3-218: a current prompt with Ben supplies no authority to report Cy.
+  run dangerAboutDifferentCounterpartTest =
     init
       .then(bookDate("o1", "slop", "ana", "cy"))
       .then(meet("o1", Set()))
-      .then(checkIn("o1", ANA_S, "fine", "none"))
       .then(tick(1))
       .then(bookDate("o2", "slop", "ana", "ben"))
       .then(meet("o2", Set()))
-      .then(checkIn("o2", ANA_S, "fine", "none"))
       .then(disclose("o2", "slop", "ana", "cy", "harassment", true))
-      .expect(not(reportSubjectMeant) and not(everyMetReportFiled) and not(matchable(s, BEN_S)) and matchable(s, CY_S)
-              and s.personBlocks.contains(("ana", "ben")) and not(s.personBlocks.contains(("ana", "cy"))))
+      .expect(s.lastAction == "dangerGuidanceOnly" and s.reports == Set() and s.personBlocks == Set())
+      .then(report("ana", "slop", "cy", "report", "harassment", false))
+      .expect(reportSubjectMeant and everyMetReportFiled and not(matchable(s, CY_S)) and matchable(s, BEN_S))
 
-  // W3-218: the code cannot file it against the older date.
-  run w3_218OlderDateNotPickedTest =
-    init
-      .then(bookDate("o1", "slop", "ana", "cy"))
-      .then(meet("o1", Set()))
-      .then(checkIn("o1", ANA_S, "fine", "none"))
-      .then(tick(1))
-      .then(bookDate("o2", "slop", "ana", "ben"))
-      .then(meet("o2", Set()))
-      .then(disclose("o1", "slop", "ana", "cy", "harassment", true).fail())
-
-  // W3-219 (confirmed): after a good date, "my boss was so rude today, he yelled at everyone" is an urgent check-in
-  // report, a block and a hold on ben.
-  run w3_219VentingTest =
+  run dangerWithoutExactCurrentPromptTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set()))
-      .then(checkIn("o1", ANA_S, "fine", "none"))
-      .then(tick(1))
+      .then(disclose("o1", "slop", "ana", "ben", "harassment", false))
+      .expect(s.lastAction == "dangerGuidanceOnly" and s.reports == Set() and s.inters == Set())
+
+  // W3-219: danger concerning someone outside the connection does not file against the counterpart.
+  run dangerAboutUnrelatedPersonTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(meet("o1", Set()))
       .then(disclose("o1", "slop", "ana", "boss", "harassment", true))
-      .expect(not(checkInReportIntended) and not(reportSubjectMeant) and not(matchable(s, BEN_S))
-              and s.personBlocks.contains(("ana", "ben")))
+      .expect(s.lastAction == "dangerGuidanceOnly" and s.reports == Set() and s.personBlocks == Set())
 
-  // W3-220 (confirmed), trigger A: the disclosure goes to peon (an unanswered peon item), where ana has no date
-  // in the window: nothing is filed.
-  run w3_220DisclosureRoutedElsewhereTest =
+  // W3-220: the same disclosure on an unrelated app gives guidance and leaves the original check-in intact.
+  run dangerRoutedElsewhereTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(meet("o1", Set()))
-      .then(checkIn("o1", ANA_S, "fine", "none"))
-      .then(tick(1))
-      .then(disclose("o1", "peon", "ana", "ben", "harassment", true))
-      .expect(s.lastAction == "discloseLost" and not(everyMetReportFiled) and matchable(s, BEN_S) and s.reports == Set())
+      .then(disclose("o1", "peon", "ana", "ben", "harassment", false))
+      .expect(s.lastAction == "dangerGuidanceOnly" and everyMetReportFiled and matchable(s, BEN_S)
+              and s.reports == Set() and s.opps.get("o1").feedbackFrom == Set())
 
   // W3-220, trigger B: "report Ben" needs "Who do you mean?" on slop; the answer goes to peon; the ask lapses.
   run w3_220WhoAnswerRoutedElsewhereTest =
