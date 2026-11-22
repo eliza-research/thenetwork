@@ -3,12 +3,14 @@
 // the same configurations as with canonical ids.
 import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
+import { slopWorld } from "../../../scripts/sim/slop.ts";
 import { resolveConfig } from "../src/config.ts";
 import { localEmbed } from "../src/embed.ts";
 import { runEngine } from "../src/engine.ts";
 import { PEON_ENGINE_CONFIG, peonPack } from "../src/packs/peon/index.ts";
 import { historyOf } from "../src/packs/peon/profile.ts";
 import { peonTestWorld } from "../src/packs/peon/testkit.ts";
+import { planFromInput, SLOP_ENGINE_CONFIG, slopPack, slopProfiles } from "../src/packs/slop/index.ts";
 import { randomWorld } from "../src/testkit.ts";
 import type { EngineInput, InteractionRecord, Role } from "../src/types.ts";
 import { World } from "../src/world.ts";
@@ -75,4 +77,44 @@ test("hiring history counts acceptance and no-response recorded under aliases on
       expect((await runEngine(aliased, cfg, { pack: peonPack })).proposals).toEqual(expected.proposals);
     }
   }
+});
+
+test("the same Slop pairs have the same date plans with two-hop member aliases", async () => {
+  const input = slopWorld(1, { perCity: 20, minorShare: 0 });
+  const [first, second] = input.members.map(member => member.id) as [string, string];
+  const alias = (id: string) => `legacy:${id}`;
+  const config = { ...SLOP_ENGINE_CONFIG, seed: 1 };
+  const aliased: EngineInput = {
+    ...input,
+    facets: input.facets.map(item => ({ ...item, memberId: alias(item.memberId) })),
+    presence: input.presence.map(item => ({ ...item, memberId: alias(item.memberId) })),
+    intents: input.intents.map(item => ({ ...item, memberId: alias(item.memberId) })),
+    idAliases: {
+      ...Object.fromEntries(input.members.flatMap(({ id }) => [[alias(id), `older:${id}`], [`older:${id}`, id]])),
+      [first]: second,
+      "cycle:a": "cycle:b",
+      "cycle:b": "cycle:a",
+    },
+  };
+  const expected = (await runEngine(input, config, { pack: slopPack })).proposals;
+  expect(expected.length).toBeGreaterThan(0);
+  const datePlans = (data: EngineInput) => expected.map(proposal =>
+    planFromInput(data, proposal.participants[0]!, proposal.participants[1]!, ["sf", "nyc", "la"]));
+  const canonicalPlans = datePlans(input);
+  expect(canonicalPlans.every(Boolean)).toBe(true);
+
+  const cold = { ...aliased };
+  expect(datePlans(cold)).toEqual(canonicalPlans);
+  expect((await runEngine(cold, config, { pack: slopPack })).proposals).toEqual(expected);
+
+  const warm = { ...aliased };
+  slopProfiles(warm, id => id);
+  expect((await runEngine(warm, config, { pack: slopPack })).proposals).toEqual(expected);
+  expect(datePlans(warm)).toEqual(canonicalPlans);
+
+  const view = new World(warm, resolveConfig(config), localEmbed, slopPack);
+  expect(view.canonical(alias(first))).toBe(first);
+  expect(view.canonical(first)).toBe(first);
+  expect(view.canonical("cycle:a")).toBe("cycle:a");
+  expect(view.canonical("unknown")).toBe("unknown");
 });
