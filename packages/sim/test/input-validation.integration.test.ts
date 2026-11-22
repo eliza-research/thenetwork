@@ -8,11 +8,31 @@ import { createPeonWorld } from "../src/apps/peon/world.ts";
 import { createSlopWorld } from "../src/apps/slop/world.ts";
 import { generatePersonas } from "../src/generator.ts";
 import { StubNetwork } from "../src/stubNetwork.ts";
+import { loadScenario, runScenarioPassK } from "../src/scenario.ts";
 import { runWorld } from "../src/world.ts";
 
 const run = promisify(execFile);
 const cli = (path: string, args: string[]) => run(process.execPath,
   ["--conditions=eliza-source", "--import", "tsx", path, ...args], { timeout: 90_000 });
+
+test.each([undefined, 0, 73])("the scenario CLI applies a seed override of %s to the world and each repetition", async seed => {
+  const path = "packages/sim/scenarios/stop-keyword.json";
+  const scenario = await loadScenario(path);
+  const factorySeeds: number[] = [];
+  const reference = await runScenarioPassK(scenario, 2, { seed, network: (spec, runSeed) => {
+    factorySeeds.push(runSeed);
+    return new StubNetwork({ randomIntros: true, ...spec.stub, seed: runSeed });
+  } });
+  const args = ["--scenario", path, "--k", "2", "--no-log", ...(seed === undefined ? [] : [`--seed=${seed}`])];
+  const output = await cli("packages/sim/src/cli.ts", args).catch(error => {
+    if (error.code === 1 && !reference.passK) return { stdout: String(error.stdout) };
+    throw error;
+  });
+  const first = seed ?? scenario.seed;
+  expect(factorySeeds).toEqual([first, first + 1]);
+  const rows = [...output.stdout.matchAll(/^\[(PASS|FAIL)\].+ seed=(\d+)$/gm)];
+  expect(rows.map(row => [row[1], Number(row[2])])).toEqual(reference.runs.map(result => [result.pass ? "PASS" : "FAIL", result.seed]));
+}, 100_000);
 
 test("the simulation CLI validates all selected blocks and counts a repeated block once", async () => {
   const script = "scripts/sim.ts";

@@ -199,6 +199,14 @@ What does not exist yet:
 
 A scenario is a scripted situation on the NYC world with checks that must pass.
 
+The simulator CLI uses the scenario's seed unless you supply `--seed`.
+With `--k`, each repetition advances that seed by one in both the world and
+its stub network. Scripted joins use the member's generated home time zone
+unless the action names a time zone. A silence action stops automatic replies,
+initiatives and cancellation texts. The grader uses the recorded order when
+the scenario also schedules an explicit message at the same time. The
+time-aware stub cancels a proposal when it has no usable start in its window.
+
 ```bash
 node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts                 # all scenarios
 node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts under_13_join   # one scenario

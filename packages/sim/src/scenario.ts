@@ -118,8 +118,8 @@ function buildScriptedPersona(spec: ScenarioPersonaSpec, seed: number): Persona 
 
 export interface ScenarioRunOptions {
   seed?: number;
-  /** Factory for the network under test; receives the scenario (e.g. to read `stub` options). */
-  network: (s: Scenario) => NetworkUnderTest;
+  /** Factory for the network under test, using the scenario options and effective seed. */
+  network: (s: Scenario, seed: number) => NetworkUnderTest;
   engine?: Engine;
   agent?: PersonaAgent;
   writeLog?: boolean;
@@ -135,7 +135,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
   const personas = [...scripted, ...background];
   const cityOf = (ref: string) => scripted.find(p => p.id === ref)?.homeCity ?? "sf";
   const actions: WorldOptions["actions"] = [];
-  for (const spec of s.personas) if (spec.join) actions.push({ at: resolveAt(spec.join, start, spec.city ?? "sf"), action: { do: "join", persona: spec.ref } });
+  for (const spec of s.personas) if (spec.join) actions.push({ at: resolveAt(spec.join, start, cityOf(spec.ref)), action: { do: "join", persona: spec.ref } });
   for (const a of s.actions) {
     let action: WorldAction;
     if (a.do === "propose") {
@@ -155,7 +155,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
     actions.push({ at: resolveAt(a.at, start, cityOf(a.persona)), action });
   }
   return {
-    seed, personas, days: s.days, start, network: o.network(s), engine: o.engine, agent: o.agent, actions,
+    seed, personas, days: s.days, start, network: o.network(s, seed), engine: o.engine, agent: o.agent, actions,
     writeLog: o.writeLog ?? false, runsDir: o.runsDir, runId: `scenario-${s.name}-s${seed}`,
   };
 }
@@ -233,7 +233,12 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       }
       case "silent_after": {
         const t = start + e.day * DAY;
-        const n = msgs.filter(x => x.direction === "inbound" && x.memberId === e.persona && x.ts > t + 60 * MINUTE).length;
+        const cutoff = recs.findIndex(record => record.type === "scenario" && record.action === "go_silent"
+          && record.detail?.persona === e.persona && record.t >= t && record.t < t + DAY);
+        const isMemberSend = (record: LoggedMessage) => record.direction === "inbound" && record.memberId === e.persona;
+        const n = cutoff < 0
+          ? msgs.filter(message => isMemberSend(message) && message.ts > t + 60 * MINUTE).length
+          : recs.slice(cutoff + 1).filter(record => record.type === "message" && isMemberSend(record.msg)).length;
         return ok(n === 0, `${n} inbound messages after day ${e.day}`);
       }
       case "no_messages_after_stop": {

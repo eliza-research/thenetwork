@@ -325,6 +325,7 @@ export class World {
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
     s.on<{ personaId: MemberId; text: string; reaction?: Reaction; noticeMeetingId?: string }>("persona_send", ev => {
+      if (this.hasGoneSilent(this.memories.get(ev.data.personaId))) return;
       this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction, ev.data.noticeMeetingId);
     });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
@@ -453,7 +454,7 @@ export class World {
     const p = this.personas.get(id)!;
     const mem = this.memories.get(id)!;
     const r = this.rng.fork("ini", id, this.clock.now());
-    if (mem.joined && !mem.optedOut) {
+    if (mem.joined && !mem.optedOut && !this.hasGoneSilent(mem)) {
       const ini = await this.agent.initiative(this.personaCtx(p, `ini${this.clock.now()}`));
       if (ini) {
         if (ini.block) for (const b of ini.block) if (!mem.blocked.includes(b)) mem.blocked.push(b);
@@ -471,7 +472,7 @@ export class World {
     const m = this.meetings.get(meetingId);
     const p = this.personas.get(personaId);
     const mem = this.memories.get(personaId);
-    if (!m || !p || !mem || mem.optedOut) return;
+    if (!m || !p || !mem || mem.optedOut || this.hasGoneSilent(mem)) return;
     const pr = mem.proposals[m.proposalId];
     const key = `${m.id}|${personaId}`;
     // Time-aware: a participant booked at a time that clashes with its week drops out (and says so more often).
@@ -488,6 +489,11 @@ export class World {
   /** WorldOptions.timeAware: the meeting's time clashes with the participant's hidden week. */
   private clashes(m: MeetingReport, p: Persona): boolean {
     return !!this.opts.timeAware && timeConflict(p, m.proposalId, m.at, m.city, this.opts.seed, this.oracle);
+  }
+
+  private hasGoneSilent(memory: PersonaMemory | undefined): boolean {
+    const cutoff = memory?.silentFrom;
+    return cutoff !== undefined && this.clock.now() >= cutoff;
   }
 
   private onMeeting(meetingId: string) {
