@@ -82,6 +82,8 @@ pure val membersValues = Set(List("one", "two"), List("two", "three"), List("thr
 
 Use the exact settled Friends plan and its private replies. A seat needs a timely reply to its own delivered feedback prompt, confirmed attendance in that reply, and an explicit yes to the same activity again. Record the reply's schedule revision. Settlement marks the seat only if it verifies receipt of the booking for that same revision and confirms attendance. A staged booking, an older revision, and older state with no such mark do not authorize a repeat. A reply reporting an absence cannot supply repeat consent. A later decline of that crew offer removes the seat. Defer to a pending crew offer or an existing crew for the table. Use each original plan for at most one new repeat and keep the same group of three to six consenting attendees. Recheck the shared activity, public venue, full window, current availability, and the current fit of every seat before review and again at approval. Rotate the host in stable member order. Every member needs to accept the new plan separately.
 
+The general simulator uses the same repeat-feedback parser as the Network. It projects a repeat-interest edge only when that parser gives a yes from a recorded attendee.
+
 ```quint
 pure def friendsRepeatSourceAllowed(completed: bool, settlementComplete: bool, crewActive: bool, alreadyOffered: bool): bool =
   completed and settlementComplete and not(crewActive or alreadyOffered)

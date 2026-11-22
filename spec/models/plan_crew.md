@@ -9,7 +9,7 @@ A member needs to opt in before joining a crew and get at most one crew session 
 Check opt-in, unique session slots, and handoff counts. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
 Imported from `quint/plan_crew.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
-Production offer transitions and the handoff decision use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch. The model's held outcome represents a booked session that reached the feedback step.
+Production offer transitions and the handoff decision use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch. The model's held outcome represents a booked session that reached the feedback step. The model starts with an offered crew. The [Friends planning rules](../friendsWeek.md#a-friends-repeat-uses-its-own-completed-table-and-a-fresh-review) cover the earlier repeat-interest feedback.
 The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessions and offers before repeats and new plans.
 
 ```quint
