@@ -99,4 +99,16 @@ pure def sometimesCanAccept(review: ReviewRequest): bool = review.phase == Accep
 pure def sometimesCanReject(review: ReviewRequest): bool = review.phase == RejectItem
 pure def sometimesCanEdit(review: ReviewRequest): bool = review.phase == PreviewEdit
 pure def sometimesBatchUnavailable(review: ReviewRequest): bool = review.phase == BatchUnavailable
+
+pure val eval_witness_sometimesCanReject = (
+  ("checkBatch", true, true, true, 1, 0, 1),
+  ("checkItems", 1, true, true),
+  ("readCommand", RejectVerb, true, true, false, false, false)
+)
+
+pure val eval_witness_sometimesCanEdit = (
+  ("checkBatch", true, true, true, 1, 0, 1),
+  ("checkItems", 1, true, true),
+  ("readCommand", EditVerb, true, true, false, true, true)
+)
 ```
