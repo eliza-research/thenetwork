@@ -25,6 +25,7 @@
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
 import { pendingSwapWithdrawn } from "../../core/src/generated/relayDecision.ts";
+import { relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
 import { initial as initialRelay, staffMayReleaseHeldText, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
@@ -121,6 +122,8 @@ export interface RelayAsk {
   kind: RelayItem["kind"];
   /** The message (text) or a caption (photo). */
   text?: string;
+  /** A first name explicitly addressed by the member in the signed request. */
+  targetName?: string;
   /** Photos the member chose (opaque ids); the service checks they are the member's own. */
   photoIds?: string[];
   /** The active item the member's turn named (the Cloud wire's itemId): only that match, else none. */
@@ -187,6 +190,13 @@ export class RelayDesk {
     const match = this.matchFor(ask.from, ask.matchId);
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
+    if (ask.targetName !== undefined) {
+      const recipient = this.host.member(to)?.firstName;
+      const fold = (name: string) => name.normalize("NFKC").replace(/[‘’]/g, "'").toLowerCase();
+      if (!relayTextRecipientAllowed(true, recipient !== undefined && fold(recipient) === fold(ask.targetName))) {
+        return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
+      }
+    }
     const now = this.host.now();
     if (ask.kind === "contact_share") return this.swap(ask, match, to, now, o);
     const item: RelayItem = ask.kind === "photo"
