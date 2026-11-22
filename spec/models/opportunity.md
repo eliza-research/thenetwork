@@ -463,6 +463,8 @@ module opportunity {
   // counter with a yes word ("sounds fun! how about next week") is a yes with no time, the same reading as
   // "yes_other_times". "Saturday was great" is a qualified time reference and stays unclear, even
   // with a model yes. "I couldn't make it" reads no in this historical oracle.
+  // An untimed probe treats a rejection of time options as a qualified unclear reply. The model
+  // uses "unclear" for that outcome and keeps the probe open.
   // "ok" -> yes, unclear after two of our messages in a row (N:774), and unclear when another message
   // followed the unclarified probe: the "ok" or "Thanks! 👍" answers that message, not the probe.
   pure def readProbe(intent: str, outboundBefore: int, answersOther: bool): str =

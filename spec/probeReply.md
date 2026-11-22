@@ -61,6 +61,21 @@ pure def lawAnUntimedProbeNeedsASeparateAnswer(separateYes: bool): bool =
   not(mayRetryCounter(false, separateYes))
 ```
 
+### An untimed probe needs an answer to the opportunity
+
+Rejection of time options keeps an untimed probe open for a clear answer, including when the reply contains affirmative wording. Treat the reply as a qualified time signal and keep it when a model reads it as yes. A clear no to the opportunity still declines it. When the probe offered times, keep the ordinary empty-selection rules.
+
+```quint
+pure def untimedProbeTimeRejectionNeedsClarification(offeredTimes: bool, rejectedTimes: bool, otherwiseUnqualified: bool): bool =
+  not(offeredTimes) and rejectedTimes and otherwiseUnqualified
+
+pure def lawAnUntimedTimeRejectionKeepsTheProbeOpen(modelConsent: str): bool =
+  untimedProbeTimeRejectionNeedsClarification(false, true, true) and probeReplyReading(true, false, modelConsent) == KeepOffline
+
+pure def lawATimedProbeKeepsItsTimeRejectionRules(rejectedTimes: bool, otherwiseUnqualified: bool): bool =
+  not(untimedProbeTimeRejectionNeedsClarification(true, rejectedTimes, otherwiseUnqualified))
+```
+
 ### A short acknowledgement must immediately follow its own probe
 
 A brief acknowledgement such as “OK” or a thumbs-up can answer a regular probe only while it remains the member's latest outgoing question and no other member turn has intervened. Two or more outgoing messages since the member last spoke make the acknowledgement ambiguous. A direct member reply must follow the accepted delivery of that question. A stale or ambiguous acknowledgement keeps the question open. A clear answer or an explicit choice of time uses the ordinary reply rules.

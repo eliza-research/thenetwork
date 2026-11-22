@@ -10,7 +10,7 @@
 import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, parseReply, type Category } from "@thenetwork/core";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { historicalProbeTimeClause, mayRetryCounter } from "../../core/src/generated/probeReply.ts";
+import { historicalProbeTimeClause, mayRetryCounter, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -796,7 +796,8 @@ const DAY_WORDS: [RegExp, string][] = [
   [day("sunday", "sun"), "Sunday"], [day("monday", "mon"), "Monday"], [day("tuesday", "tues?"), "Tuesday"], [day("wednesday", "weds?"), "Wednesday"],
   [day("thursday", "thu|thur|thurs"), "Thursday"], [day("friday", "fri"), "Friday"], [day("saturday", "sat"), "Saturday"],
 ];
-const NEITHER = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times|other times?)\b/;
+const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
+const OTHER_TIMES = /\bother times?\b/;
 /** "Any of them", "whichever", "any time": every option. */
 const ALL = /\b(any (of them|of those|works|is fine)|all (of them|work|three)|whichever|any ?time|all good)\b/;
 /** "Either", "both": every option, unless the member names the ones they mean ("either Thursday or Sunday"). */
@@ -944,6 +945,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (past && c.answer !== "no" && normalized.split(PROBE_CLAUSE_BOUNDARY).some(clause => /^\s*if\b/.test(clause))) {
     return { answer: "unclear", keys: [], why: "conditional" };
   }
+  const rejectedTimes = OFFERED_TIME_REJECTION.test(t);
+  // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
+  if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes, c.why === "affirm" || c.why === "none")) {
+    return { answer: "unclear", keys: [], why: "slot" };
+  }
   if (!options.length || c.answer === "counter") {
     // spec/probeReply.md, "A suggested alternative needs a separate yes before asking for new times"
     const yes = c.answer === "yes" || !explicitTimesOnly && c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
@@ -1028,7 +1034,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return explicitYes(picked.filter(k => strong.has(k) || c.answer === "yes"));
-  if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
+  if (rejectedTimes || OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = explicitTimesOnly ? EXPLICIT_ALL.exec(t) : ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && !negatedAt(t, allAt.index, allAt[0].length)

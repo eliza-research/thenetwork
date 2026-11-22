@@ -133,3 +133,43 @@ test.each([-1, 0, 1])("the default meeting slot includes the exact search bounda
   expect(world.log("venue").find(entry => entry.detail.oppId === oppId)?.detail.time).toBe("default");
   expect(world.meetings.map(meeting => meeting.at)).toEqual([saturday + (offset > 0 ? DAY : 0)]);
 });
+
+// spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
+test.each(["neither works this week sorry", "Neither."])("an untimed probe keeps %j open for a clear answer", async text => {
+  const ids = ["a", "b"];
+  let modelReads = 0;
+  const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
+    plans: false, growth: false, review: "human",
+    calendarFreeBusy: scope => {
+      const { grant, observation } = authorized(scope);
+      const busy = attention.candidateSlots("America/New_York", scope.now)
+        .map(slot => ({ start: slot.start, end: slot.start + 30 * MINUTE }));
+      return { grant, observation: { ...observation, busy } };
+    },
+    understand: async body => {
+      if (body !== text) return;
+      modelReads++;
+      return { consent: "yes", wants: [], notWanted: [], interests: [], skills: [] };
+    },
+  });
+  await world.onboard(...ids);
+  await world.say("a", "CALENDAR");
+  world.clock.set(Date.UTC(2026, 9, 8, 16));
+  const oppId = world.propose(ids);
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
+  expect(world.net.decide(oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await world.runUntil(() => world.probed("a"), DAY)).toBe(true);
+  expect(world.to("a").find(message => message.meta.probe?.key === oppId)?.meta.timeOptions).toBeUndefined();
+
+  await world.say("a", text);
+  expect(modelReads).toBe(1);
+  expect(world.probed("a")).toBe(true);
+  expect(world.log("probe_answer")).toEqual([]);
+  expect(world.meetings).toEqual([]);
+
+  await world.say("a", "Yes.");
+  expect(await world.runUntil(() => world.probed("b"), DAY)).toBe(true);
+  expect(world.to("b").find(message => message.meta.probe?.key === oppId)?.meta.timeOptions).toBeUndefined();
+  await world.say("b", "Yes.");
+  expect(world.meetings).toMatchObject([{ proposalId: oppId, participants: ids, at: Date.UTC(2026, 9, 10, 15) }]);
+});
