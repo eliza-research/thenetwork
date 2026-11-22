@@ -1184,8 +1184,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const withdrew = this.withdrawRequests(m, parsed.notWanted ?? []);
     if (withdrew && c.kind !== "people_request" && c.kind !== "plans_request") return this.learnFrom(m, body);
 
-    // Answers to what we asked (never from the assistant's profile: it can only teach, below).
-    const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
+    // A past absence may answer feedback, while an unrelated pending reply stays available.
+    const pendingReply = m.awaiting;
+    const eligibleReply = !c.pastAbsence || pendingReply?.kind === "feedback";
+    const aw = pendingReply?.kind === "interview" || (!mcp && eligibleReply) ? pendingReply : undefined;
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
     const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body) : undefined;
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
@@ -1309,7 +1311,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
-    if (!msg.reaction && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
+    if (!msg.reaction && !c.pastAbsence && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {
       const directAnswer = this.memberReply && !msg.reaction;
