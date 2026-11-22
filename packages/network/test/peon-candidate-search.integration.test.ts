@@ -241,7 +241,9 @@ test.skipIf(!pgAvailable)("a posting displaces the queued manager question and a
   const interrupted = await queuedProbe(item.oppId, employer!.memberId);
   expect(interrupted?.status).toBe("pending");
   const opportunity = () => runtime.net.exportState().opps.find(o => o.id === item.oppId);
+  const employerQuestions = () => runtime.net.exportState().members.find(member => member.id === employer!.memberId)?.asked;
   const firstSentAt = opportunity()?.sentAt?.[employer!.memberId];
+  const asked = employerQuestions();
 
   clock.advance(MINUTE);
   const posting = await turn("manager-starts-different-post", manager, "We're hiring a barista, 1 opening, $40k-$50k, onsite in Manhattan");
@@ -258,6 +260,7 @@ test.skipIf(!pgAvailable)("a posting displaces the queued manager question and a
   const fresh = await queuedProbe(item.oppId, employer!.memberId, interrupted!.id);
   expect(fresh?.status).toBe("pending");
   expect(opportunity()?.sentAt?.[employer!.memberId]).toBe(firstSentAt);
+  expect(employerQuestions()).toBe(asked);
 
   const admission = (row: { id: string; body: string }) => db.begin(tx => runtime.peonHireAdmission(tx, {
     app: "peon", oppId: item.oppId, memberId: employer!.memberId, id: row.id, text: row.body,

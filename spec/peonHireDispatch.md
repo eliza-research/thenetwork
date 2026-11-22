@@ -43,7 +43,7 @@ pure def lawHireAnswerRequiresDelivery(direct: bool, receivedAt: int, deliveredA
 
 ### A manager answers one hiring question at a time
 
-A posting draft or an open probe owns the manager's next answer. When an applicant consents while such a question is open, keep the reviewed introduction waiting. Offer the longest-waiting manager question first when there is room. If the manager starts a posting draft, the current manager question can return afterward while the same reviewed introduction and its original deadline still allow it. Send a new copy and require the receipt for that copy before accepting an answer. A displaced copy cannot leave the outbound queue or return as a stored reply.
+A posting draft or an open probe owns the manager's next answer. When an applicant consents while such a question is open, keep the reviewed introduction waiting. Offer the longest-waiting manager question first when there is room. If the manager starts a posting draft, the current manager question can return afterward while the same reviewed introduction and its original deadline still allow it. Send a new copy and require its receipt before accepting an answer. Both copies count as one question in the manager's response history. A displaced copy cannot leave the outbound queue or return as a stored reply.
 
 ```quint
 pure def managerQuestionMayOpen(postingOwnsSlot: bool, otherProbeOwnsSlot: bool, olderManagerProbeWaiting: bool): bool =

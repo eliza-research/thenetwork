@@ -6711,9 +6711,12 @@ export class ConsentNetwork implements NetworkUnderTest {
         onSent: messageId => {
           if (!o) return;
           m.awaiting = { kind: "probe", oppId: o.id, at: now(), probeReceiptId: messageId, probeInboundCount: m.msgsIn };
-          m.asked++; o.contacted.add(h.id);
+          o.contacted.add(h.id);
           if (o.managerProbeSuspended && o.seat?.manager === h.id) o.managerProbeSuspended = undefined;
-          else o.sentAt = { ...o.sentAt, [h.id]: now() };
+          else {
+            m.asked++;
+            o.sentAt = { ...o.sentAt, [h.id]: now() };
+          }
           this.counters.probesSent++;
           const n = o.offered?.[h.id]?.length ?? 0;
           if (n) this.counters.probesWithOptions++;
