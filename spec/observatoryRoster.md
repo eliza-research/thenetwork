@@ -38,6 +38,10 @@ pure def lawClosedReplayWithoutRosterKeepsTerminal(terminal: bool): bool =
 
 Count a completed meeting for staff only when at least two participants attended. Count it once for each attendee. Keep a person's attendance record when they were the only one to show, but leave it out of held-meeting and enjoyment counts. In the database view, use a completed or feedback-collected opportunity and its recorded participant attendance.
 
+Count an enjoyment sample only when the attendee supplied a stored rating.
+A zero rating contributes one sample. An absent rating contributes no
+sample and leaves the attendance count in place.
+
 ```quint
 pure val heldMeetingMinimum: int = 2
 
