@@ -101,8 +101,8 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
-const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|should|must|shall)\s+not\s+wait\b/g;
-const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/;
+const SWAP_GO_AHEAD = /\b(?:don'?t|do\s+not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b|\bno need to (?:wait|hesitate)\b|\b(?:will|should|must|shall)\s+not\s+wait\b|\b(?:can'?t|cannot|won'?t)\s+wait\b/g;
+const SWAP_WITHHOLDING = /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch|won'?t|can'?t|cannot|refuse|decline|private|off limits)\b/;
 const OWN_CONTACT = /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/;
 const DECLINES_PENDING_SEND = /\b(?:don'?t|do\s+not)(?:\s+want\s+(?:you\s+)?to)?\s+(?:send|share|give|pass|forward)\s+(?:it|that)\b(?=\s*(?:$|[,.!?;])|\s+yet\b)/;
 
