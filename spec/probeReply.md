@@ -25,6 +25,32 @@ pure def lawADefiniteAnswerCannotBeOverridden(offlineFoundNothing: bool, modelCo
   probeReplyReading(false, offlineFoundNothing, modelConsent) == KeepOffline
 ```
 
+### A direct request to proceed without the member declines the offer
+
+Read “deal me out” and “go ahead without me” as a refusal when the
+member gives the instruction directly. A courtesy or an acknowledgement
+before or after the instruction does not change the refusal. Ignore words
+inside a quotation or a reported or negated use of the instruction. Keep
+a separate current answer. If no separate answer appears, ask again and
+keep the qualified reading when a model supplies a different answer.
+
+```quint
+type ParticipationWithdrawal = NoWithdrawalWords | DirectWithdrawal | QualifiedWithdrawal
+
+pure def participationWithdrawalReading(hasWithdrawalWords: bool, direct: bool): ParticipationWithdrawal =
+  if (not(hasWithdrawalWords)) NoWithdrawalWords
+  else if (direct) DirectWithdrawal
+  else QualifiedWithdrawal
+
+pure def lawIndirectWithdrawalNeedsAnAnswer(modelConsent: str): bool =
+  participationWithdrawalReading(true, false) == QualifiedWithdrawal and
+    probeReplyReading(true, false, modelConsent) == KeepOffline
+
+pure def lawDirectWithdrawalKeepsTheRefusal(modelConsent: str): bool =
+  participationWithdrawalReading(true, true) == DirectWithdrawal and
+    probeReplyReading(false, false, modelConsent) == KeepOffline
+```
+
 ### A clear yes uses the chosen times when the member names them
 
 If a model reads a clear yes, use the offered times the person chose. If they gave no preference, keep all offered times. The caller validates model-supplied keys against the offered times first.

@@ -3,6 +3,8 @@
 
 /** Story: Make a choice about a proposed opportunity / A model reading cannot replace a definite or qualified answer (spec/probeReply.md) */
 export type ReplyReading = "KeepOffline" | "HeardYes" | "HeardNo";
+/** Story: Make a choice about a proposed opportunity / A direct request to proceed without the member declines the offer (spec/probeReply.md) */
+export type ParticipationWithdrawal = "NoWithdrawalWords" | "DirectWithdrawal" | "QualifiedWithdrawal";
 
 
 /** Story: Make a choice about a proposed opportunity / A model reading cannot replace a definite or qualified answer (spec/probeReply.md) */
@@ -23,6 +25,26 @@ export function lawAQualifiedAnswerCannotBeOverridden(modelConsent: string): boo
 export function lawADefiniteAnswerCannotBeOverridden(offlineFoundNothing: boolean, modelConsent: string): boolean {
   //@ ensures \result === true
   return probeReplyReading(false, offlineFoundNothing, modelConsent) === "KeepOffline";
+}
+
+/** Story: Make a choice about a proposed opportunity / A direct request to proceed without the member declines the offer (spec/probeReply.md) */
+//@ pure
+export function participationWithdrawalReading(hasWithdrawalWords: boolean, direct: boolean): ParticipationWithdrawal {
+  return !hasWithdrawalWords ? "NoWithdrawalWords" : (direct ? "DirectWithdrawal" : "QualifiedWithdrawal");
+}
+
+/** Story: Make a choice about a proposed opportunity / A direct request to proceed without the member declines the offer (spec/probeReply.md) */
+//@ pure
+export function lawIndirectWithdrawalNeedsAnAnswer(modelConsent: string): boolean {
+  //@ ensures \result === true
+  return participationWithdrawalReading(true, false) === "QualifiedWithdrawal" && probeReplyReading(true, false, modelConsent) === "KeepOffline";
+}
+
+/** Story: Make a choice about a proposed opportunity / A direct request to proceed without the member declines the offer (spec/probeReply.md) */
+//@ pure
+export function lawDirectWithdrawalKeepsTheRefusal(modelConsent: string): boolean {
+  //@ ensures \result === true
+  return participationWithdrawalReading(true, true) === "DirectWithdrawal" && probeReplyReading(false, false, modelConsent) === "KeepOffline";
 }
 
 /** Story: Make a choice about a proposed opportunity / A clear yes uses the chosen times when the member names them (spec/probeReply.md) */

@@ -1,4 +1,5 @@
 import { coordinatedStopClause, matchesSpokenAppDomain, sharedLineStopStatementStops, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
+import { participationWithdrawalReading } from "./generated/probeReply.ts";
 
 // Member reply understanding (audit 2026-10-08 network-consent-2, plugin-prototypes-12).
 // Deterministic, no model. One shared parser for "did the member say yes?" and "does the member
@@ -61,6 +62,27 @@ function normalize(s: string): string {
     .replace(/\bim\b/g, "i'm")
     .replace(/([a-z])\1{2,}/g, "$1") // "yesss" → "yes", "nooo" → "no"
     .replace(/[…]/g, "...");
+}
+
+const WITHDRAWAL_WORDS = String.raw`\b(?:deal\s+me\s+out|go\s+ahead\s+without\s+me)\b`;
+const WITHDRAWAL_MENTION = new RegExp(WITHDRAWAL_WORDS);
+const DIRECT_WITHDRAWAL = new RegExp(
+  String.raw`^(?:(?:yes|yeah|sure|ok|okay|actually|sorry|thanks|thank you|please|but)[\s,.!;:]+)*` +
+  WITHDRAWAL_WORDS + String.raw`(?:[\s,.!;:]+(?:please|thanks|thank you|sorry))*[.!]*$`,
+);
+const WITHDRAWAL_QUOTE = /"[^"]*(?:"|$)|(?<![\p{L}\p{N}])'(?:[^']|'(?=[\p{L}\p{N}]))*(?:'(?![\p{L}\p{N}])|$)/gu;
+
+function readNormalizedWithdrawal(text: string) {
+  const reading = participationWithdrawalReading(WITHDRAWAL_MENTION.test(text), DIRECT_WITHDRAWAL.test(text));
+  if (reading !== "QualifiedWithdrawal") return { reading, text };
+  const omitMention = (clause: string) => WITHDRAWAL_MENTION.test(clause) ? " ".repeat(clause.length) : clause;
+  const unquoted = text.replace(WITHDRAWAL_QUOTE, omitMention);
+  return { reading, text: unquoted.replace(/[^.!?;\n]+/g, omitMention) };
+}
+
+export function readParticipationWithdrawal(text: string) {
+  const result = readNormalizedWithdrawal(normalize(text).trim());
+  return result.reading === "NoWithdrawalWords" ? { ...result, text } : result;
 }
 
 // ------------------------------------------------------------------------------------ lexicon
@@ -189,11 +211,13 @@ function extract(t: string): Signal[] {
 /** Parse a free-text answer to a yes/no question. See the file header for the rules. */
 export function parseReply(text: string): ParsedReply {
   const raw = text ?? "";
-  const t = normalize(raw).trim();
+  const withdrawal = readNormalizedWithdrawal(normalize(raw).trim());
+  const t = withdrawal.text;
   const constraints: ReplyConstraint[] = [];
   const done = (answer: ReplyAnswer, reason: string, o: { counter?: boolean; leaning?: "yes" | "no" } = {}): ParsedReply =>
     ({ answer, constraints, counter: !!o.counter, ...(o.leaning ? { leaning: o.leaning } : {}), reason });
 
+  if (withdrawal.reading === "DirectWithdrawal") return done("no", "refusal");
   let sig = extract(t);
   // A reversal keeps only what follows it ("yes. actually no" → "no").
   const lastRev = sig.map(s => s.kind).lastIndexOf("reversal");
@@ -208,6 +232,7 @@ export function parseReply(text: string): ParsedReply {
   if (!decisive.length) {
     if (counter) return done("unsure", "counter", { counter: true });
     if (conds.length) return done("unsure", "condition_only");
+    if (withdrawal.reading === "QualifiedWithdrawal") return done("unsure", "withdrawal_context");
     // Emoji decide only when no word does, in a short reply (not an emoji at the end of a question).
     if ((t.match(/[a-z]+/g) ?? []).length > 3 || /\?/.test(t)) return done("unsure", /\?/.test(t) ? "question" : "no_signal");
     if (NO_EMOJI.test(raw)) return done("no", "emoji_no");

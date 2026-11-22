@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, parseReply, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, parseReply, readParticipationWithdrawal, type Category } from "@thenetwork/core";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { historicalProbeTimeClause, mayRetryCounter, untimedProbeTimeRejectionNeedsClarification } from "../../core/src/generated/probeReply.ts";
@@ -715,7 +715,10 @@ const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|bigg
 
 /** A counter is a separate scheduling request. A yes inside that request does not answer the offer. */
 function consentScan(body: string): Consent & { separateYes?: boolean } {
-  const t = normText(body).replace(HARMLESS_NO, " ");
+  const withdrawal = readParticipationWithdrawal(body);
+  if (withdrawal.reading === "DirectWithdrawal") return { answer: "no", why: "refusal" };
+  const qualifiedWithdrawal = withdrawal.reading === "QualifiedWithdrawal";
+  const t = normText(withdrawal.text).replace(HARMLESS_NO, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
   let refusalAt = Infinity, affirmAt = Infinity, counterAt = Infinity, cond = false, hedge = false, question = false;
   for (const s of sentencesOf(t)) {
@@ -739,7 +742,7 @@ function consentScan(body: string): Consent & { separateYes?: boolean } {
       const am0 = AFFIRM_RX.exec(y);
       // An emoji is a yes only in a short reply with no question: "Still hoping to meet someone. Anything
       // come up? 💯" is an ask with decoration, not consent (the same rule as core parseReply).
-      const am = am0 && !/[a-z]/.test(am0[0]) && (wordsIn > 3 || /\?/.test(t)) ? null : am0;
+      const am = am0 && !/[a-z]/.test(am0[0]) && (qualifiedWithdrawal || wordsIn > 3 || /\?/.test(t)) ? null : am0;
       if (am) {
         const before = x.slice(0, am.index + (am[0].match(/^[^\w']/) ? 1 : 0));
         const word = am[0].replace(/^[^\w']/, "");
@@ -772,7 +775,7 @@ function consentScan(body: string): Consent & { separateYes?: boolean } {
   // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
   // two disagree the member is asked again, never booked.
   if (affirmAt < Infinity) return shared.answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
-  return { answer: "unclear", why: "none" };
+  return { answer: "unclear", why: qualifiedWithdrawal ? "hedged" : "none" };
 }
 
 /** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
