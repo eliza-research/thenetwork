@@ -73,6 +73,37 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
   expect(escaped).toBe(0);
 },60_000);
 
+test("signed answers to the enrollment question require a positive app choice", async () => {
+  // spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
+  const cases = [
+    { text: "I'm not interested at all", apps: [] },
+    { text: "Friends, that's all", apps: ["friends"] },
+    { text: "Not everything", apps: [] },
+    { text: "All apps except dating", apps: [] },
+    { text: "All three, please", apps: ["friends", "slop"] }, // The fixture runs both child apps.
+  ];
+  const actual = [];
+  for (const [i, { text, apps }] of cases.entries()) {
+    const phone = `+1212555019${i}`;
+    const send = async (step: string, input: string) => {
+      clock.advance(MINUTE);
+      expect((await post(turn(`looking-for-${i}-${step}`, phone, input))).status).toBe(200);
+    };
+    const pending = () => service.people.getPending(service.accounts.phoneHash(phone), "looking_for");
+    await send("hello", "Hello!");
+    await send("join", "Ria, 30");
+    expect(await pending()).toMatchObject({ app: "ntwrk" });
+    await send("answer", text);
+    const person = await service.accounts.personFor(phone);
+    const memberships = (await service.people.memberships(person!.id)).map(membership => membership.app).filter(app => app !== "ntwrk").sort();
+    const consent = await sql`select app_id from platform.consent_events where e164 = ${phone} and source = 'looking_for' order by app_id`;
+    actual.push({ text, memberships, consent: consent.map(row => row.app_id), pending: !!await pending() });
+  }
+  expect(actual).toEqual(cases.map(({ text, apps }) => ({
+    text, memberships: apps, consent: apps, pending: apps.length === 0,
+  })));
+}, 60_000);
+
 // spec/travelPresence.md, "Tell the Network my travel dates"
 test("signed travel stores one coarse trip in the routed app and never guesses missing dates", async () => {
   const phone = "+12125550155";
