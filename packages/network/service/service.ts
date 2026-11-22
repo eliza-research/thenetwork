@@ -1105,12 +1105,14 @@ export class NetworkService implements RuntimeHost {
   private async notifyRecipient(personId: string): Promise<Recipient | undefined> {
     const rts = [...this.runtimes.values()].sort((a, b) => Number(b.app.id === "ntwrk") - Number(a.app.id === "ntwrk"));
     for (const rt of rts) {
-      const rows = await rt.scoped(tx => tx`select id from network.members where app_id = ${rt.app.id} and person_id = ${personId} and not opted_out`);
-      for (const r of rows as any[]) {
+      const rows = await rt.scoped(tx => tx<{ id: MemberId; time_zone: string | null }[]>`select member.id,city.tz as time_zone
+        from network.members member left join platform.cities city on city.id=member.home_city
+        where member.app_id=${rt.app.id} and member.person_id=${personId} and not member.opted_out`);
+      for (const r of rows) {
         const to = rt.addressOf(r.id);
         if (!to) continue;
         this.notifyTargets.set(normalizeAddress(to), { rt, memberId: r.id });
-        return { personId, to, timeZone: resolveTimeZone(undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
+        return { personId, to, timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
       }
     }
     return undefined;
