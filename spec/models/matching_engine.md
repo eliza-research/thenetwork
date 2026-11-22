@@ -129,7 +129,8 @@ module matching_engine {
   }
   type Posting = { status: str, openings: int, stated: int, reason: str, createdAt: int, version: int, seniority: bool, areaOk: bool }
   type Draft = { kind: str, id: str, openings: int, seniority: bool, areaOk: bool, mustDup: bool, said: str }
-  type Seat = { stage: str, reviewedVersion: int, yesVersion: int, priorInterview: str }
+  type Seat = { stage: str, reviewedVersion: int, yesVersion: int, acceptedAt: int,
+    priorInterview: str, priorAcceptedAt: int, priorFeedbackAt: int }
   type Peon = {
     env: str, posting: str -> Posting, draft: Draft, verified: bool, candDraft: bool, candOn: bool, mgrHeld: bool,
     // A no is kept per seat (network.ts seatSide, markDeclined): the pair is (candidate, seat).
@@ -247,6 +248,10 @@ module matching_engine {
   pure def bookedSeatOccupancy(seat: Seat): int =
     (if (seat.priorInterview == "accepted" or seat.priorInterview == "completed") 1 else 0)
     + (if (seat.stage == "booked") 1 else 0)
+  // Feedback changes occupancy and records its own time. The original application answer still counts.
+  def applicationAnswers(seat: Seat): int =
+    (if (seat.priorAcceptedAt >= 0 and seat.priorAcceptedAt <= now) 1 else 0)
+    + (if (seat.stage == "booked") 1 else 0)
   // peon/profile.ts p.open, world.ts live intent, peon/rules.ts (job_closed, employer_unverified,
   // locationOk), the Hire level fit (`seniority` abstracts the standing band, spec/matchLane.md), and
   // peon_not_onboarded for the candidate. packInput holds the seat with its
@@ -296,7 +301,8 @@ module matching_engine {
     // Peon matching runs locally only. "prod" exercises serving ingress, while "harness" can seed candidate rows.
     peon' = {
       env: env, posting: POSTINGS.mapBy(p => noPosting), draft: noDraft, verified: false, candDraft: false, candOn: false, mgrHeld: false,
-      seat: POSTINGS.mapBy(p => { stage: "none", reviewedVersion: 0, yesVersion: 0, priorInterview: "none" }), declAt: POSTINGS.mapBy(p => NONE), introduced: Set(),
+      seat: POSTINGS.mapBy(p => { stage: "none", reviewedVersion: 0, yesVersion: 0, acceptedAt: NONE,
+        priorInterview: "none", priorAcceptedAt: NONE, priorFeedbackAt: NONE }), declAt: POSTINGS.mapBy(p => NONE), introduced: Set(),
     },
     ph' = { reopened: false, openingsLost: false, mcpConfirmed: false, filledLost: false, saveFailed: false,
             crossJobBlock: false, engineSelectedHeld: false, seatFilled: false, candidateConfirmed: false },
@@ -632,7 +638,8 @@ module matching_engine {
     val gateOk = not(peon.mgrHeld) and not(seatDeclined(id))
     all {
       peon' = { ...peon,
-        seat: if (gateOk) peon.seat.set(id, { ...peon.seat.get(id), stage: "review", reviewedVersion: peon.posting.get(id).version, yesVersion: 0 }) else peon.seat,
+        seat: if (gateOk) peon.seat.set(id, { ...peon.seat.get(id), stage: "review", reviewedVersion: peon.posting.get(id).version,
+          yesVersion: 0, acceptedAt: NONE }) else peon.seat,
         introduced: if (gateOk) peon.introduced.union(Set(id)) else peon.introduced },
       ph' = { ...ph,
         engineSelectedHeld: ph.engineSelectedHeld or peon.mgrHeld,
@@ -666,7 +673,8 @@ module matching_engine {
     val seat = peon.seat.get(id)
     val accepted = yes and reviewedHireCurrent.contains(id) and seat.yesVersion == seat.reviewedVersion
     all {
-    peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: if (accepted) "booked" else "closed" }),
+    peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: if (accepted) "booked" else "closed",
+              acceptedAt: if (accepted) now else NONE }),
               declAt: if (yes) peon.declAt else peon.declAt.set(id, now) },
     ph' = { ...ph, seatFilled: ph.seatFilled or accepted },
     keepSlop, keepOther, now' = now, lastAction' = "mgrAnswer",
@@ -681,7 +689,9 @@ module matching_engine {
       seat.stage == "booked",
       seat.priorInterview == "none",
       Set("no_show", "completed", "accepted").contains(disposition),
-      peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: "none", priorInterview: disposition }),
+      disposition == "accepted" or now > seat.acceptedAt,
+      peon' = { ...peon, seat: peon.seat.set(id, { ...seat, stage: "none", acceptedAt: NONE, priorInterview: disposition,
+        priorAcceptedAt: seat.acceptedAt, priorFeedbackAt: if (disposition == "accepted") NONE else now }),
         introduced: peon.introduced.exclude(Set(id)) },
       ph' = ph, keepSlop, keepOther, now' = now, lastAction' = "retainInterviewDisposition",
     }
@@ -742,6 +752,9 @@ module matching_engine {
     nondet d = Set(1, 3, 7, 30).oneOf()
     tick(d),
   }
+  action peonReplyStep(id: str, agree: bool): bool =
+    any { peonEngineRun(id), seatReview(id, agree), candAnswer(id, agree), mgrAnswer(id, agree) }
+
   action peonStep(safetyEvents: bool): bool = {
     nondet id = POSTINGS.oneOf()
     nondet n = Set(0, 1, 2, 3).oneOf()
@@ -750,12 +763,14 @@ module matching_engine {
     nondet b3 = Set(true, false).oneOf()
     nondet src = Set("sms", "mcp").oneOf()
     nondet said = Set("filled", "closed").oneOf()
-    nondet disposition = Set("no_show", "completed", "accepted").oneOf()
     any {
       any { all { n > 0, mgrDraftNew(id, n, b1, b2, b3) }, mgrDraftUpdate(id, n), mgrDraftClose(id, said), mgrNo, mgrYes(src) },
       any { staffClose(id, said), staffSave(id, n), staffVerify, harnessCandidate, all { safetyEvents, setMgrHold(b1) } },
       any { candidateDraft(b1), candidateConfirm(b2) },
-      any { peonEngineRun(id), seatReview(id, b1), candAnswer(id, b1), mgrAnswer(id, b1), retainInterviewDisposition(id, disposition) },
+      if (ph.seatFilled) {
+        val disposition = if (b2) "no_show" else if (b3) "completed" else "accepted"
+        any { peonReplyStep(id, b1), retainInterviewDisposition(id, disposition) }
+      } else peonReplyStep(id, b1),
       nondet d = Set(1, 3, 7, 30).oneOf()
       tick(d),
     }
@@ -854,6 +869,11 @@ module matching_engine {
     val seat = peon.seat.get(id)
     seat.stage == "review" and seat.priorInterview == "none" implies bookedSeatOccupancy(seat) == 0
   })
+  val lawPeonAcceptanceIsVisibleAtItsRecordedTime = POSTINGS.forall(id => {
+    val seat = peon.seat.get(id)
+    seat.priorFeedbackAt >= 0 implies seat.priorAcceptedAt >= 0 and seat.priorAcceptedAt < seat.priorFeedbackAt
+      and applicationAnswers(seat) == 1 + (if (seat.stage == "booked") 1 else 0)
+  })
 
   // attention.ts "nobody is named before everyone needed said yes": a flow still probing has someone to ask. SD-063.
   val probeFlowProgresses = (flow.stage == "probing_first" or flow.stage == "probing_partners") implies toProbe(flow).size() > 0
@@ -867,7 +887,7 @@ module matching_engine {
     activityFitsSlot, lawKnownDatePacingUsesBooking, lawFeedbackForAnotherDateCannotPace,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
     declineScopedToJob, engineNeverSelectsHeld, seatCapacity, candidateProfileRequiresConfirmation, hireBookingMatchesApprovedPosting,
-    lawMissedInterviewDoesNotFillOpening, lawPendingReviewDoesNotFillOpening,
+    lawMissedInterviewDoesNotFillOpening, lawPendingReviewDoesNotFillOpening, lawPeonAcceptanceIsVisibleAtItsRecordedTime,
     probeFlowProgresses, planSeatHonorsHoldout, judgeCacheReused,
   }
 
@@ -1145,15 +1165,16 @@ module matching_engine {
   run missedInterviewReplacementTest = initWith("harness", false, "peon")
     .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
     .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
-    .then(retainInterviewDisposition("A", "no_show")).then(peonEngineRun("A")).then(tick(1))
-    .expect(peon.seat.get("A").stage == "review" and lawMissedInterviewDoesNotFillOpening)
+    .then(tick(1)).then(retainInterviewDisposition("A", "no_show")).then(peonEngineRun("A")).then(tick(1))
+    .expect(peon.seat.get("A").stage == "review" and lawMissedInterviewDoesNotFillOpening and applicationAnswers(peon.seat.get("A")) == 1)
     .then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
     .expect(bookedSeatOccupancy(peon.seat.get("A")) == 1)
 
   run completedInterviewKeepsOpeningTest = initWith("harness", false, "peon")
     .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)
     .then(peonEngineRun("A")).then(seatReview("A", true)).then(candAnswer("A", true)).then(mgrAnswer("A", true))
-    .then(retainInterviewDisposition("A", "completed")).expect(not(engineSeatOk("A")))
+    .then(tick(1)).then(retainInterviewDisposition("A", "completed"))
+    .expect(not(engineSeatOk("A")) and lawPeonAcceptanceIsVisibleAtItsRecordedTime and applicationAnswers(peon.seat.get("A")) == 1)
 
   run unansweredInterviewKeepsOpeningTest = initWith("harness", false, "peon")
     .then(mgrDraftNew("A", 1, true, true, false)).then(mgrYes("sms")).then(staffVerify).then(harnessCandidate)

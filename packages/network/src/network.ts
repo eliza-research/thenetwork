@@ -76,7 +76,7 @@ import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
-import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt } from "../../core/src/generated/peonCapacity.ts";
+import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt, peonFeedbackRetainsAcceptance } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireClosedProbeReply, hireContactAllowed, hireProbeWasDeclined, managerQuestionDeadline, managerQuestionMayOpen } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { weakProbeAcknowledgementAllowed } from "../../core/src/generated/probeReply.ts";
@@ -7287,13 +7287,27 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const o of this.opps.values()) {
       if (!o.seat) continue;
       const hasMeeting = o.meetingAt !== undefined, closed = o.stage === "closed";
-      const hasFeedback = bookedOccupies(hasMeeting, closed) && interactions.some(x => x.id.startsWith(`${o.id}:fb:`));
-      if (!bookedNeedsSyntheticAcceptance(hasMeeting, closed, hasFeedback)) continue;
+      const prefix = `${o.id}:fb:`;
+      const participants = view(o.id, o.participants);
+      const feedback = bookedOccupies(hasMeeting, closed) ? interactions.filter(record => record.id.startsWith(prefix)) : [];
+      const acceptanceRow = feedback.find(record => {
+        const author = record.id.slice(prefix.length);
+        const matchingRoster = participants.length === 2 && record.participants.length === 2
+          && participants.every(id => record.participants.includes(id))
+          && o.participants.every(id => o.status.get(id) === "yes");
+        const ownFeedback = o.feedbackFrom.has(author) && o.participants.includes(author)
+          && (record.outcome === "completed" || record.outcome === "no_show");
+        return peonFeedbackRetainsAcceptance(o.stage === "done", matchingRoster, ownFeedback);
+      });
+      if (!acceptanceRow && !bookedNeedsSyntheticAcceptance(hasMeeting, closed, feedback.length > 0)) continue;
+
       const receipts = o.seatAcceptedAt === undefined
         ? o.participants.map(id => this.bookingNoticeReceiptAt(o, id, 0)).filter((at): at is number => at !== undefined && at >= 0 && at <= input.now)
         : [];
-      const at = peonAcceptedHistoryAt(o.seatAcceptedAt ?? -1, receipts.length ? Math.min(...receipts) : -1, o.meetingAt!);
-      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
+      const acceptedAt = peonAcceptedHistoryAt(o.seatAcceptedAt ?? -1, receipts.length ? Math.min(...receipts) : -1, o.meetingAt!);
+      if (acceptanceRow) acceptanceRow.hireAcceptedAt = acceptedAt;
+      else interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants,
+        at: acceptedAt, outcome: "accepted", acceptedBy: participants });
     }
     return {
       ...input, interactions,

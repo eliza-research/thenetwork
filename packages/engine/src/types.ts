@@ -29,6 +29,8 @@ export interface InteractionRecord {
   noShowBy?: MemberId[];
   /** The meeting's start and zone, independent of the feedback receipt in at. Null means a legacy reply has no surviving booking. */
   bookedMeeting?: { at: number; timeZone: string } | null;
+  /** The booked Peon introduction's mutual acceptance, on one feedback row. at remains the feedback receipt. */
+  hireAcceptedAt?: number;
   /** Invitees who said yes (engine-visible responsiveness history; v1.2 acceptance estimate). */
   acceptedBy?: MemberId[];
   /** Invitees who were asked but never answered before the invite expired. */

@@ -21,7 +21,8 @@ import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
-import { historyOf } from "../../packages/engine/src/packs/peon/profile.ts";
+import { historyOf, jobOf } from "../../packages/engine/src/packs/peon/profile.ts";
+import { slateCap } from "../../packages/engine/src/packs/peon/selection.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
@@ -208,6 +209,11 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
       await world.say("manager", POST.replace("2 openings", "1 opening"));
       await world.say("manager", "yes");
       const seat = seatIdOf(world.saved[0]!.id);
+      await world.say("manager", "We're hiring a barista, 5 openings, $40k-$50k, onsite in Manhattan");
+      await world.say("manager", "yes");
+      const otherSeat = seatIdOf(world.saved[1]!.id);
+      const matchWorld = () => new World(world.net.packInput(world.clock.now()), resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+      const otherSlateCap = (input: World) => slateCap(input, jobOf(input, otherSeat)!);
       const queue = () => world.net.reviewQueue().filter(i => world.opp(i.oppId)?.seat?.id === seat);
       const openings = () => world.net.packInput(world.clock.now()).facets
         .find(facet => facet.id === `${seat}:openings`)?.tags.find(tag => tag.startsWith("peon:openings:"));
@@ -249,13 +255,43 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
         expect(readHistory()).toEqual({ at: interviewAt, inFlight: 0, employerAnswered: 0 });
         world.net.importState(current);
       }
+      expect(otherSlateCap(matchWorld())).toBe(5);
       const respondent = attendance === "manager missed" ? "manager" : candidate;
       expect(await world.runUntil(() => world.net.memberList().find(m => m.id === respondent)?.awaiting?.kind === "feedback", 7 * DAY)).toBe(true);
+      const feedbackAt = world.clock.now();
       if (attendance !== "unanswered") await world.say(respondent, attendance === "completed" ? "We both showed up" : "I couldn't make it");
       world.restart();
       expect(world.opp(first)?.stage).toBe("done");
       const released = attendance === "candidate missed" || attendance === "manager missed";
       expect(openings()).toBe(released ? "peon:openings:1" : "peon:openings:0");
+      const history = matchWorld();
+      expect(historyOf(history, seat).answered).toBe(1);
+      expect(historyOf(history, candidate).inFlight).toBe(attendance === "unanswered" ? 1 : 0);
+      expect(otherSlateCap(history)).toBe(5);
+      const feedbackRows = () => matchWorld().interactions.filter(row => row.id.startsWith(`${first}:fb:`));
+      if (attendance !== "unanswered") {
+        expect(feedbackRows()).toMatchObject([{ hireAcceptedAt: acceptedAt, at: feedbackAt, outcome: released ? "no_show" : "completed" }]);
+      }
+      if (attendance === "completed") {
+        expect(await world.runUntil(() => world.net.memberList().find(m => m.id === "manager")?.awaiting?.kind === "feedback", DAY)).toBe(true);
+        const secondFeedbackAt = world.clock.now();
+        await world.say("manager", "We both showed up");
+        world.restart();
+        expect(feedbackRows().map(row => [row.hireAcceptedAt, row.at])).toEqual([[acceptedAt, feedbackAt], [undefined, secondFeedbackAt]]);
+        expect(historyOf(matchWorld(), seat).answered).toBe(1);
+
+        const current = world.net.exportState();
+        const older = structuredClone(current);
+        const booking = older.opps.find(opp => opp.id === first)!;
+        delete booking.seatAcceptedAt;
+        const legacyReceipt = world.about(first).find(message => message.meta.booked?.proposalId === first)!;
+        world.net.importState(older);
+        expect(feedbackRows()[0]?.hireAcceptedAt).toBe(legacyReceipt.t);
+        delete booking.bookedAt;
+        world.net.importState(older);
+        expect(feedbackRows()[0]?.hireAcceptedAt).toBe(booking.meetingAt);
+        world.net.importState(current);
+      }
       await world.run(3 * DAY);
       world.restart();
       const replacement = queue()[0]?.oppId;
