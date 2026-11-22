@@ -10,7 +10,7 @@
 import { AGE_AND_CLAUSE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, canJoin, parseReply, type Category } from "@thenetwork/core";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
-import { mayRetryCounter } from "../../core/src/generated/probeReply.ts";
+import { historicalProbeTimeClause, mayRetryCounter } from "../../core/src/generated/probeReply.ts";
 import { safetyRequestMayResolveTarget } from "../../core/src/generated/safetyCase.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -880,6 +880,36 @@ function timeMentions(text: string): TimeMention[] {
   return [...days, ...times.filter(t => t.day || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
 }
 
+const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
+const PROBE_ORDINALS: [RegExp, number][] = [
+  [probeOrdinal("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
+  [probeOrdinal("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
+  [probeOrdinal("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, -1],
+];
+
+const PAST_PROBE_CUE = /\b(?:was|were|wasn't|weren't|went|came|met|enjoyed|loved|ago)\b/;
+const PAST_RELATIVE_TIME = /\b(?:yesterday|last\s+(?:week|month|year|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))\b/;
+const PROBE_TIME_LABEL = /\boption\s+[abc]\b|^\s*[abc]\s+(?:was|were)\b|\bweekends?\b|\b(?:mon|tues?|weds?|thu|thur|thurs|fri|sat|sun)\s+(?:was|were)\b/;
+
+const PROBE_CLAUSE_BOUNDARY = /([.,;!?\n]|\b(?:but|though|however)\b)/;
+
+function separatePastProbeTimes(text: string): { current: string; past: boolean } {
+  const clauses = text.split(PROBE_CLAUSE_BOUNDARY);
+  const current: string[] = [];
+  let past = false;
+  for (let i = 0; i < clauses.length; i += 2) {
+    const clause = clauses[i]!;
+    const relativePast = PAST_RELATIVE_TIME.test(clause);
+    const describesPast = relativePast || PAST_PROBE_CUE.test(clause);
+    const mentionsTime = describesPast && (relativePast || PROBE_TIME_LABEL.test(clause)
+      || timeMentions(clause).length > 0 || PROBE_ORDINALS.some(([re]) => clause.search(re) >= 0));
+    if (historicalProbeTimeClause(describesPast, mentionsTime)) {
+      past = true;
+    } else if (clause.trim()) current.push(clause + (clauses[i + 1] ?? ""));
+  }
+  return { current: past ? current.join(" ").trim() : text, past };
+}
+
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
@@ -900,8 +930,13 @@ interface ProbeReply {
 }
 
 export function parseProbeReply(body: string, options: readonly TimeOption[] = [], explicitTimesOnly = false): ProbeReply {
-  const t = normText(body);
-  const c = consentScan(body);
+  const normalized = normText(body);
+  const { current: t, past } = options.length ? separatePastProbeTimes(normalized) : { current: normalized, past: false };
+  const original = consentScan(body);
+  const c = past && original.why !== "conditional" && original.why !== "hedged" ? consentScan(t) : original;
+  if (past && c.answer !== "no" && normalized.split(PROBE_CLAUSE_BOUNDARY).some(clause => /^\s*if\b/.test(clause))) {
+    return { answer: "unclear", keys: [], why: "conditional" };
+  }
   if (!options.length || c.answer === "counter") {
     // spec/probeReply.md, "A suggested alternative needs a separate yes before asking for new times"
     const yes = c.answer === "yes" || !explicitTimesOnly && c.answer === "counter" && mayRetryCounter(options.length > 0, c.separateYes === true);
@@ -933,13 +968,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const alone = (explicitTimesOnly ? EXPLICIT_KEY : /^\s*([abc])[\s.!,)]*$/).exec(t);
   if (alone && (explicitTimesOnly || all.includes(alone[1]!))) { pos.add(alone[1]!); strong.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
-  const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
-  const ordinals: [RegExp, number][] = [
-    [ord("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
-    [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
-    [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
-  ];
-  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  for (const [re, index] of PROBE_ORDINALS) {
+    const option = options.at(index);
+    if (option) for (const match of t.matchAll(re)) mark([option.key], match.index!, match[0].length);
+  }
   let namedExclusion = false;
   const unresolved: TimeMention[] = [];
   const offered = options.map(o => {
@@ -997,8 +1029,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
   }
   if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
+  if (!explicitTimesOnly && namedExclusion && open.length) return { answer: "yes", keys: open, why: c.why };
+  if (past) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
-  if (c.answer === "yes" || namedExclusion && open.length) return { answer: "yes", keys: open, why: c.why };
+  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return neg.size || pos.size ? { ...unclear, why: "slot" } : unclear;
 }

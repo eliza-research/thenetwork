@@ -5,6 +5,7 @@
 // weekday plan and named the member to the other person; the member's real answer was "Can't this
 // week, maybe another time."
 import { expect, test } from "vitest";
+import { HOUR } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 
 const newcomer = (id: string, name: string) => ({ id, name, age: 30, area: "Williamsburg", interests: ["board games", "live music"], wants: [{ objective: "make a few new friends in the city", category: "social" as const }] });
@@ -22,4 +23,36 @@ test("a weekend preference is a yes only to the offered weekend times", async ()
   expect(weekend.length).toBeLessThan(options.length);
   await w.say("a", "Weekends work best. ✨💯");
   expect(w.log("probe_answer").filter(l => l.detail.memberId === "a").map(l => [l.detail.yes, l.detail.picked])).toEqual([[true, weekend]]);
+});
+
+test("a past date reference neither books nor replaces the active time choice", async () => {
+  const ids = ["rae", "sam"];
+  const thursday = Date.UTC(2026, 9, 8, 22);
+  const saturday = Date.UTC(2026, 9, 10, 22);
+  const sunday = Date.UTC(2026, 9, 11, 22);
+  const pastReply = "Saturday was great.";
+  const world = new Mini([
+    { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
+    { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
+  ], { app: "slop", plans: false, growth: false, review: "human", hooks: {
+    timeOptions: () => [thursday, saturday, sunday].map(start => ({ start, end: start + HOUR })),
+    venue: () => ({ id: "test-cafe", name: "Cafe", neighborhood: "Downtown", lat: 40.7, lng: -74 }),
+  }, understand: async (text, ctx) => text === pastReply ? {
+    consent: "yes", times: ctx.options?.slice(0, 1).map(item => item.key),
+    wants: [], notWanted: [], interests: [], skills: [],
+  } : undefined });
+  await world.onboard(...ids);
+  const id = world.propose(ids, { category: "romance", objective: "a coffee date" });
+  expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
+  expect(world.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+  expect(await world.runUntil(() => world.probed("rae"))).toBe(true);
+  await world.say("rae", "Saturday or Sunday works.");
+  expect(await world.runUntil(() => world.probed("sam"))).toBe(true);
+  await world.say("sam", pastReply);
+  expect(world.meetings).toEqual([]);
+  expect(world.probed("sam")).toBe(true);
+  expect(world.log("probe_answer").filter(item => item.detail.memberId === "sam")).toEqual([]);
+
+  await world.say("sam", "Last Saturday was great, Sunday works.");
+  expect(world.meetings).toMatchObject([{ proposalId: id, participants: ids, at: sunday }]);
 });

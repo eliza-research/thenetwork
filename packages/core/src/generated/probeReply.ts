@@ -31,6 +31,19 @@ export function pickedTimes(chosen: string[], offered: string[]): string[] {
   return chosen.length > 0 ? chosen : offered;
 }
 
+/** Story: Make a choice about a proposed opportunity / A past time reference leaves the offered time open (spec/probeReply.md) */
+//@ pure
+export function historicalProbeTimeClause(describesPast: boolean, timeReference: boolean): boolean {
+  return describesPast && timeReference;
+}
+
+/** Story: Make a choice about a proposed opportunity / A past time reference leaves the offered time open (spec/probeReply.md) */
+//@ pure
+export function lawPresentProbeTimeKeepsItsClause(timeReference: boolean): boolean {
+  //@ ensures \result === true
+  return !historicalProbeTimeClause(false, timeReference);
+}
+
 /** Story: Make a choice about a proposed opportunity / A suggested alternative needs a separate yes before asking for new times (spec/probeReply.md) */
 //@ pure
 export function mayRetryCounter(offeredTimes: boolean, separateYes: boolean): boolean {
