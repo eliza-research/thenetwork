@@ -14,6 +14,8 @@ Baseline code is `f662eda0` on `vibestack`. The hosted reference is [CI run 4505
 
 The Slop 100,000-member case took 25m 28s on its own. Candidate search accounted for 688.738s of that case. The profile builder examined every presence row for every member. A one-pass index now groups eligible trip cities by canonical member. The generated travel window checks still set the start and end bounds. The profile omits the home city and records each other city once.
 
+The first hosted run of the matching changes passed all four pinned packs. With the packs still on separate runners, Slop fell from 26m 32s to 10m 09s and Friends fell from 15m 42s to 8m 55s. Their pinned scale cases, pair-check limits, and blocking gates still ran. [Hosted comparison run](https://github.com/eliza-research/thenetwork/actions/runs/45062887809).
+
 ## Paired local measurements
 
 Node 26.13.0 on arm64 macOS. The machine ran multiple concurrent validation sessions, so the matching microbenchmarks report process CPU. The timing samples are small and indicate the size of the effect on these fixtures.
@@ -44,6 +46,7 @@ The generated check compares 232 current artifacts in both cache states. On GitH
 - Save the root and sites TypeScript incremental state by runner, Node version, lockfile, project settings and revision. The full `pnpm run typecheck` passed. A warm run found a type error in a changed file and passed again once the error was removed.
 - Share the immutable result of one six-day Observatory simulation between its consent and Postgres parity tests. The hosted reference spent 15.2s and 14.4s on the tests that each ran this fixture.
 - Run the NYC simulation alongside the other offline blocks on one runner. Both commands must succeed. The existing Postgres skip check reads the core report.
+- Share one runner and dependency install across the four matching packs. Each pack runs in its own process and must report success to the `offline` check.
 - Reuse only content-keyed generation inputs across GitHub runs. The generator and VibeLang compiler still compare outputs against the current checkout. Obsolete PR runs of the Vibestack workflow are canceled.
 - Share one unprivileged checkout and package install between Pages typecheck and build. The production job keeps its branch, environment, and deploy conditions. Bombadil uses the full Chromium build and the browser job omits the separate headless-shell binary.
 

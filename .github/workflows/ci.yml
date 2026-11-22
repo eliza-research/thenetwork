@@ -136,13 +136,8 @@ jobs:
           DEPLOY_TARGET: production
 
   matching:
-    name: matching (${{ matrix.pack }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        pack: [ntwrk, slop, peon, friends]
     outputs:
       ntwrk: ${{ steps.gates.outputs.ntwrk }}
       slop: ${{ steps.gates.outputs.slop }}
@@ -161,12 +156,27 @@ jobs:
         timeout-minutes: 5
       - name: Pinned matching simulations
         id: gates
-        env:
-          MATCHING_PACK: ${{ matrix.pack }}
+        shell: bash
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run sim --only matching --matching-pack "$MATCHING_PACK" &&
-            printf '%s=success\n' "$MATCHING_PACK" >> "$GITHUB_OUTPUT"
+          packs=(ntwrk slop peon friends)
+          pids=()
+          for pack in "${packs[@]}"; do
+            /usr/bin/time -f 'elapsed=%e user=%U sys=%S rss_kib=%M' \
+              pnpm run sim --only matching --matching-pack "$pack" 2>&1 | sed -u "s/^/[$pack] /" &
+            pids+=("$!")
+          done
+          failed=0
+          for index in "${!pids[@]}"; do
+            pack=${packs[$index]}
+            if wait "${pids[$index]}"; then
+              printf '%s=success\n' "$pack" >> "$GITHUB_OUTPUT"
+            else
+              echo "Matching simulations failed for $pack"
+              failed=1
+            fi
+          done
+          exit "$failed"
         timeout-minutes: 30
 
   offline:
