@@ -14,8 +14,8 @@ export const standingFacetScopes: string[] = ["agent_private", "opportunity_spec
 export const standingFacetProvenances: string[] = ["said", "vouched", "connected_source", "inferred"];
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
 export const standingUnreviewedPercent: number = 50;
-/** Story: Estimate standing from facts, never from popularity / A private photo rating maps onto the standing scale for dating (spec/memberStanding.md) */
-export const standingRatingScale: number = 1000;
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
+export const standingPoolMinimum: number = 20;
 /** Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty (spec/memberStanding.md) */
 export const standingUncertaintyFloor: number = 3;
 /** Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty (spec/memberStanding.md) */
@@ -24,6 +24,8 @@ export const standingUncertaintyStep: number = 2;
 export const standingWeeklyStep: number = 5;
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 export const standingObservationWeekMs: number = 604800000;
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
+export const standingMiddle: number = quotient_memberStanding(matchLane_standingCeiling, 2);
 
 /** Story: Estimate standing from facts, never from popularity / Standing exists only for an adult who consented to the lane (spec/memberStanding.md) */
 //@ pure
@@ -96,20 +98,46 @@ export function lawStandingMonotoneInEvidence(evidence: StandingEvidence[], extr
   return standingFromEvidence(evidence.concat([extra])) >= standingFromEvidence(evidence);
 }
 
-/** Story: Estimate standing from facts, never from popularity / A private photo rating maps onto the standing scale for dating (spec/memberStanding.md) */
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
 //@ pure
-export function standingFromRating(ratingPermille: number): number {
-  const local_1 = ratingPermille < 0 ? 0 : (ratingPermille > standingRatingScale ? standingRatingScale : ratingPermille);
-  return standingRatingScale > 0 ? quotient_memberStanding(exact_memberStanding(local_1 * matchLane_standingCeiling), standingRatingScale) : 0;
+export function standingPoolReady(rated: number): boolean {
+  return rated >= standingPoolMinimum;
 }
 
-/** Story: Estimate standing from facts, never from popularity / A private photo rating maps onto the standing scale for dating (spec/memberStanding.md) */
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
 //@ pure
-export function lawStandingBounded(evidence: StandingEvidence[], ratingPermille: number): boolean {
+export function standingPercentile(below: number, equal: number, rated: number): number {
+  return rated > 0 ? standingClamp(quotient_memberStanding(exact_memberStanding(exact_memberStanding(exact_memberStanding(2 * below) + equal) * matchLane_standingCeiling), exact_memberStanding(2 * rated))) : standingMiddle;
+}
+
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
+//@ pure
+export function lawStandingPercentileRisesWithRank(below: number, equal: number, rated: number): boolean {
   //@ ensures \result === true
-  const local_2 = standingFromEvidence(evidence);
-  const local_3 = standingFromRating(ratingPermille);
-  return local_2 >= 0 && local_2 <= matchLane_standingCeiling && local_3 >= 0 && local_3 <= matchLane_standingCeiling;
+  return !(below >= 0 && equal >= 0) || standingPercentile(exact_memberStanding(below + 1), equal, rated) >= standingPercentile(below, equal, rated);
+}
+
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
+//@ pure
+export function lawStandingBounded(evidence: StandingEvidence[], below: number, equal: number, rated: number): boolean {
+  //@ ensures \result === true
+  const local_1 = standingFromEvidence(evidence);
+  const local_2 = standingPercentile(below, equal, rated);
+  return local_1 >= 0 && local_1 <= matchLane_standingCeiling && local_2 >= 0 && local_2 <= matchLane_standingCeiling;
+}
+
+/** Story: Estimate standing from facts, never from popularity / One rated adult who joins a pool moves another member's percentile by at most the weekly step (spec/memberStanding.md) */
+//@ pure
+export function standingMovesWithinStep(before: number, after: number): boolean {
+  return exact_memberStanding(after - before) <= standingWeeklyStep && exact_memberStanding(before - after) <= standingWeeklyStep;
+}
+
+/** Story: Estimate standing from facts, never from popularity / One rated adult who joins a pool moves another member's percentile by at most the weekly step (spec/memberStanding.md) */
+//@ pure
+export function lawStandingPercentileStableWhenOneJoins(below: number, equal: number, rated: number): boolean {
+  //@ ensures \result === true
+  const local_3 = standingPercentile(below, equal, rated);
+  return !(below >= 0 && equal >= 1 && exact_memberStanding(below + equal) <= rated && standingPoolReady(rated)) || (standingMovesWithinStep(local_3, standingPercentile(below, equal, exact_memberStanding(rated + 1))) && standingMovesWithinStep(local_3, standingPercentile(exact_memberStanding(below + 1), equal, exact_memberStanding(rated + 1))) && standingMovesWithinStep(local_3, standingPercentile(below, exact_memberStanding(equal + 1), exact_memberStanding(rated + 1))));
 }
 
 /** Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty (spec/memberStanding.md) */
@@ -135,20 +163,55 @@ export function lawUncertaintyShrinks(reviewedCount: number): boolean {
   return standingUncertainty(exact_memberStanding(reviewedCount + 1)) <= standingUncertainty(reviewedCount);
 }
 
+/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
+//@ pure
+export function ratingSpreadPoints(spreadLow: number, spreadHigh: number): number {
+  return spreadHigh > spreadLow ? quotient_memberStanding(exact_memberStanding(exact_memberStanding(spreadHigh - spreadLow) + 1), 2) : 0;
+}
+
+/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
+//@ pure
+export function ratingUncertainty(photos: number, spreadLow: number, spreadHigh: number): number {
+  const local_7 = exact_memberStanding(standingUncertainty(photos) + ratingSpreadPoints(spreadLow, spreadHigh));
+  return photos < 2 ? matchLane_standingUncertaintyCeiling : (local_7 > matchLane_standingUncertaintyCeiling ? matchLane_standingUncertaintyCeiling : local_7);
+}
+
+/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
+//@ pure
+export function lawRatingUncertaintyShrinksWithPhotos(photos: number, spreadLow: number, spreadHigh: number): boolean {
+  //@ ensures \result === true
+  return ratingUncertainty(exact_memberStanding(photos + 1), spreadLow, spreadHigh) <= ratingUncertainty(photos, spreadLow, spreadHigh);
+}
+
+/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
+//@ pure
+export function lawRatingUncertaintyGrowsWithSpread(photos: number, spreadLow: number, spreadHigh: number, wider: number, lower: number): boolean {
+  //@ ensures \result === true
+  return (!(wider >= spreadHigh) || ratingUncertainty(photos, spreadLow, wider) >= ratingUncertainty(photos, spreadLow, spreadHigh)) && (!(lower <= spreadLow) || ratingUncertainty(photos, lower, spreadHigh) >= ratingUncertainty(photos, spreadLow, spreadHigh));
+}
+
+/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
+//@ pure
+export function lawRatingUncertaintyBounded(photos: number, spreadLow: number, spreadHigh: number): boolean {
+  //@ ensures \result === true
+  const local_8 = ratingUncertainty(photos, spreadLow, spreadHigh);
+  return local_8 >= standingUncertaintyFloor && local_8 <= matchLane_standingUncertaintyCeiling && (!(photos < 2) || local_8 === matchLane_standingUncertaintyCeiling);
+}
+
 /** Story: Move standing slowly / Standing moves toward its target by at most five points a week (spec/memberStanding.md) */
 //@ pure
 export function nextStanding(standing: number, target: number): number {
-  const local_7 = standingClamp(standing);
-  const local_8 = standingClamp(target);
-  return local_8 > exact_memberStanding(local_7 + standingWeeklyStep) ? exact_memberStanding(local_7 + standingWeeklyStep) : (local_8 < exact_memberStanding(local_7 - standingWeeklyStep) ? exact_memberStanding(local_7 - standingWeeklyStep) : local_8);
+  const local_9 = standingClamp(standing);
+  const local_10 = standingClamp(target);
+  return local_10 > exact_memberStanding(local_9 + standingWeeklyStep) ? exact_memberStanding(local_9 + standingWeeklyStep) : (local_10 < exact_memberStanding(local_9 - standingWeeklyStep) ? exact_memberStanding(local_9 - standingWeeklyStep) : local_10);
 }
 
 /** Story: Move standing slowly / Standing moves toward its target by at most five points a week (spec/memberStanding.md) */
 //@ pure
 export function lawStandingStepBounded(standing: number, target: number): boolean {
   //@ ensures \result === true
-  const local_9 = nextStanding(standing, target);
-  return local_9 >= 0 && local_9 <= matchLane_standingCeiling && (!(standing >= 0 && standing <= matchLane_standingCeiling) || (exact_memberStanding(local_9 - standing) <= standingWeeklyStep && exact_memberStanding(standing - local_9) <= standingWeeklyStep));
+  const local_11 = nextStanding(standing, target);
+  return local_11 >= 0 && local_11 <= matchLane_standingCeiling && (!(standing >= 0 && standing <= matchLane_standingCeiling) || (exact_memberStanding(local_11 - standing) <= standingWeeklyStep && exact_memberStanding(standing - local_11) <= standingWeeklyStep));
 }
 
 /** Story: Move standing slowly / Standing reaches a target that is within one step (spec/memberStanding.md) */
@@ -196,25 +259,25 @@ export function lawStandingObservationNeverMovesTimeBackward(value: number, obse
 //@ pure
 export function lawStandingObservationInRange(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
   //@ ensures \result === true
-  const local_10: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
-  return 0 <= local_10.standing && local_10.standing <= matchLane_standingCeiling && local_10.updatedAt >= -1;
+  const local_12: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
+  return 0 <= local_12.standing && local_12.standing <= matchLane_standingCeiling && local_12.updatedAt >= -1;
 }
 
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 //@ pure
 export function lawStandingDueObservationStepsOnce(value: number, observedAt: number, target: number, now: number): boolean {
   //@ ensures \result === true
-  const local_11: StandingObservation = observeStanding(value, observedAt, target, now, true);
-  const local_12 = standingClamp(value);
-  return !(observedAt >= 0 && now >= observedAt && exact_memberStanding(now - observedAt) >= standingObservationWeekMs) || (local_11.updatedAt === now && local_11.standing === nextStanding(value, target) && exact_memberStanding(local_11.standing - local_12) <= standingWeeklyStep && exact_memberStanding(local_12 - local_11.standing) <= standingWeeklyStep);
+  const local_13: StandingObservation = observeStanding(value, observedAt, target, now, true);
+  const local_14 = standingClamp(value);
+  return !(observedAt >= 0 && now >= observedAt && exact_memberStanding(now - observedAt) >= standingObservationWeekMs) || (local_13.updatedAt === now && local_13.standing === nextStanding(value, target) && exact_memberStanding(local_13.standing - local_14) <= standingWeeklyStep && exact_memberStanding(local_14 - local_13.standing) <= standingWeeklyStep);
 }
 
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 //@ pure
 export function lawStandingObservationCannotAdvanceTwiceAtSameTime(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
   //@ ensures \result === true
-  const local_13: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
-  return !(local_13.updatedAt >= 0) || equal_memberStanding(observeStanding(local_13.standing, local_13.updatedAt, target, now, true), local_13);
+  const local_15: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
+  return !(local_15.updatedAt >= 0) || equal_memberStanding(observeStanding(local_15.standing, local_15.updatedAt, target, now, true), local_15);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

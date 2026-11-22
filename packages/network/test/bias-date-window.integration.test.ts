@@ -120,6 +120,10 @@ describe.skipIf(!pgAvailable)("weekly bias monitor: dates by meeting time (Netwo
       const overall = report!.report.overall, months = BIAS_WINDOW_MS / (30.44 * DAY);
       frames.push({ proposals: Math.round(overall.proposals * months), dates: Math.round(overall.dates * months), secondDates: overall.secondDates });
     }
+    const reports = (await staff(ADMIN, "GET", "/bias")).reports;
+    expect(reports[0].report.dateStanding).toEqual({ positives: 0, negatives: 0, concordantTwice: 0, predicts: true });
+    const shown = JSON.stringify(reports);
+    for (const secret of [...opp.participants, "appearance"]) expect(shown).not.toContain(secret);
     expect((await sql`select distinct status from network.messages where direction = 'outbound'`).map((r: any) => r.status)).toEqual(["dry_run"]);
     // The proposal leaves the window one millisecond after its creation time does; the date stays until its meeting does.
     expect(frames).toEqual([

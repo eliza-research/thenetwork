@@ -136,7 +136,10 @@ export function raterFacet(p: SlopPersona, joinedAt: number, m: NonNullable<Plat
   const shift = demoGroupOf(p.id, m.biasShare) === "B" ? -m.bias : 0;
   const face = t.face + r.normal(0, m.noise) + shift, body = t.body + r.normal(0, m.noise) + shift;
   const conf = 1 / (1 + m.noise * m.noise);
-  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: conf, model: "sim-rater", ...(bt ? { bodyType: ratedBodyType(p.id, bt), bodyTypeConfidence: bt.raterAccuracy } : {}) }, joinedAt);
+  const ph = new Rng(hash32("slop-rater-photos", p.id)), photos = ph.int(1, 4);
+  const per = Array.from({ length: photos }, () => ph.normal(0, m.noise)), mean = per.reduce((a, x) => a + x, 0) / photos;
+  const spread = photos > 1 ? Math.sqrt(per.reduce((a, x) => a + (x - mean) ** 2, 0) / (photos - 1)) : undefined;
+  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: conf, photos, ...(spread !== undefined ? { spread } : {}), model: "sim-rater", ...(bt ? { bodyType: ratedBodyType(p.id, bt), bodyTypeConfidence: bt.raterAccuracy } : {}) }, joinedAt);
 }
 
 export const RELAY_DEFAULTS = { scamRecall: 0.85, hostileRecall: 0.7, falsePositive: 0.005 };

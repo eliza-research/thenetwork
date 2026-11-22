@@ -49,6 +49,7 @@ export interface Extra {
    */
   softSecondRate: number; softSecondDates: number;
   datePairs: string[];
+  standing?: { weeks: number; kept: number; positives: number; negatives: number; placed: number; narrowed: number };
 }
 
 const WEEKS_PER_MONTH = 4.345;
@@ -153,12 +154,16 @@ export async function runArm(arm: string, seeds: number[], weeks: number, perCit
   const wo = worldOptions({ ...world, ...($world ?? {}) });
   const base = $baseline ?? (arm in BASELINES && !options ? arm : undefined);
   for (const seed of seeds) {
+    const standing = { weeks: 0, kept: 0, positives: 0, negatives: 0, placed: 0, narrowed: 0 };
     const res = base
       ? runSlopWorld({ seed, perCity, weeks, matcher: BASELINES[base as keyof typeof BASELINES] as never, ...wo })
-      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed: saltSeed(seed, $engineSalt ?? 0) }), ...wo });
+      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed: saltSeed(seed, $engineSalt ?? 0), onStanding: (_, s) => {
+        standing.weeks++; standing.kept += s.validity.predicts ? 1 : 0; standing.placed += s.placed; standing.narrowed += s.narrowed;
+        standing.positives = s.validity.positives; standing.negatives = s.validity.negatives;
+      } }), ...wo });
     const m = slopMetrics(res);
     out.metrics.push(m);
-    out.extra.push(extraOf(res, m));
+    out.extra.push({ ...extraOf(res, m), ...(base ? {} : { standing: { ...standing } }) });
   }
   return out;
 }

@@ -5,18 +5,17 @@
 import type { City, MemberId } from "@thenetwork/core";
 import { DAY, withinMutualRadius } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
-import { standingFromRating, standingRatingScale, standingReadable, standingUncertainty } from "../../../../core/src/generated/memberStanding.ts";
 import { memberReason, type MemberCheck } from "../../filters.ts";
 import { countExclusion, pairCandidate, type GenCtx } from "../../genkit.ts";
 import type { EntitySegment, EntityTags, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
 import type { GeneratorSpec } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
-import { ratingPermille } from "./appearance.ts";
 import { limitMiles, mutualMarkets } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { cellIn, datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
 import { SLOP_LANE, SLOP_MATCH_LANE } from "./rules.ts";
+import { DateStandings, UNKNOWN_DATE_STANDING } from "./standing.ts";
 import { dateActivity, datePackValue, responsiveness } from "./score.ts";
 import { cellMiles, cellOfZip, ZIPS, type Cell } from "./zips.ts";
 
@@ -125,6 +124,12 @@ function dateSegmentOf(w: World, p: SlopProfile, market: City, o: SlopPackOption
 
 /** slop.date's match vectors (AppPack.vectors). */
 export function slopVectors(o: SlopPackOptions): PackVectors {
+  const standings = new WeakMap<World, DateStandings>();
+  const standingsOf = (w: World): DateStandings => {
+    let s = standings.get(w);
+    if (!s) { s = new DateStandings(w, o); standings.set(w, s); }
+    return s;
+  };
   return {
     memberships(w, memberId) {
       if (memberReason(w, memberId, DATING) !== null) return [];
@@ -144,17 +149,9 @@ export function slopVectors(o: SlopPackOptions): PackVectors {
       const p = profilesOf(w).get(entity.memberId);
       return p ? dateSegmentOf(w, p, entity.market, o) : undefined;
     },
-    // spec/memberStanding.md, "A private photo rating maps onto the standing scale for dating": a
-    // member without a usable rating sits in the middle with the widest uncertainty; a rating counts
-    // at least one photo.
     standing(w, entity) {
       const p = profilesOf(w).get(entity.memberId);
-      const rating = p?.appearance;
-      if (p && rating && rating.confidence >= o.appearance.minConfidence && standingReadable(p.adult, p.optedIn)) {
-        return { standing: standingFromRating(ratingPermille(rating.overall)), uncertainty: standingUncertainty(rating.photos ?? 1),
-          evidenceIds: p.appearanceEvidenceIds };
-      }
-      return { standing: standingFromRating(standingRatingScale / 2), uncertainty: standingUncertainty(0) };
+      return p ? standingsOf(w).standing(p, entity.market) : UNKNOWN_DATE_STANDING;
     },
     packValue(w, a, b) {
       const P = profilesOf(w), pa = P.get(a.memberId), pb = P.get(b.memberId);

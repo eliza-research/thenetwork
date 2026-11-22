@@ -40,6 +40,8 @@ import { isLateArrivalPairBooking, parseLateArrivalDeliveryId } from "../src/gro
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
+import { buildWorld, localEmbed, resolveConfig } from "@thenetwork/engine";
+import type { DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
   contextActiveItemCount, contextFacetEligible, contextFacetKept, contextFacetSizeLimit, contextItemLabel, contextMatchItemShown, contextMode, contextSinglePlayer,
@@ -1597,6 +1599,18 @@ export class NetworkRuntime {
       if (s) this.net.importState(s);
       this.unit = newUnit();
       return this.net.reviewQueue();
+    });
+  }
+
+  dateStanding(): Promise<DateStandingValidity | undefined> {
+    const of = this.wiring.dateStanding;
+    if (!of) return Promise.resolve(undefined);
+    return this.store.withLock(async () => {
+      await this.refresh();
+      const s = await this.store.load();
+      if (s) this.net.importState(s);
+      this.unit = newUnit();
+      return of(buildWorld(this.net.packInput(this.clock.now()), resolveConfig(this.wiring.engine), localEmbed));
     });
   }
 

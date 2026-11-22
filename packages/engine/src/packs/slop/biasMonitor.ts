@@ -11,6 +11,7 @@ import {
   biasAnalysisGroupMinimum, biasGroupEligible, biasRateFor, biasRatingQuintile,
   biasRatioBelowThreshold, biasRatioFor, biasThresholdDenominator, biasThresholdNumerator,
 } from "../../../../core/src/generated/weeklyBias.ts";
+import type { DateStandingValidity } from "./standing.ts";
 
 export interface MemberOutcome {
   group: string;
@@ -26,6 +27,7 @@ export interface BiasReport {
   /** The lowest ratio per metric among groups with n >= minN. */
   min: Record<OutcomeMetric, { group: string; ratio: number }>;
   alerts: { group: string; metric: OutcomeMetric; ratio: number }[];
+  dateStanding?: DateStandingValidity;
 }
 export const OUTCOME_METRICS: readonly OutcomeMetric[] = ["proposals", "dates", "secondDates"];
 export const DEFAULT_BIAS_THRESHOLD = biasThresholdNumerator / biasThresholdDenominator;

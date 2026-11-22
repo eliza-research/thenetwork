@@ -18,8 +18,6 @@
 //   3. features -> head -> calibrated z per photo; mean over photos; confidence from the number of
 //      photos, their agreement, the gate and Clef's own answer confidence;
 //   4. the platform stores the result with `appearanceFacet` (agent_private) and never shows it.
-//
-// The question bank asks nothing about race, ethnicity, age, gender or disability.
 import { ratingMaxBytes, ratingMaxPhotos } from "../../../../core/src/generated/photoPolicy.ts";
 import { canRatePhotos, adultsOnly, BODY_TYPES, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject } from "./appearance.ts";
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
@@ -46,9 +44,9 @@ export const CLEF_QUESTIONS: Record<string, ClefQuestion> = {
   "gate.one_adult": { type: "noul", instructions: "Does this photo clearly show exactly one person, who is an adult?" },
   "gate.face_visible": { type: "noul", instructions: "Is that person's face clearly visible (not hidden by sunglasses, a mask, a filter or distance)?" },
   "gate.body_visible": { type: "noul", instructions: "Is most of that person's body visible (at least from head to hips)?" },
-  "rate.face": { type: "score", instructions: "How attractive would most dating-app users find this person's face?", criteria: LEVELS7 },
-  "rate.body": { type: "score", instructions: "How attractive would most dating-app users find this person's body and physique?", criteria: LEVELS7 },
-  "rate.overall": { type: "score", instructions: "Overall, how attractive would most dating-app users find this person in this photo?", criteria: LEVELS7 },
+  "rate.face": { type: "score", instructions: "How physically attractive is this person's face?", criteria: LEVELS7 },
+  "rate.body": { type: "score", instructions: "How physically attractive is this person's body and physique?", criteria: LEVELS7 },
+  "rate.overall": { type: "score", instructions: "Overall, how physically attractive is this person in this photo?", criteria: LEVELS7 },
   "aux.photo_quality": { type: "score", instructions: "Technical photo quality (focus, lighting, framing).", criteria: LEVELS5 },
   "aux.grooming": { type: "score", instructions: "How well groomed and put-together does the person look?", criteria: LEVELS5 },
   "aux.fitness": { type: "score", instructions: "How physically fit does the person look?", criteria: LEVELS5 },
@@ -235,7 +233,8 @@ export class WorkersAIClefRater implements AppearanceRater {
       const i = pr.reduce((bi, p, k) => (p > pr[bi]! ? k : bi), 0);
       if (pr[i]! >= this.w.bodyType.minProb && unclear < 0.5) { bodyType = BODY_TYPES[i]; bodyTypeConfidence = clamp01(pr[i]! * (1 - unclear)); }
     }
-    return { face: m.face, body: m.body, overall: m.overall, confidence, model: this.id, ...(bodyType ? { bodyType, bodyTypeConfidence } : {}) };
+    return { face: m.face, body: m.body, overall: m.overall, confidence, photos: per.length, ...(per.length > 1 ? { spread } : {}),
+      model: this.id, ...(bodyType ? { bodyType, bodyTypeConfidence } : {}) };
   }
 }
 

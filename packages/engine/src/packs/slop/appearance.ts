@@ -35,8 +35,8 @@ export interface AppearanceScore {
   bodyType?: BodyType; bodyTypeConfidence?: number;
   /** 0..1: how much to trust the rating (photo quality, agreement, number of photos). */
   confidence: number;
-  /** Photos the rating is based on: the uncertainty of the private standing shrinks with it. */
   photos?: number;
+  spread?: number;
   /** Rater id and version (provenance; never shown). */
   model: string;
 }
@@ -108,7 +108,7 @@ export class ClipAppearanceRater implements AppearanceRater {
     }
     const mean = [0, 1, 2].map(d => per.reduce((s, x) => s + x[d]!, 0) / per.length);
     const spread = per.length > 1 ? Math.sqrt(per.reduce((s, x) => s + (x[2]! - mean[2]!) ** 2, 0) / (per.length - 1)) : 1;
-    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), photos: per.length, model: this.id };
+    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), photos: per.length, ...(per.length > 1 ? { spread } : {}), model: this.id };
   }
 }
 const dot = (w: readonly number[], e: readonly number[]) => w.reduce((s, x, i) => s + x * (e[i] ?? 0), 0);
@@ -153,11 +153,11 @@ export function appearanceFacet(memberId: MemberId, subject: RatingSubject, s: A
     id: `${memberId}:appearance`, memberId, kind: "fact", value: "photo rating (internal)",
     tags: [`${APPEARANCE_PREFIX}face=${f(s.face)}`, `${APPEARANCE_PREFIX}body=${f(s.body)}`, `${APPEARANCE_PREFIX}overall=${f(s.overall)}`, `${APPEARANCE_PREFIX}conf=${f(s.confidence)}`,
       ...(s.bodyType ? [`${APPEARANCE_PREFIX}bodyType=${s.bodyType}`, `${APPEARANCE_PREFIX}bodyTypeConf=${f(s.bodyTypeConfidence ?? s.confidence)}`] : []),
-      ...(s.photos !== undefined && Number.isSafeInteger(s.photos) && s.photos > 0 ? [`${APPEARANCE_PREFIX}photos=${s.photos}`] : [])],
+      ...(s.photos !== undefined && Number.isSafeInteger(s.photos) && s.photos > 0 ? [`${APPEARANCE_PREFIX}photos=${s.photos}`] : []),
+      ...(s.spread !== undefined && Number.isFinite(s.spread) && s.spread >= 0 ? [`${APPEARANCE_PREFIX}spread=${f(s.spread)}`] : [])],
     scope: "agent_private", provenance: "inferred", confidence: s.confidence, validFrom: at, observedAt: at, inferred: true, confirmedByMember: false,
   };
 }
-/** Read a rating back from tags (undefined when absent or malformed). Body type and the photo count are optional. */
 export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore, "model">) | undefined {
   const v: Record<string, number> = {};
   let bodyType: BodyType | undefined;
@@ -170,6 +170,7 @@ export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore,
     face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf!,
     ...(bodyType ? { bodyType, bodyTypeConfidence: Number.isFinite(v.bodyTypeConf) ? v.bodyTypeConf! : v.conf! } : {}),
     ...(Number.isSafeInteger(v.photos) && v.photos! > 0 ? { photos: v.photos! } : {}),
+    ...(Number.isFinite(v.spread) && v.spread! >= 0 ? { spread: v.spread! } : {}),
   };
 }
 

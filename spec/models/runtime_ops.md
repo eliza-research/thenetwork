@@ -35,7 +35,11 @@ it models like any other alert.
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
 eligibility, and aggregate outcome rules. The backend reads saved
 opportunities and rechecks eligibility under its report lock before
-inserting an aggregate report.
+inserting an aggregate report. For an app that rates photos, the weekly run
+also reads the Date standing monitor under the Network lock, from a fresh
+snapshot and the newest stored state, before the report lock; the report
+carries only the monitor's counts and decision. The model abstracts this
+read into `biasInsert`, which reads committed state as the monitor does.
 
 Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
