@@ -583,7 +583,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   // Historical logs without reply links still report decisions. Current logs require an actual send.
   const replyKey = (memberId: string, messageId: string) => JSON.stringify([memberId, messageId]);
   const replies = new Set(records.flatMap(r => r.type === "message" && r.msg.direction === "inbound" &&
-    r.msg.status === "delivered" && r.msg.meta?.inReplyTo ? [replyKey(r.msg.memberId, r.msg.meta.inReplyTo)] : []));
+    r.msg.status === "delivered" && typeof r.msg.meta?.inReplyTo === "string" ? [replyKey(r.msg.memberId, r.msg.meta.inReplyTo)] : []));
   const reachedNetwork = (r: Extract<RunRecord, { type: "decision" }>) =>
     start?.config.replyTracking !== true || replies.has(replyKey(r.memberId, r.messageId));
   let invites = 0, acceptedN = 0, declined = 0, countered = 0, ignored = 0;

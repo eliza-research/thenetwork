@@ -72,7 +72,7 @@ test.skipIf(!pgAvailable)("experiment and Observatory reports measure proactive 
   } finally {
     try { await server?.stop(); await sql?.close(); await dropTestDb(); }
     finally {
-      vi.setSystemTime();
+      vi.useRealTimers();
       if (!resolve(dir).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unexpected temporary directory");
       await rm(dir, { recursive: true, force: true });
     }
