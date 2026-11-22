@@ -5,7 +5,7 @@
 // or point, mutual radius) implements the same interface plus `pairReason`.
 import type { City, MemberId, Presence } from "@thenetwork/core";
 import { HOUR, temporaryPresenceWindow } from "@thenetwork/core";
-import { presenceWindowsOverlap, presenceWindowValid } from "../../core/src/generated/travelPresence.ts";
+import { meetingAreaInterval, presenceWindowsOverlap, presenceWindowValid, type PresenceWindow } from "../../core/src/generated/travelPresence.ts";
 import type { GeoModel } from "./pack.ts";
 import { intersect, subtract, union, type Interval } from "./interval.ts";
 import type { World } from "./world.ts";
@@ -53,10 +53,41 @@ export const cityBucketGeo: GeoModel = {
     return best;
   },
 
-  /** Activation cost input: every member lists one common area (neighbourhood) in the configuration's city. */
-  sharesArea(w: World, ids: MemberId[], market: City | undefined): boolean {
+  sharesArea(w, ids, market, window) {
+    if (window) {
+      const requested = { from: window.start, to: window.end };
+      if (!market || ids.length < 2 || !presenceWindowValid(requested)) return false;
+      const [first, ...others] = ids.map(id => areasDuring(w.get(id)?.presence ?? [], market, requested));
+      for (const [area, intervals] of first!) {
+        let common = intervals;
+        for (const location of others) {
+          common = intersect(common, location.get(area) ?? []);
+          if (!common.length) break;
+        }
+        if (common.length) return true;
+      }
+      return false;
+    }
     const areasOf = (id: MemberId) => new Set(w.get(id)!.presence.filter(p => p.city === market).flatMap(p => p.areas));
     const areaSets = ids.map(areasOf);
     return areaSets.length > 1 && [...areaSets[0]!].some(a => areaSets.every(s => s.has(a)));
   },
 };
+
+/** The intervals for each recorded area in this market. A dated visit replaces earlier area evidence within its bounds. */
+function areasDuring(presence: readonly Presence[], market: City, requested: PresenceWindow): Map<string, Interval[]> {
+  const areas = new Map<string, Interval[]>(), dated: Presence[] = [];
+  for (const row of presence) {
+    if (row.type === "temporary" || row.from !== undefined || row.to !== undefined) dated.push(row);
+    else if (row.city === market) for (const area of row.areas) areas.set(area, [[requested.from, requested.to]]);
+  }
+  for (const row of dated) {
+    const available = row.type === "temporary" ? temporaryPresenceWindow(row) : { from: row.from ?? requested.from, to: row.to ?? requested.to };
+    if (!available || !presenceWindowsOverlap(available, requested)) continue;
+    const active = meetingAreaInterval(available, requested);
+    const interval: Interval = [active.from, active.to];
+    for (const [area, intervals] of areas) areas.set(area, subtract(intervals, interval));
+    if (row.city === market) for (const area of row.areas) areas.set(area, union([...(areas.get(area) ?? []), interval]));
+  }
+  return areas;
+}
