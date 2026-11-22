@@ -85,7 +85,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { NOT_SENT, type QueueRow, type RecipientCheck, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -155,6 +155,7 @@ export interface RuntimeHost {
   log: (line: string) => void;
   conversationNetworkId?(app: AppId, homeCity: string): string | undefined;
   accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "projectRecordedAge">;
+  readonly outboundRecipientKey: RecipientWindowKey;
   photoRelay?: PhotoRelayService;
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
@@ -248,6 +249,8 @@ export class NetworkRuntime {
   private readonly nonce = randomUUID().slice(0, 8);
   private seq = 0;
   lastTick?: { at: number; ran: boolean };
+
+  get outboundRecipientKey(): RecipientWindowKey { return this.host.outboundRecipientKey; }
 
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
     this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;

@@ -10,7 +10,7 @@ Check queue claims, caps, leak checks, receipt reconciliation, and uncertain del
 
 The [participation budgets](../participationBudgets.md) supply the engine and Network's default state and lane caps. This queue model starts after the attention controller has applied those caps and models its own person-level and provider limits.
 
-The generated [provider receipt lifecycle](../outboundReceipt.md) drives the compiled send shell. A provider response whose acceptance cannot be saved holds the original key for lookup. The failure write is scoped to the worker and attempt that own the lease.
+The generated [provider receipt lifecycle](../outboundReceipt.md) drives the compiled send shell. A provider response whose acceptance cannot be saved holds the original key for lookup. The failure write is scoped to the worker and attempt that own the lease. The [terminal recipient count rule](../outboundReceipt.md#a-terminal-receipt-preserves-the-recipient-cap-after-payload-erasure) covers the hourly cap that this model abstracts. The persisted-queue integration checks the atomic move from a cleared address to an hourly keyed count.
 
 The [outbound admission spec](../outboundAdmission.md) generates the live pre-claim checks. The database still owns the locked check and lease acquisition.
 

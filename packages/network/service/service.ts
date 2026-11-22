@@ -147,7 +147,7 @@ import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
-import type { QueueRow } from "../../blooio/src/outbound-queue.ts";
+import { recipientWindowHasher, type QueueRow, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
@@ -197,7 +197,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "outbound_recipient_window", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -378,6 +378,7 @@ export class NetworkService implements RuntimeHost {
   readonly apps: Record<AppId, AppInfo>;
   readonly people: PeopleStore;
   readonly accounts: Accounts;
+  readonly outboundRecipientKey: RecipientWindowKey;
   /** The single inbox and notification scheduler; undefined when turned off. */
   readonly notify?: Notifier;
   /** Address to (runtime, member) for the notify sink, filled by the notify directory. */
@@ -442,6 +443,7 @@ export class NetworkService implements RuntimeHost {
     const key = this.env.PLATFORM_HASH_KEY ?? (devShortcutsAllowed(this.env) ? DEV_HASH_KEY : undefined);
     if (!key) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
     this.hashKey = key;
+    this.outboundRecipientKey = recipientWindowHasher(key);
     this.expectedInvitations = new ExpectedMemberInvitations(key, () => this.clock.now(), app => this.apps[app]);
     this.seedInvitations = new SeedInvitations(key, () => this.clock.now());
     this.profileFactEdits = new ProfileFactEdits(key, () => this.clock.now());

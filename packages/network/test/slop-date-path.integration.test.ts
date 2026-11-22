@@ -14,7 +14,7 @@ import { localEmbed, SLOP_ENGINE_DEFAULTS, slopPack, slopProfiles, World } from 
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
@@ -349,7 +349,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
     const [prompt] = await sql<{ id: string; body: string }[]>`select id,body from network.messages
       where app_id='slop' and member_id=${rae} and opportunity_id=${item.oppId} and type='feedback_request' and direction='outbound'`;
-    const syntheticHistory = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+    const syntheticHistory = new OutboundQueue({ recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
       provider: { kind: "sim", send: async () => { throw new Error("Fixture only records an accepted prompt"); } } });
     // The member gets guidance even before the exact feedback prompt is accepted. Until then, the
     // service cannot treat her statement as a report against the counterpart of that prompt.
@@ -459,7 +459,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect((await state()).opps.find(opp => opp.id === id)?.post).toBeUndefined();
     expect((await state()).reports).toEqual([]);
 
-    const queue = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+    const queue = new OutboundQueue({ recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
       provider: { kind: "sim", send: async () => { throw new Error("Fixture only records prompt receipts"); } } });
     const prompt = "How did your date go?";
     await sql.begin(async tx => {
@@ -562,7 +562,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const rt = service.runtimeFor("slop")!;
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: seeded.members, opps: [latest, earlier] }));
 
-    const queue = new OutboundQueue({ sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
+    const queue = new OutboundQueue({ recipientWindowKey: recipientWindowHasher("synthetic-recipient-window"), sql, clock, app: "slop", line: "+12125550160", checks: { live: () => false },
       provider: { kind: "sim", send: async () => { throw new Error("Fixture only records prompt receipts"); } } });
     const delivered = async (oppId: string, revision: number) => {
       const key = meetingFeedbackKey(oppId, rae, revision), prompt = "How did your date go?";
