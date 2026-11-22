@@ -104,3 +104,32 @@ test("a current busy conflict discovered after the probes cannot book the picked
   expect(world.meetings).toHaveLength(0);
   expect(world.net.exportState().opps.find(opp => opp.id === oppId)?.stage).toBe("closed");
 });
+
+test.each([-1, 0, 1])("the default meeting slot includes the exact search boundary (%d ms)", async offset => {
+  // spec/opportunityLifecycle.md, "Only an approved proposal with enough consent can book"
+  // spec/calendarFreeBusy.md, "A known busy interval excludes the slot and incomplete coverage cannot make it free"
+  const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
+    plans: false, growth: false, calendarFreeBusy: scope => {
+      const { grant, observation } = authorized(scope);
+      // The supported template times are busy. The weekend default at 11:00 stays open.
+      const busy = attention.candidateSlots("America/New_York", scope.now)
+        .map(slot => ({ start: slot.start, end: slot.start + 30 * MINUTE }));
+      return { grant, observation: { ...observation, busy } };
+    },
+  });
+  await world.onboard("a", "b");
+  await world.say("a", "CALENDAR");
+  world.clock.set(Date.UTC(2026, 9, 8, 16)); // Thursday 12:00 local.
+  const oppId = world.propose(["a", "b"]);
+  expect(await world.runUntil(() => world.probed("a"), DAY)).toBe(true);
+  await world.say("a", "yes");
+  expect(await world.runUntil(() => world.probed("b"), DAY)).toBe(true);
+  const probes = world.sent.filter(message => message.meta.probe?.key === oppId);
+  expect(probes.map(message => message.meta.timeOptions ?? [])).toEqual([[], []]);
+
+  const saturday = Date.UTC(2026, 9, 10, 15); // Saturday 11:00 local.
+  world.clock.set(saturday - 20 * HOUR + offset);
+  await world.say("b", "yes");
+  expect(world.log("venue").find(entry => entry.detail.oppId === oppId)?.detail.time).toBe("default");
+  expect(world.meetings.map(meeting => meeting.at)).toEqual([saturday + (offset > 0 ? DAY : 0)]);
+});
