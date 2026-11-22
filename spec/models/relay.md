@@ -10,6 +10,8 @@ Check per-item consent and withdrawal, relay decisions, age restrictions, and er
 
 Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. A condition on the recipient's assent or a later time supplies uncertainty to the private request rule. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. Phone swaps and durable queue acceptance remain separate.
 
+The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message because it mentions an upcoming minor birthday. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader; this model takes the evidence category as input.
+
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

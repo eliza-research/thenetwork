@@ -480,14 +480,16 @@ test("selected photos survive queued uncertainty/restart with native JSONB refs,
   }
 },120_000);
 
-test("a signed relay self-age closes the match and lowers the person's age across apps", async () => {
-  const sender = "+12125550217", recipient = "+12125550218";
+test.each([
+  { sender: "+12125550217", recipient: "+12125550218", phrase: "tell them 16f here", floor: 16 },
+  { sender: "+12125550227", recipient: "+12125550228", phrase: "tell them im 12 is that ok", floor: 13 },
+])("a signed relay self-age closes the match and lowers the person's age across apps ($floor)", async ({ sender, recipient, phrase, floor }) => {
   async function join(app: "friends" | "slop", phone: string, name: string) {
     const messages = [app === "friends" ? "friends.help" : "slop.date", name + ", 29",
       "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
     for (const [index, text] of messages.entries()) {
       clock.advance(MINUTE);
-      const id = "relay-age-join:" + app + ":" + name + ":" + index;
+      const id = `relay-age-join:${floor}:${app}:${name}:${index}`;
       expect((await post(TURN_PATH, { ...turn(phone, id, text), app })).status).toBe(200);
     }
     const person = await service.accounts.personFor(phone);
@@ -499,7 +501,7 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   const senderFriends = await join("friends", sender, "Bo");
   const recipientFriends = await join("friends", recipient, "Jae");
   const senderSlop = await join("slop", sender, "Bo");
-  const matchId = "friends.relay-age-pair";
+  const matchId = `friends.relay-age-pair-${floor}`;
   await fixturePair(false, "friends", [senderFriends, recipientFriends], matchId);
   const controls = [
     ["other", "tell them my 15 year old will be with me"],
@@ -509,12 +511,12 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   ] satisfies [string, string][];
   for (const [suffix, phrase] of controls) {
     clock.advance(11 * MINUTE);
-    const request = await open("relay-age-" + suffix, phrase, sender);
+    const request = await open(`relay-age-${floor}-${suffix}`, phrase, sender);
     expect((await post(RELAY_PATH, request)).status).toBe(200);
     expect((await service.accounts.personFor(sender))?.lowestAge).toBe(29);
   }
   clock.advance(11 * MINUTE);
-  const request = await open("relay-age-self", "tell them 16f here", sender);
+  const request = await open(`relay-age-self-${floor}`, phrase, sender);
   const before = posts;
   const response = await post(RELAY_PATH, request);
   expect(response.status).toBe(200);
@@ -523,8 +525,8 @@ test("a signed relay self-age closes the match and lowers the person's age acros
   expect(await replay.json()).toMatchObject({ decision: "block", delivered: false, replayed: true });
   expect(posts).toBe(before);
   expect(await pairClosed(matchId)).toBe(true);
-  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(16);
+  expect((await service.accounts.personFor(sender))?.lowestAge).toBe(floor);
   const snapshot = await loadSnapshot(sql, clock.now(), { app: "slop", city: "nyc" });
-  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(16);
-  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: 16 }]);
+  expect(snapshot.members.find(member => member.id === senderSlop)?.age).toBe(floor);
+  expect(await sql`select age from network.members where app_id='slop' and id=${senderSlop}`).toEqual([{ age: floor }]);
 }, 60_000);

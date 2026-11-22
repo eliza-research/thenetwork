@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_HALF, AGE_LOOSE_TAIL, ARTICLE_AGE_END, quoteStillOpen, canJoin, normalizeAgeInitialism, parseReply, readParticipationWithdrawal, relayMinorAge, type Category } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
@@ -264,7 +264,7 @@ const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
 type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean; estimated?: boolean };
 const SELF_CURRENT_AGE = `\\b${ME}\\s+${AGE_CURRENT_ADVERB}${SAME}`;
 const STATED_AGE = `(?:${SELF_CURRENT_AGE}|\\bi (?:just )?turned\\s+)`;
-const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE})`;
+const NOT_UPCOMING_AGE = `(?!${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
 
 const AGE_RX: AgeRule[] = [
@@ -385,6 +385,8 @@ export function agesStated(body: string, { directOnly = false } = {}): { age?: n
     const a = age(m);
     if (Number.isFinite(a) && (out.age === undefined || a < out.age)) out.age = a;
   }
+  const direct = relayMinorAge(t);
+  if (direct !== undefined && (out.age === undefined || direct < out.age)) out.age = direct;
   return out;
 }
 

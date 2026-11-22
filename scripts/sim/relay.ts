@@ -82,11 +82,15 @@ export async function relayBlock(b: Block): Promise<void> {
         for (const it of [text("see you at 7!"), share(), photo()]) { const r = relayItem(it, ctx); expect([age, side, r.decision]).toEqual([age, side, "block"]); expect(r.rendered).toBe(""); expect(r.reasons).toContain("minor:party"); }
       }
     }
-    for (const t of ["lol I'm 16 tho", "im 17 years old", "I'm still in high school", "not 18 yet but soon"]) {
+    for (const t of ["lol I'm 16 tho", "im 17 years old", "I'm still in high school", "not 18 yet but soon",
+      "im 12 is that ok", "i am 10 years old", "11 yo", "im 17m", "i'm 16f looking to meet",
+      "hey im 15f btw", "im 16/x from brooklyn", "17m here", "I'm 18 in two weeks"]) {
       const r = relayItem(text(t), baseCtx());
       expect([t, r.decision, r.record.ageSignal]).toEqual([t, "block", true]);
     }
-    for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
+    for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school",
+      "I'm 17m away from the bar", "im 170m from home", "I'm 5'8", "I'm 3 years into my PhD",
+      "I'm 1 of 3 siblings", "I'm 2 drinks in", 'she said "I am 10 years old"']) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
   });
 
   await b.run("relay: only inside a mutual match between its two participants; blocks, opt-outs and holds win", () => {

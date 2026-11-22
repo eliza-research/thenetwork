@@ -5,7 +5,7 @@
 //  - 18+: full membership (romance and other adult-only features stay 18+).
 // Missing or invalid ages fail closed: they cannot join and cannot be matched.
 
-import { adultAge, ageInRange, joinableAge, matchableAge, maxAge, minMemberAge } from "./generated/memberAge.ts";
+import { adultAge, ageInRange, joinableAge, matchableAge, maxAge, minMemberAge, precedingBirthdayAge } from "./generated/memberAge.ts";
 
 // spec/memberAge.md, "Age data outside the human range is unusable"
 export const MIN_MEMBER_AGE = minMemberAge;
@@ -44,6 +44,8 @@ const BIRTHDAY_TIME = `(?:in\\s+(?:${BIRTHDAY_COUNT}\\s+(?:minutes?|hours?|days?
 const BIRTHDAY_SEPARATOR = "(?:\\s+|\\s*[,(]\\s*)";
 const BIRTHDAY_AGE_MARKER = "(?:y(?:ears?|rs?)[\\s-]+old|y\\/?o|years of age)(?![a-z])";
 export const AGE_BIRTHDAY_AFTER_AGE = `(?:\\s*${BIRTHDAY_AGE_MARKER})?${BIRTHDAY_SEPARATOR}${BIRTHDAY_TIME}`;
+const DISTANT_BIRTHDAY_COUNT = "(?:[2-9]\\d?|1\\d|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a few|a couple(?: of)?)";
+export const AGE_DISTANT_BIRTHDAY_AFTER_AGE = `(?:\\s*${BIRTHDAY_AGE_MARKER})?${BIRTHDAY_SEPARATOR}in\\s+${DISTANT_BIRTHDAY_COUNT}\\s+years?\\b`;
 export const AGE_BIRTHDAY_END = "(?=\\s*(?:$|[.,!?;:)]|and\\b|but\\b|lol\\b|btw\\b|tho(?:ugh)?\\b))";
 const DOTTED_AGE = new RegExp(`\\by\\.o\\b(?:\\.(?=${BIRTHDAY_SEPARATOR}${BIRTHDAY_TIME}${AGE_BIRTHDAY_END}))?`, "g");
 
@@ -75,4 +77,32 @@ export function quoteStillOpen(prefix: string): boolean {
     single = !single;
   }
   return double || single;
+}
+
+
+const AGE_FORM_START = "(?:^|[.!?;]\\s*)(?:(?:hey|hi|hello|yo)[, !]+)?";
+const AGE_FORM_SELF = "(?:i'm|im|i am)\\s+";
+const AGE_FORM_QUALIFIER = `${AGE_CURRENT_ADVERB}(?:(?:just|only|barely)\\s+)?`;
+const AGE_FORM_END = "(?=\\s*(?:$|[!?.;](?!\\d)|,(?!\\s*\\d)|(?:is that ok(?:ay)?|here|lol|btw|tho(?:ugh)?|rn)\\b))";
+const AGE_FORM_SEX = "(?:[fx](?=\\s*(?:$|[!.?,;]|here\\b|lol\\b|btw\\b|from\\b|looking\\b))|m(?=\\s*(?:$|[!.?,;]|here\\b|lol\\b|btw\\b|looking\\b)))";
+const AGE_FORM_SLASH_SEX = "(?:\\s*[/]\\s*[mfx])(?=\\s*(?:$|[!.?,;]|here\\b|lol\\b|btw\\b|from\\b|looking\\b))";
+const AGE_FORM_SELF_NUMBER = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})(?!\\d)(?:\\s*${BIRTHDAY_AGE_MARKER})?${AGE_FORM_END}`, "g");
+const AGE_FORM_SHORTHAND = new RegExp(`${AGE_FORM_START}(?:${AGE_FORM_SELF}${AGE_FORM_QUALIFIER})?(\\d{1,2})(?!\\d)(?:\\s*${AGE_FORM_SEX}|${AGE_FORM_SLASH_SEX}|\\s*${BIRTHDAY_AGE_MARKER}${AGE_FORM_END})`, "g");
+const AGE_FORM_NEAR_BIRTHDAY = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`, "g");
+
+/** Read a direct age disclosure in the limited relay forms. A birthday estimate can only flag the item. */
+export function relayMinorAge(text: string, includeUpcoming = false): number | undefined {
+  const normalized = normalizeAgeInitialism(text.trim().toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"'));
+  let youngest: number | undefined;
+  for (const rule of [AGE_FORM_SELF_NUMBER, AGE_FORM_SHORTHAND, ...(includeUpcoming ? [AGE_FORM_NEAR_BIRTHDAY] : [])]) {
+    for (const reading of normalized.matchAll(rule)) {
+      const prefix = normalized.slice(0, reading.index + reading[0].indexOf(reading[1]!));
+      if (quoteStillOpen(prefix)) continue;
+      const stated = Number(reading[1]);
+      const age = rule === AGE_FORM_NEAR_BIRTHDAY ? precedingBirthdayAge(stated) : stated;
+      if (!validAge(age) || age < 1 || canBeMatched(age)) continue;
+      if (youngest === undefined || age < youngest) youngest = age;
+    }
+  }
+  return youngest;
 }

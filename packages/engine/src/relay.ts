@@ -32,7 +32,7 @@
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
-import { canBeMatched, labelHash, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { canBeMatched, labelHash, LeakGuard, relayMinorAge, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -250,7 +250,7 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
   const codes = new Set<string>();
   for (const { code, re } of RELAY_RULES) if (!codes.has(code) && vs.some(v => re.test(v))) codes.add(code);
   if (spelledPhone(text)) codes.add("contact:spelled_phone");
-  return { codes: [...codes], minorSignal: vs.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || vs.some(v => MINOR_SIGNAL.test(v)) };
 }
 
 // ----------------------------------------------------------------------------------- photo ids
