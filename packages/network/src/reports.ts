@@ -3,6 +3,7 @@
 // reporter's words. Urgent kinds (harassment, unsafe, scam, minor) have a 1-hour staff target; the
 // others 24 hours.
 import type { MemberId } from "@thenetwork/core";
+import { acceptsReportEvidence } from "../../core/src/generated/safetyCase.ts";
 
 export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
 export type ReportStatus = "open" | "held" | "banned" | "dismissed";
@@ -21,7 +22,7 @@ const IMPLIED_FIRST_PERSON = /^\s*(?:sorry|sadly|unfortunately)?\s*$/i;
 
 const KINDS: [ReportKind, RegExp][] = [
   ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
-  ["unsafe", /\b(unsafe|not safe|scared|afraid|terrified|threat(en(ed|ing)?)?|follow(ed|ing) me|stalk(ed|ing)? me|(?:wouldn'?t|would not|didn'?t|did not|refused to) let me (go|leave|out)|grabbed|touched me|assault(ed)?|(?:hit|punched|slapped|shoved|kicked|attacked) me|drugged|spiked|forced|hurt me|violent|(?:pulled|pointed|brandished) (?:out )?(?:a |their |his |her )?(?:knife|gun|weapon))\b/i],
+  ["unsafe", /\b(unsafe|not safe|scared|afraid|terrified|threat(en(ed|ing)?)?|follow(ed|ing) me|stalk(ed|ing)? me|(?:wouldn'?t|would not|didn'?t|did not|refused to) let me (go|leave|out)|grabbed|touched me|assault(ed)?|hit me(?<casualContact>\s+up\b)?|(?:punched|slapped|shoved|kicked|attacked) me|drugged|spiked|forced|hurt me|violent|(?:pulled|pointed|brandished) (?:out )?(?:a |their |his |her )?(?:knife|gun|weapon))\b/i],
   ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|(?:wouldn'?t|would not|refused to) stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b/i],
   ["scam", /\b(scam(mer|med)?|(?:asked|demanded|requested)(?: me| that i)? (?:for |to (?:send|wire|transfer|buy) |(?:send|wire|transfer|buy) )(?:some |a |the )?(?:money|cash|gift cards?|crypto|bitcoin)|asked to borrow money|wire (?:me|money))\b/i],
   ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
@@ -31,6 +32,7 @@ const ACTIVE_DENIAL = /\b(?:not(?! only\b)|never|nothing|without|no(?! way\b)|(?
 const CORRECTED_MARRIAGE = /\b(?:not married|isn't married|wasn't married)\s*[,;]?\s*but\s+(?:he|she|they)\s+(?:is|was|are|were)\s*(?:$|[.!?,;])/i;
 const CURRENT_DANGER = /^(?:(?:i am|i'm|we are|we're) (?:in (?:immediate )?danger(?: (?:right now|now))?|(?:not safe|being threatened) (?:right now|now))|(?:i |we )?need emergency help(?: (?:right now|now))?|(?:(?:he|she|they|someone) (?:is|are)|he's|she's|they're) (?:following|threatening|attacking) (?:me|us)(?: (?:right now|now))?)$/i;
 const COUNTERPART_SUBJECT = /^(?:he|she|they|my date|the person i met)\b/i;
+const DIRECT_CHOKING_REPORT = /^(?:he|she|they|my date|the person i met) choked me[.!]?$/i;
 
 function directClauses(text: string): string[] {
   return (text.normalize("NFKC").replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/"[^"]*(?:"|$)/g, "")
@@ -56,7 +58,8 @@ const reportClauseBefore = (text: string, at: number) =>
 
 function reportsHarm(text: string, marker: RegExp): boolean {
   for (const m of text.matchAll(new RegExp(marker.source, "gi"))) {
-    if (!ACTIVE_DENIAL.test(reportClauseBefore(text, m.index))) return true;
+    const affirmative = !ACTIVE_DENIAL.test(reportClauseBefore(text, m.index));
+    if (acceptsReportEvidence(affirmative, m.groups?.casualContact !== undefined)) return true;
   }
   return false;
 }
@@ -92,7 +95,8 @@ export function directFeedbackAbsence(text: string, counterpartNames: readonly s
 export function reportKindOf(text: string): ReportKind {
   const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
   for (const [k, re] of KINDS) {
-    if (k === "minor" ? re.test(t) : reportsHarm(t, re) || (k === "lying" && CORRECTED_MARRIAGE.test(t))) return k;
+    const directHarm = k === "unsafe" && DIRECT_CHOKING_REPORT.test(t.trim());
+    if (k === "minor" ? re.test(t) : reportsHarm(t, re) || directHarm || (k === "lying" && CORRECTED_MARRIAGE.test(t))) return k;
   }
   if (attendanceAbsences(t).other || reportsHarm(t, /\bghosted me\b/i)) return "no_show";
   return "other";

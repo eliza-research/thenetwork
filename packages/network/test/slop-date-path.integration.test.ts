@@ -402,16 +402,20 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
   }, T);
 
   test.each([
-    { scenario: "while answering feedback", answer: "I came, but Rae couldn't make it.", missing: true, report: true },
-    { scenario: "while a later booking awaits a reply", answer: "Rae bailed on me.", missing: true, report: false },
-    { scenario: "with a direct counterpart absence", answer: "He flaked on me.", missing: true, report: false },
-    { scenario: "with nobody at the date", answer: "Nobody showed up.", missing: true, report: false },
-    { scenario: "with an unrelated driver absence", answer: "My driver bailed on me.", missing: false, report: false },
-    { scenario: "with a quoted absence", answer: "'A message: Rae bailed on me.'", missing: false, report: false },
-    { scenario: "with a denied absence", answer: "Rae didn't flake on me.", missing: false, report: false },
-  ])("a signed own absence is feedback about the finished date $scenario", async ({ scenario, answer, missing, report }) => {
+    { scenario: "while answering feedback", answer: "I came, but Rae couldn't make it.", missing: true, report: "no_show" },
+    { scenario: "while a later booking awaits a reply", answer: "Rae bailed on me.", missing: true, report: undefined },
+    { scenario: "with a direct counterpart absence", answer: "He flaked on me.", missing: true, report: undefined },
+    { scenario: "with nobody at the date", answer: "Nobody showed up.", missing: true, report: undefined },
+    { scenario: "with an unrelated driver absence", answer: "My driver bailed on me.", missing: false, report: undefined },
+    { scenario: "with a quoted absence", answer: "'A message: Rae bailed on me.'", missing: false, report: undefined },
+    { scenario: "with a denied absence", answer: "Rae didn't flake on me.", missing: false, report: undefined },
+    { scenario: "with a casual contact idiom", answer: "He hit me up after dinner.", safety: true, missing: false, report: undefined },
+    { scenario: "with direct disclosure of physical harm", answer: "My date choked me.", safety: true, missing: false, report: "unsafe" },
+    { scenario: "with a denial of physical harm", answer: "My date never choked me.", safety: true, missing: false, report: undefined },
+  ])("a signed check-in is feedback about the finished date $scenario", async ({ scenario, answer, missing, report, safety }) => {
     // spec/meetingSettlement.md, "A feedback reply needs receipt of its exact prompt"
     // spec/meetingSettlement.md, "Classify each attendee from the available reports"
+    // spec/safetyCase.md, "Report language distinguishes physical harm from casual contact"
     await svc?.close();
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
@@ -489,9 +493,13 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const afterOther = await state();
     expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: missing });
     expect(afterOther.reports).toMatchObject(report
-      ? [{ reporterId: sam, subjectId: rae, kind: "no_show", opportunityId: id, source: "check_in" }]
+      ? [{ reporterId: sam, subjectId: rae, kind: report, opportunityId: id, source: "check_in" }]
       : []);
     expect(afterOther.blocks).toHaveLength(report ? 1 : 0);
+    if (safety) {
+      await service.close(); svc = undefined;
+      return;
+    }
     const afterBothReplies = await history();
     expect(afterBothReplies.get(sam)?.history).toMatchObject({ dates: 1, noShows: 0 });
     expect(afterBothReplies.get(rae)?.history).toMatchObject({ dates: 0, noShows: 1 });
