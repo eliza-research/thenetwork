@@ -644,11 +644,15 @@ export function extractProfile(body: string): Profile {
 }
 
 const EXPLICIT_REPEAT = /^(?:(?:yes|yeah)[, ]+)?(?:(?:i would|i'd|would)(?: definitely| really)?(?: love to| like to)? |(?:i want to|let's) )(?:do (?:it|that)|meet(?: up)?|see (?:you|them|him|her|each other)|hang out|get together) again$/i;
+const PLAN_REPEAT_COURTESY = /^\s*(?:no (?:worr(?:y|ies)|rush|pressure|problem|probs?|stress|sweat|biggie|plans that day)(?: at all| there)?|(?:it'?s a )?no[- ]brainer)(?:\s*[,!.;:—–]+\s*|\s*$)/;
+const PLAN_REPEAT_CONTEXT = /^(?:(?:we (?:all|both)|i) (?:came|made it|showed up)|(?:it|that) was (?:great|fun|nice)|we clicked)$/;
+const PLAN_REPEAT_ANSWER = /^(?:(?:so )?(?:yes|yeah|yep|definitely|absolutely|for sure)(?: again)?|again for sure|count me in(?: for the next one| next time)?|sign me up|i'm down to do it again)$/;
 
 /** Read a first-person follow-up request in its own clause. */
 export function explicitRepeatRequest(body: string): boolean {
   const text = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
-  return planAgainOf(text) === "yes" && text.split(/[.!?;]/).some(clause => EXPLICIT_REPEAT.test(clause.trim()));
+  return planAgainOf(text) === "yes" &&
+    text.replace(PLAN_REPEAT_COURTESY, "").split(/[.!?;]/).some(clause => EXPLICIT_REPEAT.test(clause.trim()));
 }
 
 /**
@@ -1091,8 +1095,16 @@ const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?
 export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
-  const s = t.replace(AGAIN_YES_IDIOM, " ");
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  const afterCourtesy = t.replace(PLAN_REPEAT_COURTESY, "");
+  const s = afterCourtesy.replace(AGAIN_YES_IDIOM, " ");
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  if (afterCourtesy !== t) {
+    // After a courtesy opener, require a direct answer to this plan. Ignore plain attendance and sentiment.
+    const answers = s.split(/[.!;,:\n—–]+/).map(clause => clause.trim())
+      .filter(clause => clause && clause !== "again" && !PLAN_REPEAT_CONTEXT.test(clause));
+    return answers.length > 0 && answers.every(clause => EXPLICIT_REPEAT.test(clause) || PLAN_REPEAT_ANSWER.test(clause))
+      ? "yes" : "unclear";
+  }
   if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again|count me in|(?:wouldn'?t|would not) say no)\b/.test(t)) return "yes";
   return "unclear";
 }
