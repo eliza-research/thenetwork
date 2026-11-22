@@ -169,6 +169,14 @@ export class Oracle {
     // Intent liveness (persona.ts): judge on the wants each persona still holds at `at`. A lapsed
     // want never counts; a held want counts whether or not the Network's intent record is live.
     const people = ps.filter((p): p is Persona => !!p).map(p => withLiveDesires(p, at));
+    // Presence changes at trip-day boundaries. The group must share the city at one instant.
+    const presenceTimes = [at];
+    if (people.some(p => p.hidden.trips.length > 0)) {
+      const end = Math.min(prop.window?.end ?? at, at + 7 * DAY);
+      const nextDay = this.worldStart + (Math.floor((at - this.worldStart) / DAY) + 1) * DAY;
+      for (let t = nextDay; t < end; t += DAY) presenceTimes.push(t);
+    }
+    if (!presenceTimes.some(t => people.every(p => this.presentIn(p, prop.city, t)))) flags.add("city_mismatch");
     // Minors policy: checked over every participant, not only per pair, so a one-person
     // proposal (growth ask, relay) involving a minor is flagged too.
     if (people.some(p => p.hidden.trueAge < 18)) flags.add("minor_included");
@@ -194,11 +202,7 @@ export class Oracle {
       e -= 0.06 * sizeDiff * (1 - a.hidden.socialEnergy);
       if (groupSize === 2 && a.hidden.boundaries.includes("prefers groups over one-on-one with strangers")
           && !a.relationships.some(r => others.some(o => o.id === r.to))) { e -= 0.15; flags.add("boundary_conflict"); }
-      // Presence over the proposal window (up to 7 days), not only at its start: a member who is
-      // away for part of the window can still meet in it (error analysis 2026-10-06, class D).
-      let present = false;
-      for (let t = at, end = Math.min(prop.window?.end ?? at, at + 7 * DAY); !present && t <= end; t = t < end && t + DAY > end ? end : t + DAY) present = this.presentIn(a, prop.city, t);
-      if (!present) flags.add("city_mismatch");
+      const present = presenceTimes.some(t => this.presentIn(a, prop.city, t));
       const enjoyment = clamp01(e);
 
       const r = new Rng(this.decisionKey("decide", prop, a.id, category, at));
@@ -374,12 +378,17 @@ export class Oracle {
    */
   latentPairs(members: MemberId[], at: number): { a: MemberId; b: MemberId; quality: number }[] {
     const ps = members.map(id => this.byId.get(id)).filter((p): p is Persona => !!p && !p.hidden.adversarial && p.hidden.trueAge >= 18);
+    const cities = new Map(ps.map(p => [p.id, new Set(
+      [p.homeCity, p.secondaryCity, ...p.hidden.trips.map(tr => tr.city)]
+        .filter((city): city is City => city !== undefined && this.presentIn(p, city, at)),
+    )]));
     const res: { a: MemberId; b: MemberId; quality: number }[] = [];
     for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
       const a = ps[i]!, b = ps[j]!;
-      if (a.homeCity !== b.homeCity) continue;
       if (a.relationships.some(r => r.to === b.id)) continue; // already know each other
-      const v = this.evaluate({ id: `latent:${a.id}:${b.id}`, kind: "intro", participants: [a.id, b.id], city: a.homeCity, window: { start: at, end: at } });
+      const sharedCity = [...cities.get(a.id)!].find(city => cities.get(b.id)!.has(city));
+      if (!sharedCity) continue;
+      const v = this.evaluate({ id: `latent:${a.id}:${b.id}`, kind: "intro", participants: [a.id, b.id], city: sharedCity, window: { start: at, end: at } });
       if (v.compatible) res.push({ a: a.id, b: b.id, quality: v.quality });
     }
     return res;
